@@ -63,7 +63,12 @@ pub(crate) enum SideRef {
     Absent,
     Inline(Vec<u8>),
     Disk(PathBuf),
-    Git { repo: PathBuf, spec: String },
+    /// `spec` は `HEAD:src/a.rs` のような git 引数。非 UTF-8 のパスを
+    /// そのまま運ぶため OsString で持つ。
+    Git {
+        repo: PathBuf,
+        spec: std::ffi::OsString,
+    },
 }
 
 #[derive(Clone, Debug)]

@@ -1,6 +1,7 @@
 //! git を読む入力ソース（R-INPUT-2〜4）。
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -32,8 +33,8 @@ pub enum GroupBy {
 
 #[derive(Clone, Debug)]
 struct DiffEntry {
-    path: String,
-    old_path: Option<String>,
+    path: PathBuf,
+    old_path: Option<PathBuf>,
     status: Status,
     add: u64,
     del: u64,
@@ -51,13 +52,13 @@ pub struct GitSource {
 /// file_id が別ファイルを指さないようにする）。
 #[derive(Default)]
 struct FileIds {
-    map: HashMap<String, String>,
+    map: HashMap<(String, PathBuf), String>,
     next: usize,
 }
 
 impl FileIds {
-    fn get(&mut self, group_id: &str, path: &str) -> String {
-        let key = format!("{group_id}\n{path}");
+    fn get(&mut self, group_id: &str, path: &Path) -> String {
+        let key = (group_id.to_string(), path.to_path_buf());
         if let Some(id) = self.map.get(&key) {
             return id.clone();
         }
@@ -92,7 +93,7 @@ impl GitSource {
             &["ls-files", "--others", "--exclude-standard", "-z"],
         )?;
         for path in split_z(&untracked) {
-            let full = self.repo.join(path);
+            let full = self.repo.join(path_from_bytes(path));
             let size = std::fs::metadata(&full).map_or(0, |meta| meta.len());
             let (add, binary) = if size > UNTRACKED_LIMIT {
                 (0, true)
@@ -111,7 +112,7 @@ impl GitSource {
                 }
             };
             entries.push(DiffEntry {
-                path: path.to_string(),
+                path: path_from_bytes(path),
                 old_path: None,
                 status: Status::Add,
                 add,
@@ -125,7 +126,7 @@ impl GitSource {
                 Status::Add => SideRef::Absent,
                 _ => SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: format!("HEAD:{}", entry.old_path.as_deref().unwrap_or(&entry.path)),
+                    spec: git_spec("HEAD:", entry.old_path.as_deref().unwrap_or(&entry.path)),
                 },
             };
             let new = match entry.status {
@@ -162,14 +163,14 @@ impl GitSource {
                 Status::Add => SideRef::Absent,
                 _ => SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: format!("HEAD:{}", entry.old_path.as_deref().unwrap_or(&entry.path)),
+                    spec: git_spec("HEAD:", entry.old_path.as_deref().unwrap_or(&entry.path)),
                 },
             };
             let new = match entry.status {
                 Status::Delete => SideRef::Absent,
                 _ => SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: format!(":{}", entry.path),
+                    spec: git_spec(":", &entry.path),
                 },
             };
             (old, new)
@@ -222,9 +223,9 @@ impl GitSource {
                             Status::Add => SideRef::Absent,
                             _ => SideRef::Git {
                                 repo: self.repo.clone(),
-                                spec: format!(
-                                    "{sha}^:{}",
-                                    entry.old_path.as_deref().unwrap_or(&entry.path)
+                                spec: git_spec(
+                                    &format!("{sha}^:"),
+                                    entry.old_path.as_deref().unwrap_or(&entry.path),
                                 ),
                             },
                         };
@@ -232,7 +233,7 @@ impl GitSource {
                             Status::Delete => SideRef::Absent,
                             _ => SideRef::Git {
                                 repo: self.repo.clone(),
-                                spec: format!("{sha}:{}", entry.path),
+                                spec: git_spec(&format!("{sha}:"), &entry.path),
                             },
                         };
                         (old, new)
@@ -268,9 +269,9 @@ impl GitSource {
                         Status::Add => SideRef::Absent,
                         _ => SideRef::Git {
                             repo: self.repo.clone(),
-                            spec: format!(
-                                "{merge_base}:{}",
-                                entry.old_path.as_deref().unwrap_or(&entry.path)
+                            spec: git_spec(
+                                &format!("{merge_base}:"),
+                                entry.old_path.as_deref().unwrap_or(&entry.path),
                             ),
                         },
                     };
@@ -278,7 +279,7 @@ impl GitSource {
                         Status::Delete => SideRef::Absent,
                         _ => SideRef::Git {
                             repo: self.repo.clone(),
-                            spec: format!("{to}:{}", entry.path),
+                            spec: git_spec(&format!("{to}:"), &entry.path),
                         },
                     };
                     (old, new)
@@ -324,17 +325,22 @@ impl GitSource {
             } else {
                 (0, 0)
             };
+            // 表示は UTF-8 へ置換してよいが、id と読み取りは元のバイトのまま扱う。
+            let display_path = entry.path.to_string_lossy().into_owned();
             let noise = classify(&NoiseInput {
-                path: &entry.path,
-                linguist_generated: linguist_generated(attributes, &entry.path),
+                path: &display_path,
+                linguist_generated: linguist_generated(attributes, &display_path),
                 binary: entry.binary,
             })
             .is_some();
             files.push(FileEntry {
                 id: id.clone(),
                 group_id: group_id.to_string(),
-                path: entry.path.clone(),
-                old_path: entry.old_path.clone(),
+                path: display_path,
+                old_path: entry
+                    .old_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
                 status: entry.status,
                 add: entry.add as u32,
                 del: entry.del as u32,
@@ -379,12 +385,12 @@ impl ReviewSource for GitSource {
 /// 状態は安いコマンドとファイルの有無から決める。
 fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
     let numstat = worktree_numstat(repo)?;
-    let head_paths: std::collections::HashSet<String> = split_z(&git_raw(
+    let head_paths: std::collections::HashSet<PathBuf> = split_z(&git_raw(
         repo,
         &["ls-tree", "-r", "--name-only", "-z", "HEAD"],
     )?)
     .into_iter()
-    .map(str::to_string)
+    .map(path_from_bytes)
     .collect();
 
     Ok(numstat
@@ -415,10 +421,10 @@ fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
 /// パス一覧は内容差分を伴わない plumbing から取る（`diff --name-only HEAD` は
 /// 全ファイルの差分判定をやり直すため、1 万ファイルでは約 0.5 秒かかる）。
 fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
-    let mut paths: Vec<String> = Vec::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
     // 改名は削除と追加の組で検出される。組の片方だけを pathspec に渡すと改名が
     // 割れるため、削除・追加になり得るパスは 1 つの呼び出しに束ねる。
-    let mut rename_candidates: Vec<String> = Vec::new();
+    let mut rename_candidates: Vec<PathBuf> = Vec::new();
     for listing in [
         git_raw(repo, &["diff-files", "--name-status", "-z", "--no-renames"])?,
         git_raw(
@@ -437,7 +443,7 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
         repo,
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )?) {
-        paths.push(path.to_string());
+        paths.push(path_from_bytes(path));
     }
     paths.sort();
     paths.dedup();
@@ -450,7 +456,7 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
 
     rename_candidates.sort();
     rename_candidates.dedup();
-    let regular: Vec<String> = paths
+    let regular: Vec<PathBuf> = paths
         .iter()
         .filter(|path| rename_candidates.binary_search(path).is_err())
         .cloned()
@@ -460,31 +466,31 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
         .map(|count| count.get())
         .unwrap_or(4)
         .clamp(2, 16);
-    let mut shards: Vec<Vec<String>> = Vec::new();
+    let mut shards: Vec<Vec<PathBuf>> = Vec::new();
     if !rename_candidates.is_empty() {
         shards.push(rename_candidates);
     }
     if !regular.is_empty() {
         let chunk = regular.len().div_ceil(workers);
-        shards.extend(regular.chunks(chunk).map(<[String]>::to_vec));
+        shards.extend(regular.chunks(chunk).map(<[PathBuf]>::to_vec));
     }
     let mut handles = Vec::new();
     for shard in shards {
         let repo = repo.to_path_buf();
         handles.push(std::thread::spawn(
             move || -> Result<Vec<Numstat>, SourceError> {
-                let mut args: Vec<String> = vec![
-                    "diff".to_string(),
-                    "--numstat".to_string(),
-                    "-z".to_string(),
-                    "-M".to_string(),
-                    "HEAD".to_string(),
-                    "--".to_string(),
+                let mut args: Vec<OsString> = vec![
+                    "diff".into(),
+                    "--numstat".into(),
+                    "-z".into(),
+                    "-M".into(),
+                    "HEAD".into(),
+                    "--".into(),
                 ];
                 // グロブ文字を含むパスが別のシャードのパスに一致しないよう literal で渡す。
-                args.extend(shard.iter().map(|path| format!(":(literal){path}")));
-                let args: Vec<&str> = args.iter().map(String::as_str).collect();
-                Ok(parse_numstat(&git_raw(&repo, &args)?))
+                args.extend(shard.iter().map(|path| literal_pathspec(path)));
+                let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
+                Ok(parse_numstat(&git_raw_os(&repo, &args)?))
             },
         ));
     }
@@ -498,6 +504,32 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
     }
     entries.sort_by(|left, right| left.new_path.cmp(&right.new_path));
     Ok(entries)
+}
+
+/// `-- <pathspec>` に渡す literal な pathspec。生のバイトのまま組み立てる。
+fn literal_pathspec(path: &Path) -> OsString {
+    let mut spec = OsString::from(":(literal)");
+    spec.push(path.as_os_str());
+    spec
+}
+
+/// `prefix` に生のパスをつないで 1 つの git 引数（例 `HEAD:src/a.rs`）にする。
+fn git_spec(prefix: &str, path: &Path) -> OsString {
+    let mut spec = OsString::from(prefix);
+    spec.push(path.as_os_str());
+    spec
+}
+
+/// git が返した生のバイト列をパスとして運ぶ。表示のときだけ lossy に変換する。
+#[cfg(unix)]
+fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(OsStr::from_bytes(bytes))
+}
+
+#[cfg(not(unix))]
+fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
 fn diff_entries(repo: &Path, range_args: &[&str]) -> Result<Vec<DiffEntry>, SourceError> {
@@ -531,9 +563,9 @@ fn diff_entries(repo: &Path, range_args: &[&str]) -> Result<Vec<DiffEntry>, Sour
 }
 
 struct Numstat {
-    path: String,
-    old_path: Option<String>,
-    new_path: String,
+    path: PathBuf,
+    old_path: Option<PathBuf>,
+    new_path: PathBuf,
     add: u64,
     del: u64,
     binary: bool,
@@ -551,18 +583,19 @@ fn parse_numstat(bytes: &[u8]) -> Vec<Numstat> {
         }
         let fields: Vec<&[u8]> = token.split(|byte| *byte == b'\t').collect();
         if fields.len() >= 3 && !fields[2].is_empty() {
+            let path = path_from_bytes(fields[2]);
             entries.push(Numstat {
-                path: String::from_utf8_lossy(fields[2]).into_owned(),
+                path: path.clone(),
                 old_path: None,
-                new_path: String::from_utf8_lossy(fields[2]).into_owned(),
+                new_path: path,
                 add: parse_count(fields[0]),
                 del: parse_count(fields[1]),
                 binary: fields[0] == b"-",
             });
             index += 1;
         } else if index + 2 < tokens.len() {
-            let old_path = String::from_utf8_lossy(tokens[index + 1]).into_owned();
-            let new_path = String::from_utf8_lossy(tokens[index + 2]).into_owned();
+            let old_path = path_from_bytes(tokens[index + 1]);
+            let new_path = path_from_bytes(tokens[index + 2]);
             entries.push(Numstat {
                 path: new_path.clone(),
                 old_path: Some(old_path),
@@ -580,8 +613,8 @@ fn parse_numstat(bytes: &[u8]) -> Vec<Numstat> {
 }
 
 struct NameStatus {
-    path: String,
-    old_path: Option<String>,
+    path: PathBuf,
+    old_path: Option<PathBuf>,
     status: Status,
 }
 
@@ -600,8 +633,8 @@ fn parse_name_status(bytes: &[u8]) -> Vec<NameStatus> {
             b'R' | b'C' => {
                 if index + 2 < tokens.len() {
                     entries.push(NameStatus {
-                        path: String::from_utf8_lossy(tokens[index + 2]).into_owned(),
-                        old_path: Some(String::from_utf8_lossy(tokens[index + 1]).into_owned()),
+                        path: path_from_bytes(tokens[index + 2]),
+                        old_path: Some(path_from_bytes(tokens[index + 1])),
                         status: Status::Rename,
                     });
                     index += 3;
@@ -617,7 +650,7 @@ fn parse_name_status(bytes: &[u8]) -> Vec<NameStatus> {
                         _ => Status::Modify,
                     };
                     entries.push(NameStatus {
-                        path: String::from_utf8_lossy(tokens[index + 1]).into_owned(),
+                        path: path_from_bytes(tokens[index + 1]),
                         old_path: None,
                         status,
                     });
@@ -633,7 +666,7 @@ fn parse_name_status(bytes: &[u8]) -> Vec<NameStatus> {
 }
 
 /// `--name-status -z --no-renames` の「状態\0パス\0」を読む。
-fn parse_name_status_z(bytes: &[u8]) -> Vec<(u8, String)> {
+fn parse_name_status_z(bytes: &[u8]) -> Vec<(u8, PathBuf)> {
     let tokens: Vec<&[u8]> = bytes.split(|byte| *byte == 0).collect();
     let mut entries = Vec::new();
     let mut index = 0;
@@ -642,10 +675,7 @@ fn parse_name_status_z(bytes: &[u8]) -> Vec<(u8, String)> {
             index += 1;
             continue;
         }
-        entries.push((
-            tokens[index][0],
-            String::from_utf8_lossy(tokens[index + 1]).into_owned(),
-        ));
+        entries.push((tokens[index][0], path_from_bytes(tokens[index + 1])));
         index += 2;
     }
     entries
@@ -658,11 +688,10 @@ fn parse_count(field: &[u8]) -> u64 {
     String::from_utf8_lossy(field).parse().unwrap_or(0)
 }
 
-fn split_z(bytes: &[u8]) -> Vec<&str> {
+fn split_z(bytes: &[u8]) -> Vec<&[u8]> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|token| !token.is_empty())
-        .map(|token| std::str::from_utf8(token).unwrap_or_default())
         .collect()
 }
 
@@ -679,10 +708,17 @@ fn side_size(side: &SideRef) -> u64 {
         SideRef::Absent => 0,
         SideRef::Inline(bytes) => bytes.len() as u64,
         SideRef::Disk(path) => std::fs::metadata(path).map_or(0, |meta| meta.len()),
-        SideRef::Git { repo, spec } => git_text(repo, &["cat-file", "-s", spec])
-            .ok()
-            .and_then(|text| text.trim().parse().ok())
-            .unwrap_or(0),
+        SideRef::Git { repo, spec } => git_raw_os(
+            repo,
+            &[OsStr::new("cat-file"), OsStr::new("-s"), spec.as_os_str()],
+        )
+        .ok()
+        .and_then(|text| {
+            std::str::from_utf8(&text)
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+        })
+        .unwrap_or(0),
     }
 }
 
@@ -736,11 +772,17 @@ pub fn repo_root(path: &Path) -> Result<PathBuf, SourceError> {
     Ok(PathBuf::from(text.trim()))
 }
 
-pub(crate) fn show(repo: &Path, spec: &str) -> Result<Vec<u8>, SourceError> {
-    git_raw(repo, &["show", spec])
+pub(crate) fn show(repo: &Path, spec: &OsStr) -> Result<Vec<u8>, SourceError> {
+    git_raw_os(repo, &[OsStr::new("show"), spec])
 }
 
 pub(crate) fn git_raw(repo: &Path, args: &[&str]) -> Result<Vec<u8>, SourceError> {
+    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    git_raw_os(repo, &args)
+}
+
+/// git の引数に生のバイト列（非 UTF-8 のパスを含む pathspec）を渡せる版。
+pub(crate) fn git_raw_os(repo: &Path, args: &[&OsStr]) -> Result<Vec<u8>, SourceError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -753,11 +795,18 @@ pub(crate) fn git_raw(repo: &Path, args: &[&str]) -> Result<Vec<u8>, SourceError
     if !output.status.success() {
         return Err(SourceError::Git(format!(
             "git {} が失敗しました: {}",
-            args.join(" "),
+            display_args(args),
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
     Ok(output.stdout)
+}
+
+fn display_args(args: &[&OsStr]) -> String {
+    args.iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(crate) fn git_text(repo: &Path, args: &[&str]) -> Result<String, SourceError> {
@@ -1053,6 +1102,81 @@ mod tests {
         let content = source.content(&review.groups[0].files[0].id).unwrap();
         assert_eq!(content.old.unwrap(), b"one\n");
         assert_eq!(content.new.unwrap(), b"three\n");
+    }
+
+    #[cfg(unix)]
+    fn non_utf8_name() -> &'static std::ffi::OsStr {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::OsStr::from_bytes(b"b\xffad.txt")
+    }
+
+    #[cfg(unix)]
+    fn find_non_utf8(review: &ReviewMeta) -> &FileEntry {
+        review
+            .groups
+            .iter()
+            .flat_map(|group| group.files.iter())
+            .find(|file| file.path.ends_with("ad.txt"))
+            .expect("non-UTF-8 path must be listed")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_includes_non_utf8_untracked_file() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "a\n");
+        repo.add_and_commit("base");
+        let source = source(&repo, GitMode::Worktree);
+
+        std::fs::write(repo.path.join(non_utf8_name()), "x\ny\n").unwrap();
+
+        let review = source.review().unwrap();
+        let entry = find_non_utf8(&review);
+
+        assert_eq!(entry.status, Status::Add);
+        assert_eq!((entry.add, entry.del), (2, 0));
+        let content = source.content(&entry.id).unwrap();
+        assert_eq!(content.old, None);
+        assert_eq!(content.new.unwrap(), b"x\ny\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_reads_non_utf8_tracked_file() {
+        let repo = TempRepo::new();
+        std::fs::write(repo.path.join(non_utf8_name()), "one\n").unwrap();
+        repo.add_and_commit("base");
+        let source = source(&repo, GitMode::Worktree);
+
+        std::fs::write(repo.path.join(non_utf8_name()), "two\n").unwrap();
+
+        let review = source.review().unwrap();
+        let entry = find_non_utf8(&review);
+
+        assert_eq!(entry.status, Status::Modify);
+        let content = source.content(&entry.id).unwrap();
+        assert_eq!(content.old.unwrap(), b"one\n");
+        assert_eq!(content.new.unwrap(), b"two\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_reads_non_utf8_path() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "a\n");
+        repo.add_and_commit("base");
+        let source = source(&repo, GitMode::Staged);
+
+        std::fs::write(repo.path.join(non_utf8_name()), "x\ny\n").unwrap();
+        repo.git(&["add", "-A"]);
+
+        let review = source.review().unwrap();
+        let entry = find_non_utf8(&review);
+
+        assert_eq!(entry.status, Status::Add);
+        let content = source.content(&entry.id).unwrap();
+        assert_eq!(content.old, None);
+        assert_eq!(content.new.unwrap(), b"x\ny\n");
     }
 }
 
