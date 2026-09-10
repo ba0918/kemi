@@ -1,9 +1,10 @@
 # 実装計画: kemi v1
 
-- 仕様: `docs/spec/kemi.md`（承認済み `2258abf`、`R-INPUT-1` と `R-SERVE` の
-  成功条件の矛盾を解消する修正を含む）
+- 仕様: `docs/spec/kemi.md`（承認済み `f92087c`。`R-INPUT-1` と `R-SERVE` の
+  矛盾解消と、UI 改訂の追記を含む）
 - ブランチ名: `kemi-v1`
-- 計画の状態: 承認待ち
+- 計画の状態: 改訂済み（Step 13 を追加。Step 6 / 7 / 10 の UI・digest 記述の
+  一部を上書きする）
 
 ## Goal
 
@@ -53,13 +54,15 @@
                                     │                └─ 8 ハイライト
                                     │                └─ 9 ライブリロード
                                     └─ 10 digest
-5,6,8,9,10 ─ 11 規模検証 ─ 12 リリース準備
+5,6,8,9,10 ─ 11 規模検証 ─ 12 リリース準備 ─ 13 UI 改訂（モック準拠）
 ```
 
 - 2 と 3 は互いに独立。並べ替えてもよい。
 - 10 は 3 と 4 を前提とする（4 の統計を共有する）。
 - 6 は 5 の API 契約に依存する。7・8・9 は 6 の後。
 - 11 は対象機能が全部動いてから。12 は 11 の後。
+- 13 は承認済みモック `docs/design/ui-mock.html` に合わせ、Step 6 / 7 の UI と
+  Step 10 の digest 打ち切りを上書きする。
 
 ## Verification map
 
@@ -77,6 +80,7 @@
 | 10 | R-DIGEST, R-INPUT-6（--digest / --digest-top） |
 | 11 | R-VERIFY, R-SERVE（性能）, R-VIEW（50 万行・DOM）, R-INPUT-2, R-DIGEST |
 | 12 | R-DIST, R-DEPS（ライセンス）, R-VERIFY, R-WS（埋め込み） |
+| 13 | R-VIEW（UI 改訂）, R-COMMENT, R-FOCUS, R-SUBMIT, R-DIGEST, R-INPUT-1 |
 
 ## Left to the implementer (plan-wide)
 
@@ -238,7 +242,7 @@ Prerequisites: Step 5。
 May change: `web/`, `crates/kemi-webview/`。
 Done when: ページがレビューを表示し、split/unified の切替、ハンクの展開、
 ファイルツリーからのジャンプ、sticky ヘッダ、ツリーのパス・状態・増減・
-ノイズ・重点の表示、focus バッジと note と「重点のみ」フィルタ、グループ
+ノイズ・重要の表示、focus バッジと note と「重要のみ」フィルタ、グループ
 見出し下の `watch` 表示、ノイズの既定折りたたみ、変更量ソートのトグル
 （初期の並びは入力順）、light/dark の自動追従と手動切替のプリセット、
 バイナリのバイト数表示、折返しは既定 off で on のとき実測高さ、最終行改行の
@@ -380,3 +384,41 @@ Left to the implementer: CI のトリガー構成、cargo-dist のバージョ�
 文面。
 Stop and hand back if: cargo-dist の設定にリポジトリ側の権限や設定が必要で、
 ローカルで `dist plan` まで確認できない場合。
+
+## Step 13 — UI 改訂（モック準拠）
+
+Purpose: 承認済みモック `docs/design/ui-mock.html` に合わせて、ヘッダ・ツリー・
+diff・コメントの見せ方と操作を改訂する。このステップは Step 6 / 7 の UI 記述
+（ヘッダ、ツリー、コメント配置、ファイルヘッダ、確認ダイアログ、用語「重要」）と、
+Step 10 の digest 打ち切り契約（`top_files_omitted`）を上書きする。
+Specification: `docs/spec/kemi.md#R-VIEW`, `#R-COMMENT`, `#R-FOCUS`,
+`#R-SUBMIT`, `#R-DIGEST`, `#R-INPUT-1`.
+Prerequisites: Step 12（実装済み）。
+May change: `web/`, `crates/kemi-server/`, `crates/kemi-core/src/domain/digest.rs`,
+`tests/`, `PROJECT.md`, `docs/plans/kemi-v1.md`。
+Done when:
+- ヘッダに `title` / `subtitle` / `meta` が出て、unified/split・折返し・重要のみ・
+  変更量順・テーマが、文字ラベルの無いモノクロアイコンとツールチップになる
+- グループ見出しに `why` の段落と「見てほしい点」ボックスが出る
+- ツリーのグループとディレクトリが開閉でき、ファイルとディレクトリが
+  モノクロ SVG アイコンで区別される
+- 行にホバーすると出る `+` からコメントを入力でき、行の直下に表示される。
+  常設のコメントパネルが無い。ファイル全体のコメントはファイルヘッダから入る
+- suggestion がコメントに添えて表示され、「適用はエージェント」と画面に出る
+- ファイルヘッダにパスコピーと全行展開がある
+- 承認 / 変更要求は確認ダイアログを経由し、キャンセルでは送信されない
+- UI 文言が日本語で、用語が「重要」。返信 UI が無く `replies` は常に空
+- 本文の基準サイズが 15.5px
+- `--digest` が `top_files_omitted` を返し（切り捨てが無いときは 0 件で存在）、
+  30,000 ファイルで 100 KB 未満、`top_files` と omitted の件数の合計が対象数と
+  一致する
+Shown by: check — `node --test web`、`npx tsc -p web --noEmit`、
+`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、
+`cargo fmt --check` を通し、続いてブラウザ自動化でモックの各項目を操作して
+表明し、`scripts/measure-startup.sh` の中央値 < 1000 ms と 30,000 ファイルの
+`--digest` を再計測する。
+Left to the implementer: モック内の細部（相対時刻の表示、バッジ、キーボード
+ショートカット）、アイコンの形、CSS の構成、集約項目内の表現。
+Stop and hand back if: インラインコメント化で既存のコメント API 契約（e2e）が
+仕様の意味を保てない場合、または digest の打ち切りが 30,000 ファイルの
+100 KB 条件を満たせない場合。
