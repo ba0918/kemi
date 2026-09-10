@@ -1018,7 +1018,7 @@ function renderLine(line, index) {
     const skip = line.skip;
     const expand = button("expand-button");
     expand.textContent = `… ${skip && skip.count ? skip.count : 0} 行を表示`;
-    expand.addEventListener("click", () => void expandSkipAt(index));
+    expand.addEventListener("click", () => void expandSkipAt(line.logicalIndex));
     row.append(expand);
     return row;
   }
