@@ -323,3 +323,124 @@ async fn interrupt_exits_130_without_json() {
     assert_eq!(exit.code(), Some(130));
     assert!(stdout.is_empty());
 }
+
+fn digest_manifest() -> String {
+    serde_json::json!({
+        "title": "digest のテスト",
+        "groups": [
+            {
+                "id": "g1",
+                "title": "最初",
+                "why": "理由",
+                "watch": "watch",
+                "diffs": [
+                    { "path": "src/a.rs", "old": "a\nb\n", "new": "a\nB\nc\n" },
+                    { "path": "src/sub/b.rs", "new": "x\n" },
+                    { "path": "Cargo.lock", "old": "x\n", "new": "y\n" }
+                ]
+            },
+            {
+                "id": "g2",
+                "title": "次",
+                "diffs": [
+                    { "path": "README.md", "old": "one\ntwo\n", "new": "one\n" }
+                ]
+            }
+        ],
+        "approval": []
+    })
+    .to_string()
+}
+
+#[test]
+fn digest_mode_schema_and_bounded_output() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", &digest_manifest());
+    let output = run(&dir.path, &["manifest.json", "--digest"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("kemi: http"));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let digest: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+
+    assert_eq!(digest["kemi"], 1);
+    assert_eq!(digest["title"], "digest のテスト");
+    assert_eq!(digest["totals"]["files"], 4);
+    assert_eq!(digest["totals"]["noise_files"], 1);
+    assert_eq!(digest["directories"][0]["path"], ".");
+    assert!(digest["directories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|directory| directory["path"] == "src"));
+    assert_eq!(digest["top_n"], 100);
+    assert!(!stdout.contains("\"quote\""));
+    assert!(stdout.len() < 100_000, "digest was {} bytes", stdout.len());
+}
+
+#[test]
+fn digest_mode_top_n_limits_and_sorts() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", &digest_manifest());
+    let output = run(
+        &dir.path,
+        &["manifest.json", "--digest", "--digest-top", "2"],
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let digest: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let top = digest["top_files"].as_array().unwrap();
+
+    assert_eq!(digest["top_n"], 2);
+    assert_eq!(top.len(), 2);
+    for pair in top.windows(2) {
+        let left = pair[0]["add"].as_u64().unwrap() + pair[0]["del"].as_u64().unwrap();
+        let right = pair[1]["add"].as_u64().unwrap() + pair[1]["del"].as_u64().unwrap();
+        assert!(
+            left > right || (left == right && pair[0]["path"].as_str() <= pair[1]["path"].as_str()),
+            "top_files not sorted: {top:?}"
+        );
+    }
+}
+
+#[test]
+fn digest_mode_bounded_thirty_thousand_files() {
+    let mut groups = Vec::new();
+    for group_index in 0..100 {
+        let mut diffs = Vec::new();
+        for file_index in 0..300 {
+            let new_text = "line\n".repeat((file_index % 5) + 1);
+            diffs.push(serde_json::json!({
+                "path": format!("src/group{group_index}/file{file_index}.rs"),
+                "old": "line\n",
+                "new": new_text,
+            }));
+        }
+        groups.push(serde_json::json!({
+            "id": format!("g{group_index}"),
+            "title": format!("コミット {group_index}"),
+            "why": "理由".repeat(30),
+            "watch": "確認".repeat(30),
+            "diffs": diffs,
+        }));
+    }
+    let manifest = serde_json::json!({
+        "title": "3 万ファイル",
+        "groups": groups,
+        "approval": []
+    })
+    .to_string();
+
+    let dir = TempDir::new();
+    dir.write("manifest.json", &manifest);
+    let output = run(&dir.path, &["manifest.json", "--digest"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let digest: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+
+    assert_eq!(digest["totals"]["files"], 30_000);
+    assert_eq!(digest["top_files"].as_array().unwrap().len(), 100);
+    assert!(stdout.len() < 100_000, "digest was {} bytes", stdout.len());
+}

@@ -239,8 +239,19 @@ async fn main() {
     let source: Arc<dyn ReviewSource> = Arc::from(source);
 
     if cli.digest {
-        eprintln!("kemi: --digest は実装中です");
-        std::process::exit(2);
+        match source.review() {
+            Ok(review) => {
+                let digest = kemi_core::domain::digest::build_digest(&review, cli.digest_top);
+                match serde_json::to_string(&digest) {
+                    Ok(json) => {
+                        println!("{json}");
+                        return;
+                    }
+                    Err(error) => fail(&format!("digest の JSON を作れません: {error}")),
+                }
+            }
+            Err(error) => fail(&error.to_string()),
+        }
     }
     // --serve は互換のための受理のみ。既定で常にサーブする。
     let _ = cli.serve;
