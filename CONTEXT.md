@@ -70,9 +70,9 @@ submit で示す判断。`approved`（承認）か `changes_requested`（変更�
 lockfile、生成物、vendored、minified など、機械的にそうと分かる変更。
 重要度の推定ではない。畳んでも印は残る。
 
-## focus / note / 重点
+## focus / note / 重要
 focus はエージェントが付ける「優先して見てほしい」の印。note はその理由。
-重点は focus が付いた状態を指す。kemi 自身は重点を推定しない。
+重要は focus が付いた状態を指す。kemi 自身は重要を推定しない。
 
 ## 更新バッジ
 ライブリロードで変更を検知したときに出す印。押すと再取得する。

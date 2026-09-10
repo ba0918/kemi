@@ -63,4 +63,4 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 
 正典は `CONTEXT.md`。特に kemi / レビュー / manifest / グループ / コメント /
 suggestion / 適用 / quote / outdated / submit / verdict / digest / ノイズ /
-focus / 重点 / 更新バッジ。
+focus / 重要 / 更新バッジ。
