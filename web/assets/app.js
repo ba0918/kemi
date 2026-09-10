@@ -1310,10 +1310,25 @@ function saveDraft(key, value) {
  * @param {any} payload
  */
 async function addComment(payload) {
+  const generation = state.selectGeneration;
   try {
     const comment = await api.postComment(payload);
-    state.comments.push(comment);
-    state.commentStore.set(payload.file_id, state.comments);
+    // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
+    // コメントだけ。表示中の state は世代が同じときだけ更新する。
+    const stored = state.commentStore.get(payload.file_id);
+    if (stored) {
+      const comments = [...stored, comment];
+      state.commentStore.set(payload.file_id, comments);
+      if (generation === state.selectGeneration) {
+        state.comments = comments;
+        state.editor = null;
+        state.selection = null;
+        recomputeThreads();
+        renderDiff();
+        renderFloating();
+        renderFileHeader();
+      }
+    }
     const selection =
       payload.start_line === null || payload.start_line === undefined
         ? null
@@ -1323,12 +1338,6 @@ async function addComment(payload) {
             end: payload.end_line,
           };
     localStorage.removeItem(draftKey(payload.file_id, selection));
-    state.editor = null;
-    state.selection = null;
-    recomputeThreads();
-    renderDiff();
-    renderFloating();
-    renderFileHeader();
   } catch (error) {
     showOverlay("コメントを追加できません", String(error));
   }
