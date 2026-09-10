@@ -345,3 +345,217 @@ export function formatBytes(bytes) {
   }
   return `${value.toFixed(1)} ${unit}`;
 }
+
+/**
+ * @typedef {{ type: "file", name: string, file: FileEntry }} FileNode
+ * @typedef {{ type: "dir", name: string, path: string, children: TreeNode[] }} DirNode
+ * @typedef {FileNode | DirNode} TreeNode
+ */
+
+/**
+ * 表示順のファイルを、パスのディレクトリで入れ子にしたツリーへ分ける。
+ * ディレクトリとファイルの順は入力の先着順を保つ（既定は入力順のため）。
+ * @param {FileEntry[]} files
+ * @returns {TreeNode[]}
+ */
+function buildFileTree(files) {
+  /** @type {TreeNode[]} */
+  const roots = [];
+  /** @type {Map<string, DirNode>} */
+  const directories = new Map();
+  for (const file of files) {
+    const segments = file.path.split("/");
+    let children = roots;
+    let prefix = "";
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      prefix = prefix ? `${prefix}/${segments[index]}` : segments[index];
+      let directory = directories.get(prefix);
+      if (!directory) {
+        directory = {
+          type: "dir",
+          name: segments[index],
+          path: prefix,
+          children: [],
+        };
+        directories.set(prefix, directory);
+        children.push(directory);
+      }
+      children = directory.children;
+    }
+    children.push({
+      type: "file",
+      name: segments[segments.length - 1],
+      file,
+    });
+  }
+  return roots;
+}
+
+/**
+ * グループごとのディレクトリツリーを作る。
+ * @param {{ file: FileEntry, group: any }[]} entries
+ * @returns {{ group: any, nodes: TreeNode[] }[]}
+ */
+export function buildTree(entries) {
+  /** @type {Map<string, { group: any, files: FileEntry[] }>} */
+  const groups = new Map();
+  for (const entry of entries) {
+    let bucket = groups.get(entry.group.id);
+    if (!bucket) {
+      bucket = { group: entry.group, files: [] };
+      groups.set(entry.group.id, bucket);
+    }
+    bucket.files.push(entry.file);
+  }
+  return [...groups.values()].map((bucket) => ({
+    group: bucket.group,
+    nodes: buildFileTree(bucket.files),
+  }));
+}
+
+/**
+ * コメントを、表示行の直下へ貼る位置に振り分ける。
+ * ファイル全体のコメントと、表示行に見つからないコメントは floating に残す。
+ * @param {DisplayLine[]} displayLines
+ * @param {any[]} comments
+ * @returns {{ byLine: Map<number, any[]>, floating: any[] }}
+ */
+export function placeThreads(displayLines, comments) {
+  /** @type {Map<string, number>} */
+  const anchors = new Map();
+  displayLines.forEach((line, index) => {
+    if (line.oldLine) {
+      anchors.set(`old:${Number(line.oldLine.number)}`, index);
+    }
+    if (line.newLine) {
+      anchors.set(`new:${Number(line.newLine.number)}`, index);
+    }
+  });
+  /** @type {Map<number, any[]>} */
+  const byLine = new Map();
+  /** @type {any[]} */
+  const floating = [];
+  for (const comment of comments) {
+    const key =
+      comment.start_line === null || comment.start_line === undefined
+        ? null
+        : `${comment.side}:${Number(comment.start_line)}`;
+    const index = key === null ? -1 : anchors.get(key) ?? -1;
+    if (index < 0) {
+      floating.push(comment);
+      continue;
+    }
+    const list = byLine.get(index) || [];
+    list.push(comment);
+    byLine.set(index, list);
+  }
+  return { byLine, floating };
+}
+
+/**
+ * レビュー全体の件数と増減を集計する。
+ * @param {any} review
+ * @returns {{ files: number, groups: number, add: number, del: number }}
+ */
+export function reviewStats(review) {
+  let files = 0;
+  let add = 0;
+  let del = 0;
+  const groups = (review && review.groups) || [];
+  for (const group of groups) {
+    for (const file of group.files || []) {
+      files += 1;
+      add += file.add;
+      del += file.del;
+    }
+  }
+  return { files, groups: groups.length, add, del };
+}
+
+/**
+ * ヘッダに出す meta の項目。manifest の meta を先に、集計値は最後に置く。
+ * @param {any} review
+ * @returns {{ label: string, value: string }[]}
+ */
+export function metaItems(review) {
+  /** @type {{ label: string, value: string }[]} */
+  const items = [];
+  const meta = review && review.meta;
+  if (typeof meta === "string") {
+    if (meta !== "") {
+      items.push({ label: "", value: meta });
+    }
+  } else if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    for (const [label, value] of Object.entries(meta)) {
+      if (value === null || value === undefined || value === "") {
+        continue;
+      }
+      const text = typeof value === "string" ? value : JSON.stringify(value);
+      if (text !== undefined) {
+        items.push({ label, value: text });
+      }
+    }
+  }
+  const stats = reviewStats(review);
+  items.push({ label: "ファイル", value: String(stats.files) });
+  if (stats.groups > 0) {
+    items.push({ label: "グループ", value: String(stats.groups) });
+  }
+  items.push({ label: "変更", value: `+${stats.add} −${stats.del}` });
+  return items;
+}
+
+/** テーマの巡回順。 */
+export const THEMES = [
+  "auto",
+  "light",
+  "dark",
+  "solarized-light",
+  "solarized-dark",
+];
+
+/**
+ * アイコン操作のたびに次のテーマへ進む。
+ * @param {string} theme
+ * @returns {string}
+ */
+export function nextTheme(theme) {
+  const index = THEMES.indexOf(theme);
+  return THEMES[(index + 1) % THEMES.length];
+}
+
+/**
+ * auto のときだけシステムの配色に従い、それ以外は指定のプリセット。
+ * @param {string} theme
+ * @param {boolean} prefersDark
+ * @returns {string}
+ */
+export function resolveTheme(theme, prefersDark) {
+  if (theme === "auto") {
+    return prefersDark ? "dark" : "light";
+  }
+  return theme;
+}
+
+/**
+ * @param {string} resolvedTheme
+ * @returns {boolean}
+ */
+export function isDarkTheme(resolvedTheme) {
+  return resolvedTheme === "dark" || resolvedTheme === "solarized-dark";
+}
+
+/**
+ * 行にコメントを付けるときの既定の側。新側があれば新側、無ければ旧側。
+ * @param {DisplayLine} line
+ * @returns {{ side: string, number: number } | null}
+ */
+export function lineAnchor(line) {
+  if (line.newLine) {
+    return { side: "new", number: Number(line.newLine.number) };
+  }
+  if (line.oldLine) {
+    return { side: "old", number: Number(line.oldLine.number) };
+  }
+  return null;
+}
