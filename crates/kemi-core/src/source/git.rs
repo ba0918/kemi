@@ -416,15 +416,28 @@ fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
 /// 全ファイルの差分判定をやり直すため、1 万ファイルでは約 0.5 秒かかる）。
 fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
     let mut paths: Vec<String> = Vec::new();
+    // 改名は削除と追加の組で検出される。組の片方だけを pathspec に渡すと改名が
+    // 割れるため、削除・追加になり得るパスは 1 つの呼び出しに束ねる。
+    let mut rename_candidates: Vec<String> = Vec::new();
     for listing in [
-        git_raw(repo, &["diff-files", "--name-only", "-z", "--no-renames"])?,
+        git_raw(repo, &["diff-files", "--name-status", "-z", "--no-renames"])?,
         git_raw(
             repo,
-            &["diff", "--name-only", "-z", "--no-renames", "--cached"],
+            &["diff", "--name-status", "-z", "--no-renames", "--cached"],
         )?,
-        git_raw(repo, &["ls-files", "--others", "--exclude-standard", "-z"])?,
     ] {
-        paths.extend(split_z(&listing).into_iter().map(str::to_string));
+        for (status, path) in parse_name_status_z(&listing) {
+            if matches!(status, b'A' | b'D') {
+                rename_candidates.push(path.clone());
+            }
+            paths.push(path);
+        }
+    }
+    for path in split_z(&git_raw(
+        repo,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?) {
+        paths.push(path.to_string());
     }
     paths.sort();
     paths.dedup();
@@ -435,19 +448,42 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
         )?));
     }
 
+    rename_candidates.sort();
+    rename_candidates.dedup();
+    let regular: Vec<String> = paths
+        .iter()
+        .filter(|path| rename_candidates.binary_search(path).is_err())
+        .cloned()
+        .collect();
+
     let workers = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4)
         .clamp(2, 16);
-    let chunk = paths.len().div_ceil(workers);
+    let mut shards: Vec<Vec<String>> = Vec::new();
+    if !rename_candidates.is_empty() {
+        shards.push(rename_candidates);
+    }
+    if !regular.is_empty() {
+        let chunk = regular.len().div_ceil(workers);
+        shards.extend(regular.chunks(chunk).map(<[String]>::to_vec));
+    }
     let mut handles = Vec::new();
-    for shard in paths.chunks(chunk) {
+    for shard in shards {
         let repo = repo.to_path_buf();
-        let shard: Vec<String> = shard.to_vec();
         handles.push(std::thread::spawn(
             move || -> Result<Vec<Numstat>, SourceError> {
-                let mut args: Vec<&str> = vec!["diff", "--numstat", "-z", "-M", "HEAD", "--"];
-                args.extend(shard.iter().map(String::as_str));
+                let mut args: Vec<String> = vec![
+                    "diff".to_string(),
+                    "--numstat".to_string(),
+                    "-z".to_string(),
+                    "-M".to_string(),
+                    "HEAD".to_string(),
+                    "--".to_string(),
+                ];
+                // グロブ文字を含むパスが別のシャードのパスに一致しないよう literal で渡す。
+                args.extend(shard.iter().map(|path| format!(":(literal){path}")));
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 Ok(parse_numstat(&git_raw(&repo, &args)?))
             },
         ));
@@ -592,6 +628,25 @@ fn parse_name_status(bytes: &[u8]) -> Vec<NameStatus> {
             }
             _ => index += 1,
         }
+    }
+    entries
+}
+
+/// `--name-status -z --no-renames` の「状態\0パス\0」を読む。
+fn parse_name_status_z(bytes: &[u8]) -> Vec<(u8, String)> {
+    let tokens: Vec<&[u8]> = bytes.split(|byte| *byte == 0).collect();
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index + 1 < tokens.len() {
+        if tokens[index].is_empty() {
+            index += 1;
+            continue;
+        }
+        entries.push((
+            tokens[index][0],
+            String::from_utf8_lossy(tokens[index + 1]).into_owned(),
+        ));
+        index += 2;
     }
     entries
 }
@@ -811,6 +866,31 @@ mod tests {
         let content = source.content(&entry.id).unwrap();
         assert_eq!(content.old.unwrap(), b"a\n");
         assert_eq!(content.new, None);
+    }
+
+    #[test]
+    fn worktree_rename_is_detected_among_many_changes() {
+        let repo = TempRepo::new();
+        let body: String = (1..=20).map(|n| format!("line{n}\n")).collect();
+        repo.write("a000.txt", &body);
+        for index in 0..300 {
+            repo.write(&format!("m{index:03}.txt"), "one\n");
+        }
+        repo.add_and_commit("base");
+
+        repo.git(&["mv", "a000.txt", "zzz.txt"]);
+        for index in 0..300 {
+            repo.write(&format!("m{index:03}.txt"), "one\ntwo\n");
+        }
+
+        let source = source(&repo, GitMode::Worktree);
+        let review = source.review().unwrap();
+
+        assert_eq!(review.groups[0].files.len(), 301);
+        let entry = find_file(&review, "zzz.txt");
+        assert_eq!(entry.status, Status::Rename);
+        assert_eq!(entry.old_path.as_deref(), Some("a000.txt"));
+        assert_eq!((entry.add, entry.del), (0, 0));
     }
 
     #[test]
