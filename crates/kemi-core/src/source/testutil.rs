@@ -24,6 +24,7 @@ impl TempRepo {
         repo.git(&["init", "-q"]);
         repo.git(&["config", "user.email", "kemi@example.com"]);
         repo.git(&["config", "user.name", "kemi"]);
+        repo.git(&["config", "core.hooksPath", "/dev/null"]);
         repo
     }
 

@@ -35,11 +35,8 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Test | `cargo test` / `node --test web` |
 | Lint | `cargo clippy -- -D warnings` / `cargo fmt --check` / `npx tsc -p web --noEmit` |
 | Run locally | `cargo run -- --worktree` |
-| Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M` |
-| Measure | `scripts/measure-startup.sh <fixture> target/release/kemi` |
-
-現時点では仕様のみで、コードは未着手。上のコマンドは仕様 `R-VERIFY` の予定であり、
-実装が入ったコミットでこの注記を外す。
+| Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
+| Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` |
 
 ## Conventions specific to this project
 
