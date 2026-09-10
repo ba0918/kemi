@@ -140,6 +140,19 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn cli_no_mode_exits_2_with_usage() {
     let dir = TempDir::new();
@@ -289,6 +302,43 @@ async fn submit_with_events_open_exits_with_json() {
     assert_eq!(status.code(), Some(0));
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(document["verdict"], "approved");
+}
+
+#[tokio::test]
+async fn runtime_io_error_stops_with_exit_2_without_json() {
+    let dir = TempDir::new();
+    git(&dir.path, &["init", "-q"]);
+    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
+    git(&dir.path, &["config", "user.name", "kemi"]);
+    dir.write("a.txt", "one\ntwo\n");
+    git(&dir.path, &["add", "a.txt"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    dir.write("a.txt", "one\nTWO\n");
+
+    let mut kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let file_id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    std::fs::remove_file(dir.path.join("a.txt")).unwrap();
+
+    let response = reqwest::get(format!("{}api/file/{file_id}", kemi.url))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 500);
+
+    let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
+    let mut stdout = String::new();
+    kemi.stdout.read_to_string(&mut stdout).unwrap();
+    assert_eq!(status.code(), Some(2));
+    assert!(stdout.is_empty(), "stdout: {stdout}");
 }
 
 #[tokio::test]

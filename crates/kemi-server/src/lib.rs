@@ -50,6 +50,12 @@ pub enum ServeOutcome {
     Submitted(serde_json::Value),
 }
 
+/// サーバを止めた理由。submit か、レビュー中の実行時エラーか。
+pub(crate) enum Stop {
+    Submitted(serde_json::Value),
+    Failed(String),
+}
+
 pub struct ServeParams {
     pub source: Arc<dyn ReviewSource>,
     pub assets: Arc<dyn Assets>,
@@ -74,8 +80,19 @@ pub(crate) struct AppState {
     pub events: broadcast::Sender<()>,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
     pub shutdown: shutdown_watch::Sender<bool>,
-    pub outcome: Mutex<Option<ServeOutcome>>,
+    pub stop: Mutex<Option<Stop>>,
     pub submit_state: Mutex<SubmitState>,
+}
+
+/// レビュー中の実行時エラーで停止する。stdout に JSON を出さず終了コード 2（R-SUBMIT）。
+pub(crate) fn stop_with_error(state: &AppState, message: impl Into<String>) {
+    {
+        let mut stop = state.stop.lock().expect("stop poisoned");
+        if stop.is_none() {
+            *stop = Some(Stop::Failed(message.into()));
+        }
+    }
+    let _ = state.shutdown.send(true);
 }
 
 pub async fn serve(
@@ -101,7 +118,7 @@ pub async fn serve(
         session: Mutex::new(Session::default()),
         events,
         shutdown,
-        outcome: Mutex::new(None),
+        stop: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),
     });
 
@@ -124,11 +141,12 @@ pub async fn serve(
         .await
         .map_err(ServerError::Io)?;
 
-    let outcome = state
-        .outcome
-        .lock()
-        .expect("outcome poisoned")
-        .take()
-        .ok_or_else(|| ServerError::Stopped("submit なしでサーバが停止しました".to_string()))?;
-    Ok(outcome)
+    let stop = state.stop.lock().expect("stop poisoned").take();
+    match stop {
+        Some(Stop::Submitted(document)) => Ok(ServeOutcome::Submitted(document)),
+        Some(Stop::Failed(message)) => Err(ServerError::Stopped(message)),
+        None => Err(ServerError::Stopped(
+            "submit なしでサーバが停止しました".to_string(),
+        )),
+    }
 }

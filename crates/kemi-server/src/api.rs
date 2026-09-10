@@ -24,7 +24,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::highlight::{self, HighlightedLine, Highlighter};
 use crate::session::{comment_json, Session};
-use crate::{AppState, ServeOutcome, ServerError, SubmitState};
+use crate::{stop_with_error, AppState, ServerError, Stop, SubmitState};
 
 /// 1 ファイル分の左右のハイライト結果。
 struct Highlighted {
@@ -139,8 +139,8 @@ async fn source_review(state: &AppState) -> Result<ReviewMeta, ApiError> {
     let source = state.source.clone();
     tokio::task::spawn_blocking(move || source.review())
         .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::internal)
+        .map_err(|error| runtime_error(state, error))?
+        .map_err(|error| runtime_error(state, error))
 }
 
 async fn source_content(
@@ -151,8 +151,15 @@ async fn source_content(
     let file_id = file_id.to_string();
     tokio::task::spawn_blocking(move || source.content(&file_id))
         .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::internal)
+        .map_err(|error| runtime_error(state, error))?
+        .map_err(|error| runtime_error(state, error))
+}
+
+/// レビュー中の git・I/O 失敗はサーバを止め、CLI を終了コード 2 にする（R-SUBMIT）。
+fn runtime_error(state: &AppState, error: impl std::fmt::Display) -> ApiError {
+    let message = error.to_string();
+    stop_with_error(state, message.clone());
+    ApiError::internal(message)
 }
 
 async fn index(
@@ -681,8 +688,13 @@ async fn submit(
 
     match build_submit_document(&state, &request.verdict).await {
         Ok(document) => {
-            *state.outcome.lock().expect("outcome poisoned") =
-                Some(ServeOutcome::Submitted(document.clone()));
+            {
+                let mut stop = state.stop.lock().expect("stop poisoned");
+                if matches!(*stop, Some(Stop::Failed(_))) {
+                    return Err(ApiError::conflict("実行時エラーで停止しています"));
+                }
+                *stop = Some(Stop::Submitted(document.clone()));
+            }
             let _ = state.shutdown.send(true);
             Ok(Json(document))
         }
