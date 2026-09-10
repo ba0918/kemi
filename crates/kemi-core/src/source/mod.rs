@@ -51,6 +51,10 @@ pub struct FileContent {
 pub trait ReviewSource: Send + Sync {
     fn review(&self) -> Result<ReviewMeta, SourceError>;
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError>;
+    /// 監視する「新側の供給元」のパス（R-LIVE）。空なら監視しない。
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// 表示時に内容を読むための参照。
@@ -169,6 +173,18 @@ impl PlanStore {
             .expect("plan store poisoned")
             .content(file_id)
     }
+
+    /// ディスク上の新側ファイル（worktree の監視対象）。
+    pub fn disk_paths(&self) -> Vec<PathBuf> {
+        let plan = self.state.lock().expect("plan store poisoned");
+        plan.files
+            .iter()
+            .filter_map(|file| match &file.new {
+                SideRef::Disk(path) => Some(path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl Default for PlanStore {
@@ -215,6 +231,10 @@ impl ReviewSource for FocusSource {
 
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
         self.inner.content(file_id)
+    }
+
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        self.inner.watch_paths()
     }
 }
 

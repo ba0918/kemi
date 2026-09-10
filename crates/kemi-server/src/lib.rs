@@ -3,6 +3,7 @@
 mod api;
 mod highlight;
 mod session;
+mod watch;
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, RwLock};
@@ -101,6 +102,8 @@ pub async fn serve(
         outcome: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),
     });
+
+    watch::start(state.source.watch_paths(), state.events.clone());
 
     let app = api::router(state.clone());
     let shutdown_state = state.clone();

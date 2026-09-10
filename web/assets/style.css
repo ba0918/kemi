@@ -577,3 +577,9 @@ button.active {
   background: var(--mark-bg);
   border-radius: 2px;
 }
+
+.update-badge {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}

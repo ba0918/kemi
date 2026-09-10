@@ -283,6 +283,18 @@ impl ReviewSource for ManifestSource {
     fn content(&self, file_id: &str) -> Result<crate::source::FileContent, SourceError> {
         self.store.content(file_id)
     }
+
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        for group in &self.manifest.groups {
+            for diff in &group.diffs {
+                if let Some(new_path) = &diff.new_path {
+                    paths.push(self.base.join(new_path));
+                }
+            }
+        }
+        paths
+    }
 }
 
 #[cfg(test)]

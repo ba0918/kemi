@@ -606,3 +606,298 @@ async fn highlight_can_be_turned_off() {
     assert_eq!(body["highlight"]["enabled"], false);
     assert!(body["rows"][0]["old"].get("html").is_none());
 }
+
+// ---- R-LIVE（監視）の結合テスト ----
+
+use kemi_core::source::git::{GitMode, GitSource, GroupBy};
+use kemi_core::source::manifest::ManifestSource;
+use std::path::PathBuf;
+use std::time::Instant;
+
+struct TempRepo {
+    path: PathBuf,
+}
+
+impl TempRepo {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "kemi-live-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let repo = TempRepo { path };
+        repo.git(&["init", "-q"]);
+        repo.git(&["config", "user.email", "kemi@example.com"]);
+        repo.git(&["config", "user.name", "kemi"]);
+        repo
+    }
+
+    fn git(&self, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.path)
+            .args(args)
+            .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00+00:00")
+            .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00+00:00")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn write(&self, relative: &str, content: &str) {
+        std::fs::write(self.path.join(relative), content).unwrap();
+    }
+
+    fn commit(&self, message: &str) -> String {
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "-m", message]);
+        self.git(&["rev-parse", "HEAD"])
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+struct LiveServer {
+    port: u16,
+    task: JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
+}
+
+impl LiveServer {
+    async fn start(source: Arc<dyn ReviewSource>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let params = ServeParams {
+            source,
+            assets: Arc::new(FakeAssets),
+            token: "live-token".to_string(),
+        };
+        let task = tokio::spawn(serve(listener, params));
+        // 監視スレッドがパスを登録するのを待つ。
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        LiveServer { port, task }
+    }
+
+    fn stop(self) {
+        self.task.abort();
+    }
+}
+
+struct SseStream {
+    stream: tokio::net::TcpStream,
+    buffer: String,
+}
+
+impl SseStream {
+    async fn connect(port: u16) -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let request = format!(
+            "GET /s/live-token/api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut sse = SseStream {
+            stream,
+            buffer: String::new(),
+        };
+        let mut chunk = [0u8; 2048];
+        let read = tokio::time::timeout(Duration::from_secs(2), sse.stream.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        sse.buffer
+            .push_str(&String::from_utf8_lossy(&chunk[..read]));
+        sse
+    }
+
+    async fn next_update(&mut self, timeout: Duration) -> bool {
+        use tokio::io::AsyncReadExt;
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.drain_updates() > 0 {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let mut chunk = [0u8; 2048];
+            match tokio::time::timeout(remaining, self.stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => return false,
+                Ok(Ok(read)) => self
+                    .buffer
+                    .push_str(&String::from_utf8_lossy(&chunk[..read])),
+            }
+        }
+    }
+
+    async fn count_updates(&mut self, duration: Duration) -> usize {
+        use tokio::io::AsyncReadExt;
+
+        let deadline = Instant::now() + duration;
+        let mut count = self.drain_updates();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return count;
+            }
+            let mut chunk = [0u8; 2048];
+            match tokio::time::timeout(remaining, self.stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => return count,
+                Ok(Ok(read)) => {
+                    self.buffer
+                        .push_str(&String::from_utf8_lossy(&chunk[..read]));
+                    count += self.drain_updates();
+                }
+            }
+        }
+    }
+
+    fn drain_updates(&mut self) -> usize {
+        let needle = "event: update";
+        let mut count = 0;
+        while let Some(index) = self.buffer.find(needle) {
+            count += 1;
+            self.buffer.drain(..index + needle.len());
+        }
+        count
+    }
+}
+
+#[tokio::test]
+async fn live_worktree_change_sends_update() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    repo.write("a.txt", "initial change\n");
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    repo.write("a.txt", "two\n");
+    assert!(
+        sse.next_update(Duration::from_secs(2)).await,
+        "no update event"
+    );
+
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_manifest_path_change_sends_update() {
+    let dir = TempRepo::new();
+    dir.write("old.txt", "one\n");
+    dir.write("new.txt", "one\n");
+    let json =
+        r#"{"groups":[{"diffs":[{"path":"a.txt","old_path":"old.txt","new_path":"new.txt"}]}]}"#;
+    let source = Arc::new(ManifestSource::from_json(json, &dir.path).unwrap());
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    dir.write("new.txt", "two\n");
+    assert!(
+        sse.next_update(Duration::from_secs(2)).await,
+        "no update event"
+    );
+
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_ref_change_sends_update_and_other_git_writes_are_ignored() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    let base = repo.commit("base");
+    let source = Arc::new(GitSource::new(
+        repo.path.clone(),
+        GitMode::Range {
+            from: base,
+            to: "HEAD".to_string(),
+            group_by: GroupBy::Commit,
+        },
+    ));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    repo.write("b.txt", "two\n");
+    repo.commit("second");
+    assert!(
+        sse.next_update(Duration::from_secs(2)).await,
+        "no update event for the new commit"
+    );
+
+    // `.git` の他の書き込みは監視対象ではない。
+    std::fs::write(repo.path.join(".git/not-a-ref.txt"), "x").unwrap();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(sse.drain_updates(), 0, "unrelated .git write sent an event");
+
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_worktree_read_does_not_send_update() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    repo.write("a.txt", "initial change\n");
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    // api/review はファイルを読む。読み取り（Access）は更新ではない。
+    let response = reqwest::get(format!(
+        "http://127.0.0.1:{}/s/live-token/api/review",
+        server.port
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    let _ = response.text().await.unwrap();
+
+    assert!(
+        !sse.next_update(Duration::from_millis(700)).await,
+        "read-only access must not send an update"
+    );
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_debounce_coalesces_rapid_writes() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    repo.write("a.txt", "initial change\n");
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    for index in 0..5 {
+        repo.write("a.txt", &format!("write {index}\n"));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let count = sse.count_updates(Duration::from_millis(1400)).await;
+    // 5 回の書き込みが debounce でまとまる。tick 境界の関係で 1〜2 通に
+    // なることはあるが、書き込みごとに通知はしない（バッジは冪等に出す）。
+    assert!(
+        (1..=2).contains(&count),
+        "rapid writes should coalesce, got {count} updates"
+    );
+
+    server.stop();
+}

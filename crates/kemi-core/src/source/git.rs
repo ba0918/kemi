@@ -340,6 +340,14 @@ impl ReviewSource for GitSource {
     fn content(&self, file_id: &str) -> Result<crate::source::FileContent, SourceError> {
         self.store.content(file_id)
     }
+
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        match &self.mode {
+            GitMode::Worktree => self.store.disk_paths(),
+            GitMode::Staged => Vec::new(),
+            GitMode::Range { to, .. } => ref_watch_paths(&self.repo, to).unwrap_or_default(),
+        }
+    }
 }
 
 fn diff_entries(repo: &Path, range_args: &[&str]) -> Result<Vec<DiffEntry>, SourceError> {
@@ -530,6 +538,26 @@ fn verify_ref(repo: &Path, revision: &str) -> Result<(), SourceError> {
         )));
     }
     Ok(())
+}
+
+/// `--to` の ref 更新を検知するための監視パス。HEAD と、その参照先の
+/// loose ref（または親ディレクトリ）を返す。
+pub fn ref_watch_paths(repo: &Path, reference: &str) -> Result<Vec<PathBuf>, SourceError> {
+    let full = git_text(repo, &["rev-parse", "--symbolic-full-name", reference])?
+        .trim()
+        .to_string();
+    let git_dir = PathBuf::from(git_text(repo, &["rev-parse", "--absolute-git-dir"])?.trim());
+    let mut paths = vec![git_dir.join("HEAD")];
+    if !full.is_empty() && full != "HEAD" {
+        let ref_path = git_dir.join(&full);
+        if let Some(parent) = ref_path.parent() {
+            paths.push(parent.to_path_buf());
+        }
+        if ref_path.exists() {
+            paths.push(ref_path);
+        }
+    }
+    Ok(paths)
 }
 
 pub fn repo_root(path: &Path) -> Result<PathBuf, SourceError> {
@@ -803,5 +831,23 @@ mod tests {
         let content = source.content(&review.groups[0].files[0].id).unwrap();
         assert_eq!(content.old.unwrap(), b"one\n");
         assert_eq!(content.new.unwrap(), b"three\n");
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+    use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn worktree_watch_paths_lists_new_side_files() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+        repo.write("a.txt", "two\n");
+        let source = GitSource::new(repo.path.clone(), GitMode::Worktree);
+        source.review().unwrap();
+
+        assert_eq!(source.watch_paths(), vec![repo.path.join("a.txt")]);
     }
 }
