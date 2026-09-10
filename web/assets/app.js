@@ -3,15 +3,22 @@
 
 import * as api from "./api.js";
 import {
+  buildTree,
   collapseDefault,
   commentLabel,
   draftKey,
   filterAndSortFiles,
   formatBytes,
+  isDarkTheme,
   keyAction,
+  lineAnchor,
   lineOffsets,
+  metaItems,
   nextHighlightOverride,
+  nextTheme,
+  placeThreads,
   replaceComment,
+  resolveTheme,
   statusLabel,
   suggestionAllowed,
   toDisplayLines,
@@ -22,8 +29,32 @@ import {
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
 /** @typedef {import("./model.js").DisplayLine} DisplayLine */
 
-const ROW_HEIGHT = 22;
+const ROW_HEIGHT = 24;
 const OVERSCAN = 12;
+
+const FILE_ICON =
+  '<svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>';
+const DIR_ICON =
+  '<svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 3.5h4l1.5 2h7.5v7h-13z"/></svg>';
+const COMMENT_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 3v-3h-2z"/></svg>';
+const COPY_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5"/><path d="M10.5 5.5V3a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v7A1.5 1.5 0 0 0 4 11.5h1.5"/></svg>';
+const EXPAND_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5.5 8 10l5-4.5"/><path d="M3 2.5h10"/></svg>';
+const CODE_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4 2 8l2.5 4M11.5 4 14 8l-2.5 4M9.5 2.5l-3 11"/></svg>';
+const EYE_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/></svg>';
+
+/** @type {Record<string, string>} */
+const THEME_LABELS = {
+  auto: "自動",
+  light: "light",
+  dark: "dark",
+  "solarized-light": "solarized light",
+  "solarized-dark": "solarized dark",
+};
 
 /**
  * @param {string} selector
@@ -35,34 +66,38 @@ function must(selector) {
 
 const dom = {
   title: must("#review-title"),
-  stats: must("#review-stats"),
+  subtitle: must("#review-subtitle"),
+  meta: must("#review-meta"),
   tree: must("#tree"),
   groupHeader: must("#group-header"),
   fileHeader: must("#file-header"),
+  floating: must("#floating-threads"),
   notice: must("#notice"),
   viewport: must("#diff-viewport"),
   content: must("#diff-content"),
   footer: must("#approval-footer"),
-  modeUnified: must("#mode-unified"),
-  modeSplit: must("#mode-split"),
-  wrap: must("#toggle-wrap"),
-  focus: must("#toggle-focus"),
-  sort: must("#toggle-sort"),
-  theme: /** @type {HTMLSelectElement} */ (must("#theme-select")),
-  selectionBar: must("#selection-bar"),
-  commentsList: must("#comments-list"),
-  updateBadge: must("#update-badge"),
-  submitApproved: must("#submit-approved"),
-  submitChanges: must("#submit-changes"),
+  btnUnified: /** @type {HTMLButtonElement} */ (must("#btn-unified")),
+  btnSplit: /** @type {HTMLButtonElement} */ (must("#btn-split")),
+  btnWrap: /** @type {HTMLButtonElement} */ (must("#btn-wrap")),
+  chipFocus: /** @type {HTMLButtonElement} */ (must("#chip-focus")),
+  chipSort: /** @type {HTMLButtonElement} */ (must("#chip-sort")),
+  btnTheme: /** @type {HTMLButtonElement} */ (must("#btn-theme")),
+  updateBadge: /** @type {HTMLButtonElement} */ (must("#update-badge")),
+  submitApproved: /** @type {HTMLButtonElement} */ (must("#btn-approve")),
+  submitChanges: /** @type {HTMLButtonElement} */ (must("#btn-changes")),
+  modal: must("#modal"),
+  modalTitle: must("#modal-title"),
+  modalBody: must("#modal-body"),
+  modalOk: /** @type {HTMLButtonElement} */ (must("#modal-ok")),
+  modalCancel: /** @type {HTMLButtonElement} */ (must("#modal-cancel")),
   overlay: must("#overlay"),
   overlayCard: must("#overlay-card"),
 };
 
 /**
- * @typedef {{
- *   file: FileEntry,
- *   group: { id: string, title: string, why: string, watch: string },
- * }} Entry
+ * @typedef {{ file: FileEntry, group: any }} Entry
+ * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection
+ * @typedef {{ fileId: string, side: string, start: number, end: number, displayIndex: number, wide: boolean }} Editor
  */
 
 /** @type {{
@@ -80,6 +115,7 @@ const dom = {
  *   rows: LogicalRow[],
  *   display: DisplayLine[],
  *   heights: number[],
+ *   threads: { byLine: Map<number, any[]>, floating: any[] },
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
  *   rendering: boolean,
@@ -90,13 +126,18 @@ const dom = {
  *   cacheKey: string,
  *   selectGeneration: number,
  *   comments: any[],
- *   selection: null | { fileId: string, side: string, start: number, end: number, anchor: number },
+ *   selection: Selection | null,
+ *   editor: Editor | null,
+ *   dragging: { fileId: string, side: string } | null,
  *   submitted: boolean,
  *   updateAvailable: boolean,
+ *   pendingVerdict: "approved" | "changes_requested" | null,
  *   treeItems: Map<string, HTMLButtonElement>,
  *   treeActiveId: string | null,
  *   treeVersion: number,
  *   treeRenderedVersion: number,
+ *   groupOpen: Map<string, boolean>,
+ *   dirOpen: Map<string, boolean>,
  * }} */
 const state = {
   review: null,
@@ -113,6 +154,7 @@ const state = {
   rows: [],
   display: [],
   heights: [],
+  threads: { byLine: new Map(), floating: [] },
   binary: false,
   collapsedOverrides: {},
   rendering: false,
@@ -122,14 +164,19 @@ const state = {
   dark: false,
   cacheKey: "",
   selectGeneration: 0,
-  comments: /** @type {any[]} */ ([]),
-  selection: /** @type {null | { fileId: string, side: string, start: number, end: number, anchor: number }} */ (null),
+  comments: [],
+  selection: null,
+  editor: null,
+  dragging: null,
   submitted: false,
   updateAvailable: false,
+  pendingVerdict: null,
   treeItems: new Map(),
-  treeActiveId: /** @type {string|null} */ (null),
+  treeActiveId: null,
   treeVersion: 0,
   treeRenderedVersion: -1,
+  groupOpen: new Map(),
+  dirOpen: new Map(),
 };
 
 function currentEntry() {
@@ -168,6 +215,29 @@ function button(className) {
 function textEl(tag, className, text) {
   const element = el(tag, className);
   element.textContent = text;
+  return element;
+}
+
+/**
+ * @param {string} markup
+ * @returns {SVGElement}
+ */
+function svgIcon(markup) {
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  return /** @type {SVGElement} */ (template.content.firstElementChild);
+}
+
+/**
+ * @param {string} title
+ * @param {string} markup
+ * @returns {HTMLButtonElement}
+ */
+function iconButton(title, markup) {
+  const element = button("iconbtn");
+  element.title = title;
+  element.setAttribute("aria-label", title);
+  element.append(svgIcon(markup));
   return element;
 }
 
@@ -229,6 +299,45 @@ function rebuildVisible(keepId) {
   state.index = Math.max(0, Math.min(state.visible.length - 1, state.index));
 }
 
+/**
+ * @param {string} groupId
+ * @returns {{ files: number, add: number, del: number }}
+ */
+function groupStatsFor(groupId) {
+  let files = 0;
+  let add = 0;
+  let del = 0;
+  for (const entry of state.entries) {
+    if (entry.group.id === groupId) {
+      files += 1;
+      add += entry.file.add;
+      del += entry.file.del;
+    }
+  }
+  return { files, add, del };
+}
+
+/**
+ * @param {FileEntry} file
+ * @returns {HTMLElement}
+ */
+function fileStatsEl(file) {
+  const stats = el("span", "st");
+  if (file.binary) {
+    stats.append(
+      document.createTextNode(
+        `${formatBytes(file.old_size)} → ${formatBytes(file.new_size)}`,
+      ),
+    );
+  } else {
+    stats.append(
+      textEl("span", "p", `+${file.add}`),
+      textEl("span", "m", `−${file.del}`),
+    );
+  }
+  return stats;
+}
+
 function renderUpdateBadge() {
   dom.updateBadge.hidden = !state.updateAvailable;
 }
@@ -245,31 +354,42 @@ async function refresh() {
   state.entries = flatten(state.review);
   const keepId = currentEntry() ? currentEntry().file.id : undefined;
   rebuildVisible(keepId);
-  renderTopbar();
+  renderHeader();
   renderTree();
   renderFooter();
   if (state.visible.length > 0) {
     await selectIndex(state.index, { scrollTop: false });
     dom.viewport.scrollTop = scrollTop;
     scheduleRender();
+  } else {
+    renderGroupHeader();
+    renderFileHeader();
+    renderNotice();
   }
 }
 
-function renderTopbar() {
-  dom.title.textContent = state.review ? state.review.title : "kemi";
-  if (state.review) {
-    const files = state.review.groups.reduce(
-      /** @param {number} sum @param {any} group */
-      (sum, group) => sum + group.files.length,
-      0,
-    );
-    dom.stats.textContent = `${files} ファイル`;
+function renderHeader() {
+  const review = state.review;
+  dom.title.textContent = review ? review.title : "kemi";
+  const subtitle = review ? review.subtitle : "";
+  dom.subtitle.textContent = subtitle || "";
+  dom.subtitle.hidden = !subtitle;
+  dom.meta.textContent = "";
+  if (review) {
+    for (const item of metaItems(review)) {
+      const span = el("span");
+      if (item.label) {
+        span.append(textEl("b", "", item.label));
+      }
+      span.append(document.createTextNode(item.value));
+      dom.meta.append(span);
+    }
   }
-  dom.modeUnified.classList.toggle("active", state.mode === "unified");
-  dom.modeSplit.classList.toggle("active", state.mode === "split");
-  dom.wrap.classList.toggle("active", state.wrap);
-  dom.focus.classList.toggle("active", state.focusOnly);
-  dom.sort.classList.toggle("active", state.sortBySize);
+  dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
+  dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
+  dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
+  dom.chipFocus.setAttribute("aria-pressed", String(state.focusOnly));
+  dom.chipSort.setAttribute("aria-pressed", String(state.sortBySize));
 }
 
 function renderTree() {
@@ -280,30 +400,55 @@ function renderTree() {
   updateTreeActive();
 }
 
-/**
- * ツリー全体を組み立て直す。同じファイルの項目は前回の要素を使い回す。
- * 選択や seen の切り替えだけでは呼ばない（renderTree の差分更新側で扱う）。
- */
 function rebuildTree() {
-  dom.tree.textContent = "";
+  const groups = buildTree(state.visible);
+  /** @type {Map<string, HTMLButtonElement>} */
   const items = new Map();
+  dom.tree.textContent = "";
   const fragment = document.createDocumentFragment();
-  let lastGroup = null;
-  for (const entry of state.visible) {
-    if (entry.group.id !== lastGroup) {
-      const heading = el("div", "group-heading");
-      heading.append(
-        textEl("div", "group-title", entry.group.title || entry.group.id),
-      );
-      if (entry.group.watch) {
-        heading.append(textEl("div", "group-watch", `watch: ${entry.group.watch}`));
-      }
-      fragment.append(heading);
-      lastGroup = entry.group.id;
+  for (const { group, nodes } of groups) {
+    const open = state.groupOpen.get(group.id) !== false;
+    const groupEl = el("div", "group");
+    groupEl.dataset.group = group.id;
+    groupEl.dataset.open = open ? "true" : "false";
+    const head = button("group-head");
+    head.setAttribute("aria-expanded", String(open));
+    const caret = textEl("span", "caret", open ? "▾" : "▸");
+    const stats = groupStatsFor(group.id);
+    head.append(
+      caret,
+      textEl("span", "gtitle", group.title || group.id),
+      textEl(
+        "span",
+        "st",
+        `${stats.files} files  +${stats.add} −${stats.del}`,
+      ),
+    );
+    head.addEventListener("click", () => {
+      const nextOpen = groupEl.dataset.open === "false";
+      groupEl.dataset.open = nextOpen ? "true" : "false";
+      state.groupOpen.set(group.id, nextOpen);
+      head.setAttribute("aria-expanded", String(nextOpen));
+      caret.textContent = nextOpen ? "▾" : "▸";
+    });
+    groupEl.append(head);
+    const body = el("div", "group-body");
+    if (group.why) {
+      body.append(textEl("p", "why", group.why));
     }
-    const item = treeItem(entry);
-    items.set(entry.file.id, item);
-    fragment.append(item);
+    if (group.watch) {
+      const watch = el("div", "watch");
+      watch.append(
+        textEl("b", "", "見てほしい点"),
+        document.createTextNode(group.watch),
+      );
+      body.append(watch);
+    }
+    const list = el("ul", "files");
+    appendNodes(list, nodes, group, items);
+    body.append(list);
+    groupEl.append(body);
+    fragment.append(groupEl);
   }
   dom.tree.append(fragment);
   state.treeItems = items;
@@ -311,13 +456,51 @@ function rebuildTree() {
 }
 
 /**
+ * @param {HTMLElement} parent
+ * @param {import("./model.js").TreeNode[]} nodes
+ * @param {any} group
+ * @param {Map<string, HTMLButtonElement>} items
+ */
+function appendNodes(parent, nodes, group, items) {
+  for (const node of nodes) {
+    if (node.type === "dir") {
+      const li = el("li", "dir");
+      const key = `${group.id}:${node.path}`;
+      const open = state.dirOpen.get(key) !== false;
+      li.dataset.open = open ? "true" : "false";
+      const head = button("dir-head");
+      head.setAttribute("aria-expanded", String(open));
+      const caret = textEl("span", "caret", open ? "▾" : "▸");
+      head.append(caret, svgIcon(DIR_ICON), document.createTextNode(node.name));
+      head.addEventListener("click", () => {
+        const nextOpen = li.dataset.open === "false";
+        li.dataset.open = nextOpen ? "true" : "false";
+        state.dirOpen.set(key, nextOpen);
+        head.setAttribute("aria-expanded", String(nextOpen));
+        caret.textContent = nextOpen ? "▾" : "▸";
+      });
+      const ul = el("ul");
+      appendNodes(ul, node.children, group, items);
+      li.append(head, ul);
+      parent.append(li);
+    } else {
+      const li = el("li");
+      li.append(treeItem({ file: node.file, group }, node.name, items));
+      parent.append(li);
+    }
+  }
+}
+
+/**
  * @param {Entry} entry
+ * @param {string} label
+ * @param {Map<string, HTMLButtonElement>} items
  * @returns {HTMLButtonElement}
  */
-function treeItem(entry) {
-  let item = state.treeItems.get(entry.file.id);
+function treeItem(entry, label, items) {
+  let item = items.get(entry.file.id);
   if (!item) {
-    item = button("tree-item");
+    item = button("file");
     item.dataset.fileId = entry.file.id;
     item.addEventListener("click", () => {
       const index = state.visible.findIndex(
@@ -327,37 +510,18 @@ function treeItem(entry) {
     });
   }
   item.textContent = "";
-  item.classList.remove("active");
-  if (entry.file.seen) {
-    item.classList.add("seen");
-  } else {
-    item.classList.remove("seen");
-  }
-  const line1 = el("span", "tree-path");
-  line1.textContent = entry.file.path;
-  const line2 = el("span", "tree-meta");
-  line2.append(textEl("span", "badge status", statusLabel(entry.file.status)));
+  item.classList.toggle("seen", entry.file.seen);
+  item.append(
+    svgIcon(FILE_ICON),
+    textEl("span", "fname", label),
+    fileStatsEl(entry.file),
+  );
   if (entry.file.focus) {
-    line2.append(textEl("span", "badge focus", "重点"));
+    item.append(textEl("span", "badge-focus", "重要"));
   }
   if (entry.file.noise) {
-    line2.append(textEl("span", "badge noise", "ノイズ"));
+    item.append(textEl("span", "badge-noise", "ノイズ"));
   }
-  if (!entry.file.binary) {
-    line2.append(
-      textEl("span", "count add", `+${entry.file.add}`),
-      textEl("span", "count del", `-${entry.file.del}`),
-    );
-  } else {
-    line2.append(
-      textEl(
-        "span",
-        "count bytes",
-        `${formatBytes(entry.file.old_size)} → ${formatBytes(entry.file.new_size)}`,
-      ),
-    );
-  }
-  item.append(line1, line2);
   return item;
 }
 
@@ -376,55 +540,84 @@ function updateTreeActive() {
   state.treeActiveId = nextId;
 }
 
-function renderGroupAndFile() {
+function renderGroupHeader() {
   const entry = currentEntry();
   dom.groupHeader.textContent = "";
-  dom.fileHeader.textContent = "";
   if (!entry) {
     return;
   }
-  dom.groupHeader.append(
-    textEl("span", "group-label", entry.group.title || entry.group.id),
+  const stats = groupStatsFor(entry.group.id);
+  const line = el("div", "gh-line");
+  line.append(
+    textEl("span", "gh-title", entry.group.title || entry.group.id),
+    textEl("span", "gh-st", `+${stats.add} −${stats.del} / ${stats.files} files`),
   );
-  if (entry.group.watch) {
-    dom.groupHeader.append(textEl("span", "group-watch", entry.group.watch));
+  dom.groupHeader.append(line);
+  if (entry.group.why) {
+    dom.groupHeader.append(textEl("p", "gh-why", entry.group.why));
   }
+  if (entry.group.watch) {
+    const watch = el("div", "gh-watch");
+    watch.append(
+      textEl("b", "", "見てほしい点"),
+      document.createTextNode(entry.group.watch),
+    );
+    dom.groupHeader.append(watch);
+  }
+}
 
-  dom.fileHeader.append(textEl("span", "file-path", entry.file.path));
+function highlightTitle() {
+  if (state.highlightEnabled) {
+    return "ハイライトを切る";
+  }
+  if (state.highlightCapable) {
+    return "ハイライトを有効にする";
+  }
+  return "このファイルでハイライトを有効にする";
+}
+
+function renderFileHeader() {
+  dom.fileHeader.textContent = "";
+  const entry = currentEntry();
+  if (!entry) {
+    return;
+  }
+  dom.fileHeader.append(textEl("span", "path", entry.file.path));
   if (entry.file.old_path) {
-    dom.fileHeader.append(textEl("span", "file-old", `← ${entry.file.old_path}`));
+    dom.fileHeader.append(
+      textEl("span", "file-old", `← ${entry.file.old_path}`),
+    );
   }
   dom.fileHeader.append(
     textEl("span", "badge status", statusLabel(entry.file.status)),
   );
-  if (!entry.file.binary) {
-    dom.fileHeader.append(
-      textEl("span", "count add", `+${entry.file.add}`),
-      textEl("span", "count del", `-${entry.file.del}`),
-    );
-  }
+  dom.fileHeader.append(fileStatsEl(entry.file));
   if (entry.file.focus) {
-    dom.fileHeader.append(textEl("span", "badge focus", "重点"));
+    dom.fileHeader.append(textEl("span", "badge focus", "重要"));
   }
   if (entry.file.note) {
-    dom.fileHeader.append(textEl("span", "file-note", entry.file.note));
+    dom.fileHeader.append(textEl("span", "note", entry.file.note));
   }
-  const seen = button("toggle seen-button");
-  seen.textContent = entry.file.seen ? "見た ✓" : "見た";
-  seen.classList.toggle("active", entry.file.seen);
-  seen.addEventListener("click", () => void toggleSeen(entry.file));
-  dom.fileHeader.append(seen);
+  dom.fileHeader.append(el("span", "spacer"));
 
-  const highlightButton = button("toggle highlight-button");
-  if (state.highlightEnabled) {
-    highlightButton.textContent = "ハイライト off";
-  } else if (state.highlightCapable) {
-    highlightButton.textContent = "ハイライト on";
-  } else {
-    highlightButton.textContent = "このファイルで有効化";
-  }
-  highlightButton.classList.toggle("active", state.highlightEnabled);
-  highlightButton.addEventListener("click", () => {
+  const comment = iconButton("ファイル全体にコメント", COMMENT_ICON);
+  comment.disabled = state.submitted;
+  comment.addEventListener("click", openFileWideEditor);
+  dom.fileHeader.append(comment);
+
+  const copy = iconButton("パスをコピー", COPY_ICON);
+  copy.addEventListener("click", () => void copyPath(entry.file.path, copy));
+  dom.fileHeader.append(copy);
+
+  const expand = iconButton("すべての行を展開", EXPAND_ICON);
+  expand.disabled = state.submitted || state.binary;
+  expand.addEventListener("click", () => void expandAll());
+  dom.fileHeader.append(expand);
+
+  const highlight = iconButton(highlightTitle(), CODE_ICON);
+  highlight.classList.toggle("active", state.highlightEnabled);
+  highlight.setAttribute("aria-pressed", String(state.highlightEnabled));
+  highlight.addEventListener("click", () => {
     const next = nextHighlightOverride(
       state.highlightEnabled,
       state.highlightCapable,
@@ -436,7 +629,30 @@ function renderGroupAndFile() {
     }
     void selectIndex(state.index, { scrollTop: false });
   });
-  dom.fileHeader.append(highlightButton);
+  dom.fileHeader.append(highlight);
+
+  const seen = iconButton(entry.file.seen ? "見た（取り消す）" : "見た", EYE_ICON);
+  seen.setAttribute("aria-pressed", String(entry.file.seen));
+  seen.addEventListener("click", () => void toggleSeen(entry.file));
+  dom.fileHeader.append(seen);
+}
+
+/**
+ * @param {string} path
+ * @param {HTMLButtonElement} element
+ */
+async function copyPath(path, element) {
+  try {
+    await navigator.clipboard.writeText(path);
+    element.classList.add("copied");
+    element.title = "コピーしました";
+    window.setTimeout(() => {
+      element.classList.remove("copied");
+      element.title = "パスをコピー";
+    }, 1_500);
+  } catch (error) {
+    showOverlay("コピーできません", String(error));
+  }
 }
 
 function renderNotice() {
@@ -444,6 +660,10 @@ function renderNotice() {
   dom.notice.textContent = "";
   const entry = currentEntry();
   if (!entry) {
+    if (state.review) {
+      dom.notice.hidden = false;
+      dom.notice.textContent = "表示するファイルがありません";
+    }
     return;
   }
   if (state.binary) {
@@ -461,7 +681,7 @@ function renderNotice() {
     dom.notice.hidden = false;
     const label = entry.file.noise ? "ノイズ" : "折りたたみ";
     dom.notice.append(textEl("span", "notice-text", `${label}: 内容を畳んでいます`));
-    const open = button("open-button");
+    const open = button("btn");
     open.textContent = "表示する";
     open.addEventListener("click", () => {
       state.collapsedOverrides[entry.file.id] = false;
@@ -469,20 +689,255 @@ function renderNotice() {
         .postState({ file_id: entry.file.id, collapsed: false })
         .catch(() => undefined);
       renderNotice();
-      scheduleRender();
+      renderDiff();
     });
     dom.notice.append(open);
   }
 }
 
+function renderFloating() {
+  dom.floating.textContent = "";
+  const floating = state.threads.floating;
+  const wideEditor = state.editor && state.editor.wide ? state.editor : null;
+  if (floating.length === 0 && !wideEditor) {
+    dom.floating.hidden = true;
+    return;
+  }
+  dom.floating.hidden = false;
+  if (wideEditor) {
+    dom.floating.append(renderEditor(wideEditor));
+  }
+  for (const comment of floating) {
+    const wrap = el("div", "floating-thread");
+    wrap.append(textEl("div", "floating-where", commentLabel(comment)));
+    wrap.append(renderThread(comment));
+    dom.floating.append(wrap);
+  }
+}
+
+/**
+ * @param {any} comment
+ * @returns {HTMLElement}
+ */
+function renderThread(comment) {
+  const thread = el("div", "thread");
+  if (comment.outdated) {
+    thread.classList.add("outdated");
+  }
+  const head = el("div", "t-head");
+  head.append(textEl("span", "t-role", "あなた"));
+  if (comment.suggestion) {
+    head.append(textEl("span", "badge-focus", "提案"));
+  }
+  if (comment.resolved) {
+    head.append(textEl("span", "badge resolved", "解決済み"));
+  }
+  thread.append(head);
+
+  thread.append(textEl("div", "t-body", comment.body));
+
+  if (comment.suggestion) {
+    const box = el("div", "t-suggestion");
+    box.append(textEl("div", "sug-head", "提案された変更"));
+    const pre = el("pre");
+    pre.textContent =
+      comment.suggestion.replacement === ""
+        ? "（行の削除）"
+        : comment.suggestion.replacement;
+    box.append(pre);
+    thread.append(box);
+    thread.append(
+      textEl(
+        "div",
+        "t-note",
+        "この提案はコメントと一緒に JSON でエージェントへ渡る（適用はエージェント）。",
+      ),
+    );
+  }
+
+  if (comment.outdated) {
+    thread.append(
+      textEl(
+        "div",
+        "t-outdated",
+        "古いコメント — この後にファイルが変更されています（行番号は作成時のまま）",
+      ),
+    );
+  }
+
+  if (!state.submitted) {
+    const actions = el("div", "t-actions");
+    const resolve = button("resolve");
+    resolve.textContent = comment.resolved ? "解決を戻す" : "解決";
+    resolve.addEventListener("click", () => void toggleResolve(comment));
+    actions.append(resolve);
+    thread.append(actions);
+  }
+  return thread;
+}
+
+/**
+ * @param {Editor} editor
+ * @returns {HTMLFormElement}
+ */
+function renderEditor(editor) {
+  const form = /** @type {HTMLFormElement} */ (el("form", "editor"));
+  const body = document.createElement("textarea");
+  body.placeholder = editor.wide
+    ? "ファイル全体へのコメント"
+    : "この行へのコメント（Cmd/Ctrl+Enter で記録）";
+  body.rows = 3;
+  const key = draftKey(
+    editor.fileId,
+    editor.wide
+      ? null
+      : { side: editor.side, start: editor.start, end: editor.end },
+  );
+  body.value = loadDraft(key);
+  body.addEventListener("input", () => saveDraft(key, body.value));
+  body.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.append(body);
+
+  /** @type {{ checkbox: HTMLInputElement, textarea: HTMLTextAreaElement } | null} */
+  let suggestion = null;
+  if (!editor.wide && suggestionAllowed(editor.side)) {
+    const row = el("div", "suggestion-row");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    const textarea = document.createElement("textarea");
+    textarea.placeholder = "置換後の全文（空なら行の削除）";
+    textarea.value = selectionText();
+    row.append(
+      checkbox,
+      document.createTextNode("suggestion として置換後の全文を書く"),
+      textarea,
+    );
+    form.append(row);
+    suggestion = { checkbox, textarea };
+  }
+
+  const actions = el("div", "row");
+  const cancel = button("btn");
+  cancel.textContent = "やめる";
+  cancel.addEventListener("click", closeEditor);
+  const submit = /** @type {HTMLButtonElement} */ (el("button", "btn primary"));
+  submit.type = "submit";
+  submit.textContent = "コメント";
+  actions.append(cancel, submit);
+  form.append(actions);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const payload = /** @type {any} */ ({
+      op: "add",
+      file_id: editor.fileId,
+      side: editor.side,
+      body: body.value,
+    });
+    if (editor.wide) {
+      payload.start_line = null;
+      payload.end_line = null;
+    } else {
+      payload.start_line = editor.start;
+      payload.end_line = editor.end;
+    }
+    if (suggestion && suggestion.checkbox.checked) {
+      payload.suggestion = suggestion.textarea.value;
+    }
+    void addComment(payload);
+  });
+
+  window.requestAnimationFrame(() => body.focus());
+  return form;
+}
+
+function closeEditor() {
+  state.editor = null;
+  state.selection = null;
+  renderDiff();
+  renderFloating();
+}
+
+function openFileWideEditor() {
+  if (state.submitted) {
+    return;
+  }
+  const entry = currentEntry();
+  if (!entry) {
+    return;
+  }
+  state.selection = null;
+  state.editor = {
+    fileId: entry.file.id,
+    side: "new",
+    start: 0,
+    end: 0,
+    displayIndex: -1,
+    wide: true,
+  };
+  renderDiff();
+  renderFloating();
+}
+
+/**
+ * @param {string} side
+ * @param {number} number
+ * @param {number} index
+ */
+function openEditorAt(side, number, index) {
+  if (state.submitted) {
+    return;
+  }
+  const entry = currentEntry();
+  if (!entry) {
+    return;
+  }
+  const selection = state.selection;
+  let start = number;
+  let end = number;
+  if (
+    selection &&
+    selection.fileId === entry.file.id &&
+    selection.side === side &&
+    number >= selection.start &&
+    number <= selection.end
+  ) {
+    start = selection.start;
+    end = selection.end;
+  } else {
+    state.selection = {
+      fileId: entry.file.id,
+      side,
+      start,
+      end,
+      anchor: number,
+    };
+  }
+  state.editor = {
+    fileId: entry.file.id,
+    side,
+    start,
+    end,
+    displayIndex: index,
+    wide: false,
+  };
+  renderDiff();
+  renderFloating();
+}
+
 function renderDiff() {
   const entry = currentEntry();
   dom.content.textContent = "";
-  if (!entry || state.binary) {
-    dom.content.style.height = "0px";
-    return;
-  }
-  if (collapseDefault(entry.file, state.collapsedOverrides)) {
+  if (
+    !entry ||
+    state.binary ||
+    collapseDefault(entry.file, state.collapsedOverrides)
+  ) {
     dom.content.style.height = "0px";
     return;
   }
@@ -502,43 +957,92 @@ function renderDiff() {
   }
   const fragment = document.createDocumentFragment();
   for (let index = window.start; index < window.end; index += 1) {
-    const element = renderLine(state.display[index]);
-    element.style.top = `${offsets[index]}px`;
-    fragment.append(element);
+    const block = renderBlock(state.display[index], index);
+    block.style.top = `${offsets[index]}px`;
+    fragment.append(block);
   }
   dom.content.append(fragment);
-  if (state.wrap) {
+  const needsMeasure =
+    state.wrap ||
+    state.threads.byLine.size > 0 ||
+    Boolean(state.editor && !state.editor.wide);
+  if (needsMeasure) {
     measureHeights(window.start);
   }
 }
 
 /**
  * @param {DisplayLine} line
+ * @param {number} index
+ * @returns {HTMLDivElement}
+ */
+function renderBlock(line, index) {
+  const block = /** @type {HTMLDivElement} */ (el("div", "row-block"));
+  block.dataset.kemiRow = "1";
+  block.append(renderLine(line, index));
+  const threads = state.threads.byLine.get(index);
+  if (threads) {
+    for (const comment of threads) {
+      const row = el("div", "thread-row");
+      row.append(renderThread(comment));
+      block.append(row);
+    }
+  }
+  const editorState = state.editor;
+  const entry = currentEntry();
+  if (
+    editorState &&
+    !editorState.wide &&
+    editorState.fileId === (entry ? entry.file.id : "") &&
+    editorState.displayIndex === index
+  ) {
+    block.append(renderEditor(editorState));
+  }
+  return block;
+}
+
+/**
+ * @param {DisplayLine} line
+ * @param {number} index
  * @returns {HTMLElement}
  */
-function renderLine(line) {
+function renderLine(line, index) {
   const row = el("div", `row kind-${line.kind}`);
-  row.dataset.kemiRow = "1";
   if (line.kind === "skip") {
     const skip = line.skip;
     const expand = button("expand-button");
     expand.textContent = `… ${skip && skip.count ? skip.count : 0} 行を表示`;
-    expand.addEventListener("click", () => void expandSkip(line));
+    expand.addEventListener("click", () => void expandSkipAt(index));
     row.append(expand);
     return row;
   }
+  const anchor = lineAnchor(line);
+  const canComment = Boolean(anchor) && !state.submitted;
+  const plusSide = anchor ? anchor.side : null;
   if (state.mode === "split") {
     row.classList.add("split");
     row.append(
-      sideCell("old", line.oldLine, line.oldSegments),
-      sideCell("new", line.newLine, line.newSegments),
+      sideCell(
+        "old",
+        line.oldLine,
+        line.oldSegments,
+        canComment && plusSide === "old",
+        index,
+      ),
+      sideCell(
+        "new",
+        line.newLine,
+        line.newSegments,
+        canComment && plusSide === "new",
+        index,
+      ),
     );
     return row;
   }
   row.append(
-    numberCell("old", line.oldLine),
-    numberCell("new", line.newLine),
-    textEl("span", "sign", signFor(line.kind)),
+    numberCell("old", line.oldLine, canComment && plusSide === "old", index),
+    numberCell("new", line.newLine, canComment && plusSide === "new", index),
+    textEl("span", "mk", signFor(line.kind)),
   );
   const code = el("span", "code");
   if (line.newLine) {
@@ -561,9 +1065,9 @@ function signFor(kind) {
       return "+";
     case "delete":
     case "replace-old":
-      return "-";
+      return "−";
     default:
-      return " ";
+      return "";
   }
 }
 
@@ -571,13 +1075,15 @@ function signFor(kind) {
  * @param {"old" | "new"} side
  * @param {import("./model.js").Line|null} line
  * @param {import("./model.js").Segment[]} segments
+ * @param {boolean} withPlus
+ * @param {number} index
  * @returns {HTMLElement}
  */
-function sideCell(side, line, segments) {
+function sideCell(side, line, segments, withPlus, index) {
   const cell = el("span", "cell");
   const code = el("span", "code");
   fillCode(code, line, segments);
-  cell.append(numberCell(side, line), code);
+  cell.append(numberCell(side, line, withPlus, index), code);
   return cell;
 }
 
@@ -597,20 +1103,37 @@ function fillCode(code, line, segments) {
 /**
  * @param {"old" | "new"} side
  * @param {import("./model.js").Line|null} line
+ * @param {boolean} withPlus
+ * @param {number} index
  * @returns {HTMLElement}
  */
-function numberCell(side, line) {
+function numberCell(side, line, withPlus, index) {
+  const cell = el("span", "no-cell");
   const number = textEl("span", "num", line ? String(line.number) : "");
   if (line && !state.submitted) {
-    number.classList.add("clickable");
-    number.addEventListener("click", (event) =>
-      handleLineClick(side, Number(line.number), event.shiftKey),
-    );
+    const value = Number(line.number);
+    number.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      startSelection(side, value);
+    });
+    number.addEventListener("mouseenter", () => extendSelection(side, value));
+    if (selectionContains(side, value)) {
+      number.classList.add("selected");
+    }
   }
-  if (line && selectionContains(side, Number(line.number))) {
-    number.classList.add("selected");
+  cell.append(number);
+  if (line && withPlus) {
+    const plus = button("line-add-btn");
+    plus.textContent = "+";
+    plus.title = "この行にコメント";
+    plus.setAttribute("aria-label", "この行にコメント");
+    plus.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openEditorAt(side, Number(line.number), index);
+    });
+    cell.append(plus);
   }
-  return number;
+  return cell;
 }
 
 /**
@@ -631,9 +1154,8 @@ function selectionContains(side, number) {
 /**
  * @param {"old" | "new"} side
  * @param {number} number
- * @param {boolean} extend
  */
-function handleLineClick(side, number, extend) {
+function startSelection(side, number) {
   if (state.submitted) {
     return;
   }
@@ -641,39 +1163,36 @@ function handleLineClick(side, number, extend) {
   if (!entry) {
     return;
   }
-  const selection = state.selection;
-  if (
-    selection &&
-    selection.side === side &&
-    selection.fileId === entry.file.id &&
-    !extend &&
-    selection.start === number &&
-    selection.end === number
-  ) {
-    state.selection = null;
-  } else if (
-    extend &&
-    selection &&
-    selection.side === side &&
-    selection.fileId === entry.file.id
-  ) {
-    state.selection = {
-      fileId: entry.file.id,
-      side,
-      anchor: selection.anchor,
-      start: Math.min(selection.anchor, number),
-      end: Math.max(selection.anchor, number),
-    };
-  } else {
-    state.selection = {
-      fileId: entry.file.id,
-      side,
-      anchor: number,
-      start: number,
-      end: number,
-    };
+  state.dragging = { fileId: entry.file.id, side };
+  state.selection = {
+    fileId: entry.file.id,
+    side,
+    anchor: number,
+    start: number,
+    end: number,
+  };
+  renderDiff();
+}
+
+/**
+ * @param {string} side
+ * @param {number} number
+ */
+function extendSelection(side, number) {
+  const drag = state.dragging;
+  const entry = currentEntry();
+  if (!drag || !entry || drag.fileId !== entry.file.id || drag.side !== side) {
+    return;
   }
-  renderSelectionBar();
+  const selection = state.selection;
+  const anchor = selection ? selection.anchor : number;
+  state.selection = {
+    fileId: entry.file.id,
+    side,
+    anchor,
+    start: Math.min(anchor, number),
+    end: Math.max(anchor, number),
+  };
   renderDiff();
 }
 
@@ -694,36 +1213,6 @@ function selectionText() {
     }
   }
   return texts.join("\n");
-}
-
-function renderSelectionBar() {
-  dom.selectionBar.textContent = "";
-  const selection = state.selection;
-  if (!selection || state.submitted) {
-    dom.selectionBar.hidden = true;
-    return;
-  }
-  dom.selectionBar.hidden = false;
-  const range =
-    selection.start === selection.end
-      ? `${selection.start}`
-      : `${selection.start}–${selection.end}`;
-  const side = selection.side === "new" ? "新側" : "旧側";
-  dom.selectionBar.append(
-    textEl("span", "selection-label", `${side} ${range} にコメント`),
-  );
-  const add = button("add-comment-button");
-  add.textContent = "コメントを追加";
-  add.addEventListener("click", () => openCommentForm(selection));
-  dom.selectionBar.append(add);
-  const clear = button("cancel-button");
-  clear.textContent = "選択解除";
-  clear.addEventListener("click", () => {
-    state.selection = null;
-    renderSelectionBar();
-    renderDiff();
-  });
-  dom.selectionBar.append(clear);
 }
 
 /**
@@ -748,64 +1237,6 @@ function saveDraft(key, value) {
 }
 
 /**
- * @param {{ fileId: string, side: string, start: number, end: number }} selection
- */
-function openCommentForm(selection) {
-  dom.selectionBar.textContent = "";
-  const form = el("form", "comment-form");
-  const body = document.createElement("textarea");
-  body.placeholder = "本文";
-  body.rows = 3;
-  const key = draftKey(selection.fileId, selection);
-  body.value = loadDraft(key);
-  body.addEventListener("input", () => saveDraft(key, body.value));
-  form.append(body);
-
-  let suggestion = null;
-  if (suggestionAllowed(selection.side)) {
-    const label = el("label", "suggestion-row");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    const suggestionText = document.createElement("textarea");
-    suggestionText.placeholder = "置換後の全文（空なら行の削除）";
-    suggestionText.rows = 2;
-    suggestionText.value = selectionText();
-    label.append(checkbox, document.createTextNode(" suggestion"), suggestionText);
-    form.append(label);
-    suggestion = { checkbox, textarea: suggestionText };
-  }
-
-  const submitButton = /** @type {HTMLButtonElement} */ (el("button", "add-comment-button"));
-  submitButton.textContent = "追加";
-  const cancel = button("cancel-button");
-  cancel.textContent = "キャンセル";
-  cancel.addEventListener("click", () => {
-    state.selection = null;
-    renderSelectionBar();
-    renderDiff();
-  });
-  form.append(submitButton, cancel);
-
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const payload = /** @type {any} */ ({
-      op: "add",
-      file_id: selection.fileId,
-      side: selection.side,
-      start_line: selection.start,
-      end_line: selection.end,
-      body: body.value,
-    });
-    if (suggestion && suggestion.checkbox.checked) {
-      payload.suggestion = suggestion.textarea.value;
-    }
-    void addComment(payload);
-  });
-  dom.selectionBar.append(form);
-  body.focus();
-}
-
-/**
  * @param {any} payload
  */
 async function addComment(payload) {
@@ -813,139 +1244,23 @@ async function addComment(payload) {
     const comment = await api.postComment(payload);
     state.comments.push(comment);
     state.commentStore.set(payload.file_id, state.comments);
-    localStorage.removeItem(
+    const selection =
       payload.start_line === null || payload.start_line === undefined
-        ? draftKey(payload.file_id, null)
-        : draftKey(payload.file_id, {
+        ? null
+        : {
             side: payload.side,
             start: payload.start_line,
             end: payload.end_line,
-          }),
-    );
+          };
+    localStorage.removeItem(draftKey(payload.file_id, selection));
+    state.editor = null;
     state.selection = null;
-    renderSelectionBar();
+    recomputeThreads();
     renderDiff();
-    renderComments();
+    renderFloating();
+    renderFileHeader();
   } catch (error) {
     showOverlay("コメントを追加できません", String(error));
-  }
-}
-
-function renderComments() {
-  dom.commentsList.textContent = "";
-  const fileWide = button("file-wide-button");
-  fileWide.textContent = "ファイル全体にコメント";
-  fileWide.disabled = state.submitted;
-  fileWide.addEventListener("click", () => openFileWideForm());
-  dom.commentsList.append(fileWide);
-  for (const comment of state.comments) {
-    dom.commentsList.append(commentThread(comment));
-  }
-}
-
-function openFileWideForm() {
-  if (state.submitted) {
-    return;
-  }
-  const entry = currentEntry();
-  if (!entry) {
-    return;
-  }
-  const form = el("form", "comment-form");
-  const body = document.createElement("textarea");
-  body.placeholder = "ファイル全体への本文";
-  body.rows = 3;
-  const key = draftKey(entry.file.id, null);
-  body.value = loadDraft(key);
-  body.addEventListener("input", () => saveDraft(key, body.value));
-  const submitButton = /** @type {HTMLButtonElement} */ (el("button", "add-comment-button"));
-  submitButton.textContent = "追加";
-  form.append(body, submitButton);
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void addComment({
-      op: "add",
-      file_id: entry.file.id,
-      side: "new",
-      body: body.value,
-    });
-  });
-  dom.commentsList.prepend(form);
-  body.focus();
-}
-
-/**
- * @param {any} comment
- * @returns {HTMLElement}
- */
-function commentThread(comment) {
-  const thread = el("div", "thread");
-  const head = el("div", "thread-head");
-  head.append(textEl("span", "thread-where", commentLabel(comment)));
-  if (comment.outdated) {
-    head.append(textEl("span", "badge outdated", "古い"));
-  }
-  if (comment.resolved) {
-    head.append(textEl("span", "badge resolved", "解決済み"));
-  }
-  thread.append(head);
-
-  if (comment.quote && comment.quote.length > 0) {
-    const quote = el("pre", "thread-quote");
-    quote.textContent = comment.quote.join("\n");
-    thread.append(quote);
-  }
-  const body = el("div", "thread-body");
-  body.textContent = comment.body;
-  thread.append(body);
-
-  if (comment.suggestion) {
-    const suggestion = el("pre", "thread-suggestion");
-    suggestion.textContent =
-      comment.suggestion.replacement === ""
-        ? "（行の削除）"
-        : comment.suggestion.replacement;
-    thread.append(suggestion);
-  }
-  for (const reply of comment.replies || []) {
-    thread.append(textEl("div", "thread-reply", reply));
-  }
-
-  if (!state.submitted) {
-    const replyForm = el("form", "reply-form");
-    const input = document.createElement("input");
-    input.placeholder = "返信";
-    const send = /** @type {HTMLButtonElement} */ (el("button", "reply-button"));
-    send.textContent = "返信";
-    replyForm.append(input, send);
-    replyForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void sendReply(comment.id, input.value);
-    });
-    thread.append(replyForm);
-
-    const resolve = button("resolve-button");
-    resolve.textContent = comment.resolved ? "解決を戻す" : "解決";
-    resolve.addEventListener("click", () => void toggleResolve(comment));
-    thread.append(resolve);
-  }
-  return thread;
-}
-
-/**
- * @param {string} id
- * @param {string} body
- */
-async function sendReply(id, body) {
-  if (body === "") {
-    return;
-  }
-  try {
-    const updated = await api.postComment({ op: "reply", id, body });
-    applyCommentUpdate(updated);
-    renderComments();
-  } catch (error) {
-    showOverlay("返信できません", String(error));
   }
 }
 
@@ -959,23 +1274,39 @@ async function toggleResolve(comment) {
       id: comment.id,
       resolved: !comment.resolved,
     });
-    applyCommentUpdate(updated);
-    renderComments();
+    state.comments = replaceComment(state.comments, updated);
+    const entry = currentEntry();
+    if (entry) {
+      state.commentStore.set(entry.file.id, state.comments);
+    }
+    recomputeThreads();
+    renderDiff();
+    renderFloating();
   } catch (error) {
     showOverlay("解決状態を変えられません", String(error));
   }
 }
 
 /**
- * 返信・解決の結果を、現在のファイルのコメント保持先へ反映する。
- * @param {any} updated
+ * @param {"approved" | "changes_requested"} verdict
  */
-function applyCommentUpdate(updated) {
-  state.comments = replaceComment(state.comments, updated);
-  const entry = currentEntry();
-  if (entry) {
-    state.commentStore.set(entry.file.id, state.comments);
-  }
+function openConfirm(verdict) {
+  state.pendingVerdict = verdict;
+  const approve = verdict === "approved";
+  dom.modalTitle.textContent = approve
+    ? "承認しますか？"
+    : "変更要求として送信しますか？";
+  dom.modalBody.textContent = approve
+    ? "レビューを終了して、承認の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。"
+    : "レビューを終了して、変更要求の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。";
+  dom.modalOk.textContent = approve ? "承認して終了" : "変更要求で終了";
+  dom.modalOk.className = approve ? "btn primary" : "btn danger";
+  dom.modal.hidden = false;
+}
+
+function closeModal() {
+  dom.modal.hidden = true;
+  state.pendingVerdict = null;
 }
 
 /**
@@ -989,11 +1320,13 @@ async function submitReview(verdict) {
     await api.submit(verdict);
     state.submitted = true;
     state.selection = null;
-    renderSelectionBar();
-    renderComments();
+    state.editor = null;
+    renderDiff();
+    renderFloating();
+    renderFileHeader();
     showOverlay(
       verdict === "approved" ? "承認しました" : "変更要求を送りました",
-      "kemi は注釈の JSON を出力して終了しました。",
+      "kemi はコメントの JSON を出力して終了しました。",
     );
   } catch (error) {
     showOverlay("送信できませんでした", String(error));
@@ -1047,45 +1380,50 @@ function scheduleRender() {
 }
 
 /**
- * @param {DisplayLine} line
+ * 1 つの折りたたみを、サーバの残りが尽きるまで展開する。
+ * @param {number} index
+ * @returns {Promise<boolean>} 展開できたら true。
  */
-async function expandSkip(line) {
+async function expandSkipAt(index) {
   const entry = currentEntry();
-  const skip = line.skip;
-  if (!entry || !skip || skip.from === undefined || skip.to === undefined) {
-    return;
+  const skip = state.rows[index];
+  if (
+    !entry ||
+    !skip ||
+    skip.kind !== "skip" ||
+    skip.from === undefined ||
+    skip.to === undefined
+  ) {
+    return false;
   }
   const generation = state.selectGeneration;
   const cacheKey = state.cacheKey;
-  const data = await api.getFile(
-    entry.file.id,
-    { from: skip.from, to: skip.to },
-    {
-      dark: state.dark,
-      highlight: state.highlightOverrides.get(entry.file.id),
-    },
-  );
-  if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
-    // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
-    return;
+  /** @type {LogicalRow[]} */
+  const replacement = [];
+  let from = Number(skip.from);
+  const to = Number(skip.to);
+  while (from < to) {
+    const data = await api.getFile(
+      entry.file.id,
+      { from, to },
+      {
+        dark: state.dark,
+        highlight: state.highlightOverrides.get(entry.file.id),
+      },
+    );
+    if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
+      // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
+      return false;
+    }
+    replacement.push(...(data.rows || []));
+    if (data.next === null || data.next === undefined) {
+      break;
+    }
+    from = Number(data.next);
   }
-  const index = state.rows.indexOf(skip);
-  if (index < 0) {
-    // 同じ折りたたみ行が先に展開された。取得前の位置へ挿すと表示行が重複する。
-    return;
-  }
-  const replacement = /** @type {LogicalRow[]} */ (data.rows);
-  if (data.next !== null && data.next !== undefined) {
-    replacement.push({
-      kind: "skip",
-      old: null,
-      new: null,
-      old_segments: [],
-      new_segments: [],
-      count: skip.to - Number(data.next),
-      from: Number(data.next),
-      to: skip.to,
-    });
+  if (state.rows[index] !== skip) {
+    // 同じ折りたたみが先に展開された。取得前の位置へ挿すと表示行が重複する。
+    return false;
   }
   const rows = state.rows.slice();
   rows.splice(index, 1, ...replacement);
@@ -1093,11 +1431,44 @@ async function expandSkip(line) {
   state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
   recomputeDisplay();
   renderDiff();
+  return true;
+}
+
+async function expandAll() {
+  const entry = currentEntry();
+  if (!entry) {
+    return;
+  }
+  if (collapseDefault(entry.file, state.collapsedOverrides)) {
+    state.collapsedOverrides[entry.file.id] = false;
+    void api
+      .postState({ file_id: entry.file.id, collapsed: false })
+      .catch(() => undefined);
+    renderNotice();
+  }
+  let index = 0;
+  while (index < state.rows.length) {
+    if (state.rows[index].kind !== "skip") {
+      index += 1;
+      continue;
+    }
+    const expanded = await expandSkipAt(index);
+    if (!expanded) {
+      return;
+    }
+    index += 1;
+  }
+  renderDiff();
+}
+
+function recomputeThreads() {
+  state.threads = placeThreads(state.display, state.comments);
 }
 
 function recomputeDisplay() {
   state.display = toDisplayLines(state.rows, state.mode);
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  recomputeThreads();
 }
 
 /**
@@ -1106,6 +1477,9 @@ function recomputeDisplay() {
  */
 async function selectIndex(index, options = { scrollTop: true }) {
   if (state.visible.length === 0) {
+    renderGroupHeader();
+    renderFileHeader();
+    renderNotice();
     return;
   }
   state.index = Math.max(0, Math.min(state.visible.length - 1, index));
@@ -1138,15 +1512,16 @@ async function selectIndex(index, options = { scrollTop: true }) {
   state.comments = storedComments || data.comments || [];
   state.commentStore.set(id, state.comments);
   state.selection = null;
+  state.editor = null;
   if (options.scrollTop) {
     dom.viewport.scrollTop = 0;
   }
   recomputeDisplay();
   renderTree();
-  renderGroupAndFile();
-  renderSelectionBar();
+  renderGroupHeader();
+  renderFileHeader();
   renderNotice();
-  renderComments();
+  renderFloating();
   renderDiff();
 }
 
@@ -1157,7 +1532,7 @@ async function toggleSeen(file) {
   const next = !file.seen;
   file.seen = next;
   state.treeItems.get(file.id)?.classList.toggle("seen", next);
-  renderGroupAndFile();
+  renderFileHeader();
   try {
     await api.postState({ file_id: file.id, seen: next });
   } catch {
@@ -1166,17 +1541,16 @@ async function toggleSeen(file) {
 }
 
 function applyTheme() {
-  const resolved =
-    state.theme === "auto"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : state.theme;
-  const dark = resolved === "dark" || resolved === "solarized-dark";
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const resolved = resolveTheme(state.theme, prefersDark);
+  const dark = isDarkTheme(resolved);
   const changed = state.dark !== dark;
   state.dark = dark;
   document.documentElement.dataset.theme = resolved;
-  dom.theme.value = state.theme;
+  const current =
+    THEME_LABELS[state.theme] || THEME_LABELS.auto;
+  const next = THEME_LABELS[nextTheme(state.theme)] || "";
+  dom.btnTheme.title = `テーマ: ${current}（クリックで ${next}）`;
   if (changed) {
     state.cache.clear();
     if (currentEntry()) {
@@ -1192,18 +1566,18 @@ function setMode(mode) {
   state.mode = mode;
   localStorage.setItem("kemi-mode", mode);
   recomputeDisplay();
-  renderTopbar();
+  renderHeader();
   renderDiff();
 }
 
 function renderFooter() {
   dom.footer.textContent = "";
   const approval = state.review ? state.review.approval || [] : [];
+  dom.footer.hidden = approval.length === 0;
   if (approval.length === 0) {
     return;
   }
-  const label = textEl("span", "footer-label", "承認対象");
-  dom.footer.append(label);
+  dom.footer.append(textEl("span", "footer-label", "承認対象"));
   for (const item of approval) {
     const row = el("span", "approval-item");
     row.append(
@@ -1218,6 +1592,16 @@ function renderFooter() {
  * @param {KeyboardEvent} event
  */
 function handleKey(event) {
+  if (event.key === "Escape") {
+    if (!dom.modal.hidden) {
+      closeModal();
+      return;
+    }
+    if (state.editor) {
+      closeEditor();
+      return;
+    }
+  }
   const target = /** @type {HTMLElement} */ (event.target);
   if (
     target.tagName === "INPUT" ||
@@ -1239,8 +1623,9 @@ function handleKey(event) {
     setMode(action.mode === "split" ? "split" : "unified");
   } else if (action.type === "wrap") {
     state.wrap = Boolean(action.value);
-    dom.wrap.classList.toggle("active", state.wrap);
-    scheduleRender();
+    state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+    renderHeader();
+    renderDiff();
   }
 }
 
@@ -1249,11 +1634,13 @@ async function boot() {
   state.entries = flatten(state.review);
   state.visible = state.entries.slice();
   state.treeVersion += 1;
-  renderTopbar();
+  renderHeader();
   renderTree();
   renderFooter();
   if (state.visible.length > 0) {
     await selectIndex(0, { scrollTop: true });
+  } else {
+    renderNotice();
   }
   api.subscribeEvents(() => {
     state.updateAvailable = true;
@@ -1262,37 +1649,49 @@ async function boot() {
 }
 
 document.addEventListener("keydown", handleKey);
-dom.modeUnified.addEventListener("click", () => setMode("unified"));
-dom.modeSplit.addEventListener("click", () => setMode("split"));
-dom.wrap.addEventListener("click", () => {
-  state.wrap = !state.wrap;
-  dom.wrap.classList.toggle("active", state.wrap);
-  scheduleRender();
+document.addEventListener("mouseup", () => {
+  state.dragging = null;
 });
-dom.focus.addEventListener("click", () => {
+dom.btnUnified.addEventListener("click", () => setMode("unified"));
+dom.btnSplit.addEventListener("click", () => setMode("split"));
+dom.btnWrap.addEventListener("click", () => {
+  state.wrap = !state.wrap;
+  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  renderHeader();
+  renderDiff();
+});
+dom.chipFocus.addEventListener("click", () => {
   state.focusOnly = !state.focusOnly;
   const keepId = currentEntry() ? currentEntry().file.id : undefined;
   rebuildVisible(keepId);
-  renderTopbar();
+  renderHeader();
   renderTree();
   void selectIndex(state.index, { scrollTop: false });
 });
-dom.sort.addEventListener("click", () => {
+dom.chipSort.addEventListener("click", () => {
   state.sortBySize = !state.sortBySize;
   const keepId = currentEntry() ? currentEntry().file.id : undefined;
   rebuildVisible(keepId);
-  renderTopbar();
+  renderHeader();
   renderTree();
   void selectIndex(state.index, { scrollTop: false });
 });
-dom.theme.addEventListener("change", () => {
-  state.theme = dom.theme.value;
+dom.btnTheme.addEventListener("click", () => {
+  state.theme = nextTheme(state.theme);
   localStorage.setItem("kemi-theme", state.theme);
   applyTheme();
 });
 dom.updateBadge.addEventListener("click", () => void refresh());
-dom.submitApproved.addEventListener("click", () => void submitReview("approved"));
-dom.submitChanges.addEventListener("click", () => void submitReview("changes_requested"));
+dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
+dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
+dom.modalCancel.addEventListener("click", closeModal);
+dom.modalOk.addEventListener("click", () => {
+  const verdict = state.pendingVerdict;
+  closeModal();
+  if (verdict) {
+    void submitReview(verdict);
+  }
+});
 dom.viewport.addEventListener("scroll", scheduleRender);
 window.addEventListener("resize", scheduleRender);
 window

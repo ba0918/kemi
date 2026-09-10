@@ -7,42 +7,97 @@
     <link rel="stylesheet" href="assets/style.css" />
   </head>
   <body>
-    <div id="topbar">
-      <h1 id="review-title">kemi</h1>
-      <span id="review-stats"></span>
+    <header class="topbar">
+      <div class="brand">kemi</div>
+      <div class="title-block">
+        <div class="title" id="review-title"></div>
+        <div class="subtitle" id="review-subtitle" hidden></div>
+      </div>
+      <div class="meta" id="review-meta"></div>
       <span class="spacer"></span>
-      <button id="mode-unified" type="button">unified</button>
-      <button id="mode-split" type="button">split</button>
-      <button id="toggle-wrap" type="button">折返し</button>
-      <button id="toggle-focus" type="button">重点のみ</button>
-      <button id="toggle-sort" type="button">変更量順</button>
-      <select id="theme-select" aria-label="テーマ">
-        <option value="auto">自動</option>
-        <option value="light">light</option>
-        <option value="dark">dark</option>
-        <option value="solarized-light">solarized light</option>
-        <option value="solarized-dark">solarized dark</option>
-      </select>
-      <span class="spacer"></span>
-      <button id="update-badge" type="button" class="update-badge" hidden>更新あり</button>
-      <button id="submit-approved" type="button" class="submit approved">承認</button>
-      <button id="submit-changes" type="button" class="submit changes">変更要求</button>
-    </div>
-    <div id="layout">
-      <aside id="tree" aria-label="ファイルツリー"></aside>
+      <div class="tools">
+        <div class="seg" role="group" aria-label="表示モード">
+          <button
+            class="iconbtn"
+            id="btn-unified"
+            type="button"
+            aria-pressed="true"
+            title="1 列（unified）"
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+          </button>
+          <button
+            class="iconbtn"
+            id="btn-split"
+            type="button"
+            aria-pressed="false"
+            title="2 列（split）"
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M8 2.5v11"/></svg>
+          </button>
+        </div>
+        <button
+          class="iconbtn"
+          id="btn-wrap"
+          type="button"
+          aria-pressed="false"
+          title="折り返し"
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h8a2 2 0 1 1 0 4H7"/><path d="M9 10.5 7 12l2 1.5"/></svg>
+        </button>
+        <button
+          class="chip"
+          id="chip-focus"
+          type="button"
+          aria-pressed="false"
+          title="重要が付いたファイルだけ表示"
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 9.9 5.7l4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></svg>
+        </button>
+        <button
+          class="chip"
+          id="chip-sort"
+          type="button"
+          aria-pressed="false"
+          title="増減数の多い順に並べ替える"
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 3v10M4 13l-2-2M4 13l2-2M9 4h5M9 8h4M9 12h3"/></svg>
+        </button>
+        <button class="iconbtn" id="btn-theme" type="button" title="テーマ切替">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>
+        </button>
+        <button id="update-badge" type="button" class="update-badge" hidden>
+          更新あり
+        </button>
+        <button class="btn primary" id="btn-approve" type="button">承認</button>
+        <button class="btn danger" id="btn-changes" type="button">変更要求</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="tree" id="tree" aria-label="ファイルツリー"></aside>
       <main id="main">
-        <div id="group-header"></div>
-        <div id="file-header"></div>
-        <div id="selection-bar" hidden></div>
+        <div class="group-header" id="group-header"></div>
+        <div class="file-header" id="file-header"></div>
+        <div id="floating-threads" hidden></div>
         <div id="notice" hidden></div>
         <div id="diff-viewport"><div id="diff-content"></div></div>
       </main>
-      <aside id="comments-panel" aria-label="コメント">
-        <div id="comments-header">コメント</div>
-        <div id="comments-list"></div>
-      </aside>
     </div>
-    <footer id="approval-footer"></footer>
+
+    <footer id="approval-footer" hidden></footer>
+
+    <div class="modal" id="modal" hidden>
+      <div class="box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h3 id="modal-title"></h3>
+        <p id="modal-body"></p>
+        <div class="row">
+          <button class="btn" id="modal-cancel" type="button">戻る</button>
+          <button class="btn" id="modal-ok" type="button"></button>
+        </div>
+      </div>
+    </div>
+
     <div id="overlay" hidden><div id="overlay-card"></div></div>
     <script type="module" src="assets/app.js"></script>
   </body>
