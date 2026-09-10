@@ -48,6 +48,7 @@ const dom = {
   theme: /** @type {HTMLSelectElement} */ (must("#theme-select")),
   selectionBar: must("#selection-bar"),
   commentsList: must("#comments-list"),
+  updateBadge: must("#update-badge"),
   submitApproved: must("#submit-approved"),
   submitChanges: must("#submit-changes"),
   overlay: must("#overlay"),
@@ -86,6 +87,7 @@ const dom = {
  *   comments: any[],
  *   selection: null | { fileId: string, side: string, start: number, end: number, anchor: number },
  *   submitted: boolean,
+ *   updateAvailable: boolean,
  * }} */
 const state = {
   review: null,
@@ -112,6 +114,7 @@ const state = {
   comments: /** @type {any[]} */ ([]),
   selection: /** @type {null | { fileId: string, side: string, start: number, end: number, anchor: number }} */ (null),
   submitted: false,
+  updateAvailable: false,
 };
 
 function currentEntry() {
@@ -208,6 +211,29 @@ function rebuildVisible(keepId) {
     }
   }
   state.index = Math.max(0, Math.min(state.visible.length - 1, state.index));
+}
+
+function renderUpdateBadge() {
+  dom.updateBadge.hidden = !state.updateAvailable;
+}
+
+async function refresh() {
+  state.updateAvailable = false;
+  renderUpdateBadge();
+  const scrollTop = dom.viewport.scrollTop;
+  state.cache.clear();
+  state.review = await api.getReview();
+  state.entries = flatten(state.review);
+  const keepId = currentEntry() ? currentEntry().file.id : undefined;
+  rebuildVisible(keepId);
+  renderTopbar();
+  renderTree();
+  renderFooter();
+  if (state.visible.length > 0) {
+    await selectIndex(state.index, { scrollTop: false });
+    dom.viewport.scrollTop = scrollTop;
+    scheduleRender();
+  }
 }
 
 function renderTopbar() {
@@ -1103,6 +1129,10 @@ async function boot() {
   if (state.visible.length > 0) {
     await selectIndex(0, { scrollTop: true });
   }
+  api.subscribeEvents(() => {
+    state.updateAvailable = true;
+    renderUpdateBadge();
+  });
 }
 
 document.addEventListener("keydown", handleKey);
@@ -1134,6 +1164,7 @@ dom.theme.addEventListener("change", () => {
   localStorage.setItem("kemi-theme", state.theme);
   applyTheme();
 });
+dom.updateBadge.addEventListener("click", () => void refresh());
 dom.submitApproved.addEventListener("click", () => void submitReview("approved"));
 dom.submitChanges.addEventListener("click", () => void submitReview("changes_requested"));
 dom.viewport.addEventListener("scroll", scheduleRender);

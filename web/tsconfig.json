@@ -12,5 +12,5 @@
     "noUnusedParameters": true,
     "types": ["node"]
   },
-  "include": ["*.js"]
+  "include": ["**/*.js"]
 }

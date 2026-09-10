@@ -166,7 +166,7 @@ async fn asset(
     State(state): State<Arc<AppState>>,
     Path((_token, path)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    serve_asset(&state, &path)
+    serve_asset(&state, &format!("assets/{path}"))
 }
 
 fn serve_asset(state: &AppState, path: &str) -> Result<Response, ApiError> {
