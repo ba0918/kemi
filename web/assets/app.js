@@ -88,6 +88,7 @@ const dom = {
  *   highlightEnabled: boolean,
  *   dark: boolean,
  *   cacheKey: string,
+ *   selectGeneration: number,
  *   comments: any[],
  *   selection: null | { fileId: string, side: string, start: number, end: number, anchor: number },
  *   submitted: boolean,
@@ -116,6 +117,7 @@ const state = {
   highlightEnabled: false,
   dark: false,
   cacheKey: "",
+  selectGeneration: 0,
   comments: /** @type {any[]} */ ([]),
   selection: /** @type {null | { fileId: string, side: string, start: number, end: number, anchor: number }} */ (null),
   submitted: false,
@@ -1047,11 +1049,16 @@ async function selectIndex(index, options = { scrollTop: true }) {
   const override = state.highlightOverrides.get(id);
   const key = `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
   state.cacheKey = key;
+  const generation = ++state.selectGeneration;
   if (!state.cache.has(key)) {
     const data = await api.getFile(id, null, {
       dark: state.dark,
       highlight: override,
     });
+    if (generation !== state.selectGeneration) {
+      // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。
+      return;
+    }
     state.cache.set(key, { ...data, rows: data.rows || [] });
   }
   const data = state.cache.get(key);
