@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 実装の基準寸法はこのモックの約 110%（本文 15.5px 相当）。返信 UI は v1 では出さない。 -->
+<title>kemi UI モック — GitHub 風 + インラインコメント</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #f6f8fa; --panel-2: #eef1f4;
+  --ink: #1f2328; --ink-2: #59636e; --ink-3: #818b98;
+  --line: #d0d7de; --line-soft: #e7ebef;
+  --accent: #0969da; --accent-soft: #ddf4ff;
+  --add-bg: #e6ffec; --add-mark: #abf2bc; --add-ink: #1a7f37;
+  --del-bg: #ffebe9; --del-mark: #ffc9c4; --del-ink: #cf222e;
+  --focus: #9a6700; --focus-bg: #fff8c5;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117; --panel: #161b22; --panel-2: #21262d;
+  --ink: #e6edf3; --ink-2: #9198a1; --ink-3: #6e7681;
+  --line: #30363d; --line-soft: #21262d;
+  --accent: #4493f8; --accent-soft: #121d2f;
+  --add-bg: #12261e; --add-mark: #2ea04366; --add-ink: #3fb950;
+  --del-bg: #25171c; --del-mark: #f8514966; --del-ink: #f85149;
+  --focus: #d29922; --focus-bg: #272115;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+/* ---------- ヘッダー ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 18px;
+  padding: 12px 18px; border-bottom: 1px solid var(--line);
+  background: var(--panel); position: sticky; top: 0; z-index: 20;
+}
+.brand { font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.brand .mock { font-size: 10px; font-weight: 600; color: var(--focus); background: var(--focus-bg);
+  border: 1px solid var(--focus); border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+.title-block { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subtitle { color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { display: flex; gap: 10px; color: var(--ink-3); font-size: 11.5px; white-space: nowrap; }
+.meta b { color: var(--ink-2); font-weight: 600; }
+.spacer { flex: 1 1 auto; }
+.tools { display: flex; align-items: center; gap: 6px; }
+.iconbtn {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px;
+  background: var(--bg); color: var(--ink-2); border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.iconbtn:hover { background: var(--panel-2); color: var(--ink); }
+.iconbtn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.iconbtn svg, .chip svg { width: 15px; height: 15px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg .iconbtn { border: 0; border-radius: 0; height: 26px; }
+.seg .iconbtn + .iconbtn { border-left: 1px solid var(--line); }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--focus-bg); border-color: var(--focus); color: var(--focus); }
+.btn { height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; }
+.btn.primary { background: #1f883d; border-color: #1f883d; color: #fff; font-weight: 600; }
+.btn.danger { background: var(--bg); border-color: var(--del-ink); color: var(--del-ink); }
+
+/* ---------- レイアウト ---------- */
+.layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); height: calc(100vh - 46px); }
+.tree { border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 10px 48px; background: var(--panel); }
+main { overflow: auto; }
+
+/* ---------- ツリー ---------- */
+.group-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; border-radius: 6px; padding: 8px;
+  color: var(--ink); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer;
+}
+.group-head:hover { background: var(--panel-2); }
+.group-head .caret { color: var(--ink-3); transition: transform .12s; }
+.group-head[aria-expanded="false"] .caret { transform: rotate(-90deg); }
+.group-head .gtitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-head .st { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.group-body { margin: 6px 0 14px; }
+.group[data-open="false"] .group-body { display: none; }
+.why { margin: 4px 8px 4px 22px; color: var(--ink-2); font-size: 12px; line-height: 1.6;
+  border-left: 2px solid var(--line); padding-left: 8px; }
+.watch { margin: 6px 8px 8px 22px; font-size: 12px; color: var(--ink-2);
+  background: var(--focus-bg); border: 1px solid color-mix(in srgb, var(--focus) 35%, transparent);
+  border-radius: 6px; padding: 6px 8px; }
+.watch b { display: block; font-size: 10.5px; letter-spacing: .06em; color: var(--focus); margin-bottom: 2px; }
+ul.files { list-style: none; margin: 0; padding: 0; }
+ul.files ul { list-style: none; margin: 0; padding-left: 14px; }
+.dir > .dir-head {
+  display: flex; align-items: center; gap: 5px; width: 100%; padding: 5px 8px;
+  background: none; border: 0; border-radius: 6px; color: var(--ink-2);
+  font: inherit; font-size: 12px; cursor: pointer; text-align: left;
+}
+.dir > .dir-head:hover { background: var(--panel-2); color: var(--ink); }
+.dir[data-open="false"] > ul { display: none; }
+.file {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px 5px 20px;
+  background: none; border: 0; border-radius: 6px; color: var(--ink-2);
+  font: inherit; font-size: 12px; cursor: pointer; text-align: left;
+}
+.file:hover { background: var(--panel-2); color: var(--ink); }
+.file.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.file .fname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.file .st { font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+.st .p { color: var(--add-ink); } .st .m { color: var(--del-ink); }
+.badge-focus { font-size: 10px; color: var(--focus); background: var(--focus-bg);
+  border: 1px solid var(--focus); border-radius: 999px; padding: 0 6px; }
+
+/* ---------- diff ---------- */
+.group-header { position: sticky; top: 0; z-index: 10; background: var(--bg);
+  border-bottom: 1px solid var(--line); padding: 14px 20px; }
+.group-header .gh-line { display: flex; align-items: baseline; gap: 10px; }
+.group-header .gh-title { font-weight: 700; font-size: 15px; }
+.group-header .gh-st { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.group-header .gh-why { margin: 6px 0 0; color: var(--ink-2); white-space: pre-wrap; line-height: 1.6; }
+.group-header .gh-watch { margin-top: 8px; background: var(--focus-bg);
+  border: 1px solid color-mix(in srgb, var(--focus) 35%, transparent); border-radius: 6px; padding: 7px 10px;
+  color: var(--ink-2); font-size: 12.5px; }
+.group-header .gh-watch b { color: var(--focus); font-size: 11px; letter-spacing: .06em; display: block; margin-bottom: 2px; }
+.file-header { display: flex; align-items: center; gap: 8px; padding: 9px 20px;
+  border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+  position: sticky; top: var(--gh, 96px); background: var(--bg); z-index: 9; }
+.file-header .path { font-weight: 600; color: var(--ink); }
+.file-header .badge { font-family: var(--sans); font-size: 10.5px; border: 1px solid var(--line);
+  border-radius: 999px; padding: 0 7px; color: var(--ink-3); }
+.file-header .note { font-family: var(--sans); font-size: 11.5px; color: var(--focus);
+  background: var(--focus-bg); border-radius: 6px; padding: 1px 7px; }
+.diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.75; }
+.diff table { border-collapse: collapse; width: 100%; }
+.diff td { vertical-align: top; }
+td.no { width: 1%; padding: 0 8px; text-align: right; color: var(--ink-3); user-select: none;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.mk { width: 1%; padding: 0 6px; text-align: center; user-select: none; color: var(--ink-3); }
+td.src { padding: 0 12px 0 8px; white-space: pre; }
+tr.add td.src { background: var(--add-bg); } tr.add td.mk { color: var(--add-ink); }
+tr.del td.src { background: var(--del-bg); } tr.del td.mk { color: var(--del-ink); }
+tr.ctx td.src { color: var(--ink-2); }
+mark.add { background: var(--add-mark); border-radius: 2px; }
+mark.del { background: var(--del-mark); border-radius: 2px; }
+tr.hoverable:hover td.no.cursor { background: var(--accent-soft); color: var(--accent); cursor: pointer; }
+.line-add-btn { display: none; }
+tr.hoverable:hover .line-add-btn { display: inline-flex; }
+.line-add-btn { width: 16px; height: 16px; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; border: 0; border-radius: 4px; font-size: 12px; line-height: 1; cursor: pointer; }
+tr.skip td { padding: 4px 12px; color: var(--ink-3); background: var(--panel-2); font-size: 11px; text-align: center; }
+
+/* インラインコメント */
+tr.thread-row > td { background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.thread { padding: 11px 14px; font-family: var(--sans); }
+.fi { width: 14px; height: 14px; flex: 0 0 auto; color: var(--ink-3); }
+.file.active .fi { color: var(--accent); }
+.dir-head:hover .fi { color: var(--ink-2); }
+.t-role { font-weight: 600; color: var(--ink); font-size: 11.5px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; }
+.iconbtn.slim { width: 26px; padding: 0; justify-content: center; }
+.thread + .thread { border-top: 1px solid var(--line-soft); }
+.t-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
+
+.t-body { margin: 6px 0 0 30px; color: var(--ink); white-space: pre-wrap; line-height: 1.65; }
+.t-suggestion { margin: 8px 0 0 30px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.t-suggestion .sug-head { background: var(--panel-2); padding: 4px 10px; font-size: 11px; color: var(--ink-2); }
+.t-suggestion pre { margin: 0; padding: 8px 10px; background: var(--add-bg); overflow-x: auto; }
+.t-note { margin: 6px 0 0 30px; font-size: 11.5px; color: var(--ink-3); }
+.t-actions { margin: 6px 0 0 30px; display: flex; gap: 10px; font-size: 11.5px; }
+.t-actions button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+.t-actions .resolve { color: var(--ink-3); }
+.outdated { border-left: 3px solid var(--focus); }
+.outdated .t-outdated { margin: 6px 0 0 30px; font-size: 11px; color: var(--focus); }
+.reply-box { margin: 8px 0 0 30px; display: flex; gap: 6px; }
+.reply-box input { flex: 1 1 auto; height: 30px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--ink); padding: 0 9px; font: inherit; font-size: 12px; }
+.editor { padding: 8px 12px; background: var(--accent-soft); border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--accent); font-family: var(--sans); }
+.editor textarea { width: 100%; min-height: 64px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--ink); padding: 8px; font: inherit; font-size: 12.5px; resize: vertical; }
+.editor .row { display: flex; gap: 8px; margin-top: 6px; justify-content: flex-end; }
+
+/* split は簡略表示 */
+.split-cols { display: none; }
+html[data-mode="split"] .unified-cols { display: none; }
+html[data-mode="split"] .split-cols { display: table; }
+html[data-wrap="on"] td.src { white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- confirm ---------- */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal[hidden] { display: none; }
+.modal .box { background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 18px 20px; width: 360px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+.modal h3 { margin: 0 0 8px; font-size: 15px; }
+.modal p { margin: 0 0 14px; color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+.modal .row { display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">kemi<span class="mock">UI モック</span></div>
+  <div class="title-block">
+    <div class="title">セッションの復元と manifest 入力を追加</div>
+    <div class="subtitle">レビュー: エージェントが書いた理由と重要を、その場で読んで判断する</div>
+  </div>
+  <div class="meta">
+    <span><b>対象</b> main..kemi-v1</span>
+    <span><b>コミット</b> 3</span>
+    <span><b>変更</b> <span class="st"><span class="p">+182</span> <span class="m">−47</span></span></span>
+  </div>
+  <span class="spacer"></span>
+  <div class="tools">
+    <div class="seg" role="group" aria-label="表示モード">
+      <button class="iconbtn" id="btn-unified" aria-pressed="true" title="1 列（unified）">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+      </button>
+      <button class="iconbtn" id="btn-split" aria-pressed="false" title="2 列（split）">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M8 2.5v11"/></svg>
+      </button>
+    </div>
+    <button class="iconbtn" id="btn-wrap" aria-pressed="false" title="折り返し">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h8a2 2 0 1 1 0 4H7"/><path d="M9 10.5 7 12l2 1.5"/></svg>
+    </button>
+    <button class="chip" id="chip-focus" aria-pressed="false" title="重要が付いたファイルだけ表示">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 9.9 5.7l4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></svg>
+    </button>
+    <button class="chip" id="chip-sort" aria-pressed="false" title="増減数の多い順に並べ替える">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 3v10M4 13l-2-2M4 13l2-2M9 4h5M9 8h4M9 12h3"/></svg>
+    </button>
+    <button class="iconbtn" id="btn-theme" title="テーマ切替">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>
+    </button>
+    <button class="btn primary" id="btn-approve">承認</button>
+    <button class="btn danger" id="btn-changes">変更要求</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="tree" id="tree">
+    <!-- グループ 1 -->
+    <div class="group" data-open="true" data-group="1">
+      <button class="group-head" aria-expanded="true"><span class="caret">▾</span><span class="gtitle">1. feat: manifest の入力ソースを追加</span><span class="st"><span class="p">+96</span> <span class="m">−12</span></span></button>
+      <div class="group-body">
+        <p class="why">レビュー対象をコミット範囲だけでなく manifest からも取れるようにした。エージェントが下書きや散文をレビューに載せるための入口になる。</p>
+        <div class="watch"><b>見てほしい点</b>グループ id を省略したときの生成規則（g1…）と、存在しないパスを指したときの扱い。互換のために旧ツールより厳しくしている。</div>
+        <ul class="files">
+          <li class="dir" data-open="true">
+            <button class="dir-head"><span class="caret">▾</span><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 3.5h4l1.5 2h7.5v7h-13z"/></svg> src/source</button>
+            <ul>
+              <li><button class="file active focus-file" data-file="manifest.rs"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">manifest.rs</span><span class="st"><span class="p">+64</span> <span class="m">−8</span></span><span class="badge-focus">重要</span></button></li>
+              <li><button class="file" data-file="mod.rs"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">mod.rs</span><span class="st"><span class="p">+18</span> <span class="m">−4</span></span></button></li>
+            </ul>
+          </li>
+          <li><button class="file" data-file="test_manifest.rs"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">tests/manifest_test.rs</span><span class="st"><span class="p">+14</span> <span class="m">−0</span></span></button></li>
+        </ul>
+      </div>
+    </div>
+    <!-- グループ 2 -->
+    <div class="group" data-open="true" data-group="2">
+      <button class="group-head" aria-expanded="true"><span class="caret">▾</span><span class="gtitle">2. fix: 折りたたみの状態を再読込後も保つ</span><span class="st"><span class="p">+22</span> <span class="m">−9</span></span></button>
+      <div class="group-body">
+        <p class="why">サーバが持っている collapsed を、クライアントが noise 既定で上書きしていた。ノイズファイルを開いても再読込で戻る不具合の修正。</p>
+        <ul class="files">
+          <li class="dir" data-open="true">
+            <button class="dir-head"><span class="caret">▾</span><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 3.5h4l1.5 2h7.5v7h-13z"/></svg> web</button>
+            <ul>
+              <li><button class="file" data-file="model.js"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">model.js</span><span class="st"><span class="p">+12</span> <span class="m">−5</span></span></button></li>
+              <li><button class="file" data-file="app.js"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">app.js</span><span class="st"><span class="p">+10</span> <span class="m">−4</span></span></button></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+    <!-- グループ 3 -->
+    <div class="group" data-open="true" data-group="3">
+      <button class="group-head" aria-expanded="true"><span class="caret">▾</span><span class="gtitle">3. docs: README と使い方を追加</span><span class="st"><span class="p">+64</span> <span class="m">−26</span></span></button>
+      <div class="group-body">
+        <p class="why">インストールと JSON 契約の説明。初めて使う人が最初に読む。</p>
+        <ul class="files">
+          <li><button class="file" data-file="README.md"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">README.md</span><span class="st"><span class="p">+52</span> <span class="m">−26</span></span></button></li>
+          <li><button class="file" data-file="usage.md"><svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg><span class="fname">docs/usage.md</span><span class="st"><span class="p">+12</span> <span class="m">−0</span></span></button></li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="group-header">
+      <div class="gh-line"><span class="gh-title">1. feat: manifest の入力ソースを追加</span><span class="gh-st">+96 −12 / 4 files</span></div>
+      <p class="gh-why">レビュー対象をコミット範囲だけでなく manifest からも取れるようにした。エージェントが下書きや散文をレビューに載せるための入口になる。</p>
+      <div class="gh-watch"><b>見てほしい点</b>グループ id を省略したときの生成規則（g1…）と、存在しないパスを指したときの扱い。互換のために旧ツールより厳しくしている。</div>
+    </div>
+
+    <div class="file-header">
+      <span class="path">src/source/manifest.rs</span>
+      <span class="badge">変更</span>
+      <span class="st"><span class="p">+64</span> <span class="m">−8</span></span>
+      <span class="badge">重要</span>
+      <span class="note">互換キーの解釈が決定点</span>
+      <button class="iconbtn slim" title="パスをコピー">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5"/><path d="M10.5 5.5V3a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v7A1.5 1.5 0 0 0 4 11.5h1.5"/></svg>
+      </button>
+      <button class="iconbtn slim" title="すべての行を展開">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5.5 8 10l5-4.5"/><path d="M3 2.5h10"/></svg>
+      </button>
+      <span class="spacer"></span>
+      <span class="badge">Rust</span>
+    </div>
+
+    <div class="diff">
+      <table class="unified-cols">
+        <tr class="hoverable ctx">
+          <td class="no cursor">41</td><td class="no">41</td><td class="mk"></td>
+          <td class="src">fn read_side(spec: &amp;DiffSpec, base: &amp;Path) -&gt; Result&lt;Side&gt; {</td>
+        </tr>
+        <tr class="hoverable del">
+          <td class="no cursor">42</td><td class="no"></td><td class="mk">−</td>
+          <td class="src">    let text = spec.<mark class="del">old</mark>.clone().unwrap_or_default();</td>
+        </tr>
+        <tr class="hoverable add">
+          <td class="no"></td><td class="no cursor">42</td><td class="mk">+</td>
+          <td class="src">    let text = match (spec.<mark class="add">old</mark>.as_ref(), spec.<mark class="add">old_path</mark>.as_ref()) {</td>
+        </tr>
+        <tr class="add">
+          <td class="no"></td><td class="no">43</td><td class="mk">+</td>
+          <td class="src">        (Some(v), None) =&gt; v.clone(),</td>
+        </tr>
+        <tr class="add">
+          <td class="no"></td><td class="no">44</td><td class="mk">+</td>
+          <td class="src">        (None, Some(p)) =&gt; read_file(base.join(p))?,</td>
+        </tr>
+        <tr class="add">
+          <td class="no"></td><td class="no">45</td><td class="mk">+</td>
+          <td class="src">        (Some(_), Some(_)) =&gt; return Err(Error::BothSides),</td>
+        </tr>
+        <!-- インラインスレッド（人間のコメント） -->
+        <tr class="thread-row"><td colspan="4">
+          <div class="thread">
+            <div class="t-head"><span class="t-role">あなた</span><span>2 分前</span></div>
+            <div class="t-body">`old` と `old_path` の同時指定はエラーで正解。移行時に気付ける方がいい。</div>
+            <div class="t-actions"><button class="resolve">解決</button></div>
+          </div>
+        </td></tr>
+        <tr class="hoverable ctx">
+          <td class="no cursor">46</td><td class="no">47</td><td class="mk"></td>
+          <td class="src">    };</td>
+        </tr>
+        <tr class="skip"><td colspan="4">… 32 行 変更なし …</td></tr>
+        <!-- suggestion 付きコメント -->
+        <tr class="hoverable add">
+          <td class="no"></td><td class="no cursor">79</td><td class="mk">+</td>
+          <td class="src">    ids.next()<span class="line-add-btn">+</span></td>
+        </tr>
+        <tr class="thread-row"><td colspan="4">
+          <div class="thread">
+            <div class="t-head"><span class="t-role">あなた</span><span>1 分前</span><span class="badge-focus">提案</span></div>
+            <div class="t-body">ここは `g1` から始まる旧形式と合わせたい。</div>
+            <div class="t-suggestion">
+              <div class="sug-head">提案された変更</div>
+              <pre>    format!("g{}", ids.next())</pre>
+            </div>
+            <div class="t-actions"><button class="resolve">解決</button></div>
+            <div class="t-note">この提案はコメントと一緒に JSON でエージェントへ渡る（適用はエージェント）。</div>
+          </div>
+        </td></tr>
+        <!-- 古いコメント -->
+        <tr class="hoverable ctx">
+          <td class="no cursor">80</td><td class="no">81</td><td class="mk"></td>
+          <td class="src">}</td>
+        </tr>
+        <tr class="thread-row"><td colspan="4">
+          <div class="thread outdated">
+            <div class="t-head"><span class="t-role">あなた</span><span>昨日</span></div>
+            <div class="t-body">この行の並び、テストでも固定しておいて。</div>
+            <div class="t-outdated">古いコメント — この後にファイルが変更されています（行番号は作成時のまま）</div>
+          </div>
+        </td></tr>
+      </table>
+
+      <table class="split-cols">
+        <tr class="hoverable del">
+          <td class="no cursor">42</td><td class="mk">−</td>
+          <td class="src" style="width:50%">    let text = spec.old.clone().unwrap_or_default();</td>
+          <td class="no">42</td><td class="mk"></td>
+          <td class="src" style="width:50%">    let text = match (spec.old.as_ref(), spec.old_path.as_ref()) {</td>
+        </tr>
+        <tr class="add">
+          <td class="no"></td><td class="mk"></td><td class="src"></td>
+          <td class="no">43</td><td class="mk">+</td><td class="src">        (Some(v), None) =&gt; v.clone(),</td>
+        </tr>
+        <tr class="skip"><td colspan="6">… 残りは unified と同じ（モックでは簡略） …</td></tr>
+      </table>
+    </div>
+  </main>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="box">
+    <h3 id="modal-title">承認しますか?</h3>
+    <p id="modal-body">レビューを終了して、コメントと verdict を実行ターミナルへ JSON で返します。この操作は取り消せません。</p>
+    <div class="row">
+      <button class="btn" id="modal-cancel">戻る</button>
+      <button class="btn primary" id="modal-ok">承認して終了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const qsa = (s) => Array.from(document.querySelectorAll(s));
+
+  // ディレクトリ・グループ開閉
+  document.addEventListener("click", (e) => {
+    const head = e.target.closest(".group-head");
+    if (head) {
+      const g = head.parentElement;
+      const open = g.dataset.open !== "false";
+      g.dataset.open = open ? "false" : "true";
+      head.setAttribute("aria-expanded", String(!open));
+      return;
+    }
+    const dirHead = e.target.closest(".dir-head");
+    if (dirHead) {
+      const d = dirHead.parentElement;
+      d.dataset.open = d.dataset.open === "false" ? "true" : "false";
+      dirHead.querySelector(".caret").textContent = d.dataset.open === "false" ? "▸" : "▾";
+    }
+  });
+
+  // 表示モード
+  const setMode = (mode) => {
+    root.dataset.mode = mode;
+    document.getElementById("btn-unified").setAttribute("aria-pressed", String(mode === "unified"));
+    document.getElementById("btn-split").setAttribute("aria-pressed", String(mode === "split"));
+  };
+  document.getElementById("btn-unified").onclick = () => setMode("unified");
+  document.getElementById("btn-split").onclick = () => setMode("split");
+
+  // 折り返し
+  const wrapBtn = document.getElementById("btn-wrap");
+  wrapBtn.onclick = () => {
+    const on = root.dataset.wrap === "on";
+    root.dataset.wrap = on ? "off" : "on";
+    wrapBtn.setAttribute("aria-pressed", String(!on));
+  };
+
+  // 重要のみ
+  const focusChip = document.getElementById("chip-focus");
+  function applyFocusFilter(on) {
+    qsa("#tree .file").forEach((f) => {
+      const keep = !on || f.classList.contains("focus-file");
+      f.style.display = keep ? "" : "none";
+    });
+    qsa("#tree .dir").forEach((d) => {
+      const any = Array.from(d.querySelectorAll(".file")).some((f) => f.style.display !== "none");
+      d.style.display = any ? "" : "none";
+    });
+    qsa("#tree .group").forEach((g) => {
+      const any = Array.from(g.querySelectorAll(".file")).some((f) => f.style.display !== "none");
+      g.style.display = any ? "" : "none";
+    });
+  }
+  focusChip.onclick = () => {
+    const next = focusChip.getAttribute("aria-pressed") !== "true";
+    focusChip.setAttribute("aria-pressed", String(next));
+    applyFocusFilter(next);
+  };
+
+  // 変更量順（モックではトグルの見た目のみ）
+  const sortChip = document.getElementById("chip-sort");
+  sortChip.onclick = () => {
+    const on = sortChip.getAttribute("aria-pressed") === "true";
+    sortChip.setAttribute("aria-pressed", String(!on));
+  };
+
+  // テーマ
+  document.getElementById("btn-theme").onclick = () => {
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+  };
+
+  // 行ホバーの + でインライン入力を開く
+  document.addEventListener("click", (e) => {
+    const plus = e.target.closest(".line-add-btn");
+    if (plus) {
+      e.stopPropagation();
+      qsa(".editor-row").forEach((r) => r.remove());
+      const tr = plus.closest("tr");
+      const next = tr.nextElementSibling;
+      const row = document.createElement("tr");
+      row.className = "editor-row";
+      row.innerHTML = '<td colspan="4"><div class="editor"><textarea placeholder="この行へのコメント（Cmd/Ctrl+Enter で記録）"></textarea><div class="row"><button class="btn cancel">やめる</button><button class="btn primary save">コメント</button></div></div></td>';
+      (next && next.classList.contains("thread-row") ? next : tr).after(row);
+      row.querySelector("textarea").focus();
+      row.querySelector(".cancel").onclick = () => row.remove();
+      row.querySelector(".save").onclick = () => row.remove();
+    }
+  });
+
+  // 承認/変更要求の confirm
+  const modal = document.getElementById("modal");
+  const openModal = (kind) => {
+    document.getElementById("modal-title").textContent = kind === "approve" ? "承認しますか?" : "変更要求として送信しますか?";
+    document.getElementById("modal-body").textContent =
+      kind === "approve"
+        ? "レビューを終了して、承認の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。"
+        : "レビューを終了して、変更要求の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。";
+    document.getElementById("modal-ok").className = kind === "approve" ? "btn primary" : "btn danger";
+    document.getElementById("modal-ok").textContent = kind === "approve" ? "承認して終了" : "変更要求で終了";
+    modal.hidden = false;
+  };
+  document.getElementById("btn-approve").onclick = () => openModal("approve");
+  document.getElementById("btn-changes").onclick = () => openModal("changes");
+  document.getElementById("modal-cancel").onclick = () => { modal.hidden = true; };
+  document.getElementById("modal-ok").onclick = () => { modal.hidden = true; };
+</script>
+</body>
+</html>
