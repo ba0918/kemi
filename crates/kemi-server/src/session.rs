@@ -1,6 +1,6 @@
 //! セッション状態（R-SERVE）。コメント、見た、折りたたみ、解決をメモリに持つ。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kemi_core::domain::review::Comment;
 use serde_json::json;
@@ -9,7 +9,7 @@ use serde_json::json;
 pub struct Session {
     pub comments: Vec<Comment>,
     pub seen: BTreeSet<String>,
-    pub collapsed: BTreeSet<String>,
+    pub collapsed: BTreeMap<String, bool>,
     pub next_comment: u32,
 }
 

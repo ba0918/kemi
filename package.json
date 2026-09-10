@@ -1,0 +1,5 @@
+{
+  "name": "kemi-workspace",
+  "private": true,
+  "workspaces": ["web"]
+}

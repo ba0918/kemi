@@ -2,7 +2,11 @@
   "name": "kemi-web",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
   "devDependencies": {
+    "@types/node": "24.3.0",
     "typescript": "5.9.3"
   }
 }

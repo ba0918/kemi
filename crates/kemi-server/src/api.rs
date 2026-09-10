@@ -214,7 +214,11 @@ fn review_json(review: &ReviewMeta, session: &Session) -> Value {
                 "note": file.note,
                 "noise": file.noise,
                 "seen": session.seen.contains(&file.id),
-                "collapsed": session.collapsed.contains(&file.id),
+                "collapsed": session
+                    .collapsed
+                    .get(&file.id)
+                    .copied()
+                    .unwrap_or(file.noise),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     })
@@ -559,16 +563,16 @@ async fn state_api(
         }
     }
     if let Some(collapsed) = request.collapsed {
-        if collapsed {
-            session.collapsed.insert(request.file_id.clone());
-        } else {
-            session.collapsed.remove(&request.file_id);
-        }
+        session.collapsed.insert(request.file_id.clone(), collapsed);
     }
     Ok(Json(json!({
         "id": request.file_id,
         "seen": session.seen.contains(&request.file_id),
-        "collapsed": session.collapsed.contains(&request.file_id),
+        "collapsed": session
+            .collapsed
+            .get(&request.file_id)
+            .copied()
+            .unwrap_or(false),
     })))
 }
 
