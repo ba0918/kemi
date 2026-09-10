@@ -851,14 +851,17 @@ ul.files ul {
   min-width: 0;
 }
 
-mark.changed {
+.changed,
+.word-changed {
   background: var(--add-mark);
   border-radius: 2px;
   color: inherit;
 }
 
-.row.kind-delete mark.changed,
-.row.kind-replace-old mark.changed {
+.row.kind-delete .changed,
+.row.kind-delete .word-changed,
+.row.kind-replace-old .changed,
+.row.kind-replace-old .word-changed {
   background: var(--del-mark);
 }
 
