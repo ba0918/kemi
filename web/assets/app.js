@@ -237,6 +237,8 @@ async function refresh() {
   state.updateAvailable = false;
   renderUpdateBadge();
   const scrollTop = dom.viewport.scrollTop;
+  // 取得中の展開応答が、新しいレビューで消えたキャッシュへ古い行を戻さないようにする。
+  state.selectGeneration += 1;
   state.cache.clear();
   state.commentStore.clear();
   state.review = await api.getReview(true);
@@ -1054,6 +1056,7 @@ async function expandSkip(line) {
     return;
   }
   const generation = state.selectGeneration;
+  const cacheKey = state.cacheKey;
   const data = await api.getFile(
     entry.file.id,
     { from: skip.from, to: skip.to },
@@ -1062,8 +1065,13 @@ async function expandSkip(line) {
       highlight: state.highlightOverrides.get(entry.file.id),
     },
   );
-  if (generation !== state.selectGeneration) {
-    // 取得中に別のファイルが選ばれた。古い応答で表示とキャッシュを上書きしない。
+  if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
+    // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
+    return;
+  }
+  const index = state.rows.indexOf(skip);
+  if (index < 0) {
+    // 同じ折りたたみ行が先に展開された。取得前の位置へ挿すと表示行が重複する。
     return;
   }
   const replacement = /** @type {LogicalRow[]} */ (data.rows);
@@ -1079,8 +1087,10 @@ async function expandSkip(line) {
       to: skip.to,
     });
   }
-  state.rows.splice(line.logicalIndex, 1, ...replacement);
-  state.cache.set(state.cacheKey, { ...state.cache.get(state.cacheKey), rows: state.rows });
+  const rows = state.rows.slice();
+  rows.splice(index, 1, ...replacement);
+  state.rows = rows;
+  state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
   recomputeDisplay();
   renderDiff();
 }
