@@ -1,0 +1,8 @@
+[package]
+name = "kemi-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Domain and input-source layers for kemi"
+
+[dependencies]

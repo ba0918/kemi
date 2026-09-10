@@ -1,0 +1,9 @@
+[package]
+name = "kemi-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTP and SSE server for kemi"
+
+[dependencies]
+kemi-core = { path = "../kemi-core" }
