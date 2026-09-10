@@ -452,13 +452,7 @@ mod tests {
     #[test]
     fn digest_top_files_omitted_covers_budget_cut() {
         let files: Vec<FileEntry> = (0..2_000)
-            .map(|index| {
-                file(
-                    &format!("dir{}/{}", index % 50, "x".repeat(140)),
-                    1,
-                    1,
-                )
-            })
+            .map(|index| file(&format!("dir{}/{}", index % 50, "x".repeat(140)), 1, 1))
             .collect();
         let review = review_with(files);
 
