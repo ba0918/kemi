@@ -1,0 +1,4 @@
+{
+  "groups": { "g1": { "watch": "focus の watch" } },
+  "files": [{ "path": "src/a.rs", "focus": true, "note": "focus の note" }]
+}

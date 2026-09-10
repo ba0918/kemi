@@ -13,6 +13,20 @@ pub enum FocusError {
     UnknownPath(String),
 }
 
+impl std::fmt::Display for FocusError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FocusError::Parse(message) => write!(formatter, "focus を読めません: {message}"),
+            FocusError::UnknownGroup(id) => {
+                write!(formatter, "focus のグループ id が見つかりません: {id}")
+            }
+            FocusError::UnknownPath(path) => {
+                write!(formatter, "focus のパスが見つかりません: {path}")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct FocusLayer {
     #[serde(default)]

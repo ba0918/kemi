@@ -1,0 +1,64 @@
+{
+  "title": "legacy manifest のレビュー",
+  "groups": [
+    {
+      "id": "g1",
+      "title": "最初の変更",
+      "watch": "ここを見て",
+      "files": [
+        {
+          "path": "src/a.rs",
+          "old_path": null,
+          "status": "modify",
+          "add": 1,
+          "del": 1,
+          "focus": true,
+          "note": "決定点",
+          "noise": false,
+          "binary": false
+        },
+        {
+          "path": "src/added.rs",
+          "old_path": null,
+          "status": "add",
+          "add": 1,
+          "del": 0,
+          "focus": false,
+          "note": "",
+          "noise": false,
+          "binary": false
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "title": "二つ目",
+      "watch": "",
+      "files": [
+        {
+          "path": "src/removed.rs",
+          "old_path": null,
+          "status": "delete",
+          "add": 0,
+          "del": 1,
+          "focus": false,
+          "note": "",
+          "noise": false,
+          "binary": false
+        },
+        {
+          "path": "src/renamed.rs",
+          "old_path": "src/renamed_old.rs",
+          "status": "rename",
+          "add": 1,
+          "del": 1,
+          "focus": false,
+          "note": "",
+          "noise": false,
+          "binary": false
+        }
+      ]
+    }
+  ],
+  "approval": [{ "path": "src/a.rs", "identity": "sha256:abc123" }]
+}

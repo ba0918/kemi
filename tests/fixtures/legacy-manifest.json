@@ -1,0 +1,42 @@
+{
+  "title": "legacy manifest のレビュー",
+  "subtitle": "旧ツール互換の確認",
+  "meta": { "author": "ba0918" },
+  "groups": [
+    {
+      "id": "g1",
+      "title": "最初の変更",
+      "why": "最初の理由",
+      "watch": "ここを見て",
+      "diffs": [
+        {
+          "path": "src/a.rs",
+          "old": "fn main() {\n    old();\n}\n",
+          "new": "fn main() {\n    new();\n}\n",
+          "focus": true,
+          "note": "決定点"
+        },
+        {
+          "path": "src/added.rs",
+          "new": "pub fn added() {}\n"
+        }
+      ]
+    },
+    {
+      "title": "二つ目",
+      "diffs": [
+        {
+          "path": "src/removed.rs",
+          "old": "pub fn removed() {}\n"
+        },
+        {
+          "path": "src/renamed.rs",
+          "old_path": "tests/fixtures/legacy-base/renamed_old.txt",
+          "new_path": "tests/fixtures/legacy-base/renamed_new.txt",
+          "renamed_from": "src/renamed_old.rs"
+        }
+      ]
+    }
+  ],
+  "approval": [{ "path": "src/a.rs", "identity": "sha256:abc123" }]
+}
