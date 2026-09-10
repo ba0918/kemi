@@ -222,7 +222,7 @@ async function refresh() {
   renderUpdateBadge();
   const scrollTop = dom.viewport.scrollTop;
   state.cache.clear();
-  state.review = await api.getReview(false);
+  state.review = await api.getReview(true);
   state.entries = flatten(state.review);
   const keepId = currentEntry() ? currentEntry().file.id : undefined;
   rebuildVisible(keepId);
