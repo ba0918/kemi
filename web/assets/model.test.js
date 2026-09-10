@@ -9,6 +9,7 @@ import {
   formatBytes,
   keyAction,
   lineOffsets,
+  nextHighlightOverride,
   replaceComment,
   statusLabel,
   suggestionAllowed,
@@ -248,6 +249,14 @@ test("commentLabel_marks_file_wide_and_ranges", () => {
 test("suggestionAllowed_only_on_new_side", () => {
   assert.equal(suggestionAllowed("new"), true);
   assert.equal(suggestionAllowed("old"), false);
+});
+
+test("nextHighlightOverride_toggles_one_file_at_a_time", () => {
+  // 有効なら off、上限内なら既定に戻し、上限超過ならそのファイルだけ on。
+  assert.equal(nextHighlightOverride(true, false), "off");
+  assert.equal(nextHighlightOverride(true, true), "off");
+  assert.equal(nextHighlightOverride(false, true), null);
+  assert.equal(nextHighlightOverride(false, false), "on");
 });
 
 test("draftKey_separates_file_and_range", () => {

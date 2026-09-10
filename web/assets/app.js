@@ -10,6 +10,7 @@ import {
   formatBytes,
   keyAction,
   lineOffsets,
+  nextHighlightOverride,
   replaceComment,
   statusLabel,
   suggestionAllowed,
@@ -82,7 +83,7 @@ const dom = {
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
  *   rendering: boolean,
- *   highlightMode: string,
+ *   highlightOverrides: Map<string, "on" | "off">,
  *   highlightCapable: boolean,
  *   highlightEnabled: boolean,
  *   dark: boolean,
@@ -110,7 +111,7 @@ const state = {
   binary: false,
   collapsedOverrides: {},
   rendering: false,
-  highlightMode: localStorage.getItem("kemi-highlight") || "auto",
+  highlightOverrides: new Map(),
   highlightCapable: false,
   highlightEnabled: false,
   dark: false,
@@ -367,14 +368,15 @@ function renderGroupAndFile() {
   }
   highlightButton.classList.toggle("active", state.highlightEnabled);
   highlightButton.addEventListener("click", () => {
-    if (state.highlightEnabled) {
-      state.highlightMode = "off";
-    } else if (state.highlightCapable) {
-      state.highlightMode = "auto";
+    const next = nextHighlightOverride(
+      state.highlightEnabled,
+      state.highlightCapable,
+    );
+    if (next === null) {
+      state.highlightOverrides.delete(entry.file.id);
     } else {
-      state.highlightMode = "on";
+      state.highlightOverrides.set(entry.file.id, next);
     }
-    localStorage.setItem("kemi-highlight", state.highlightMode);
     void selectIndex(state.index, { scrollTop: false });
   });
   dom.fileHeader.append(highlightButton);
@@ -1001,7 +1003,7 @@ async function expandSkip(line) {
     { from: skip.from, to: skip.to },
     {
       dark: state.dark,
-      highlight: state.highlightMode === "auto" ? undefined : state.highlightMode,
+      highlight: state.highlightOverrides.get(entry.file.id),
     },
   );
   const replacement = /** @type {LogicalRow[]} */ (data.rows);
@@ -1042,12 +1044,13 @@ async function selectIndex(index, options = { scrollTop: true }) {
     return;
   }
   const id = entry.file.id;
-  const key = `${id}|${state.dark ? 1 : 0}|${state.highlightMode}`;
+  const override = state.highlightOverrides.get(id);
+  const key = `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
   state.cacheKey = key;
   if (!state.cache.has(key)) {
     const data = await api.getFile(id, null, {
       dark: state.dark,
-      highlight: state.highlightMode === "auto" ? undefined : state.highlightMode,
+      highlight: override,
     });
     state.cache.set(key, { ...data, rows: data.rows || [] });
   }

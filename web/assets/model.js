@@ -292,6 +292,23 @@ export function draftKey(fileId, selection) {
 }
 
 /**
+ * ハイライトボタンを押した後のそのファイルの指定。
+ * null はファイル既定（上限内なら有効）に戻すことを表す。
+ * @param {boolean} enabled
+ * @param {boolean} capable
+ * @returns {"on" | "off" | null}
+ */
+export function nextHighlightOverride(enabled, capable) {
+  if (enabled) {
+    return "off";
+  }
+  if (capable) {
+    return null;
+  }
+  return "on";
+}
+
+/**
  * @param {string} status
  * @returns {string}
  */
