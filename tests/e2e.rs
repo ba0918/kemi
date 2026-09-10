@@ -554,6 +554,9 @@ fn digest_mode_schema_and_bounded_output() {
         .iter()
         .any(|directory| directory["path"] == "src"));
     assert_eq!(digest["top_n"], 100);
+    assert_eq!(digest["top_files_omitted"]["files"], 0);
+    assert_eq!(digest["top_files_omitted"]["add"], 0);
+    assert_eq!(digest["top_files_omitted"]["del"], 0);
     assert!(!stdout.contains("\"quote\""));
     assert!(stdout.len() < 100_000, "digest was {} bytes", stdout.len());
 }
@@ -574,6 +577,12 @@ fn digest_mode_top_n_limits_and_sorts() {
 
     assert_eq!(digest["top_n"], 2);
     assert_eq!(top.len(), 2);
+    let omitted = digest["top_files_omitted"]["files"].as_u64().unwrap();
+    assert_eq!(omitted, 2);
+    assert_eq!(
+        top.len() as u64 + omitted,
+        digest["totals"]["files"].as_u64().unwrap()
+    );
     for pair in top.windows(2) {
         let left = pair[0]["add"].as_u64().unwrap() + pair[0]["del"].as_u64().unwrap();
         let right = pair[1]["add"].as_u64().unwrap() + pair[1]["del"].as_u64().unwrap();
@@ -622,5 +631,11 @@ fn digest_mode_bounded_thirty_thousand_files() {
 
     assert_eq!(digest["totals"]["files"], 30_000);
     assert_eq!(digest["top_files"].as_array().unwrap().len(), 100);
+    assert_eq!(digest["top_files_omitted"]["files"], 29_900);
+    assert_eq!(
+        digest["top_files"].as_array().unwrap().len() as u64
+            + digest["top_files_omitted"]["files"].as_u64().unwrap(),
+        digest["totals"]["files"].as_u64().unwrap()
+    );
     assert!(stdout.len() < 100_000, "digest was {} bytes", stdout.len());
 }

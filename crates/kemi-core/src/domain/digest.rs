@@ -29,6 +29,7 @@ pub struct Digest {
     pub groups: Vec<DigestGroup>,
     pub directories: Vec<DigestDirectory>,
     pub top_files: Vec<DigestFile>,
+    pub top_files_omitted: DigestOmitted,
     pub top_n: usize,
 }
 
@@ -71,12 +72,22 @@ pub struct DigestFile {
     pub note: String,
 }
 
-/// 出力の組み立てに使う上限。文字列の文字数、グループ数、ディレクトリ数。
+/// 予算または `top_n` で `top_files` に載せられなかった分の件数と増減の合計。
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct DigestOmitted {
+    pub files: usize,
+    pub add: u64,
+    pub del: u64,
+}
+
+/// 出力の組み立てに使う上限。文字列の文字数、グループ数、ディレクトリ数、
+/// top_files の件数。
 #[derive(Clone, Copy)]
 struct Limits {
     strings: usize,
     groups: usize,
     directories: usize,
+    top_files: usize,
 }
 
 pub fn build_digest(review: &ReviewMeta, top_n: usize) -> Digest {
@@ -84,18 +95,25 @@ pub fn build_digest(review: &ReviewMeta, top_n: usize) -> Digest {
         strings: FIELD_LIMIT,
         groups: GROUP_LIMIT,
         directories: DIRECTORY_LIMIT,
+        top_files: top_n,
     };
     loop {
         if let Some(digest) = fit_strings(review, top_n, limits) {
             return digest;
         }
         // 文字列を空にしても予算を超えるのは、項目の構造だけで大きい場合。
-        // グループ数・ディレクトリ数を減らして再挑戦する。
-        if limits.groups <= 1 && limits.directories <= 1 {
-            return assemble(review, top_n, limits);
+        // グループ数・ディレクトリ数を減らし、それでも収まらなければ
+        // top_files の件数を減らして再挑戦する。
+        if limits.groups > 1 || limits.directories > 1 {
+            limits.groups = (limits.groups / 2).max(1);
+            limits.directories = (limits.directories / 2).max(1);
+            continue;
         }
-        limits.groups = (limits.groups / 2).max(1);
-        limits.directories = (limits.directories / 2).max(1);
+        if limits.top_files > 0 {
+            limits.top_files /= 2;
+            continue;
+        }
+        return assemble(review, top_n, limits);
     }
 }
 
@@ -245,9 +263,22 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
             .cmp(&left_total)
             .then_with(|| left.path.cmp(&right.path))
     });
+    let omitted = DigestOmitted {
+        files: all_files.len().saturating_sub(limits.top_files),
+        add: all_files
+            .iter()
+            .skip(limits.top_files)
+            .map(|file| u64::from(file.add))
+            .sum(),
+        del: all_files
+            .iter()
+            .skip(limits.top_files)
+            .map(|file| u64::from(file.del))
+            .sum(),
+    };
     let mut top_files: Vec<DigestFile> = all_files
         .into_iter()
-        .take(top_n)
+        .take(limits.top_files)
         .map(|file| DigestFile {
             path: truncate(&file.path, limits.strings),
             status: file.status.as_str().to_string(),
@@ -274,6 +305,7 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
         groups,
         directories,
         top_files,
+        top_files_omitted: omitted,
         top_n,
     }
 }
@@ -384,6 +416,61 @@ mod tests {
         let digest = build_digest(&review, 2);
         assert_eq!(digest.top_files.len(), 2);
         assert_eq!(digest.top_n, 2);
+    }
+
+    #[test]
+    fn digest_top_files_omitted_reports_cut_files() {
+        let review = review_with(vec![
+            file("a.rs", 10, 0),
+            file("b.rs", 5, 0),
+            file("c.rs", 1, 2),
+        ]);
+
+        let digest = build_digest(&review, 2);
+
+        assert_eq!(digest.top_files.len(), 2);
+        assert_eq!(digest.top_files_omitted.files, 1);
+        assert_eq!(digest.top_files_omitted.add, 1);
+        assert_eq!(digest.top_files_omitted.del, 2);
+        assert_eq!(
+            digest.top_files.len() + digest.top_files_omitted.files,
+            digest.totals.files
+        );
+    }
+
+    #[test]
+    fn digest_top_files_omitted_is_zero_when_nothing_is_cut() {
+        let review = review_with(vec![file("a.rs", 1, 1), file("b.rs", 2, 2)]);
+
+        let digest = build_digest(&review, 100);
+
+        assert_eq!(digest.top_files_omitted.files, 0);
+        assert_eq!(digest.top_files_omitted.add, 0);
+        assert_eq!(digest.top_files_omitted.del, 0);
+    }
+
+    #[test]
+    fn digest_top_files_omitted_covers_budget_cut() {
+        let files: Vec<FileEntry> = (0..2_000)
+            .map(|index| {
+                file(
+                    &format!("dir{}/{}", index % 50, "x".repeat(140)),
+                    1,
+                    1,
+                )
+            })
+            .collect();
+        let review = review_with(files);
+
+        let digest = build_digest(&review, 2_000);
+        let json = serde_json::to_string(&digest).unwrap();
+
+        assert!(json.len() < 100_000, "digest was {} bytes", json.len());
+        assert!(digest.top_files.len() < 2_000);
+        assert_eq!(
+            digest.top_files.len() + digest.top_files_omitted.files,
+            digest.totals.files
+        );
     }
 
     #[test]
