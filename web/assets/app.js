@@ -514,6 +514,7 @@ function treeItem(entry, label, items) {
   item.append(
     svgIcon(FILE_ICON),
     textEl("span", "fname", label),
+    textEl("span", "badge status", statusLabel(entry.file.status)),
     fileStatsEl(entry.file),
   );
   if (entry.file.focus) {

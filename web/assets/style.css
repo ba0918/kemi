@@ -541,6 +541,23 @@ ul.files ul {
   color: var(--del-ink);
 }
 
+.file .badge {
+  flex: 0 0 auto;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.file.active .badge {
+  color: inherit;
+  border-color: currentColor;
+}
+
 .caret {
   color: var(--ink-3);
   flex: 0 0 auto;
