@@ -221,6 +221,7 @@ fn review_json(review: &ReviewMeta, session: &Session) -> Value {
                     .unwrap_or(file.noise),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
+        "comments": session.comments.iter().map(comment_json).collect::<Vec<_>>(),
     })
 }
 
@@ -248,6 +249,7 @@ async fn file(
             "old_size": file.old_size,
             "new_size": file.new_size,
             "rows": [],
+            "comments": comments_for(&state, &id),
         })));
     }
 
@@ -269,6 +271,7 @@ async fn file(
             "binary": false,
             "rows": slice,
             "next": next,
+            "comments": comments_for(&state, &id),
         })));
     }
 
@@ -283,7 +286,18 @@ async fn file(
         "old_total": old_lines.len(),
         "new_total": new_lines.len(),
         "rows": rows_json,
+        "comments": comments_for(&state, &id),
     })))
+}
+
+fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
+    let session = state.session.lock().expect("session poisoned");
+    session
+        .comments
+        .iter()
+        .filter(|comment| comment.file_id == file_id)
+        .map(comment_json)
+        .collect()
 }
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {

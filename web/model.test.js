@@ -3,11 +3,13 @@ import { test } from "node:test";
 
 import {
   collapseDefault,
+  commentLabel,
   filterAndSortFiles,
   formatBytes,
   keyAction,
   lineOffsets,
   statusLabel,
+  suggestionAllowed,
   toDisplayLines,
   windowFor,
 } from "./model.js";
@@ -230,4 +232,15 @@ test("formatBytes_uses_binary_units", () => {
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(2048), "2.0 KiB");
   assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MiB");
+});
+
+test("commentLabel_marks_file_wide_and_ranges", () => {
+  assert.equal(commentLabel({ side: "new", start_line: null, end_line: null }), "ファイル全体");
+  assert.equal(commentLabel({ side: "new", start_line: 3, end_line: 3 }), "新側 3");
+  assert.equal(commentLabel({ side: "old", start_line: 4, end_line: 6 }), "旧側 4–6");
+});
+
+test("suggestionAllowed_only_on_new_side", () => {
+  assert.equal(suggestionAllowed("new"), true);
+  assert.equal(suggestionAllowed("old"), false);
 });

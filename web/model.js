@@ -239,6 +239,34 @@ export function collapseDefault(file, collapsedMap) {
 }
 
 /**
+ * コメントの位置表示。ファイル全体は行を持たない。
+ * @param {any} comment
+ * @returns {string}
+ */
+export function commentLabel(comment) {
+  if (comment.start_line === null || comment.start_line === undefined) {
+    return "ファイル全体";
+  }
+  const side = comment.side === "new" ? "新側" : "旧側";
+  const single =
+    comment.end_line === null ||
+    comment.end_line === undefined ||
+    comment.end_line === comment.start_line;
+  return single
+    ? `${side} ${comment.start_line}`
+    : `${side} ${comment.start_line}–${comment.end_line}`;
+}
+
+/**
+ * suggestion は新側の行コメントにだけ付く。
+ * @param {string} side
+ * @returns {boolean}
+ */
+export function suggestionAllowed(side) {
+  return side === "new";
+}
+
+/**
  * @param {string} status
  * @returns {string}
  */

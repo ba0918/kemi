@@ -4,11 +4,13 @@
 import * as api from "./api.js";
 import {
   collapseDefault,
+  commentLabel,
   filterAndSortFiles,
   formatBytes,
   keyAction,
   lineOffsets,
   statusLabel,
+  suggestionAllowed,
   toDisplayLines,
   windowFor,
 } from "./model.js";
@@ -44,6 +46,12 @@ const dom = {
   focus: must("#toggle-focus"),
   sort: must("#toggle-sort"),
   theme: /** @type {HTMLSelectElement} */ (must("#theme-select")),
+  selectionBar: must("#selection-bar"),
+  commentsList: must("#comments-list"),
+  submitApproved: must("#submit-approved"),
+  submitChanges: must("#submit-changes"),
+  overlay: must("#overlay"),
+  overlayCard: must("#overlay-card"),
 };
 
 /**
@@ -70,6 +78,9 @@ const dom = {
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
  *   rendering: boolean,
+ *   comments: any[],
+ *   selection: null | { fileId: string, side: string, start: number, end: number, anchor: number },
+ *   submitted: boolean,
  * }} */
 const state = {
   review: null,
@@ -88,6 +99,9 @@ const state = {
   binary: false,
   collapsedOverrides: {},
   rendering: false,
+  comments: /** @type {any[]} */ ([]),
+  selection: /** @type {null | { fileId: string, side: string, start: number, end: number, anchor: number }} */ (null),
+  submitted: false,
 };
 
 function currentEntry() {
@@ -394,16 +408,14 @@ function renderLine(line) {
   if (state.mode === "split") {
     row.classList.add("split");
     row.append(
-      sideCell(line.oldLine, line.oldSegments),
-      sideCell(line.newLine, line.newSegments),
+      sideCell("old", line.oldLine, line.oldSegments),
+      sideCell("new", line.newLine, line.newSegments),
     );
     return row;
   }
-  const oldNumber = line.oldLine ? String(line.oldLine.number) : "";
-  const newNumber = line.newLine ? String(line.newLine.number) : "";
   row.append(
-    textEl("span", "num", oldNumber),
-    textEl("span", "num", newNumber),
+    numberCell("old", line.oldLine),
+    numberCell("new", line.newLine),
     textEl("span", "sign", signFor(line.kind)),
   );
   const code = el("span", "code");
@@ -434,20 +446,404 @@ function signFor(kind) {
 }
 
 /**
+ * @param {"old" | "new"} side
  * @param {import("./model.js").Line|null} line
  * @param {import("./model.js").Segment[]} segments
  * @returns {HTMLElement}
  */
-function sideCell(line, segments) {
+function sideCell(side, line, segments) {
   const cell = el("span", "cell");
-  const number = el("span", "num");
-  number.textContent = line ? String(line.number) : "";
   const code = el("span", "code");
   if (line) {
     appendSegments(code, segments, line.text);
   }
-  cell.append(number, code);
+  cell.append(numberCell(side, line), code);
   return cell;
+}
+
+/**
+ * @param {"old" | "new"} side
+ * @param {import("./model.js").Line|null} line
+ * @returns {HTMLElement}
+ */
+function numberCell(side, line) {
+  const number = textEl("span", "num", line ? String(line.number) : "");
+  if (line && !state.submitted) {
+    number.classList.add("clickable");
+    number.addEventListener("click", (event) =>
+      handleLineClick(side, Number(line.number), event.shiftKey),
+    );
+  }
+  if (line && selectionContains(side, Number(line.number))) {
+    number.classList.add("selected");
+  }
+  return number;
+}
+
+/**
+ * @param {"old" | "new"} side
+ * @param {number} number
+ * @returns {boolean}
+ */
+function selectionContains(side, number) {
+  const selection = state.selection;
+  return Boolean(
+    selection &&
+      selection.side === side &&
+      number >= selection.start &&
+      number <= selection.end,
+  );
+}
+
+/**
+ * @param {"old" | "new"} side
+ * @param {number} number
+ * @param {boolean} extend
+ */
+function handleLineClick(side, number, extend) {
+  if (state.submitted) {
+    return;
+  }
+  const entry = currentEntry();
+  if (!entry) {
+    return;
+  }
+  const selection = state.selection;
+  if (
+    selection &&
+    selection.side === side &&
+    selection.fileId === entry.file.id &&
+    !extend &&
+    selection.start === number &&
+    selection.end === number
+  ) {
+    state.selection = null;
+  } else if (
+    extend &&
+    selection &&
+    selection.side === side &&
+    selection.fileId === entry.file.id
+  ) {
+    state.selection = {
+      fileId: entry.file.id,
+      side,
+      anchor: selection.anchor,
+      start: Math.min(selection.anchor, number),
+      end: Math.max(selection.anchor, number),
+    };
+  } else {
+    state.selection = {
+      fileId: entry.file.id,
+      side,
+      anchor: number,
+      start: number,
+      end: number,
+    };
+  }
+  renderSelectionBar();
+  renderDiff();
+}
+
+function selectionText() {
+  const selection = state.selection;
+  if (!selection) {
+    return "";
+  }
+  const texts = [];
+  for (const row of state.rows) {
+    const line = selection.side === "new" ? row.new : row.old;
+    if (
+      line &&
+      Number(line.number) >= selection.start &&
+      Number(line.number) <= selection.end
+    ) {
+      texts.push(line.text);
+    }
+  }
+  return texts.join("\n");
+}
+
+function renderSelectionBar() {
+  dom.selectionBar.textContent = "";
+  const selection = state.selection;
+  if (!selection || state.submitted) {
+    dom.selectionBar.hidden = true;
+    return;
+  }
+  dom.selectionBar.hidden = false;
+  const range =
+    selection.start === selection.end
+      ? `${selection.start}`
+      : `${selection.start}–${selection.end}`;
+  const side = selection.side === "new" ? "新側" : "旧側";
+  dom.selectionBar.append(
+    textEl("span", "selection-label", `${side} ${range} にコメント`),
+  );
+  const add = button("add-comment-button");
+  add.textContent = "コメントを追加";
+  add.addEventListener("click", () => openCommentForm(selection));
+  dom.selectionBar.append(add);
+  const clear = button("cancel-button");
+  clear.textContent = "選択解除";
+  clear.addEventListener("click", () => {
+    state.selection = null;
+    renderSelectionBar();
+    renderDiff();
+  });
+  dom.selectionBar.append(clear);
+}
+
+/**
+ * @param {{ fileId: string, side: string, start: number, end: number }} selection
+ */
+function openCommentForm(selection) {
+  dom.selectionBar.textContent = "";
+  const form = el("form", "comment-form");
+  const body = document.createElement("textarea");
+  body.placeholder = "本文";
+  body.rows = 3;
+  form.append(body);
+
+  let suggestion = null;
+  if (suggestionAllowed(selection.side)) {
+    const label = el("label", "suggestion-row");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    const suggestionText = document.createElement("textarea");
+    suggestionText.placeholder = "置換後の全文（空なら行の削除）";
+    suggestionText.rows = 2;
+    suggestionText.value = selectionText();
+    label.append(checkbox, document.createTextNode(" suggestion"), suggestionText);
+    form.append(label);
+    suggestion = { checkbox, textarea: suggestionText };
+  }
+
+  const submitButton = /** @type {HTMLButtonElement} */ (el("button", "add-comment-button"));
+  submitButton.textContent = "追加";
+  const cancel = button("cancel-button");
+  cancel.textContent = "キャンセル";
+  cancel.addEventListener("click", () => {
+    state.selection = null;
+    renderSelectionBar();
+    renderDiff();
+  });
+  form.append(submitButton, cancel);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const payload = /** @type {any} */ ({
+      op: "add",
+      file_id: selection.fileId,
+      side: selection.side,
+      start_line: selection.start,
+      end_line: selection.end,
+      body: body.value,
+    });
+    if (suggestion && suggestion.checkbox.checked) {
+      payload.suggestion = suggestion.textarea.value;
+    }
+    void addComment(payload);
+  });
+  dom.selectionBar.append(form);
+  body.focus();
+}
+
+/**
+ * @param {any} payload
+ */
+async function addComment(payload) {
+  try {
+    const comment = await api.postComment(payload);
+    state.comments.push(comment);
+    state.selection = null;
+    renderSelectionBar();
+    renderDiff();
+    renderComments();
+  } catch (error) {
+    showOverlay("コメントを追加できません", String(error));
+  }
+}
+
+function renderComments() {
+  dom.commentsList.textContent = "";
+  const fileWide = button("file-wide-button");
+  fileWide.textContent = "ファイル全体にコメント";
+  fileWide.disabled = state.submitted;
+  fileWide.addEventListener("click", () => openFileWideForm());
+  dom.commentsList.append(fileWide);
+  for (const comment of state.comments) {
+    dom.commentsList.append(commentThread(comment));
+  }
+}
+
+function openFileWideForm() {
+  if (state.submitted) {
+    return;
+  }
+  const form = el("form", "comment-form");
+  const body = document.createElement("textarea");
+  body.placeholder = "ファイル全体への本文";
+  body.rows = 3;
+  const submitButton = /** @type {HTMLButtonElement} */ (el("button", "add-comment-button"));
+  submitButton.textContent = "追加";
+  form.append(body, submitButton);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const entry = currentEntry();
+    if (!entry) {
+      return;
+    }
+    void addComment({
+      op: "add",
+      file_id: entry.file.id,
+      side: "new",
+      body: body.value,
+    });
+  });
+  dom.commentsList.prepend(form);
+  body.focus();
+}
+
+/**
+ * @param {any} comment
+ * @returns {HTMLElement}
+ */
+function commentThread(comment) {
+  const thread = el("div", "thread");
+  const head = el("div", "thread-head");
+  head.append(textEl("span", "thread-where", commentLabel(comment)));
+  if (comment.outdated) {
+    head.append(textEl("span", "badge outdated", "古い"));
+  }
+  if (comment.resolved) {
+    head.append(textEl("span", "badge resolved", "解決済み"));
+  }
+  thread.append(head);
+
+  if (comment.quote && comment.quote.length > 0) {
+    const quote = el("pre", "thread-quote");
+    quote.textContent = comment.quote.join("\n");
+    thread.append(quote);
+  }
+  const body = el("div", "thread-body");
+  body.textContent = comment.body;
+  thread.append(body);
+
+  if (comment.suggestion) {
+    const suggestion = el("pre", "thread-suggestion");
+    suggestion.textContent =
+      comment.suggestion.replacement === ""
+        ? "（行の削除）"
+        : comment.suggestion.replacement;
+    thread.append(suggestion);
+  }
+  for (const reply of comment.replies || []) {
+    thread.append(textEl("div", "thread-reply", reply));
+  }
+
+  if (!state.submitted) {
+    const replyForm = el("form", "reply-form");
+    const input = document.createElement("input");
+    input.placeholder = "返信";
+    const send = /** @type {HTMLButtonElement} */ (el("button", "reply-button"));
+    send.textContent = "返信";
+    replyForm.append(input, send);
+    replyForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void sendReply(comment.id, input.value);
+    });
+    thread.append(replyForm);
+
+    const resolve = button("resolve-button");
+    resolve.textContent = comment.resolved ? "解決を戻す" : "解決";
+    resolve.addEventListener("click", () => void toggleResolve(comment));
+    thread.append(resolve);
+  }
+  return thread;
+}
+
+/**
+ * @param {string} id
+ * @param {string} body
+ */
+async function sendReply(id, body) {
+  if (body === "") {
+    return;
+  }
+  try {
+    const updated = await api.postComment({ op: "reply", id, body });
+    replaceComment(updated);
+    renderComments();
+  } catch (error) {
+    showOverlay("返信できません", String(error));
+  }
+}
+
+/**
+ * @param {any} comment
+ */
+async function toggleResolve(comment) {
+  try {
+    const updated = await api.postComment({
+      op: "resolve",
+      id: comment.id,
+      resolved: !comment.resolved,
+    });
+    replaceComment(updated);
+    renderComments();
+  } catch (error) {
+    showOverlay("解決状態を変えられません", String(error));
+  }
+}
+
+/**
+ * @param {any} updated
+ */
+function replaceComment(updated) {
+  state.comments = state.comments.map((comment) =>
+    comment.id === updated.id ? updated : comment,
+  );
+}
+
+/**
+ * @param {"approved" | "changes_requested"} verdict
+ */
+async function submitReview(verdict) {
+  if (state.submitted) {
+    return;
+  }
+  try {
+    await api.submit(verdict);
+    state.submitted = true;
+    state.selection = null;
+    renderSelectionBar();
+    renderComments();
+    showOverlay(
+      verdict === "approved" ? "承認しました" : "変更要求を送りました",
+      "kemi は注釈の JSON を出力して終了しました。",
+    );
+  } catch (error) {
+    showOverlay("送信できませんでした", String(error));
+  }
+}
+
+/**
+ * @param {string} title
+ * @param {string|null} detail
+ */
+function showOverlay(title, detail) {
+  dom.overlay.hidden = false;
+  dom.overlayCard.textContent = "";
+  dom.overlayCard.append(textEl("h2", "overlay-title", title));
+  if (detail) {
+    dom.overlayCard.append(textEl("p", "overlay-detail", detail));
+  }
+  const close = button("overlay-close");
+  close.textContent = "閉じる";
+  close.addEventListener("click", () => {
+    dom.overlay.hidden = true;
+  });
+  dom.overlayCard.append(close);
 }
 
 /**
@@ -535,13 +931,17 @@ async function selectIndex(index, options = { scrollTop: true }) {
   const data = state.cache.get(id);
   state.rows = data.rows || [];
   state.binary = Boolean(data.binary);
+  state.comments = data.comments || [];
+  state.selection = null;
   if (options.scrollTop) {
     dom.viewport.scrollTop = 0;
   }
   recomputeDisplay();
   renderTree();
   renderGroupAndFile();
+  renderSelectionBar();
   renderNotice();
+  renderComments();
   renderDiff();
 }
 
@@ -671,6 +1071,8 @@ dom.theme.addEventListener("change", () => {
   localStorage.setItem("kemi-theme", state.theme);
   applyTheme();
 });
+dom.submitApproved.addEventListener("click", () => void submitReview("approved"));
+dom.submitChanges.addEventListener("click", () => void submitReview("changes_requested"));
 dom.viewport.addEventListener("scroll", scheduleRender);
 window.addEventListener("resize", scheduleRender);
 window

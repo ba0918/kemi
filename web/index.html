@@ -23,17 +23,26 @@
         <option value="solarized-light">solarized light</option>
         <option value="solarized-dark">solarized dark</option>
       </select>
+      <span class="spacer"></span>
+      <button id="submit-approved" type="button" class="submit approved">承認</button>
+      <button id="submit-changes" type="button" class="submit changes">変更要求</button>
     </div>
     <div id="layout">
       <aside id="tree" aria-label="ファイルツリー"></aside>
       <main id="main">
         <div id="group-header"></div>
         <div id="file-header"></div>
+        <div id="selection-bar" hidden></div>
         <div id="notice" hidden></div>
         <div id="diff-viewport"><div id="diff-content"></div></div>
       </main>
+      <aside id="comments-panel" aria-label="コメント">
+        <div id="comments-header">コメント</div>
+        <div id="comments-list"></div>
+      </aside>
     </div>
     <footer id="approval-footer"></footer>
+    <div id="overlay" hidden><div id="overlay-card"></div></div>
     <script type="module" src="assets/app.js"></script>
   </body>
 </html>
