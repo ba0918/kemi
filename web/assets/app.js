@@ -97,7 +97,7 @@ const dom = {
 /**
  * @typedef {{ file: FileEntry, group: any }} Entry
  * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection
- * @typedef {{ fileId: string, side: string, start: number, end: number, displayIndex: number, wide: boolean }} Editor
+ * @typedef {{ fileId: string, side: string, start: number, end: number, displayIndex: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean }} Editor
  */
 
 /** @type {{
@@ -787,14 +787,18 @@ function renderEditor(editor) {
     ? "ファイル全体へのコメント"
     : "この行へのコメント（Cmd/Ctrl+Enter で記録）";
   body.rows = 3;
+  body.dataset.editorField = "body";
   const key = draftKey(
     editor.fileId,
     editor.wide
       ? null
       : { side: editor.side, start: editor.start, end: editor.end },
   );
-  body.value = loadDraft(key);
-  body.addEventListener("input", () => saveDraft(key, body.value));
+  body.value = editor.body;
+  body.addEventListener("input", () => {
+    editor.body = body.value;
+    saveDraft(key, body.value);
+  });
   body.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -809,9 +813,17 @@ function renderEditor(editor) {
     const row = el("div", "suggestion-row");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
+    checkbox.checked = editor.suggestionOn;
+    checkbox.addEventListener("change", () => {
+      editor.suggestionOn = checkbox.checked;
+    });
     const textarea = document.createElement("textarea");
     textarea.placeholder = "置換後の全文（空なら行の削除）";
-    textarea.value = selectionText();
+    textarea.value = editor.suggestion;
+    textarea.dataset.editorField = "suggestion";
+    textarea.addEventListener("input", () => {
+      editor.suggestion = textarea.value;
+    });
     row.append(
       checkbox,
       document.createTextNode("suggestion として置換後の全文を書く"),
@@ -852,7 +864,16 @@ function renderEditor(editor) {
     void addComment(payload);
   });
 
-  window.requestAnimationFrame(() => body.focus());
+  if (editor.needsFocus) {
+    window.requestAnimationFrame(() => {
+      // 先に描き直されていたら、その描画に focus を任せる。
+      if (!body.isConnected) {
+        return;
+      }
+      editor.needsFocus = false;
+      body.focus();
+    });
+  }
   return form;
 }
 
@@ -885,6 +906,10 @@ function openFileWideEditor() {
     end: 0,
     displayIndex: -1,
     wide: true,
+    body: loadDraft(draftKey(entry.file.id, null)),
+    suggestion: "",
+    suggestionOn: false,
+    needsFocus: true,
   };
   renderDiff();
   renderFloating();
@@ -931,6 +956,10 @@ function openEditorAt(side, number, index) {
     end,
     displayIndex: index,
     wide: false,
+    body: loadDraft(draftKey(entry.file.id, { side, start, end })),
+    suggestion: selectionText(),
+    suggestionOn: false,
+    needsFocus: true,
   };
   renderDiff();
   renderFloating();
@@ -938,6 +967,7 @@ function openEditorAt(side, number, index) {
 
 function renderDiff() {
   const entry = currentEntry();
+  const focus = captureEditorFocus();
   dom.content.textContent = "";
   if (
     !entry ||
@@ -968,6 +998,7 @@ function renderDiff() {
     fragment.append(block);
   }
   dom.content.append(fragment);
+  restoreEditorFocus(focus);
   const needsMeasure =
     state.wrap ||
     state.threads.byLine.size > 0 ||
@@ -975,6 +1006,39 @@ function renderDiff() {
   if (needsMeasure) {
     measureHeights(window.start);
   }
+}
+
+/**
+ * 描き直しでエディタを作り直す前に、フォーカス中の欄と選択位置を覚える。
+ * @returns {{ field: string, start: number, end: number } | null}
+ */
+function captureEditorFocus() {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLTextAreaElement)) {
+    return null;
+  }
+  const field = active.dataset.editorField;
+  if (!field || !dom.content.contains(active)) {
+    return null;
+  }
+  return { field, start: active.selectionStart, end: active.selectionEnd };
+}
+
+/**
+ * @param {{ field: string, start: number, end: number } | null} focus
+ */
+function restoreEditorFocus(focus) {
+  if (!focus) {
+    return;
+  }
+  const field = dom.content.querySelector(
+    `[data-editor-field="${focus.field}"]`,
+  );
+  if (!(field instanceof HTMLTextAreaElement)) {
+    return;
+  }
+  field.focus({ preventScroll: true });
+  field.setSelectionRange(focus.start, focus.end);
 }
 
 /**
