@@ -402,8 +402,8 @@ function renderTree() {
 
 function rebuildTree() {
   const groups = buildTree(state.visible);
-  /** @type {Map<string, HTMLButtonElement>} */
-  const items = new Map();
+  /** 前回のボタンを使い回す。同じファイルの項目は作り直さない。 */
+  const items = new Map(state.treeItems);
   dom.tree.textContent = "";
   const fragment = document.createDocumentFragment();
   for (const { group, nodes } of groups) {
