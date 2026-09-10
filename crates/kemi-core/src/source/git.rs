@@ -709,22 +709,24 @@ fn verify_ref(repo: &Path, revision: &str) -> Result<(), SourceError> {
     Ok(())
 }
 
-/// `--to` の ref 更新を検知するための監視パス。HEAD と、その参照先の
-/// loose ref（または親ディレクトリ）を返す。
+/// `--to` の ref 更新を検知するための監視パス。返すのは ref のファイルそのもので、
+/// 親ディレクトリは含めない。親を渡すとその下の別ブランチの更新まで拾うため。
+/// packed refs で loose ref が無い場合は、存在しないパスを返して watch 側に
+/// 親ディレクトリの監視とファイル名の照合を任せる。
 pub fn ref_watch_paths(repo: &Path, reference: &str) -> Result<Vec<PathBuf>, SourceError> {
     let full = git_text(repo, &["rev-parse", "--symbolic-full-name", reference])?
         .trim()
         .to_string();
     let git_dir = PathBuf::from(git_text(repo, &["rev-parse", "--absolute-git-dir"])?.trim());
-    let mut paths = vec![git_dir.join("HEAD")];
-    if !full.is_empty() && full != "HEAD" {
-        let ref_path = git_dir.join(&full);
-        if let Some(parent) = ref_path.parent() {
-            paths.push(parent.to_path_buf());
-        }
-        if ref_path.exists() {
-            paths.push(ref_path);
-        }
+    let mut paths = Vec::new();
+    // HEAD がシンボリック ref のとき、コミットで書き換わるのは参照先の
+    // loose ref で、HEAD 自身は書き換わらない。両方を監視して、checkout で
+    // 見先が変わる場合と、参照先の ref が進む場合の両方を拾う。
+    if reference == "HEAD" || full == "HEAD" {
+        paths.push(git_dir.join("HEAD"));
+    }
+    if full.starts_with("refs/") {
+        paths.push(git_dir.join(&full));
     }
     Ok(paths)
 }
@@ -1069,5 +1071,27 @@ mod watch_tests {
         source.review().unwrap();
 
         assert_eq!(source.watch_paths(), vec![repo.path.join("a.txt")]);
+    }
+
+    #[test]
+    fn ref_watch_paths_point_at_ref_files_not_their_directories() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+        let branch = repo.git(&["symbolic-ref", "--short", "HEAD"]);
+
+        let paths = ref_watch_paths(&repo.path, "HEAD").unwrap();
+
+        assert!(
+            paths.iter().all(|path| !path.is_dir()),
+            "watch paths must be files only: {paths:?}"
+        );
+        assert!(paths.iter().any(|path| path.ends_with("HEAD")));
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.ends_with(format!("refs/heads/{branch}"))),
+            "the resolved branch ref must be watched: {paths:?}"
+        );
     }
 }

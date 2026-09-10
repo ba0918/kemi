@@ -846,17 +846,30 @@ async fn live_ref_change_sends_update_and_other_git_writes_are_ignored() {
     let server = LiveServer::start(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
+
+    // `--to`（HEAD）以外の ref、たとえば別ブランチの更新は監視対象ではない。
+    repo.git(&["branch", "other"]);
+    assert_eq!(
+        sse.count_updates(Duration::from_millis(1000)).await,
+        0,
+        "another branch ref sent an event"
+    );
+
+    // `.git` の他の書き込みも監視対象ではない。
+    std::fs::write(repo.path.join(".git/not-a-ref.txt"), "x").unwrap();
+    assert_eq!(
+        sse.count_updates(Duration::from_millis(1000)).await,
+        0,
+        "unrelated .git write sent an event"
+    );
+
+    // 対象の ref が進めば通知する。
     repo.write("b.txt", "two\n");
     repo.commit("second");
     assert!(
         sse.next_update(Duration::from_secs(2)).await,
         "no update event for the new commit"
     );
-
-    // `.git` の他の書き込みは監視対象ではない。
-    std::fs::write(repo.path.join(".git/not-a-ref.txt"), "x").unwrap();
-    tokio::time::sleep(Duration::from_millis(700)).await;
-    assert_eq!(sse.drain_updates(), 0, "unrelated .git write sent an event");
 
     server.stop();
 }

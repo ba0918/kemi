@@ -1,9 +1,12 @@
 //! 新側の供給元の監視（R-LIVE）。変更を debounce して SSE の更新通知にする。
 //!
-//! 監視は対象ファイルの親ディレクトリごとに行い、イベントは対象ファイル
-//! （または対象ディレクトリの直下）に限って採用する。読み取り（Access）は
-//! 変更ではないので通知しない。kemi 自身や他のツールが同じディレクトリに
-//! 書いてもバッジは出ない。
+//! 監視は対象ファイルの親ディレクトリごとに行い、イベントは対象ファイルの
+//! パスに完全一致する場合だけ採用する。読み取り（Access）は変更ではないので
+//! 通知しない。ref の親ディレクトリを渡しても、その下の別ブランチの更新や
+//! kemi 自身・他ツールの書き込みではバッジは出ない。
+//!
+//! packed refs のように対象ファイルがまだ無い場合は、存在しないパスを登録して
+//! 親ディレクトリを監視し、パスの照合で loose ref の作成を検知する。
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -27,19 +30,13 @@ pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<()>) {
         };
 
         let mut files: HashSet<PathBuf> = HashSet::new();
-        let mut dirs: HashSet<PathBuf> = HashSet::new();
         let mut watch_targets: HashSet<PathBuf> = HashSet::new();
         for path in paths {
-            let canonical = canonical(path.clone());
-            if path.is_dir() {
-                dirs.insert(canonical.clone());
-                watch_targets.insert(canonical);
-            } else {
-                files.insert(canonical.clone());
-                if let Some(parent) = canonical.parent() {
-                    watch_targets.insert(parent.to_path_buf());
-                }
+            let canonical = canonical(path);
+            if let Some(parent) = canonical.parent() {
+                watch_targets.insert(parent.to_path_buf());
             }
+            files.insert(canonical);
         }
         for target in watch_targets {
             let _ = debouncer.watch(&target, RecursiveMode::NonRecursive);
@@ -56,13 +53,11 @@ pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<()>) {
                 ) {
                     return false;
                 }
-                debounced.event.paths.iter().any(|path| {
-                    let canonical = canonical(path.clone());
-                    files.contains(&canonical)
-                        || canonical
-                            .parent()
-                            .is_some_and(|parent| dirs.contains(parent))
-                })
+                debounced
+                    .event
+                    .paths
+                    .iter()
+                    .any(|path| files.contains(&canonical(path.clone())))
             });
             if changed {
                 let _ = events.send(());
@@ -71,6 +66,15 @@ pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<()>) {
     });
 }
 
+/// ファイルがまだ無い場合でも、実在する親まで解決してファイル名を足す。
+/// こうしないと、symlink を含むパス（macOS の /tmp など）で、登録時と
+/// イベント時の canonical 表記が食い違って一致しない。
 fn canonical(path: PathBuf) -> PathBuf {
-    std::fs::canonicalize(&path).unwrap_or(path)
+    if let Ok(canonical) = std::fs::canonicalize(&path) {
+        return canonical;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => canonical(parent.to_path_buf()).join(name),
+        _ => path,
+    }
 }
