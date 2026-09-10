@@ -6,3 +6,4 @@ license.workspace = true
 description = "Domain and input-source layers for kemi"
 
 [dependencies]
+similar = "3.2.0"
