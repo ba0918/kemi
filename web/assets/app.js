@@ -1053,6 +1053,7 @@ async function expandSkip(line) {
   if (!entry || !skip || skip.from === undefined || skip.to === undefined) {
     return;
   }
+  const generation = state.selectGeneration;
   const data = await api.getFile(
     entry.file.id,
     { from: skip.from, to: skip.to },
@@ -1061,6 +1062,10 @@ async function expandSkip(line) {
       highlight: state.highlightOverrides.get(entry.file.id),
     },
   );
+  if (generation !== state.selectGeneration) {
+    // 取得中に別のファイルが選ばれた。古い応答で表示とキャッシュを上書きしない。
+    return;
+  }
   const replacement = /** @type {LogicalRow[]} */ (data.rows);
   if (data.next !== null && data.next !== undefined) {
     replacement.push({
