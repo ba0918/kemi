@@ -387,11 +387,22 @@ fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
 }
 
 /// worktree の numstat。ファイル数が多いときはパスを分割して並列に引く。
+/// パス一覧は内容差分を伴わない plumbing から取る（`diff --name-only HEAD` は
+/// 全ファイルの差分判定をやり直すため、1 万ファイルでは約 0.5 秒かかる）。
 fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
-    let paths: Vec<String> = split_z(&git_raw(repo, &["diff", "--name-only", "-z", "HEAD"])?)
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let mut paths: Vec<String> = Vec::new();
+    for listing in [
+        git_raw(repo, &["diff-files", "--name-only", "-z", "--no-renames"])?,
+        git_raw(
+            repo,
+            &["diff", "--name-only", "-z", "--no-renames", "--cached"],
+        )?,
+        git_raw(repo, &["ls-files", "--others", "--exclude-standard", "-z"])?,
+    ] {
+        paths.extend(split_z(&listing).into_iter().map(str::to_string));
+    }
+    paths.sort();
+    paths.dedup();
     if paths.len() < 256 {
         return Ok(parse_numstat(&git_raw(
             repo,
