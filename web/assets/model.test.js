@@ -213,10 +213,13 @@ test("filterAndSortFiles_keeps_only_focus_when_asked", () => {
   );
 });
 
-test("collapseDefault_uses_noise_default_and_explicit_state", () => {
-  const noisy = file("Cargo.lock", 1, 1, { noise: true });
+test("collapseDefault_uses_server_state_and_local_override", () => {
+  // サーバが返す collapsed は「ノイズの既定」か「前回開いた状態」の結果。
+  const noisy = file("Cargo.lock", 1, 1, { noise: true, collapsed: true });
   assert.equal(collapseDefault(noisy, {}), true);
   assert.equal(collapseDefault(noisy, { [noisy.id]: false }), false);
+  const opened = file("Cargo.lock", 1, 1, { noise: true, collapsed: false });
+  assert.equal(collapseDefault(opened, {}), false);
   assert.equal(collapseDefault(file("a.rs", 1, 1), {}), false);
 });
 

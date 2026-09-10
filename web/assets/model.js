@@ -235,7 +235,7 @@ export function collapseDefault(file, collapsedMap) {
   if (Object.prototype.hasOwnProperty.call(collapsedMap, file.id)) {
     return collapsedMap[file.id];
   }
-  return file.noise;
+  return Boolean(file.collapsed);
 }
 
 /**
