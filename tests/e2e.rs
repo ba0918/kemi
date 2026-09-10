@@ -117,6 +117,21 @@ impl Kemi {
     }
 }
 
+/// プロセスの終了を待つ。時間内に終わらなければパニックする。
+async fn wait_for_exit(kemi: &mut Kemi, timeout: std::time::Duration) -> std::process::ExitStatus {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Some(status) = kemi.child.try_wait().unwrap() {
+            return status;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "kemi が時間内に終了しませんでした"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
 fn run(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_kemi"))
         .args(args)
@@ -245,6 +260,35 @@ async fn exit_code_approved_is_0_and_stdout_json() {
         stderr_lines.iter().any(|line| line.contains("コメント")),
         "live stderr missing: {stderr_lines:?}"
     );
+}
+
+#[tokio::test]
+async fn submit_with_events_open_exits_with_json() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let mut kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
+
+    // ブラウザと同じく SSE を開いたまま submit しても、サーバは接続を閉じて終了する。
+    let events = reqwest::Client::new()
+        .get(format!("{}api/events", kemi.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), 200);
+
+    let response = kemi
+        .post("api/submit", serde_json::json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+
+    let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
+    drop(events);
+
+    let mut stdout = String::new();
+    kemi.stdout.read_to_string(&mut stdout).unwrap();
+    assert_eq!(status.code(), Some(0));
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(document["verdict"], "approved");
 }
 
 #[tokio::test]

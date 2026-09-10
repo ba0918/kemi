@@ -683,7 +683,7 @@ async fn submit(
         Ok(document) => {
             *state.outcome.lock().expect("outcome poisoned") =
                 Some(ServeOutcome::Submitted(document.clone()));
-            state.shutdown.notify_one();
+            let _ = state.shutdown.send(true);
             Ok(Json(document))
         }
         Err(error) => {
@@ -746,7 +746,20 @@ async fn events(
     Path(_token): Path<String>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let receiver = state.events.subscribe();
+    let mut shutdown = state.shutdown.subscribe();
+    // submit 後の graceful shutdown は接続が閉じるまで待つので、SSE は停止通知で終端する。
+    let stop = async move {
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if shutdown.changed().await.is_err() {
+                break;
+            }
+        }
+    };
     let stream = BroadcastStream::new(receiver)
+        .take_until(stop)
         .map(|_| Ok::<_, Infallible>(Event::default().event("update").data("{}")));
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

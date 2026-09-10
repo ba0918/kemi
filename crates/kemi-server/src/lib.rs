@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use kemi_core::domain::review::ReviewMeta;
 use kemi_core::source::ReviewSource;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{broadcast, watch as shutdown_watch};
 
 pub use api::session_url;
 pub use session::Session;
@@ -72,7 +72,8 @@ pub(crate) struct AppState {
     pub meta: RwLock<Arc<ReviewMeta>>,
     pub session: Mutex<Session>,
     pub events: broadcast::Sender<()>,
-    pub shutdown: Notify,
+    /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
+    pub shutdown: shutdown_watch::Sender<bool>,
     pub outcome: Mutex<Option<ServeOutcome>>,
     pub submit_state: Mutex<SubmitState>,
 }
@@ -87,6 +88,7 @@ pub async fn serve(
 
     let review = params.source.review().map_err(ServerError::Source)?;
     let (events, _) = broadcast::channel(16);
+    let (shutdown, _) = shutdown_watch::channel(false);
 
     let state = Arc::new(AppState {
         source: params.source,
@@ -98,7 +100,7 @@ pub async fn serve(
         meta: RwLock::new(Arc::new(review)),
         session: Mutex::new(Session::default()),
         events,
-        shutdown: Notify::new(),
+        shutdown,
         outcome: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),
     });
@@ -106,8 +108,17 @@ pub async fn serve(
     watch::start(state.source.watch_paths(), state.events.clone());
 
     let app = api::router(state.clone());
-    let shutdown_state = state.clone();
-    let shutdown = async move { shutdown_state.shutdown.notified().await };
+    let mut shutdown_receiver = state.shutdown.subscribe();
+    let shutdown = async move {
+        loop {
+            if *shutdown_receiver.borrow() {
+                break;
+            }
+            if shutdown_receiver.changed().await.is_err() {
+                break;
+            }
+        }
+    };
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await
