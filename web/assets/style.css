@@ -59,6 +59,11 @@
   box-sizing: border-box;
 }
 
+/* hidden 属性は UA の display:none だけでは author の display 指定に負ける。 */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
