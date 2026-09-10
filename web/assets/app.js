@@ -1361,20 +1361,30 @@ async function addComment(payload) {
  * @param {any} comment
  */
 async function toggleResolve(comment) {
+  const generation = state.selectGeneration;
+  const entry = currentEntry();
+  const fileId = entry ? entry.file.id : null;
   try {
     const updated = await api.postComment({
       op: "resolve",
       id: comment.id,
       resolved: !comment.resolved,
     });
-    state.comments = replaceComment(state.comments, updated);
-    const entry = currentEntry();
-    if (entry) {
-      state.commentStore.set(entry.file.id, state.comments);
+    // 応答までに別のファイルへ切り替わっていても、置き換えるのは送信元の
+    // コメントだけ。表示中の state は世代が同じときだけ更新する。
+    if (fileId !== null) {
+      const stored = state.commentStore.get(fileId);
+      if (stored) {
+        const comments = replaceComment(stored, updated);
+        state.commentStore.set(fileId, comments);
+        if (generation === state.selectGeneration) {
+          state.comments = comments;
+          recomputeThreads();
+          renderDiff();
+          renderFloating();
+        }
+      }
     }
-    recomputeThreads();
-    renderDiff();
-    renderFloating();
   } catch (error) {
     showOverlay("解決状態を変えられません", String(error));
   }
