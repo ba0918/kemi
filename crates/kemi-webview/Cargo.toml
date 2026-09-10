@@ -6,3 +6,4 @@ license.workspace = true
 description = "Embedded web assets for kemi"
 
 [dependencies]
+rust-embed = "8.12.0"

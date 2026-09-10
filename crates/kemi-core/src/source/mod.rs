@@ -177,27 +177,45 @@ impl Default for PlanStore {
     }
 }
 
-/// `--focus` のファイルを読み、レビューへ後付けする。パスは `base` 相対。
-pub fn apply_focus_path(
-    review: &mut ReviewMeta,
-    focus_path: &Path,
-    base: &Path,
-) -> Result<(), SourceError> {
-    let full = base.join(focus_path);
-    let text = std::fs::read_to_string(&full).map_err(|source| SourceError::Io {
-        path: full.clone(),
-        source,
-    })?;
-    let layer = focus::parse_focus(&text).map_err(|error| SourceError::Focus(error.to_string()))?;
-    focus::apply_focus(review, &layer).map_err(|error| match error {
-        focus::FocusError::UnknownGroup(id) => {
-            SourceError::Focus(format!("focus のグループ id が見つかりません: {id}"))
-        }
-        focus::FocusError::UnknownPath(path) => {
-            SourceError::Focus(format!("focus のパスが見つかりません: {path}"))
-        }
-        focus::FocusError::Parse(message) => SourceError::Focus(message),
-    })
+/// `--focus` を `review()` のたびに後付けする装飾ソース。
+pub struct FocusSource {
+    inner: Box<dyn ReviewSource>,
+    layer: focus::FocusLayer,
+}
+
+impl FocusSource {
+    pub fn new(inner: Box<dyn ReviewSource>, layer: focus::FocusLayer) -> Self {
+        FocusSource { inner, layer }
+    }
+
+    /// `--focus` のファイルを読み込む。パスは `base` 相対。
+    pub fn from_path(
+        inner: Box<dyn ReviewSource>,
+        focus_path: &Path,
+        base: &Path,
+    ) -> Result<Self, SourceError> {
+        let full = base.join(focus_path);
+        let text = std::fs::read_to_string(&full).map_err(|source| SourceError::Io {
+            path: full.clone(),
+            source,
+        })?;
+        let layer =
+            focus::parse_focus(&text).map_err(|error| SourceError::Focus(error.to_string()))?;
+        Ok(FocusSource::new(inner, layer))
+    }
+}
+
+impl ReviewSource for FocusSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        let mut meta = self.inner.review()?;
+        focus::apply_focus(&mut meta, &self.layer)
+            .map_err(|error| SourceError::Focus(error.to_string()))?;
+        Ok(meta)
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(file_id)
+    }
 }
 
 #[cfg(test)]
@@ -240,13 +258,30 @@ mod tests {
         }
     }
 
+    struct StaticSource {
+        meta: ReviewMeta,
+    }
+
+    impl ReviewSource for StaticSource {
+        fn review(&self) -> Result<ReviewMeta, SourceError> {
+            Ok(self.meta.clone())
+        }
+
+        fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+            Err(SourceError::UnknownFileId(file_id.to_string()))
+        }
+    }
+
     #[test]
     fn focus_file_overrides_watch_and_sets_note() {
-        let mut review = review_with_file("src/a.rs");
-        let focus_path = Path::new("tests/fixtures/focus.json");
+        let inner = Box::new(StaticSource {
+            meta: review_with_file("src/a.rs"),
+        });
+        let source =
+            FocusSource::from_path(inner, Path::new("tests/fixtures/focus.json"), &base_dir())
+                .unwrap();
 
-        apply_focus_path(&mut review, focus_path, &base_dir()).unwrap();
-
+        let review = source.review().unwrap();
         assert_eq!(review.groups[0].watch, "focus の watch");
         assert!(review.groups[0].files[0].focus);
         assert_eq!(review.groups[0].files[0].note, "focus の note");
@@ -254,10 +289,17 @@ mod tests {
 
     #[test]
     fn focus_file_unknown_path_names_the_path() {
-        let mut review = review_with_file("src/a.rs");
-        let focus_path = Path::new("tests/fixtures/focus-unknown.json");
+        let inner = Box::new(StaticSource {
+            meta: review_with_file("src/a.rs"),
+        });
+        let source = FocusSource::from_path(
+            inner,
+            Path::new("tests/fixtures/focus-unknown.json"),
+            &base_dir(),
+        )
+        .unwrap();
 
-        let error = apply_focus_path(&mut review, focus_path, &base_dir()).unwrap_err();
+        let error = source.review().unwrap_err();
         let message = error.to_string();
         assert!(message.contains("src/missing.rs"), "{message}");
     }

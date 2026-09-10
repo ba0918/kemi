@@ -53,6 +53,7 @@ pub struct Suggestion {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     pub id: String,
+    pub file_id: String,
     pub group_id: String,
     pub group_title: String,
     pub path: String,
@@ -64,6 +65,7 @@ pub struct Comment {
     pub body: String,
     pub replies: Vec<String>,
     pub resolved: bool,
+    pub outdated: bool,
     /// 作成時の内容ハッシュ。現在のハッシュと違えば outdated。
     pub content_hash: String,
     pub suggestion: Option<Suggestion>,
