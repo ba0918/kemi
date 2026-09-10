@@ -724,6 +724,11 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
     };
     let mut outdated = std::collections::HashMap::new();
     for (id, file_id, side, created_hash) in snapshot {
+        // 再取得で一覧から消えたファイルは内容を引けないので古い扱いにする。
+        if find_file(&review, &file_id).is_none() {
+            outdated.insert(id, true);
+            continue;
+        }
         let content = source_content(state, &file_id).await?;
         let lines = match side {
             Side::Old => side_lines(&content.old),

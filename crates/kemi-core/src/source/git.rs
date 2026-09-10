@@ -1,7 +1,9 @@
 //! git を読む入力ソース（R-INPUT-2〜4）。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
 use crate::domain::content;
 use crate::domain::noise::{classify, linguist_generated, NoiseInput};
@@ -42,6 +44,28 @@ pub struct GitSource {
     repo: PathBuf,
     mode: GitMode,
     store: PlanStore,
+    ids: Mutex<FileIds>,
+}
+
+/// 再取得しても同じファイルには同じ id を返す（`?refresh=1` でコメントの
+/// file_id が別ファイルを指さないようにする）。
+#[derive(Default)]
+struct FileIds {
+    map: HashMap<String, String>,
+    next: usize,
+}
+
+impl FileIds {
+    fn get(&mut self, group_id: &str, path: &str) -> String {
+        let key = format!("{group_id}\n{path}");
+        if let Some(id) = self.map.get(&key) {
+            return id.clone();
+        }
+        self.next += 1;
+        let id = format!("f{}", self.next);
+        self.map.insert(key, id.clone());
+        id
+    }
 }
 
 impl GitSource {
@@ -50,6 +74,7 @@ impl GitSource {
             repo,
             mode,
             store: PlanStore::new(),
+            ids: Mutex::new(FileIds::default()),
         }
     }
 
@@ -95,7 +120,7 @@ impl GitSource {
             });
         }
 
-        let files = self.build_entries(&entries, &attributes, "worktree", &mut 0, |entry| {
+        let files = self.build_entries(&entries, &attributes, "worktree", |entry| {
             let old = match entry.status {
                 Status::Add => SideRef::Absent,
                 _ => SideRef::Git {
@@ -132,7 +157,7 @@ impl GitSource {
     fn review_staged(&self) -> Result<(ReviewMeta, Plan), SourceError> {
         let attributes = read_attributes(&self.repo);
         let entries = diff_entries(&self.repo, &["--cached"])?;
-        let files = self.build_entries(&entries, &attributes, "staged", &mut 0, |entry| {
+        let files = self.build_entries(&entries, &attributes, "staged", |entry| {
             let old = match entry.status {
                 Status::Add => SideRef::Absent,
                 _ => SideRef::Git {
@@ -188,32 +213,30 @@ impl GitSource {
                 )?;
                 let mut groups = Vec::new();
                 let mut plan_files = Vec::new();
-                let mut next_id = 0usize;
                 for sha in shas.lines().filter(|line| !line.trim().is_empty()) {
                     let revision = format!("{sha}^!");
                     let entries = diff_entries(&self.repo, &[&revision])?;
                     let (title, why) = commit_message(&self.repo, sha)?;
-                    let files =
-                        self.build_entries(&entries, &attributes, sha, &mut next_id, |entry| {
-                            let old = match entry.status {
-                                Status::Add => SideRef::Absent,
-                                _ => SideRef::Git {
-                                    repo: self.repo.clone(),
-                                    spec: format!(
-                                        "{sha}^:{}",
-                                        entry.old_path.as_deref().unwrap_or(&entry.path)
-                                    ),
-                                },
-                            };
-                            let new = match entry.status {
-                                Status::Delete => SideRef::Absent,
-                                _ => SideRef::Git {
-                                    repo: self.repo.clone(),
-                                    spec: format!("{sha}:{}", entry.path),
-                                },
-                            };
-                            (old, new)
-                        });
+                    let files = self.build_entries(&entries, &attributes, sha, |entry| {
+                        let old = match entry.status {
+                            Status::Add => SideRef::Absent,
+                            _ => SideRef::Git {
+                                repo: self.repo.clone(),
+                                spec: format!(
+                                    "{sha}^:{}",
+                                    entry.old_path.as_deref().unwrap_or(&entry.path)
+                                ),
+                            },
+                        };
+                        let new = match entry.status {
+                            Status::Delete => SideRef::Absent,
+                            _ => SideRef::Git {
+                                repo: self.repo.clone(),
+                                spec: format!("{sha}:{}", entry.path),
+                            },
+                        };
+                        (old, new)
+                    });
                     plan_files.extend(files.1);
                     groups.push(Group {
                         id: sha.to_string(),
@@ -240,7 +263,7 @@ impl GitSource {
                     .to_string();
                 let range = format!("{from}...{to}");
                 let entries = diff_entries(&self.repo, &[&range])?;
-                let files_h = self.build_entries(&entries, &attributes, "all", &mut 0, |entry| {
+                let files_h = self.build_entries(&entries, &attributes, "all", |entry| {
                     let old = match entry.status {
                         Status::Add => SideRef::Absent,
                         _ => SideRef::Git {
@@ -285,14 +308,16 @@ impl GitSource {
         entries: &[DiffEntry],
         attributes: &str,
         group_id: &str,
-        next_id: &mut usize,
         sides: impl Fn(&DiffEntry) -> (SideRef, SideRef),
     ) -> (Vec<FileEntry>, Vec<PlannedFile>) {
         let mut files = Vec::new();
         let mut planned = Vec::new();
         for entry in entries {
-            *next_id += 1;
-            let id = format!("f{next_id}");
+            let id = self
+                .ids
+                .lock()
+                .expect("file id lock poisoned")
+                .get(group_id, &entry.path);
             let (old, new) = sides(entry);
             let (old_size, new_size) = if entry.binary {
                 (side_size(&old), side_size(&new))
@@ -742,6 +767,32 @@ mod tests {
         let content = source.content(&entry.id).unwrap();
         assert_eq!(content.old, None);
         assert_eq!(content.new.unwrap(), b"x\ny\n");
+    }
+
+    #[test]
+    fn worktree_file_ids_survive_re_review() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.write("b.txt", "one\n");
+        repo.add_and_commit("base");
+        let source = source(&repo, GitMode::Worktree);
+
+        repo.write("a.txt", "two\n");
+        repo.write("b.txt", "two\n");
+        let first = source.review().unwrap();
+        let first_a = find_file(&first, "a.txt").id.clone();
+        let first_b = find_file(&first, "b.txt").id.clone();
+        assert_ne!(first_a, first_b);
+
+        // a を戻すと一覧から消えるが、残る b の id は変えない。
+        repo.write("a.txt", "one\n");
+        let second = source.review().unwrap();
+        assert_eq!(find_file(&second, "b.txt").id, first_b);
+
+        // 一度消えた a が再び現れても、最初の id を使う。
+        repo.write("a.txt", "three\n");
+        let third = source.review().unwrap();
+        assert_eq!(find_file(&third, "a.txt").id, first_a);
     }
 
     #[test]

@@ -342,6 +342,92 @@ async fn runtime_io_error_stops_with_exit_2_without_json() {
 }
 
 #[tokio::test]
+async fn refresh_keeps_comment_on_the_same_file() {
+    let dir = TempDir::new();
+    git(&dir.path, &["init", "-q"]);
+    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
+    git(&dir.path, &["config", "user.name", "kemi"]);
+    dir.write("a.txt", "a1\n");
+    dir.write("b.txt", "b1\n");
+    git(&dir.path, &["add", "a.txt", "b.txt"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    dir.write("a.txt", "a2\n");
+    dir.write("b.txt", "b2\n");
+
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let file_id = |review: &serde_json::Value, path: &str| {
+        review["groups"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["path"] == path)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let b_id = file_id(&review, "b.txt");
+    let a_id = file_id(&review, "a.txt");
+
+    for (id, body) in [(&b_id, "b へのコメント"), (&a_id, "a へのコメント")] {
+        let response = kemi
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add", "file_id": id, "side": "new",
+                    "start_line": 1, "end_line": 1, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+
+    // a を戻して再取得しても、残る b の id とコメントの対応は変わらない。
+    dir.write("a.txt", "a1\n");
+    let refreshed = reqwest::get(format!("{}api/review?refresh=1", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(file_id(&refreshed, "b.txt"), b_id);
+
+    let file = reqwest::get(format!("{}api/file/{b_id}", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(file["comments"][0]["body"], "b へのコメント");
+
+    let response = kemi
+        .post("api/submit", serde_json::json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let (status, stdout) = kemi.wait();
+    assert_eq!(status.code(), Some(0));
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let comments = document["comments"].as_array().unwrap();
+    let b_comment = comments
+        .iter()
+        .find(|comment| comment["path"] == "b.txt")
+        .unwrap();
+    assert_eq!(b_comment["outdated"], false);
+    // 一覧から消えたファイルへのコメントは古い扱いで残る。
+    let a_comment = comments
+        .iter()
+        .find(|comment| comment["path"] == "a.txt")
+        .unwrap();
+    assert_eq!(a_comment["outdated"], true);
+}
+
+#[tokio::test]
 async fn exit_code_changes_requested_is_1() {
     let dir = TempDir::new();
     dir.write("manifest.json", MANIFEST);
