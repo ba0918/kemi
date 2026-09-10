@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   collapseDefault,
   commentLabel,
+  draftKey,
   filterAndSortFiles,
   formatBytes,
   keyAction,
@@ -247,6 +248,18 @@ test("commentLabel_marks_file_wide_and_ranges", () => {
 test("suggestionAllowed_only_on_new_side", () => {
   assert.equal(suggestionAllowed("new"), true);
   assert.equal(suggestionAllowed("old"), false);
+});
+
+test("draftKey_separates_file_and_range", () => {
+  assert.equal(draftKey("f1", null), "kemi-draft:f1:file");
+  assert.equal(
+    draftKey("f1", { side: "new", start: 3, end: 5 }),
+    "kemi-draft:f1:new:3-5",
+  );
+  assert.notEqual(
+    draftKey("f1", { side: "new", start: 3, end: 5 }),
+    draftKey("f2", { side: "new", start: 3, end: 5 }),
+  );
 });
 
 test("replaceComment_swaps_only_the_matching_id", () => {

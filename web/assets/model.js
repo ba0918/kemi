@@ -279,6 +279,19 @@ export function replaceComment(comments, updated) {
 }
 
 /**
+ * 下書きをファイルとコメント位置ごとに分ける localStorage のキー。
+ * @param {string} fileId
+ * @param {{ side: string, start: number, end: number } | null} selection
+ * @returns {string}
+ */
+export function draftKey(fileId, selection) {
+  if (!selection) {
+    return `kemi-draft:${fileId}:file`;
+  }
+  return `kemi-draft:${fileId}:${selection.side}:${selection.start}-${selection.end}`;
+}
+
+/**
  * @param {string} status
  * @returns {string}
  */

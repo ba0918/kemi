@@ -5,6 +5,7 @@ import * as api from "./api.js";
 import {
   collapseDefault,
   commentLabel,
+  draftKey,
   filterAndSortFiles,
   formatBytes,
   keyAction,
@@ -667,6 +668,27 @@ function renderSelectionBar() {
 }
 
 /**
+ * @param {string} key
+ * @returns {string}
+ */
+function loadDraft(key) {
+  return localStorage.getItem(key) || "";
+}
+
+/**
+ * 下書きは入力のたびに残す（CONTEXT.md の下書き）。
+ * @param {string} key
+ * @param {string} value
+ */
+function saveDraft(key, value) {
+  if (value === "") {
+    localStorage.removeItem(key);
+  } else {
+    localStorage.setItem(key, value);
+  }
+}
+
+/**
  * @param {{ fileId: string, side: string, start: number, end: number }} selection
  */
 function openCommentForm(selection) {
@@ -675,6 +697,9 @@ function openCommentForm(selection) {
   const body = document.createElement("textarea");
   body.placeholder = "本文";
   body.rows = 3;
+  const key = draftKey(selection.fileId, selection);
+  body.value = loadDraft(key);
+  body.addEventListener("input", () => saveDraft(key, body.value));
   form.append(body);
 
   let suggestion = null;
@@ -729,6 +754,15 @@ async function addComment(payload) {
     const comment = await api.postComment(payload);
     state.comments.push(comment);
     state.commentStore.set(payload.file_id, state.comments);
+    localStorage.removeItem(
+      payload.start_line === null || payload.start_line === undefined
+        ? draftKey(payload.file_id, null)
+        : draftKey(payload.file_id, {
+            side: payload.side,
+            start: payload.start_line,
+            end: payload.end_line,
+          }),
+    );
     state.selection = null;
     renderSelectionBar();
     renderDiff();
@@ -754,19 +788,22 @@ function openFileWideForm() {
   if (state.submitted) {
     return;
   }
+  const entry = currentEntry();
+  if (!entry) {
+    return;
+  }
   const form = el("form", "comment-form");
   const body = document.createElement("textarea");
   body.placeholder = "ファイル全体への本文";
   body.rows = 3;
+  const key = draftKey(entry.file.id, null);
+  body.value = loadDraft(key);
+  body.addEventListener("input", () => saveDraft(key, body.value));
   const submitButton = /** @type {HTMLButtonElement} */ (el("button", "add-comment-button"));
   submitButton.textContent = "追加";
   form.append(body, submitButton);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const entry = currentEntry();
-    if (!entry) {
-      return;
-    }
     void addComment({
       op: "add",
       file_id: entry.file.id,
