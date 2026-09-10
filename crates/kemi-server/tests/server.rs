@@ -31,6 +31,14 @@ impl FakeSource {
                 new: Some(new.into_bytes()),
             },
         );
+        let large = "line\n".repeat(10_001);
+        contents.insert(
+            "f3".to_string(),
+            FileContent {
+                old: Some(large.clone().into_bytes()),
+                new: Some(large.into_bytes()),
+            },
+        );
         FakeSource {
             meta: ReviewMeta {
                 title: "テストのレビュー".to_string(),
@@ -43,6 +51,7 @@ impl FakeSource {
                     watch: "ここを見て".to_string(),
                     files: vec![
                         file_entry("f1", "src/a.rs"),
+                        file_entry("f3", "src/large.rs"),
                         FileEntry {
                             id: "f2".to_string(),
                             group_id: "g1".to_string(),
@@ -224,7 +233,8 @@ async fn review_api_returns_groups_and_files() {
     assert_eq!(body["groups"][0]["watch"], "ここを見て");
     assert_eq!(body["groups"][0]["files"][0]["path"], "src/a.rs");
     assert_eq!(body["groups"][0]["files"][0]["seen"], false);
-    assert_eq!(body["groups"][0]["files"][1]["binary"], true);
+    assert_eq!(body["groups"][0]["files"][2]["path"], "assets/logo.png");
+    assert_eq!(body["groups"][0]["files"][2]["binary"], true);
     assert_eq!(body["approval"][0]["identity"], "sha256:abc");
 }
 
@@ -901,4 +911,23 @@ async fn live_debounce_coalesces_rapid_writes() {
     );
 
     server.stop();
+}
+
+#[tokio::test]
+async fn highlight_cap_can_be_overridden_for_one_file() {
+    let server = TestServer::start().await;
+
+    let capped: Value = server.get("api/file/f3").await.json().await.unwrap();
+    assert_eq!(capped["highlight"]["capable"], false);
+    assert_eq!(capped["highlight"]["enabled"], false);
+
+    let forced: Value = server
+        .get("api/file/f3?highlight=on&from=0&to=2")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(forced["highlight"]["capable"], false);
+    assert_eq!(forced["highlight"]["enabled"], true);
+    assert!(forced["rows"][0]["old"]["html"].is_string());
 }
