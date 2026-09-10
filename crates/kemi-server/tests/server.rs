@@ -576,3 +576,33 @@ async fn post_json(url: &str, origin: &str, path: &str, body: Value) -> reqwest:
         .await
         .unwrap()
 }
+
+#[tokio::test]
+async fn highlight_enabled_by_default_and_rows_carry_html() {
+    let server = TestServer::start().await;
+    let body: Value = server
+        .get("api/file/f1?from=0&to=3")
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(body["highlight"]["capable"], true);
+    assert_eq!(body["highlight"]["enabled"], true);
+    let html = body["rows"][0]["old"]["html"].as_str().unwrap();
+    assert!(html.contains("<span"), "{html}");
+}
+
+#[tokio::test]
+async fn highlight_can_be_turned_off() {
+    let server = TestServer::start().await;
+    let body: Value = server
+        .get("api/file/f1?from=0&to=3&highlight=off")
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(body["highlight"]["enabled"], false);
+    assert!(body["rows"][0]["old"].get("html").is_none());
+}

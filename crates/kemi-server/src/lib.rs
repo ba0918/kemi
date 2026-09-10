@@ -1,6 +1,7 @@
 //! HTTP / SSE サーバ（R-SERVE, R-SUBMIT, R-LIVE）。
 
 mod api;
+mod highlight;
 mod session;
 
 use std::borrow::Cow;
@@ -62,6 +63,7 @@ pub(crate) enum SubmitState {
 
 pub(crate) struct AppState {
     pub source: Arc<dyn ReviewSource>,
+    pub highlighter: crate::highlight::Highlighter,
     pub assets: Arc<dyn Assets>,
     pub token: String,
     pub origin: String,
@@ -87,6 +89,7 @@ pub async fn serve(
 
     let state = Arc::new(AppState {
         source: params.source,
+        highlighter: crate::highlight::Highlighter::new(),
         assets: params.assets,
         token: params.token,
         origin,

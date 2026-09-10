@@ -572,3 +572,8 @@ button.active {
   margin: 0;
   color: var(--muted);
 }
+
+.word-changed {
+  background: var(--mark-bg);
+  border-radius: 2px;
+}

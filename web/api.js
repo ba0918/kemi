@@ -45,13 +45,20 @@ export function getReview() {
 
 /**
  * @param {string} id
- * @param {{from?: number, to?: number}} [range]
+ * @param {{from?: number, to?: number}|null} [range]
+ * @param {{dark?: boolean, highlight?: string}} [options]
  */
-export function getFile(id, range) {
+export function getFile(id, range, options = {}) {
   const params = new URLSearchParams();
   if (range && range.from !== undefined && range.to !== undefined) {
     params.set("from", String(range.from));
     params.set("to", String(range.to));
+  }
+  if (options.dark) {
+    params.set("dark", "1");
+  }
+  if (options.highlight) {
+    params.set("highlight", options.highlight);
   }
   const query = params.toString();
   return getJson(`api/file/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);

@@ -2,7 +2,7 @@
 // ブラウザとテストで共有する純ロジック。DOM には触れない。
 
 /**
- * @typedef {{ number: number, text: string }} Line
+ * @typedef {{ number: number, text: string, html?: string }} Line
  * @typedef {{ text: string, changed: boolean }} Segment
  * @typedef {{
  *   kind: string,

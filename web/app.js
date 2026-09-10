@@ -78,6 +78,11 @@ const dom = {
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
  *   rendering: boolean,
+ *   highlightMode: string,
+ *   highlightCapable: boolean,
+ *   highlightEnabled: boolean,
+ *   dark: boolean,
+ *   cacheKey: string,
  *   comments: any[],
  *   selection: null | { fileId: string, side: string, start: number, end: number, anchor: number },
  *   submitted: boolean,
@@ -99,6 +104,11 @@ const state = {
   binary: false,
   collapsedOverrides: {},
   rendering: false,
+  highlightMode: localStorage.getItem("kemi-highlight") || "auto",
+  highlightCapable: false,
+  highlightEnabled: false,
+  dark: false,
+  cacheKey: "",
   comments: /** @type {any[]} */ ([]),
   selection: /** @type {null | { fileId: string, side: string, start: number, end: number, anchor: number }} */ (null),
   submitted: false,
@@ -315,6 +325,28 @@ function renderGroupAndFile() {
   seen.classList.toggle("active", entry.file.seen);
   seen.addEventListener("click", () => void toggleSeen(entry.file));
   dom.fileHeader.append(seen);
+
+  const highlightButton = button("toggle highlight-button");
+  if (state.highlightEnabled) {
+    highlightButton.textContent = "ハイライト off";
+  } else if (state.highlightCapable) {
+    highlightButton.textContent = "ハイライト on";
+  } else {
+    highlightButton.textContent = "このファイルで有効化";
+  }
+  highlightButton.classList.toggle("active", state.highlightEnabled);
+  highlightButton.addEventListener("click", () => {
+    if (state.highlightEnabled) {
+      state.highlightMode = "off";
+    } else if (state.highlightCapable) {
+      state.highlightMode = "auto";
+    } else {
+      state.highlightMode = "on";
+    }
+    localStorage.setItem("kemi-highlight", state.highlightMode);
+    void selectIndex(state.index, { scrollTop: false });
+  });
+  dom.fileHeader.append(highlightButton);
 }
 
 function renderNotice() {
@@ -420,9 +452,9 @@ function renderLine(line) {
   );
   const code = el("span", "code");
   if (line.newLine) {
-    appendSegments(code, line.newSegments, line.newLine.text);
+    fillCode(code, line.newLine, line.newSegments);
   } else if (line.oldLine) {
-    appendSegments(code, line.oldSegments, line.oldLine.text);
+    fillCode(code, line.oldLine, line.oldSegments);
   }
   row.append(code);
   return row;
@@ -454,11 +486,22 @@ function signFor(kind) {
 function sideCell(side, line, segments) {
   const cell = el("span", "cell");
   const code = el("span", "code");
-  if (line) {
-    appendSegments(code, segments, line.text);
-  }
+  fillCode(code, line, segments);
   cell.append(numberCell(side, line), code);
   return cell;
+}
+
+/**
+ * @param {HTMLElement} code
+ * @param {import("./model.js").Line|null} line
+ * @param {import("./model.js").Segment[]} segments
+ */
+function fillCode(code, line, segments) {
+  if (line && line.html) {
+    code.innerHTML = line.html;
+    return;
+  }
+  appendSegments(code, segments, line ? line.text : "");
 }
 
 /**
@@ -882,10 +925,14 @@ async function expandSkip(line) {
   if (!entry || !skip || skip.from === undefined || skip.to === undefined) {
     return;
   }
-  const data = await api.getFile(entry.file.id, {
-    from: skip.from,
-    to: skip.to,
-  });
+  const data = await api.getFile(
+    entry.file.id,
+    { from: skip.from, to: skip.to },
+    {
+      dark: state.dark,
+      highlight: state.highlightMode === "auto" ? undefined : state.highlightMode,
+    },
+  );
   const replacement = /** @type {LogicalRow[]} */ (data.rows);
   if (data.next !== null && data.next !== undefined) {
     replacement.push({
@@ -900,7 +947,7 @@ async function expandSkip(line) {
     });
   }
   state.rows.splice(line.logicalIndex, 1, ...replacement);
-  state.cache.set(entry.file.id, { ...state.cache.get(entry.file.id), rows: state.rows });
+  state.cache.set(state.cacheKey, { ...state.cache.get(state.cacheKey), rows: state.rows });
   recomputeDisplay();
   renderDiff();
 }
@@ -924,13 +971,20 @@ async function selectIndex(index, options = { scrollTop: true }) {
     return;
   }
   const id = entry.file.id;
-  if (!state.cache.has(id)) {
-    const data = await api.getFile(id);
-    state.cache.set(id, { ...data, rows: data.rows || [] });
+  const key = `${id}|${state.dark ? 1 : 0}|${state.highlightMode}`;
+  state.cacheKey = key;
+  if (!state.cache.has(key)) {
+    const data = await api.getFile(id, null, {
+      dark: state.dark,
+      highlight: state.highlightMode === "auto" ? undefined : state.highlightMode,
+    });
+    state.cache.set(key, { ...data, rows: data.rows || [] });
   }
-  const data = state.cache.get(id);
+  const data = state.cache.get(key);
   state.rows = data.rows || [];
   state.binary = Boolean(data.binary);
+  state.highlightCapable = Boolean(data.highlight && data.highlight.capable);
+  state.highlightEnabled = Boolean(data.highlight && data.highlight.enabled);
   state.comments = data.comments || [];
   state.selection = null;
   if (options.scrollTop) {
@@ -967,8 +1021,17 @@ function applyTheme() {
         ? "dark"
         : "light"
       : state.theme;
+  const dark = resolved === "dark" || resolved === "solarized-dark";
+  const changed = state.dark !== dark;
+  state.dark = dark;
   document.documentElement.dataset.theme = resolved;
   dom.theme.value = state.theme;
+  if (changed) {
+    state.cache.clear();
+    if (currentEntry()) {
+      void selectIndex(state.index, { scrollTop: false });
+    }
+  }
 }
 
 /**

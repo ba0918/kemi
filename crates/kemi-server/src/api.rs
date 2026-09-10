@@ -22,8 +22,15 @@ use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::highlight::{self, HighlightedLine, Highlighter};
 use crate::session::{comment_json, Session};
 use crate::{AppState, ServeOutcome, ServerError, SubmitState};
+
+/// 1 ファイル分の左右のハイライト結果。
+struct Highlighted {
+    old: Vec<HighlightedLine>,
+    new: Vec<HighlightedLine>,
+}
 
 /// 1 回の展開要求で返す行数の上限。巨大な折りたたみを一度に読まないため。
 const EXPAND_LIMIT: usize = 5_000;
@@ -231,6 +238,12 @@ struct ExpandQuery {
     from: Option<usize>,
     #[serde(default)]
     to: Option<usize>,
+    /// "on" で上限を無視して有効化、"off" で無効化。
+    #[serde(default)]
+    highlight: Option<String>,
+    /// "1" で暗いテーマ。
+    #[serde(default)]
+    dark: Option<String>,
 }
 
 async fn file(
@@ -242,6 +255,8 @@ async fn file(
     let file =
         find_file(&review, &id).ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))?;
 
+    let dark = query.dark.as_deref() == Some("1");
+
     if file.binary {
         return Ok(Json(json!({
             "id": id,
@@ -250,13 +265,35 @@ async fn file(
             "new_size": file.new_size,
             "rows": [],
             "comments": comments_for(&state, &id),
+            "highlight": { "capable": false, "enabled": false, "dark": dark },
         })));
     }
 
     let content = source_content(&state, &id).await?;
+    let old_text = content
+        .old
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+    let new_text = content
+        .new
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
     let old_lines = side_lines(&content.old);
     let new_lines = side_lines(&content.new);
     let rows = diff::align(&old_lines, &new_lines);
+
+    let capable = Highlighter::capable(old_text.as_deref(), new_text.as_deref());
+    let forced = query.highlight.as_deref() == Some("on");
+    let enabled = forced || (capable && query.highlight.as_deref() != Some("off"));
+    let highlighted = enabled.then(|| Highlighted {
+        old: state
+            .highlighter
+            .highlight(&file.path, old_text.as_deref().unwrap_or(""), dark),
+        new: state
+            .highlighter
+            .highlight(&file.path, new_text.as_deref().unwrap_or(""), dark),
+    });
+    let highlight_info = json!({ "capable": capable, "enabled": enabled, "dark": dark });
 
     update_outdated(&state, &id, &old_lines, &new_lines);
 
@@ -264,7 +301,10 @@ async fn file(
         let from = from.min(rows.len());
         let to = to.min(rows.len()).max(from);
         let end = to.min(from + EXPAND_LIMIT);
-        let slice: Vec<Value> = rows[from..end].iter().map(row_json).collect();
+        let slice: Vec<Value> = rows[from..end]
+            .iter()
+            .map(|row| row_json(row, highlighted.as_ref()))
+            .collect();
         let next = if end < to { Some(end) } else { None };
         return Ok(Json(json!({
             "id": id,
@@ -272,13 +312,14 @@ async fn file(
             "rows": slice,
             "next": next,
             "comments": comments_for(&state, &id),
+            "highlight": highlight_info,
         })));
     }
 
     let display = diff::collapse(&rows, diff::DEFAULT_CONTEXT);
     let rows_json = display
         .iter()
-        .map(|row| display_row_json(row, &rows))
+        .map(|row| display_row_json(row, &rows, highlighted.as_ref()))
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "id": id,
@@ -287,6 +328,7 @@ async fn file(
         "new_total": new_lines.len(),
         "rows": rows_json,
         "comments": comments_for(&state, &id),
+        "highlight": highlight_info,
     })))
 }
 
@@ -316,34 +358,36 @@ fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_li
     }
 }
 
-fn row_json(row: &Row) -> Value {
+fn row_json(row: &Row, highlighted: Option<&Highlighted>) -> Value {
+    let old_highlight = highlighted.map(|highlight| highlight.old.as_slice());
+    let new_highlight = highlighted.map(|highlight| highlight.new.as_slice());
     match row.kind {
         diff::RowKind::Equal => json!({
             "kind": "equal",
-            "old": line_json(row.old.as_ref()),
-            "new": line_json(row.new.as_ref()),
+            "old": line_json(row.old.as_ref(), old_highlight, &[]),
+            "new": line_json(row.new.as_ref(), new_highlight, &[]),
         }),
         diff::RowKind::Insert => json!({
             "kind": "insert",
-            "new": line_json(row.new.as_ref()),
+            "new": line_json(row.new.as_ref(), new_highlight, &[]),
         }),
         diff::RowKind::Delete => json!({
             "kind": "delete",
-            "old": line_json(row.old.as_ref()),
+            "old": line_json(row.old.as_ref(), old_highlight, &[]),
         }),
         diff::RowKind::Replace => json!({
             "kind": "replace",
-            "old": line_json(row.old.as_ref()),
-            "new": line_json(row.new.as_ref()),
+            "old": line_json(row.old.as_ref(), old_highlight, &row.old_segments),
+            "new": line_json(row.new.as_ref(), new_highlight, &row.new_segments),
             "old_segments": segments_json(&row.old_segments),
             "new_segments": segments_json(&row.new_segments),
         }),
     }
 }
 
-fn display_row_json(row: &DisplayRow, rows: &[Row]) -> Value {
+fn display_row_json(row: &DisplayRow, rows: &[Row], highlighted: Option<&Highlighted>) -> Value {
     match row {
-        DisplayRow::Diff(row) => row_json(row),
+        DisplayRow::Diff(row) => row_json(row, highlighted),
         DisplayRow::Skip(skip) => {
             let (old_start, new_start) = rows
                 .get(skip.from)
@@ -366,9 +410,20 @@ fn display_row_json(row: &DisplayRow, rows: &[Row]) -> Value {
     }
 }
 
-fn line_json(line: Option<&Line>) -> Value {
+fn line_json(
+    line: Option<&Line>,
+    highlighted: Option<&[HighlightedLine]>,
+    segments: &[Segment],
+) -> Value {
     match line {
-        Some(line) => json!({ "number": line.number, "text": line.text }),
+        Some(line) => {
+            let mut value = json!({ "number": line.number, "text": line.text });
+            if let Some(ranges) = highlighted.and_then(|lines| lines.get(line.number as usize - 1))
+            {
+                value["html"] = Value::String(highlight::render_line(ranges, segments));
+            }
+            value
+        }
         None => Value::Null,
     }
 }
