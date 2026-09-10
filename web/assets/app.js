@@ -9,6 +9,7 @@ import {
   formatBytes,
   keyAction,
   lineOffsets,
+  replaceComment,
   statusLabel,
   suggestionAllowed,
   toDisplayLines,
@@ -73,6 +74,7 @@ const dom = {
  *   sortBySize: boolean,
  *   theme: string,
  *   cache: Map<string, any>,
+ *   commentStore: Map<string, any[]>,
  *   rows: LogicalRow[],
  *   display: DisplayLine[],
  *   heights: number[],
@@ -100,6 +102,7 @@ const state = {
   sortBySize: false,
   theme: localStorage.getItem("kemi-theme") || "auto",
   cache: new Map(),
+  commentStore: new Map(),
   rows: [],
   display: [],
   heights: [],
@@ -222,6 +225,7 @@ async function refresh() {
   renderUpdateBadge();
   const scrollTop = dom.viewport.scrollTop;
   state.cache.clear();
+  state.commentStore.clear();
   state.review = await api.getReview(true);
   state.entries = flatten(state.review);
   const keepId = currentEntry() ? currentEntry().file.id : undefined;
@@ -724,6 +728,7 @@ async function addComment(payload) {
   try {
     const comment = await api.postComment(payload);
     state.comments.push(comment);
+    state.commentStore.set(payload.file_id, state.comments);
     state.selection = null;
     renderSelectionBar();
     renderDiff();
@@ -841,7 +846,7 @@ async function sendReply(id, body) {
   }
   try {
     const updated = await api.postComment({ op: "reply", id, body });
-    replaceComment(updated);
+    applyCommentUpdate(updated);
     renderComments();
   } catch (error) {
     showOverlay("返信できません", String(error));
@@ -858,7 +863,7 @@ async function toggleResolve(comment) {
       id: comment.id,
       resolved: !comment.resolved,
     });
-    replaceComment(updated);
+    applyCommentUpdate(updated);
     renderComments();
   } catch (error) {
     showOverlay("解決状態を変えられません", String(error));
@@ -866,12 +871,15 @@ async function toggleResolve(comment) {
 }
 
 /**
+ * 返信・解決の結果を、現在のファイルのコメント保持先へ反映する。
  * @param {any} updated
  */
-function replaceComment(updated) {
-  state.comments = state.comments.map((comment) =>
-    comment.id === updated.id ? updated : comment,
-  );
+function applyCommentUpdate(updated) {
+  state.comments = replaceComment(state.comments, updated);
+  const entry = currentEntry();
+  if (entry) {
+    state.commentStore.set(entry.file.id, state.comments);
+  }
 }
 
 /**
@@ -1011,7 +1019,9 @@ async function selectIndex(index, options = { scrollTop: true }) {
   state.binary = Boolean(data.binary);
   state.highlightCapable = Boolean(data.highlight && data.highlight.capable);
   state.highlightEnabled = Boolean(data.highlight && data.highlight.enabled);
-  state.comments = data.comments || [];
+  const storedComments = state.commentStore.get(id);
+  state.comments = storedComments || data.comments || [];
+  state.commentStore.set(id, state.comments);
   state.selection = null;
   if (options.scrollTop) {
     dom.viewport.scrollTop = 0;

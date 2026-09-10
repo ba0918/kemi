@@ -267,6 +267,18 @@ export function suggestionAllowed(side) {
 }
 
 /**
+ * id が一致するコメントだけを差し替えた新しい配列を返す。
+ * @param {any[]} comments
+ * @param {any} updated
+ * @returns {any[]}
+ */
+export function replaceComment(comments, updated) {
+  return comments.map((comment) =>
+    comment.id === updated.id ? updated : comment,
+  );
+}
+
+/**
  * @param {string} status
  * @returns {string}
  */

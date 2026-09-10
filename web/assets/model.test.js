@@ -8,6 +8,7 @@ import {
   formatBytes,
   keyAction,
   lineOffsets,
+  replaceComment,
   statusLabel,
   suggestionAllowed,
   toDisplayLines,
@@ -246,4 +247,12 @@ test("commentLabel_marks_file_wide_and_ranges", () => {
 test("suggestionAllowed_only_on_new_side", () => {
   assert.equal(suggestionAllowed("new"), true);
   assert.equal(suggestionAllowed("old"), false);
+});
+
+test("replaceComment_swaps_only_the_matching_id", () => {
+  const first = { id: "c1", body: "a" };
+  const second = { id: "c2", body: "b" };
+  const updated = { id: "c1", body: "a", replies: ["r"] };
+
+  assert.deepEqual(replaceComment([first, second], updated), [updated, second]);
 });
