@@ -64,7 +64,7 @@ pub(crate) enum SubmitState {
 
 pub(crate) struct AppState {
     pub source: Arc<dyn ReviewSource>,
-    pub highlighter: crate::highlight::Highlighter,
+    pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
     pub token: String,
     pub origin: String,
@@ -90,7 +90,7 @@ pub async fn serve(
 
     let state = Arc::new(AppState {
         source: params.source,
-        highlighter: crate::highlight::Highlighter::new(),
+        highlighter: std::sync::OnceLock::new(),
         assets: params.assets,
         token: params.token,
         origin,

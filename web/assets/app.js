@@ -222,7 +222,7 @@ async function refresh() {
   renderUpdateBadge();
   const scrollTop = dom.viewport.scrollTop;
   state.cache.clear();
-  state.review = await api.getReview();
+  state.review = await api.getReview(false);
   state.entries = flatten(state.review);
   const keepId = currentEntry() ? currentEntry().file.id : undefined;
   rebuildVisible(keepId);
@@ -1120,7 +1120,7 @@ function handleKey(event) {
 }
 
 async function boot() {
-  state.review = await api.getReview();
+  state.review = await api.getReview(false);
   state.entries = flatten(state.review);
   state.visible = state.entries.slice();
   renderTopbar();

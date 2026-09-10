@@ -60,7 +60,7 @@ impl GitSource {
 
     fn review_worktree(&self) -> Result<(ReviewMeta, Plan), SourceError> {
         let attributes = read_attributes(&self.repo);
-        let mut entries = diff_entries(&self.repo, &["HEAD"])?;
+        let mut entries = worktree_diff_entries(&self.repo)?;
 
         let untracked = git_raw(
             &self.repo,
@@ -348,6 +348,84 @@ impl ReviewSource for GitSource {
             GitMode::Range { to, .. } => ref_watch_paths(&self.repo, to).unwrap_or_default(),
         }
     }
+}
+
+/// worktree の統計を求める。変更が多いときはパスで分けて並列に diff する。
+/// 状態は安いコマンドとファイルの有無から決める。
+fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
+    let numstat = worktree_numstat(repo)?;
+    let head_paths: std::collections::HashSet<String> = split_z(&git_raw(
+        repo,
+        &["ls-tree", "-r", "--name-only", "-z", "HEAD"],
+    )?)
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+
+    Ok(numstat
+        .into_iter()
+        .map(|stat| {
+            let status = if stat.old_path.is_some() {
+                Status::Rename
+            } else if !head_paths.contains(&stat.new_path) {
+                Status::Add
+            } else if !repo.join(&stat.new_path).exists() {
+                Status::Delete
+            } else {
+                Status::Modify
+            };
+            DiffEntry {
+                path: stat.new_path,
+                old_path: stat.old_path,
+                status,
+                add: stat.add,
+                del: stat.del,
+                binary: stat.binary,
+            }
+        })
+        .collect())
+}
+
+/// worktree の numstat。ファイル数が多いときはパスを分割して並列に引く。
+fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
+    let paths: Vec<String> = split_z(&git_raw(repo, &["diff", "--name-only", "-z", "HEAD"])?)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    if paths.len() < 256 {
+        return Ok(parse_numstat(&git_raw(
+            repo,
+            &["diff", "--numstat", "-z", "-M", "HEAD"],
+        )?));
+    }
+
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .clamp(2, 16);
+    let chunk = paths.len().div_ceil(workers);
+    let mut handles = Vec::new();
+    for shard in paths.chunks(chunk) {
+        let repo = repo.to_path_buf();
+        let shard: Vec<String> = shard.to_vec();
+        handles.push(std::thread::spawn(
+            move || -> Result<Vec<Numstat>, SourceError> {
+                let mut args: Vec<&str> = vec!["diff", "--numstat", "-z", "-M", "HEAD", "--"];
+                args.extend(shard.iter().map(String::as_str));
+                Ok(parse_numstat(&git_raw(&repo, &args)?))
+            },
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for handle in handles {
+        let mut shard = handle
+            .join()
+            .map_err(|_| SourceError::Git("numstat の並列実行に失敗しました".to_string()))??;
+        entries.append(&mut shard);
+    }
+    entries.sort_by(|left, right| left.new_path.cmp(&right.new_path));
+    Ok(entries)
 }
 
 fn diff_entries(repo: &Path, range_args: &[&str]) -> Result<Vec<DiffEntry>, SourceError> {

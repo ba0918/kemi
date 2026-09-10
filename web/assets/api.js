@@ -39,8 +39,8 @@ async function postJson(path, body) {
   return response.json();
 }
 
-export function getReview() {
-  return getJson("api/review");
+export function getReview(refresh = false) {
+  return getJson(`api/review${refresh ? "?refresh=1" : ""}`);
 }
 
 /**

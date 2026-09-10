@@ -182,14 +182,26 @@ fn serve_asset(state: &AppState, path: &str) -> Result<Response, ApiError> {
     Ok(response)
 }
 
+#[derive(Debug, Deserialize)]
+struct ReviewQuery {
+    #[serde(default)]
+    refresh: Option<String>,
+}
+
 async fn review(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
+    Query(query): Query<ReviewQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let review = source_review(&state).await?;
-    *state.meta.write().expect("meta lock poisoned") = Arc::new(review.clone());
+    let review: Arc<ReviewMeta> = if query.refresh.as_deref() == Some("1") {
+        let review = Arc::new(source_review(&state).await?);
+        *state.meta.write().expect("meta lock poisoned") = review.clone();
+        review
+    } else {
+        state.meta.read().expect("meta lock poisoned").clone()
+    };
     let session = state.session.lock().expect("session poisoned");
-    Ok(Json(review_json(&review, &session)))
+    Ok(Json(review_json(review.as_ref(), &session)))
 }
 
 fn review_json(review: &ReviewMeta, session: &Session) -> Value {
@@ -285,13 +297,12 @@ async fn file(
     let capable = Highlighter::capable(old_text.as_deref(), new_text.as_deref());
     let forced = query.highlight.as_deref() == Some("on");
     let enabled = forced || (capable && query.highlight.as_deref() != Some("off"));
-    let highlighted = enabled.then(|| Highlighted {
-        old: state
-            .highlighter
-            .highlight(&file.path, old_text.as_deref().unwrap_or(""), dark),
-        new: state
-            .highlighter
-            .highlight(&file.path, new_text.as_deref().unwrap_or(""), dark),
+    let highlighted = enabled.then(|| {
+        let highlighter = state.highlighter.get_or_init(Highlighter::new);
+        Highlighted {
+            old: highlighter.highlight(&file.path, old_text.as_deref().unwrap_or(""), dark),
+            new: highlighter.highlight(&file.path, new_text.as_deref().unwrap_or(""), dark),
+        }
     });
     let highlight_info = json!({ "capable": capable, "enabled": enabled, "dark": dark });
 
