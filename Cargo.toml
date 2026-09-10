@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "A local review tool that shows changes in a browser and returns comments as JSON"
+repository = "https://github.com/ba0918/kemi"
 
 [workspace]
 members = ["crates/kemi-core", "crates/kemi-server", "crates/kemi-webview"]
@@ -24,3 +25,8 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal",
 [dev-dependencies]
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

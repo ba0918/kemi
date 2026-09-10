@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Licenses
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+      - name: Domain purity
+        run: |
+          if rg -n 'use (axum|hyper|tokio|std::process)' crates/kemi-core/src/domain; then
+            echo "domain must not depend on infrastructure" >&2
+            exit 1
+          fi
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: Install
+        run: npm ci
+      - name: Types
+        run: npx tsc -p web --noEmit
+      - name: Pure logic tests
+        run: node --test web

@@ -37,6 +37,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` |
+| Release plan | `dist plan`（cargo-dist をローカルに入れて実行） |
 
 ## Conventions specific to this project
 
