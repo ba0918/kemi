@@ -104,6 +104,7 @@ const dom = {
  *   review: any,
  *   entries: Entry[],
  *   visible: Entry[],
+ *   current: Entry|null,
  *   index: number,
  *   mode: "unified" | "split",
  *   wrap: boolean,
@@ -143,6 +144,7 @@ const state = {
   review: null,
   entries: [],
   visible: [],
+  current: null,
   index: 0,
   mode: localStorage.getItem("kemi-mode") === "split" ? "split" : "unified",
   wrap: false,
@@ -180,7 +182,7 @@ const state = {
 };
 
 function currentEntry() {
-  return state.visible[state.index];
+  return state.current;
 }
 
 /**
@@ -294,6 +296,7 @@ function rebuildVisible(keepId) {
     const found = state.visible.findIndex((entry) => entry.file.id === keepId);
     if (found >= 0) {
       state.index = found;
+      state.current = state.visible[found];
     }
   }
   state.index = Math.max(0, Math.min(state.visible.length - 1, state.index));
@@ -352,16 +355,26 @@ async function refresh() {
   state.commentStore.clear();
   state.review = await api.getReview(true);
   state.entries = flatten(state.review);
-  const keepId = currentEntry() ? currentEntry().file.id : undefined;
+  const current = currentEntry();
+  const keepId = current ? current.file.id : undefined;
+  const keep =
+    keepId === undefined
+      ? undefined
+      : state.entries.find((entry) => entry.file.id === keepId);
   rebuildVisible(keepId);
   renderHeader();
   renderTree();
   renderFooter();
-  if (state.visible.length > 0) {
+  if (keep) {
+    await selectEntry(keep, { scrollTop: false });
+    dom.viewport.scrollTop = scrollTop;
+    scheduleRender();
+  } else if (state.visible.length > 0) {
     await selectIndex(state.index, { scrollTop: false });
     dom.viewport.scrollTop = scrollTop;
     scheduleRender();
   } else {
+    state.current = null;
     renderGroupHeader();
     renderFileHeader();
     renderNotice();
@@ -628,7 +641,7 @@ function renderFileHeader() {
     } else {
       state.highlightOverrides.set(entry.file.id, next);
     }
-    void selectIndex(state.index, { scrollTop: false });
+    void selectEntry(entry, { scrollTop: false });
   });
   dom.fileHeader.append(highlight);
 
@@ -1563,10 +1576,15 @@ async function selectIndex(index, options = { scrollTop: true }) {
     return;
   }
   state.index = Math.max(0, Math.min(state.visible.length - 1, index));
-  const entry = currentEntry();
-  if (!entry) {
-    return;
-  }
+  await selectEntry(state.visible[state.index], options);
+}
+
+/**
+ * @param {Entry} entry
+ * @param {{ scrollTop?: boolean }} [options]
+ */
+async function selectEntry(entry, options = { scrollTop: true }) {
+  state.current = entry;
   const id = entry.file.id;
   const override = state.highlightOverrides.get(id);
   const key = `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
@@ -1633,8 +1651,9 @@ function applyTheme() {
   dom.btnTheme.title = `テーマ: ${current}（クリックで ${next}）`;
   if (changed) {
     state.cache.clear();
-    if (currentEntry()) {
-      void selectIndex(state.index, { scrollTop: false });
+    const entry = currentEntry();
+    if (entry) {
+      void selectEntry(entry, { scrollTop: false });
     }
   }
 }
@@ -1741,20 +1760,19 @@ dom.btnWrap.addEventListener("click", () => {
   renderDiff();
 });
 dom.chipFocus.addEventListener("click", () => {
+  // R-FOCUS: このフィルタはツリーだけを絞り、本文の表示は変えない。
   state.focusOnly = !state.focusOnly;
-  const keepId = currentEntry() ? currentEntry().file.id : undefined;
-  rebuildVisible(keepId);
+  const current = currentEntry();
+  rebuildVisible(current ? current.file.id : undefined);
   renderHeader();
   renderTree();
-  void selectIndex(state.index, { scrollTop: false });
 });
 dom.chipSort.addEventListener("click", () => {
   state.sortBySize = !state.sortBySize;
-  const keepId = currentEntry() ? currentEntry().file.id : undefined;
-  rebuildVisible(keepId);
+  const current = currentEntry();
+  rebuildVisible(current ? current.file.id : undefined);
   renderHeader();
   renderTree();
-  void selectIndex(state.index, { scrollTop: false });
 });
 dom.btnTheme.addEventListener("click", () => {
   state.theme = nextTheme(state.theme);
