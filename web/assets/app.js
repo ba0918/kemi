@@ -859,8 +859,14 @@ function renderEditor(editor) {
 function closeEditor() {
   state.editor = null;
   state.selection = null;
+  resetHeights();
   renderDiff();
   renderFloating();
+}
+
+/** エディタやスレッドの出入りで測り直す前に、行の高さを基準値へ戻す。 */
+function resetHeights() {
+  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
 }
 
 function openFileWideEditor() {
