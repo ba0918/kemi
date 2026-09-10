@@ -93,6 +93,10 @@ const dom = {
  *   selection: null | { fileId: string, side: string, start: number, end: number, anchor: number },
  *   submitted: boolean,
  *   updateAvailable: boolean,
+ *   treeItems: Map<string, HTMLButtonElement>,
+ *   treeActiveId: string | null,
+ *   treeVersion: number,
+ *   treeRenderedVersion: number,
  * }} */
 const state = {
   review: null,
@@ -122,6 +126,10 @@ const state = {
   selection: /** @type {null | { fileId: string, side: string, start: number, end: number, anchor: number }} */ (null),
   submitted: false,
   updateAvailable: false,
+  treeItems: new Map(),
+  treeActiveId: /** @type {string|null} */ (null),
+  treeVersion: 0,
+  treeRenderedVersion: -1,
 };
 
 function currentEntry() {
@@ -211,6 +219,7 @@ function rebuildVisible(keepId) {
   state.visible = /** @type {Entry[]} */ (
     files.map((file) => byId.get(file.id))
   );
+  state.treeVersion += 1;
   if (keepId !== undefined) {
     const found = state.visible.findIndex((entry) => entry.file.id === keepId);
     if (found >= 0) {
@@ -262,7 +271,20 @@ function renderTopbar() {
 }
 
 function renderTree() {
+  if (state.treeVersion !== state.treeRenderedVersion) {
+    rebuildTree();
+    state.treeRenderedVersion = state.treeVersion;
+  }
+  updateTreeActive();
+}
+
+/**
+ * ツリー全体を組み立て直す。同じファイルの項目は前回の要素を使い回す。
+ * 選択や seen の切り替えだけでは呼ばない（renderTree の差分更新側で扱う）。
+ */
+function rebuildTree() {
   dom.tree.textContent = "";
+  const items = new Map();
   const fragment = document.createDocumentFragment();
   let lastGroup = null;
   for (const entry of state.visible) {
@@ -277,48 +299,79 @@ function renderTree() {
       fragment.append(heading);
       lastGroup = entry.group.id;
     }
-    const item = button("tree-item");
-    item.dataset.fileId = entry.file.id;
-    if (currentEntry() && currentEntry().file.id === entry.file.id) {
-      item.classList.add("active");
-    }
-    if (entry.file.seen) {
-      item.classList.add("seen");
-    }
-    const line1 = el("span", "tree-path");
-    line1.textContent = entry.file.path;
-    const line2 = el("span", "tree-meta");
-    line2.append(textEl("span", "badge status", statusLabel(entry.file.status)));
-    if (entry.file.focus) {
-      line2.append(textEl("span", "badge focus", "重点"));
-    }
-    if (entry.file.noise) {
-      line2.append(textEl("span", "badge noise", "ノイズ"));
-    }
-    if (!entry.file.binary) {
-      line2.append(
-        textEl("span", "count add", `+${entry.file.add}`),
-        textEl("span", "count del", `-${entry.file.del}`),
-      );
-    } else {
-      line2.append(
-        textEl(
-          "span",
-          "count bytes",
-          `${formatBytes(entry.file.old_size)} → ${formatBytes(entry.file.new_size)}`,
-        ),
-      );
-    }
-    item.append(line1, line2);
-    item.addEventListener("click", () => {
-      const index = state.visible.findIndex(
-        (candidate) => candidate.file.id === entry.file.id,
-      );
-      void selectIndex(index, { scrollTop: true });
-    });
+    const item = treeItem(entry);
+    items.set(entry.file.id, item);
     fragment.append(item);
   }
   dom.tree.append(fragment);
+  state.treeItems = items;
+  state.treeActiveId = null;
+}
+
+/**
+ * @param {Entry} entry
+ * @returns {HTMLButtonElement}
+ */
+function treeItem(entry) {
+  let item = state.treeItems.get(entry.file.id);
+  if (!item) {
+    item = button("tree-item");
+    item.dataset.fileId = entry.file.id;
+    item.addEventListener("click", () => {
+      const index = state.visible.findIndex(
+        (candidate) => candidate.file.id === item?.dataset.fileId,
+      );
+      void selectIndex(index, { scrollTop: true });
+    });
+  }
+  item.textContent = "";
+  item.classList.remove("active");
+  if (entry.file.seen) {
+    item.classList.add("seen");
+  } else {
+    item.classList.remove("seen");
+  }
+  const line1 = el("span", "tree-path");
+  line1.textContent = entry.file.path;
+  const line2 = el("span", "tree-meta");
+  line2.append(textEl("span", "badge status", statusLabel(entry.file.status)));
+  if (entry.file.focus) {
+    line2.append(textEl("span", "badge focus", "重点"));
+  }
+  if (entry.file.noise) {
+    line2.append(textEl("span", "badge noise", "ノイズ"));
+  }
+  if (!entry.file.binary) {
+    line2.append(
+      textEl("span", "count add", `+${entry.file.add}`),
+      textEl("span", "count del", `-${entry.file.del}`),
+    );
+  } else {
+    line2.append(
+      textEl(
+        "span",
+        "count bytes",
+        `${formatBytes(entry.file.old_size)} → ${formatBytes(entry.file.new_size)}`,
+      ),
+    );
+  }
+  item.append(line1, line2);
+  return item;
+}
+
+function updateTreeActive() {
+  const entry = currentEntry();
+  const nextId = entry ? entry.file.id : null;
+  if (nextId === state.treeActiveId) {
+    return;
+  }
+  if (state.treeActiveId) {
+    state.treeItems.get(state.treeActiveId)?.classList.remove("active");
+  }
+  if (nextId) {
+    state.treeItems.get(nextId)?.classList.add("active");
+  }
+  state.treeActiveId = nextId;
 }
 
 function renderGroupAndFile() {
@@ -1088,7 +1141,7 @@ async function selectIndex(index, options = { scrollTop: true }) {
 async function toggleSeen(file) {
   const next = !file.seen;
   file.seen = next;
-  renderTree();
+  state.treeItems.get(file.id)?.classList.toggle("seen", next);
   renderGroupAndFile();
   try {
     await api.postState({ file_id: file.id, seen: next });
@@ -1180,6 +1233,7 @@ async function boot() {
   state.review = await api.getReview(false);
   state.entries = flatten(state.review);
   state.visible = state.entries.slice();
+  state.treeVersion += 1;
   renderTopbar();
   renderTree();
   renderFooter();
