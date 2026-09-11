@@ -636,6 +636,10 @@ export function hasStops(file, comments, collapsedMap) {
  * @returns {boolean}
  */
 export function hasLoadedStops(rows, comments) {
+  // 変更の行があれば変更ブロックがある。大きなファイルで表示行を作る手間を省く。
+  if (rows.some((row) => isChangeKind(row.kind))) {
+    return true;
+  }
   return navStops(toDisplayLines(withRowIndex(rows), "unified"), comments).length > 0;
 }
 
