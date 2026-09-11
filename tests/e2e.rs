@@ -1001,19 +1001,23 @@ async fn result_relative_xdg_state_home_falls_back_to_home() {
     assert!(!dir.path.join("relative").exists());
 }
 
-#[tokio::test]
-async fn result_unwritable_location_keeps_stdout_and_exit_code() {
+/// manifest のレビューを承認で終える。submit の応答、終了コード、stdout と、
+/// URL の行より後に stderr へ出た行を返す。
+async fn approve_manifest_review(
+    state: &Path,
+) -> (
+    serde_json::Value,
+    std::process::ExitStatus,
+    String,
+    Vec<String>,
+) {
     let dir = TempDir::new();
-    let state = TempDir::new();
-    // 状態ディレクトリの kemi がファイルなので、その下に結果を作れない。
-    std::fs::write(state.path.join("kemi"), "not a directory").unwrap();
     dir.write("manifest.json", MANIFEST);
     let mut kemi = Kemi::spawn_with_state(
         &dir.path,
         &["manifest.json", "--no-open", "--port", "0"],
-        &state.path,
+        state,
     );
-
     let response = kemi
         .post("api/submit", serde_json::json!({"verdict": "approved"}))
         .await;
@@ -1022,12 +1026,28 @@ async fn result_unwritable_location_keeps_stdout_and_exit_code() {
     let mut stderr = String::new();
     kemi.stderr.read_to_string(&mut stderr).unwrap();
     let (status, stdout) = kemi.wait();
+    let lines = stderr.lines().map(str::to_string).collect();
+    (answer, status, stdout, lines)
+}
+
+#[tokio::test]
+async fn result_unwritable_location_keeps_stdout_and_exit_code() {
+    let writable = TempDir::new();
+    let (_, _, writable_stdout, writable_stderr) = approve_manifest_review(&writable.path).await;
+    let unwritable = TempDir::new();
+    // 状態ディレクトリの kemi がファイルなので、その下に結果を作れない。
+    std::fs::write(unwritable.path.join("kemi"), "not a directory").unwrap();
+
+    let (answer, status, stdout, stderr) = approve_manifest_review(&unwritable.path).await;
 
     assert_eq!(status.code(), Some(0));
-    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(document["verdict"], "approved");
+    assert_eq!(stdout, writable_stdout);
     assert!(answer["saved"]["error"].is_string());
-    assert!(!stderr.trim().is_empty(), "a warning must go to stderr");
+    // 文言は契約でないので、書ける場合より stderr の行が増えたことで警告を確かめる。
+    assert!(
+        stderr.len() > writable_stderr.len(),
+        "a warning must go to stderr: {stderr:?} vs {writable_stderr:?}"
+    );
 }
 
 #[cfg(unix)]
