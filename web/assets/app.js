@@ -2521,7 +2521,12 @@ async function switchUnit(unit, jump) {
   let review = unit === state.unit ? state.review : state.reviews.get(unit);
   const fresh = !review;
   if (!review) {
-    review = await api.getReview(false, unit);
+    try {
+      review = await api.getReview(false, unit);
+    } catch (error) {
+      showOverlay("グループ単位を切り替えられません", String(error));
+      return;
+    }
   }
   applyReview(review, fresh);
   let index = jump ? jump.find(state.entries) : -1;
@@ -2770,10 +2775,24 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     renderNotice();
     renderFloating();
     renderDiff();
-    const data = await api.getFile(id, null, {
-      dark: state.dark,
-      highlight: override,
-    });
+    /** @type {any} */
+    let data;
+    try {
+      data = await api.getFile(id, null, {
+        dark: state.dark,
+        highlight: override,
+      });
+    } catch (error) {
+      if (generation === state.selectGeneration) {
+        // 読み込み中のまま止まらないよう戻す。選び直せば取り直す。
+        state.loading = false;
+        renderFileHeader();
+        renderNotice();
+        renderDiff();
+        showOverlay("ファイルを読み込めません", String(error));
+      }
+      return;
+    }
     if (generation !== state.selectGeneration) {
       // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。
       return;
