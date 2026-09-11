@@ -1159,7 +1159,7 @@ function openCommentEditor(comment) {
  */
 function confirmDeleteComment(comment) {
   dom.modalTitle.textContent = "コメントを削除しますか？";
-  dom.modalBody.textContent = `${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`;
+  setModalText(`${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`);
   dom.modalOk.textContent = "削除";
   dom.modalOk.className = "btn secondary";
   dom.modalCancel.textContent = "戻る";
@@ -1981,6 +1981,15 @@ function openConfirm(verdict) {
   dom.modal.hidden = false;
 }
 
+/**
+ * 確認ダイアログの本文を、改行を保つ段落 1 つにする。
+ * @param {string} text
+ */
+function setModalText(text) {
+  dom.modalBody.textContent = "";
+  dom.modalBody.append(textEl("p", "", text));
+}
+
 function closeModal() {
   dom.modal.hidden = true;
   state.pendingVerdict = null;
@@ -2541,7 +2550,7 @@ async function switchUnit(unit, jump) {
 function openUnitFailure(status) {
   const unit = String(status.unit);
   dom.modalTitle.textContent = `${UNIT_LABELS[unit] || unit}の単位を作れなかった`;
-  dom.modalBody.textContent = `理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`;
+  setModalText(`理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`);
   dom.modalOk.textContent = "再試行";
   dom.modalOk.className = "btn primary";
   dom.modalCancel.textContent = "閉じる";
