@@ -91,18 +91,30 @@ fn list_names(dir: &Path) -> Vec<String> {
 pub fn save(dir: &Path, key: &str, text: &str, millis: u128, pid: u32) -> std::io::Result<PathBuf> {
     create_private_dir(dir)?;
     let mut attempt = 0;
-    let path = loop {
-        let path = dir.join(file_name(millis, key, pid, attempt));
-        match create_private_file(&path) {
-            Ok(mut file) => {
-                use std::io::Write;
-                file.write_all(text.as_bytes())?;
-                break path;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
-            Err(error) => return Err(error),
+    let (name, path) = loop {
+        let name = file_name(millis, key, pid, attempt);
+        let path = dir.join(&name);
+        if path.symlink_metadata().is_err() {
+            break (name, path);
         }
+        attempt += 1;
     };
+    // 書き終えてから結果の名前に移す。書き込みの途中で失敗したファイルが、最新の
+    // 結果として読まれないように。結果の名前にならない一時の名前で書く。
+    // Why not hard_link で名前の衝突まで原子的に防がない: ハードリンクを作れない
+    // ファイルシステムでは保存そのものが失敗する。名前には pid が入るので、別の
+    // プロセスと同じ名前を取り合うことは無い。
+    let temporary = dir.join(format!(".{name}.tmp"));
+    let written = create_private_file(&temporary)
+        .and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(text.as_bytes())
+        })
+        .and_then(|()| std::fs::rename(&temporary, &path));
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
     let names = list_names(dir);
     for name in to_prune(&names, KEEP) {
         let _ = std::fs::remove_file(dir.join(name));
