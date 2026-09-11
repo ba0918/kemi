@@ -16,8 +16,11 @@
   --del-bg: #ffebe9;
   --del-mark: #ffc9c4;
   --del-ink: #cf222e;
+  --add-gut: #cdeed6;
+  --del-gut: #f8d3cf;
   --focus: #9a6700;
   --focus-bg: #fff8c5;
+  --hatch: repeating-linear-gradient(135deg, transparent 0 5px, var(--line-soft) 5px 6px);
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
   --row-height: 24px;
@@ -41,6 +44,8 @@
   --del-bg: #25171c;
   --del-mark: #f8514966;
   --del-ink: #f85149;
+  --add-gut: #18351f;
+  --del-gut: #3d1e1f;
   --focus: #d29922;
   --focus-bg: #272115;
 }
@@ -63,6 +68,8 @@
   --del-bg: #fbe3e1;
   --del-mark: #f0b8b1;
   --del-ink: #dc322f;
+  --add-gut: #cfe5c6;
+  --del-gut: #f3cfca;
   --focus: #b58900;
   --focus-bg: #f7ecc9;
 }
@@ -85,6 +92,8 @@
   --del-bg: #37222a;
   --del-mark: #7a3a44;
   --del-ink: #dc322f;
+  --add-gut: #123b33;
+  --del-gut: #472a33;
   --focus: #b58900;
   --focus-bg: #3a3113;
 }
@@ -769,24 +778,50 @@ ul.files ul {
   background: transparent;
 }
 
-.row.kind-insert,
-.row.kind-replace-new {
+/* 1 列: 行の側で色を決め、行番号の欄にも同じ色を付ける。 */
+.row.tone-add {
   background: var(--add-bg);
 }
 
-.row.kind-delete,
-.row.kind-replace-old {
+.row.tone-del {
   background: var(--del-bg);
 }
 
-.row.kind-insert .mk,
-.row.kind-replace-new .mk {
+.row.tone-add .no-cell,
+.cell.side-add .no-cell {
+  background: var(--add-gut);
   color: var(--add-ink);
 }
 
-.row.kind-delete .mk,
-.row.kind-replace-old .mk {
+.row.tone-del .no-cell,
+.cell.side-del .no-cell {
+  background: var(--del-gut);
   color: var(--del-ink);
+}
+
+.row.tone-add .mk,
+.cell.side-add .mk {
+  color: var(--add-ink);
+  font-weight: 700;
+}
+
+.row.tone-del .mk,
+.cell.side-del .mk {
+  color: var(--del-ink);
+  font-weight: 700;
+}
+
+/* 2 列: 書き換えの旧側は削除、新側は追加の色。相手の無い側は斜線の無地。 */
+.cell.side-add {
+  background: var(--add-bg);
+}
+
+.cell.side-del {
+  background: var(--del-bg);
+}
+
+.cell.side-empty {
+  background: var(--hatch), var(--panel);
 }
 
 .row.kind-equal .src,
@@ -795,26 +830,118 @@ ul.files ul {
 }
 
 .row.kind-skip {
-  justify-content: center;
-  background: var(--panel-2);
+  background: var(--accent-soft);
   color: var(--ink-3);
+  font-family: var(--sans);
   font-size: 12.5px;
+  border-block: 1px solid var(--line-soft);
 }
 
 .expand-button {
-  margin: 0 auto;
-  font-size: 12.5px;
-  background: none;
+  flex: 0 0 auto;
+  min-width: calc(6.8em + 1px);
+  height: 100%;
+  padding: 0 10px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   border: 0;
   color: var(--accent);
 }
 
+.skip-range {
+  margin-left: auto;
+  padding-right: 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* 由来の行（R-ORIGIN）。変更ブロックのすぐ上に 1 行で出す。 */
+.origin-row {
+  gap: 6px;
+  padding-left: 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow: hidden;
+}
+
+.origin-label {
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+
+.origin-entry {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48ch;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.origin-entry[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.origin-pending,
+.origin-unknown {
+  flex: 0 0 auto;
+  font-style: italic;
+}
+
+.origin-reason {
+  padding: 8px 16px 10px calc(6.8em + 12px);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: normal;
+}
+
+.origin-reason-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.origin-sha {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.origin-body {
+  margin: 4px 0 0;
+  max-width: 76ch;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
 .no-cell {
-  flex: 0 0 4.6em;
+  flex: 0 0 3.4em;
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   padding: 0 4px 0 6px;
+  background: var(--panel);
   color: var(--ink-3);
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -876,10 +1003,10 @@ ul.files ul {
   color: inherit;
 }
 
-.row.kind-delete .changed,
-.row.kind-delete .word-changed,
-.row.kind-replace-old .changed,
-.row.kind-replace-old .word-changed {
+.row.tone-del .changed,
+.row.tone-del .word-changed,
+.cell.side-del .changed,
+.cell.side-del .word-changed {
   background: var(--del-mark);
 }
 
@@ -890,6 +1017,8 @@ ul.files ul {
 .cell {
   flex: 1 1 50%;
   display: flex;
+  align-self: stretch;
+  align-items: center;
   min-width: 0;
   border-right: 1px solid var(--line);
 }

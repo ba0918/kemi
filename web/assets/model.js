@@ -168,6 +168,69 @@ export function toDisplayLines(rows, mode, options = {}) {
 }
 
 /**
+ * 折りたたみ行の下に続く表示範囲（次の折りたたみ行か末尾まで）の旧・新の行番号
+ * （git の `@@` と同じ意味）。下に行が無ければ null。行の無い側は null。
+ * @param {LogicalRow[]} rows
+ * @param {number} skipIndex
+ * @returns {{ old: { start: number, end: number } | null, new: { start: number, end: number } | null } | null}
+ */
+export function rangeAfterSkip(rows, skipIndex) {
+  /** @type {{ start: number, end: number } | null} */
+  let old = null;
+  /** @type {{ start: number, end: number } | null} */
+  let added = null;
+  /**
+   * @param {{ start: number, end: number } | null} span
+   * @param {number} value
+   */
+  const widen = (span, value) =>
+    span === null
+      ? { start: value, end: value }
+      : { start: Math.min(span.start, value), end: Math.max(span.end, value) };
+  let seen = false;
+  for (let index = skipIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row.kind === "skip") {
+      break;
+    }
+    seen = true;
+    if (row.old) {
+      old = widen(old, Number(row.old.number));
+    }
+    if (row.new) {
+      added = widen(added, Number(row.new.number));
+    }
+  }
+  return seen ? { old, new: added } : null;
+}
+
+/**
+ * 表示行の色の役割。2 列では側ごとに、書き換えの旧側を削除、新側を追加の色にし、
+ * 相手の無い側は色を付けない（`empty`）。1 列では `side` に null を渡し、行の側で決める。
+ * @param {string} kind
+ * @param {"old" | "new" | null} side
+ * @returns {"del" | "add" | "empty" | ""}
+ */
+export function sideTone(kind, side) {
+  if (side === null) {
+    if (kind === "delete" || kind === "replace-old") {
+      return "del";
+    }
+    return kind === "insert" || kind === "replace-new" ? "add" : "";
+  }
+  switch (kind) {
+    case "replace":
+      return side === "old" ? "del" : "add";
+    case "delete":
+      return side === "old" ? "del" : "empty";
+    case "insert":
+      return side === "old" ? "empty" : "add";
+    default:
+      return "";
+  }
+}
+
+/**
  * 各行の上端オフセット（最後に全体の高さ）を返す。
  * @param {number[]} heights
  * @returns {number[]}

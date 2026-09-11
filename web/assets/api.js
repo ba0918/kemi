@@ -65,6 +65,15 @@ export function getFile(id, range, options = {}) {
 }
 
 /**
+ * 最終形のファイルの由来。`force` で上限を超えるファイルでも求める。
+ * @param {string} id
+ * @param {boolean} force
+ */
+export function getOrigin(id, force) {
+  return getJson(`api/origin/${encodeURIComponent(id)}${force ? "?force=1" : ""}`);
+}
+
+/**
  * @param {{file_id: string, seen?: boolean, collapsed?: boolean}} body
  */
 export function postState(body) {

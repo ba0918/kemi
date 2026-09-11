@@ -18,11 +18,14 @@ import {
   nextHighlightOverride,
   nextTheme,
   placeThreads,
+  rangeAfterSkip,
   resolveTheme,
+  sideTone,
   statusLabel,
   suggestionAllowed,
   toDisplayLines,
   windowFor,
+  withRowIndex,
 } from "./model.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
@@ -44,6 +47,8 @@ const EXPAND_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5.5 8 10l5-4.5"/><path d="M3 2.5h10"/></svg>';
 const CODE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4 2 8l2.5 4M11.5 4 14 8l-2.5 4M9.5 2.5l-3 11"/></svg>';
+const ORIGIN_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="4" r="1.8"/><circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="8" r="1.8"/><path d="M4 5.8v4.4M5.6 4.8 10.4 7.2"/></svg>';
 const EYE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/></svg>';
 
@@ -141,6 +146,11 @@ const dom = {
  *   dirOpen: Map<string, boolean>,
  *   groupHeaderOpen: Map<string, boolean>,
  *   commentClampOpen: Map<string, boolean>,
+ *   loading: boolean,
+ *   origins: Map<string, any>,
+ *   originForced: Set<string>,
+ *   originOpen: Map<string, string>,
+ *   skipRanges: Map<number, any>,
  * }} */
 const state = {
   review: null,
@@ -183,6 +193,11 @@ const state = {
   dirOpen: new Map(),
   groupHeaderOpen: new Map(),
   commentClampOpen: new Map(),
+  loading: false,
+  origins: new Map(),
+  originForced: new Set(),
+  originOpen: new Map(),
+  skipRanges: new Map(),
 };
 
 function currentEntry() {
@@ -648,8 +663,10 @@ function renderFileHeader() {
   }
   dom.fileHeader.append(el("span", "spacer"));
 
+  // 取得が終わるまでは、前のファイルに操作が届かないよう、ヘッダの操作を無効にする。
+  const busy = state.loading;
   const comment = iconButton("ファイル全体にコメント", COMMENT_ICON);
-  comment.disabled = state.submitted;
+  comment.disabled = state.submitted || busy;
   comment.addEventListener("click", openFileWideEditor);
   dom.fileHeader.append(comment);
 
@@ -662,7 +679,7 @@ function renderFileHeader() {
     fullyExpanded ? "すべて折りたたむ" : "すべての行を展開",
     EXPAND_ICON,
   );
-  expand.disabled = state.submitted || state.binary;
+  expand.disabled = state.submitted || state.binary || busy;
   expand.addEventListener("click", () => {
     if (fullyExpanded) {
       collapseAll();
@@ -673,6 +690,7 @@ function renderFileHeader() {
   dom.fileHeader.append(expand);
 
   const highlight = iconButton(highlightTitle(), CODE_ICON);
+  highlight.disabled = busy;
   highlight.classList.toggle("active", state.highlightEnabled);
   highlight.setAttribute("aria-pressed", String(state.highlightEnabled));
   highlight.addEventListener("click", () => {
@@ -689,10 +707,88 @@ function renderFileHeader() {
   });
   dom.fileHeader.append(highlight);
 
+  if (originAvailable() && !state.binary && !state.highlightCapable) {
+    const forced = state.originForced.has(entry.file.id);
+    const origin = iconButton(
+      forced ? "このファイルの由来を隠す" : "このファイルで由来を求める",
+      ORIGIN_ICON,
+    );
+    origin.disabled = busy;
+    origin.setAttribute("aria-pressed", String(forced));
+    origin.addEventListener("click", () => {
+      if (forced) {
+        state.originForced.delete(entry.file.id);
+      } else {
+        state.originForced.add(entry.file.id);
+      }
+      recomputeDisplay();
+      renderFileHeader();
+      renderDiff();
+      void loadOrigin(entry);
+    });
+    dom.fileHeader.append(origin);
+  }
+
   const seen = iconButton(entry.file.seen ? "見た（取り消す）" : "見た", EYE_ICON);
+  seen.disabled = busy;
   seen.setAttribute("aria-pressed", String(entry.file.seen));
   seen.addEventListener("click", () => void toggleSeen(entry.file));
   dom.fileHeader.append(seen);
+}
+
+/** 最終形（由来を持つ単位）を表示しているか。 */
+function originAvailable() {
+  return Boolean(state.review && state.review.unit === "file");
+}
+
+/** 表示中のファイルで由来の行を出すか。上限を超えるファイルは有効にしたときだけ。 */
+function originShown() {
+  const entry = currentEntry();
+  if (!entry || !originAvailable() || state.binary) {
+    return false;
+  }
+  return state.highlightCapable || state.originForced.has(entry.file.id);
+}
+
+/**
+ * @param {string} fileId
+ * @returns {string}
+ */
+function originKey(fileId) {
+  return `${fileId}|${state.originForced.has(fileId) ? 1 : 0}`;
+}
+
+/** 表示中のファイルの由来。取得中は "pending"、まだなら undefined。 */
+function currentOrigin() {
+  const entry = currentEntry();
+  return entry ? state.origins.get(originKey(entry.file.id)) : undefined;
+}
+
+/**
+ * 由来は差分の表示を待たせず、後から取りに行って付ける（R-ORIGIN）。
+ * @param {Entry} entry
+ */
+async function loadOrigin(entry) {
+  const id = entry.file.id;
+  const key = originKey(id);
+  if (!originShown() || state.origins.has(key)) {
+    return;
+  }
+  state.origins.set(key, "pending");
+  try {
+    const data = await api.getOrigin(id, state.originForced.has(id));
+    /** @type {Map<number, any>} */
+    const blocks = new Map();
+    for (const block of data.blocks || []) {
+      blocks.set(Number(block.row), block);
+    }
+    state.origins.set(key, { ...data, blocks });
+  } catch (error) {
+    state.origins.set(key, { failed: String(error), blocks: new Map() });
+  }
+  if (isShowingFile(id)) {
+    renderDiff();
+  }
 }
 
 /**
@@ -722,6 +818,11 @@ function renderNotice() {
       dom.notice.hidden = false;
       dom.notice.textContent = "表示するファイルがありません";
     }
+    return;
+  }
+  if (state.loading) {
+    dom.notice.hidden = false;
+    dom.notice.append(textEl("span", "notice-text", "読み込み中…"));
     return;
   }
   if (state.binary) {
@@ -1134,6 +1235,7 @@ function renderDiff() {
   const needsMeasure =
     state.wrap ||
     state.threads.byLine.size > 0 ||
+    state.originOpen.size > 0 ||
     Boolean(state.editor && !state.editor.wide);
   if (needsMeasure) {
     measureHeights(window.start);
@@ -1182,6 +1284,12 @@ function renderBlock(line, index) {
   const block = /** @type {HTMLDivElement} */ (el("div", "row-block"));
   block.dataset.kemiRow = "1";
   block.append(renderLine(line));
+  if (line.kind === "origin") {
+    const reason = renderOriginReason(line);
+    if (reason) {
+      block.append(reason);
+    }
+  }
   const threads = state.threads.byLine.get(index);
   if (threads) {
     for (const comment of threads) {
@@ -1208,15 +1316,24 @@ function renderBlock(line, index) {
  * @returns {HTMLElement}
  */
 function renderLine(line) {
-  const row = el("div", `row kind-${line.kind}`);
+  if (line.kind === "origin") {
+    return renderOriginLine(line);
+  }
+  const tone = state.mode === "split" ? "" : sideTone(line.kind, null);
+  const row = el("div", `row kind-${line.kind}${tone ? ` tone-${tone}` : ""}`);
   if (line.kind === "skip") {
     const skip = line.skip;
     const expand = button("expand-button");
-    expand.textContent = `… ${skip && skip.count ? skip.count : 0} 行を表示`;
+    expand.textContent = `↕ ${skip && skip.count ? skip.count : 0} 行を表示`;
+    expand.disabled = state.loading;
     expand.addEventListener("click", () => {
       void expandSkipAt(line.logicalIndex).then(() => renderFileHeader());
     });
     row.append(expand);
+    const range = state.skipRanges.get(line.logicalIndex);
+    if (range) {
+      row.append(textEl("span", "skip-range", rangeLabel(range)));
+    }
     return row;
   }
   const anchor = lineAnchor(line);
@@ -1230,12 +1347,14 @@ function renderLine(line) {
         line.oldLine,
         line.oldSegments,
         canComment && plusSide === "old",
+        sideTone(line.kind, "old"),
       ),
       sideCell(
         "new",
         line.newLine,
         line.newSegments,
         canComment && plusSide === "new",
+        sideTone(line.kind, "new"),
       ),
     );
     return row;
@@ -1253,6 +1372,100 @@ function renderLine(line) {
   }
   row.append(code);
   return row;
+}
+
+/**
+ * 折りたたみ行に出す、下に続く範囲の旧・新の行番号。
+ * @param {{ old: { start: number, end: number } | null, new: { start: number, end: number } | null }} range
+ * @returns {string}
+ */
+function rangeLabel(range) {
+  /** @param {{ start: number, end: number }} span */
+  const text = (span) => (span.start === span.end ? `${span.start}` : `${span.start}–${span.end}`);
+  const parts = [];
+  if (range.old) {
+    parts.push(`旧 ${text(range.old)}`);
+  }
+  if (range.new) {
+    parts.push(`新 ${text(range.new)}`);
+  }
+  return parts.join(" → ");
+}
+
+/**
+ * 変更ブロックのすぐ上の由来の行（R-ORIGIN）。計算中は行だけ先に出して印を置く。
+ * @param {DisplayLine} line
+ * @returns {HTMLElement}
+ */
+function renderOriginLine(line) {
+  const row = el("div", "row origin-row");
+  row.append(textEl("span", "origin-label", "由来"));
+  const origin = currentOrigin();
+  if (!origin || origin === "pending") {
+    row.append(textEl("span", "origin-pending", "計算中…"));
+    return row;
+  }
+  if (origin.failed) {
+    row.append(textEl("span", "origin-unknown", "求められませんでした"));
+    return row;
+  }
+  const block = origin.blocks.get(Number(line.block));
+  const entries = block ? block.entries : [];
+  const openKey = `${currentEntry()?.file.id}:${line.block}`;
+  for (const entry of entries) {
+    const commit = (origin.commits || {})[entry.sha] || { subject: "", body: "" };
+    const short = String(entry.sha).slice(0, 7);
+    const item = button("origin-entry");
+    item.textContent = entry.merge ? `マージ ${short}` : `${short} ${commit.subject}`;
+    item.title = commit.subject || short;
+    const open = state.originOpen.get(openKey) === entry.sha;
+    item.setAttribute("aria-expanded", String(open));
+    item.addEventListener("click", () => {
+      if (open) {
+        state.originOpen.delete(openKey);
+      } else {
+        state.originOpen.set(openKey, entry.sha);
+      }
+      resetHeights();
+      renderDiff();
+    });
+    row.append(item);
+  }
+  if (!block || block.unknown === "all") {
+    row.append(textEl("span", "origin-unknown", "特定できない"));
+  } else if (block.unknown === "some") {
+    row.append(textEl("span", "origin-unknown", "一部特定できない"));
+  }
+  return row;
+}
+
+/**
+ * 由来を押したときに開く、そのコミットの理由（本文）。
+ * @param {DisplayLine} line
+ * @returns {HTMLElement | null}
+ */
+function renderOriginReason(line) {
+  const entry = currentEntry();
+  const origin = currentOrigin();
+  if (!entry || !origin || origin === "pending" || origin.failed) {
+    return null;
+  }
+  const sha = state.originOpen.get(`${entry.file.id}:${line.block}`);
+  if (!sha) {
+    return null;
+  }
+  const commit = (origin.commits || {})[sha] || { subject: "", body: "", merge: false };
+  const panel = el("div", "origin-reason");
+  const head = el("div", "origin-reason-head");
+  head.append(
+    textEl("span", "origin-sha", String(sha).slice(0, 7)),
+    textEl("span", "origin-subject", commit.subject),
+  );
+  panel.append(head);
+  panel.append(
+    textEl("p", "origin-body", commit.body || "（本文はありません）"),
+  );
+  return panel;
 }
 
 /**
@@ -1277,13 +1490,15 @@ function signFor(kind) {
  * @param {import("./model.js").Line|null} line
  * @param {import("./model.js").Segment[]} segments
  * @param {boolean} withPlus
+ * @param {string} tone
  * @returns {HTMLElement}
  */
-function sideCell(side, line, segments, withPlus) {
-  const cell = el("span", "cell");
+function sideCell(side, line, segments, withPlus, tone) {
+  const cell = el("span", `cell${tone ? ` side-${tone}` : ""}`);
   const code = el("span", "code");
   fillCode(code, line, segments);
-  cell.append(numberCell(side, line, withPlus), code);
+  const sign = tone === "del" ? "−" : tone === "add" ? "+" : "";
+  cell.append(numberCell(side, line, withPlus), textEl("span", "mk", sign), code);
   return cell;
 }
 
@@ -1694,8 +1909,19 @@ function recomputeThreads() {
 }
 
 function recomputeDisplay() {
-  state.display = toDisplayLines(state.rows, state.mode);
+  state.display = toDisplayLines(withRowIndex(state.rows), state.mode, {
+    origin: originShown(),
+  });
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  state.skipRanges = new Map();
+  state.rows.forEach((row, index) => {
+    if (row.kind === "skip") {
+      const range = rangeAfterSkip(state.rows, index);
+      if (range) {
+        state.skipRanges.set(index, range);
+      }
+    }
+  });
   recomputeThreads();
 }
 
@@ -1726,6 +1952,18 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   state.cacheKey = key;
   const generation = ++state.selectGeneration;
   if (!state.cache.has(key)) {
+    // ヘッダは取得を待たずに新しいファイルへ切り替え、取得中は操作できなくする。
+    state.loading = true;
+    state.rows = [];
+    state.display = [];
+    state.heights = [];
+    state.threads = { byLine: new Map(), floating: [] };
+    renderTree();
+    renderGroupHeader();
+    renderFileHeader();
+    renderNotice();
+    renderFloating();
+    renderDiff();
     const data = await api.getFile(id, null, {
       dark: state.dark,
       highlight: override,
@@ -1737,6 +1975,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     const rows = data.rows || [];
     state.cache.set(key, { ...data, rows, collapsedRows: rows });
   }
+  state.loading = false;
   const data = state.cache.get(key);
   state.rows = data.rows || [];
   state.binary = Boolean(data.binary);
@@ -1759,12 +1998,16 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   renderNotice();
   renderFloating();
   renderDiff();
+  void loadOrigin(entry);
 }
 
 /**
  * @param {FileEntry} file
  */
 async function toggleSeen(file) {
+  if (state.loading || !isShowingFile(file.id)) {
+    return;
+  }
   const next = !file.seen;
   file.seen = next;
   state.treeItems.get(file.id)?.classList.toggle("seen", next);

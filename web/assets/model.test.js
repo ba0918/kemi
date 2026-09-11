@@ -30,6 +30,8 @@ import {
   hasStops,
   commitTypeBox,
   statusLetter,
+  rangeAfterSkip,
+  sideTone,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -703,4 +705,51 @@ test("status_letter_is_one_character", () => {
   assert.equal(statusLetter("delete"), "D");
   assert.equal(statusLetter("rename"), "R");
   assert.equal(statusLetter("modify"), "M");
+});
+
+test("skip_row_shows_old_and_new_lines_of_the_range_below_it", () => {
+  const rows = [
+    { kind: "skip", count: 3, from: 0, to: 3 },
+    equal(4, "d"),
+    replaceAt(5, "o", "n"),
+    inserted(6, "x"),
+    { kind: "skip", count: 9, from: 6, to: 15 },
+    equal(16, "p"),
+  ];
+
+  assert.deepEqual(rangeAfterSkip(rows, 0), {
+    old: { start: 4, end: 5 },
+    new: { start: 4, end: 6 },
+  });
+  assert.deepEqual(rangeAfterSkip(rows, 4), {
+    old: { start: 16, end: 16 },
+    new: { start: 16, end: 16 },
+  });
+});
+
+test("skip_row_at_the_end_has_no_range_below_it", () => {
+  const rows = [equal(1, "a"), { kind: "skip", count: 9, from: 1, to: 10 }];
+
+  assert.equal(rangeAfterSkip(rows, 1), null);
+});
+
+test("skip_row_range_leaves_out_a_side_without_lines", () => {
+  const rows = [{ kind: "skip", count: 3, from: 0, to: 3 }, inserted(4, "x")];
+
+  assert.deepEqual(rangeAfterSkip(rows, 0), { old: null, new: { start: 4, end: 4 } });
+});
+
+test("split_colors_the_old_side_as_removed_and_the_new_side_as_added", () => {
+  assert.deepEqual([sideTone("replace", "old"), sideTone("replace", "new")], ["del", "add"]);
+  assert.deepEqual([sideTone("delete", "old"), sideTone("delete", "new")], ["del", "empty"]);
+  assert.deepEqual([sideTone("insert", "old"), sideTone("insert", "new")], ["empty", "add"]);
+  assert.deepEqual([sideTone("equal", "old"), sideTone("equal", "new")], ["", ""]);
+});
+
+test("unified_colors_each_line_by_the_side_it_shows", () => {
+  assert.equal(sideTone("replace-old", null), "del");
+  assert.equal(sideTone("delete", null), "del");
+  assert.equal(sideTone("replace-new", null), "add");
+  assert.equal(sideTone("insert", null), "add");
+  assert.equal(sideTone("equal", null), "");
 });
