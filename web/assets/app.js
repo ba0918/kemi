@@ -430,7 +430,8 @@ async function refresh() {
   state.cache.clear();
   state.commentStore.clear();
   state.origins.clear();
-  state.reviews.clear();
+  // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
+  state.reviews = new Map();
   applyReview(await api.getReview(true, state.unit), true);
   const current = currentEntry();
   const keepId = current ? current.file.id : undefined;
@@ -1746,6 +1747,7 @@ function renderOriginReason(line) {
         find: (entries) => originJumpTarget(entries, sha, to),
         side: to.side,
         line: to.line,
+        missing: () => showToast("移り先のファイルが見つかりません"),
       });
     });
     panel.append(jump);
@@ -2539,9 +2541,11 @@ function applyReview(review, fresh) {
 
 /**
  * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
- * 最初のコミット）を出す。由来から移るときは、そのコミットの該当行を出す。
+ * 最初のコミット）を出す。由来やコメント一覧から移るときは、そのファイルの該当行を出す。
+ * 移り先が無ければ（履歴の書き換えで消えたなど）別のファイルへは移らず、切り替えもせず
+ * `missing` を呼ぶ。
  * @param {string} unit
- * @param {{ find: (entries: Entry[]) => number, side: string, line: number | null } | null} jump
+ * @param {{ find: (entries: Entry[]) => number, side: string, line: number | null, missing: () => void } | null} jump
  */
 async function switchUnit(unit, jump) {
   if (unit === state.unit && !jump) {
@@ -2574,6 +2578,15 @@ async function switchUnit(unit, jump) {
       showOverlay("グループ単位を切り替えられません", String(error));
       return;
     }
+  }
+  if (jump && jump.find(flatten(review)) < 0) {
+    // 読んだ単位は控えておき、コメント一覧で消えたコミットを見分けられるようにする。
+    if (fresh) {
+      state.reviews.set(unit, review);
+    }
+    renderUnitSwitch();
+    jump.missing();
+    return;
   }
   applyReview(review, fresh);
   let index = jump ? jump.find(state.entries) : -1;
@@ -2695,6 +2708,31 @@ function openCommentList() {
   renderCommentList();
   dom.commentList.hidden = false;
   dom.btnComments.setAttribute("aria-expanded", "true");
+  void loadCommitGroups();
+}
+
+/**
+ * コメント一覧で消えたコミットを見分けられるよう、作ってあるコミットごとの単位を
+ * まだ読んでいなければ読む（再取得の後は表示中の単位しか控えていない）。
+ */
+async function loadCommitGroups() {
+  const status = state.units.find((candidate) => candidate.unit === "commit");
+  if (!status || status.state !== "ready" || state.reviews.has("commit")) {
+    return;
+  }
+  const reviews = state.reviews;
+  try {
+    const review = await api.getReview(false, "commit");
+    if (!reviews.has("commit")) {
+      reviews.set("commit", review);
+    }
+  } catch {
+    // 読めなければ消えたかどうかを決めないまま。押したときに移り先を確かめる。
+    return;
+  }
+  if (reviews === state.reviews && !dom.commentList.hidden) {
+    renderCommentList();
+  }
 }
 
 function closeCommentList() {
@@ -2719,7 +2757,12 @@ async function goToComment(comment, unit) {
       (entry) => entry.group.id === comment.group_id && entry.file.path === comment.path,
     );
   if (unit && unit !== state.unit) {
-    await switchUnit(unit, { find, side: comment.side, line });
+    // 移り先が無ければ、一覧を開き直して（消えたコミットならそう示して）本文を見せる。
+    const missing = () => {
+      openCommentList();
+      showToast("移り先のファイルが見つかりません");
+    };
+    await switchUnit(unit, { find, side: comment.side, line, missing });
     return;
   }
   const index = find(state.entries);
