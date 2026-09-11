@@ -14,6 +14,8 @@ use crate::domain::review::Side;
 pub struct RangeCommit {
     pub sha: String,
     pub merge: bool,
+    pub subject: String,
+    pub body: String,
 }
 
 /// ある行を変えた（または消した）コミットと、そのコミット時点の行の位置。
@@ -208,6 +210,8 @@ mod tests {
             .map(|(sha, merge)| RangeCommit {
                 sha: sha.to_string(),
                 merge: *merge,
+                subject: String::new(),
+                body: String::new(),
             })
             .collect()
     }

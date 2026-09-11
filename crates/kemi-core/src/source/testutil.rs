@@ -29,12 +29,18 @@ impl TempRepo {
     }
 
     pub fn git(&self, args: &[&str]) -> String {
+        self.git_at("2026-01-01T00:00:00+00:00", args)
+    }
+
+    /// 日付を指定して git を実行する。複数のマージ基点から git が選ぶものを、
+    /// コミットの日付で決めたいときに使う。
+    pub fn git_at(&self, date: &str, args: &[&str]) -> String {
         let output = Command::new("git")
             .arg("-C")
             .arg(&self.path)
             .args(args)
-            .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00+00:00")
-            .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00+00:00")
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
             .output()
             .expect("run git");
         assert!(
@@ -65,6 +71,12 @@ impl TempRepo {
     pub fn add_and_commit(&self, message: &str) -> String {
         self.git(&["add", "-A"]);
         self.git(&["commit", "-q", "-m", message]);
+        self.head()
+    }
+
+    pub fn add_and_commit_at(&self, date: &str, message: &str) -> String {
+        self.git(&["add", "-A"]);
+        self.git_at(date, &["commit", "-q", "-m", message]);
         self.head()
     }
 }

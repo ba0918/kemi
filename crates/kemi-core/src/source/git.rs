@@ -9,7 +9,8 @@ use std::sync::Mutex;
 use crate::domain::content;
 use crate::domain::noise::{classify, linguist_generated, NoiseInput};
 use crate::domain::review::{FileEntry, Group, ReviewMeta, Status};
-use crate::source::{Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError};
+use crate::source::origin::{file_origin, OriginPaths, OriginRange};
+use crate::source::{FileOrigin, Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError};
 
 /// 内容を読まずに統計だけを出す untracked の上限（D6）。
 pub const UNTRACKED_LIMIT: u64 = 1_048_576;
@@ -46,6 +47,13 @@ pub struct GitSource {
     mode: GitMode,
     store: PlanStore,
     ids: Mutex<FileIds>,
+    final_origin: Mutex<Option<FinalOrigin>>,
+}
+
+/// 最終形の計画に添える、由来を求めるための範囲とファイルごとのパス。
+struct FinalOrigin {
+    range: OriginRange,
+    files: HashMap<String, OriginPaths>,
 }
 
 /// 再取得しても同じファイルには同じ id を返す（`?refresh=1` でコメントの
@@ -76,6 +84,7 @@ impl GitSource {
             mode,
             store: PlanStore::new(),
             ids: Mutex::new(FileIds::default()),
+            final_origin: Mutex::new(None),
         }
     }
 
@@ -259,11 +268,15 @@ impl GitSource {
                 ))
             }
             GroupBy::File => {
-                let merge_base = git_text(&self.repo, &["merge-base", from, to])?
+                // 由来と内容が同じ版を指すよう、範囲の端を sha に解決して使う。
+                let from_sha = resolve_ref(&self.repo, from)?;
+                let to_sha = resolve_ref(&self.repo, to)?;
+                let merge_base = git_text(&self.repo, &["merge-base", &from_sha, &to_sha])?
                     .trim()
                     .to_string();
-                let range = format!("{from}...{to}");
+                let range = format!("{from_sha}...{to_sha}");
                 let entries = diff_entries(&self.repo, &[&range])?;
+                let mut origin_files: HashMap<String, OriginPaths> = HashMap::new();
                 let files_h = self.build_entries(&entries, &attributes, "all", |entry| {
                     let old = match entry.status {
                         Status::Add => SideRef::Absent,
@@ -279,10 +292,28 @@ impl GitSource {
                         Status::Delete => SideRef::Absent,
                         _ => SideRef::Git {
                             repo: self.repo.clone(),
-                            spec: git_spec(&format!("{to}:"), &entry.path),
+                            spec: git_spec(&format!("{to_sha}:"), &entry.path),
                         },
                     };
                     (old, new)
+                });
+                for (file, entry) in files_h.1.iter().zip(&entries) {
+                    origin_files.insert(
+                        file.id.clone(),
+                        OriginPaths {
+                            old: (entry.status != Status::Add)
+                                .then(|| entry.old_path.clone().unwrap_or(entry.path.clone())),
+                            new: (entry.status != Status::Delete).then(|| entry.path.clone()),
+                        },
+                    );
+                }
+                *self.final_origin.lock().expect("origin lock poisoned") = Some(FinalOrigin {
+                    range: OriginRange {
+                        from: from_sha,
+                        to: to_sha,
+                        merge_base: merge_base.clone(),
+                    },
+                    files: origin_files,
                 });
                 Ok((
                     ReviewMeta {
@@ -370,6 +401,21 @@ impl ReviewSource for GitSource {
 
     fn content(&self, file_id: &str) -> Result<crate::source::FileContent, SourceError> {
         self.store.content(file_id)
+    }
+
+    fn origin(&self, file_id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
+        let (range, paths) = {
+            let guard = self.final_origin.lock().expect("origin lock poisoned");
+            let Some(context) = guard.as_ref() else {
+                return Ok(None);
+            };
+            let Some(paths) = context.files.get(file_id) else {
+                return Ok(None);
+            };
+            (context.range.clone(), paths.clone())
+        };
+        let content = self.store.content(file_id)?;
+        file_origin(&self.repo, &range, &paths, &content, force)
     }
 
     fn watch_paths(&self) -> Vec<PathBuf> {
@@ -522,13 +568,13 @@ fn git_spec(prefix: &str, path: &Path) -> OsString {
 
 /// git が返した生のバイト列をパスとして運ぶ。表示のときだけ lossy に変換する。
 #[cfg(unix)]
-fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     use std::os::unix::ffi::OsStrExt;
     PathBuf::from(OsStr::from_bytes(bytes))
 }
 
 #[cfg(not(unix))]
-fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
@@ -724,6 +770,14 @@ fn side_size(side: &SideRef) -> u64 {
 
 fn read_attributes(repo: &Path) -> String {
     std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default()
+}
+
+fn resolve_ref(repo: &Path, revision: &str) -> Result<String, SourceError> {
+    let spec = format!("{revision}^{{commit}}");
+    Ok(git_text(repo, &["rev-parse", "--verify", "--quiet", &spec])
+        .map_err(|_| SourceError::Git(format!("ref が見つかりません: {revision}")))?
+        .trim()
+        .to_string())
 }
 
 fn verify_ref(repo: &Path, revision: &str) -> Result<(), SourceError> {

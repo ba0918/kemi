@@ -2,6 +2,7 @@
 
 pub mod git;
 pub mod manifest;
+mod origin;
 
 #[cfg(test)]
 pub(crate) mod testutil;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::domain::focus;
+use crate::domain::origin::{BlockOrigin, RangeCommit};
 use crate::domain::review::ReviewMeta;
 
 #[derive(Debug)]
@@ -47,10 +49,26 @@ pub struct FileContent {
     pub new: Option<Vec<u8>>,
 }
 
+/// 最終形の 1 ファイルの由来（R-ORIGIN）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileOrigin {
+    /// 上限を超えるファイルで、有効にされていないときは false（ブロックは空）。
+    pub enabled: bool,
+    pub blocks: Vec<BlockOrigin>,
+    /// ブロックが指すコミット。件名と本文を画面に出すために添える。
+    pub commits: Vec<RangeCommit>,
+}
+
 /// レビューの供給元。`review` はメタデータと統計、`content` は表示時の行内容を返す。
 pub trait ReviewSource: Send + Sync {
     fn review(&self) -> Result<ReviewMeta, SourceError>;
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError>;
+    /// 最終形のファイルの由来。`force` で上限を超えるファイルでも求める。
+    /// 由来を持たないファイル（最終形以外）では None。
+    fn origin(&self, file_id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
+        let _ = (file_id, force);
+        Ok(None)
+    }
     /// 監視する「新側の供給元」のパス（R-LIVE）。空なら監視しない。
     fn watch_paths(&self) -> Vec<PathBuf> {
         Vec::new()
@@ -236,6 +254,10 @@ impl ReviewSource for FocusSource {
 
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
         self.inner.content(file_id)
+    }
+
+    fn origin(&self, file_id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
+        self.inner.origin(file_id, force)
     }
 
     fn watch_paths(&self) -> Vec<PathBuf> {
