@@ -571,6 +571,12 @@ kbd {
   background: var(--panel);
 }
 
+/* 配置の計算をグループの中に閉じ込める。コミットごとで数万項目あるとき、1 項目の札の
+   出し入れでツリー全体を計算し直さない。paint は閉じ込めない（端のフォーカスの枠を切るため）。 */
+.group {
+  contain: layout style;
+}
+
 .group-head {
   display: flex;
   align-items: center;
