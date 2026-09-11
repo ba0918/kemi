@@ -771,23 +771,48 @@ function renderFloating() {
     wrap.append(renderThread(comment));
     dom.floating.append(wrap);
   }
+  applyCommentClamps(dom.floating);
 }
 
-/** 既定で見せる本文の行数。超えた分は「続きを読む」の向こうに置く。 */
-const COMMENT_CLAMP_LINES = 3;
-/** 折返し幅の概算。DOM の実測は仮想スクロールの再描画ごとに走るため使わない。 */
-const COMMENT_CLAMP_COLUMNS = 100;
-
 /**
- * @param {string} body
+ * 折りたたみで実際に隠れるかを、描画後の高さで測る。畳み高さは CSS の
+ * max-height が正典なので、文字数からの概算ではなく折りたたみ時の
+ * scrollHeight と clientHeight を比べる。文字幅も折返し幅も見なくて済む。
+ * @param {HTMLElement} body .t-body.clamp
  * @returns {boolean}
  */
-function isLongCommentBody(body) {
-  let lines = 0;
-  for (const segment of body.split("\n")) {
-    lines += Math.max(1, Math.ceil(segment.length / COMMENT_CLAMP_COLUMNS));
+function commentBodyIsClamped(body) {
+  const clampBody = body.querySelector(".clamp-body");
+  if (!(clampBody instanceof HTMLElement)) {
+    return false;
   }
-  return lines > COMMENT_CLAMP_LINES;
+  // 開いていると max-height が外れて隠れていないため、畳んだ状態で測る。
+  const wasOpen = body.dataset.open === "true";
+  if (wasOpen) {
+    body.dataset.open = "false";
+  }
+  const clamped = clampBody.scrollHeight > clampBody.clientHeight;
+  if (wasOpen) {
+    body.dataset.open = "true";
+  }
+  return clamped;
+}
+
+/**
+ * 描画済みの本文を実測し、隠れるものだけ畳みとトグルを残す。
+ * @param {HTMLElement} root
+ */
+function applyCommentClamps(root) {
+  for (const body of root.querySelectorAll(".t-body.clamp")) {
+    if (!(body instanceof HTMLElement) || commentBodyIsClamped(body)) {
+      continue;
+    }
+    const toggle = body.querySelector(".clamp-toggle");
+    if (toggle) {
+      toggle.remove();
+    }
+    body.classList.remove("clamp");
+  }
 }
 
 /**
@@ -809,27 +834,23 @@ function renderThread(comment) {
   }
   thread.append(head);
 
-  if (isLongCommentBody(comment.body)) {
-    const body = el("div", "t-body clamp");
-    const open = state.commentClampOpen.get(comment.id) === true;
-    body.dataset.open = open ? "true" : "false";
-    const clampBody = textEl("span", "clamp-body", comment.body);
-    const toggle = button("clamp-toggle");
-    toggle.textContent = open ? "折りたたむ" : "続きを読む";
-    toggle.addEventListener("click", () => {
-      const nextOpen = body.dataset.open !== "true";
-      body.dataset.open = nextOpen ? "true" : "false";
-      state.commentClampOpen.set(comment.id, nextOpen);
-      toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
-      if (dom.content.contains(body)) {
-        renderDiff();
-      }
-    });
-    body.append(clampBody, toggle);
-    thread.append(body);
-  } else {
-    thread.append(textEl("div", "t-body", comment.body));
-  }
+  const body = el("div", "t-body clamp");
+  const open = state.commentClampOpen.get(comment.id) === true;
+  body.dataset.open = open ? "true" : "false";
+  const clampBody = textEl("span", "clamp-body", comment.body);
+  const toggle = button("clamp-toggle");
+  toggle.textContent = open ? "折りたたむ" : "続きを読む";
+  toggle.addEventListener("click", () => {
+    const nextOpen = body.dataset.open !== "true";
+    body.dataset.open = nextOpen ? "true" : "false";
+    state.commentClampOpen.set(comment.id, nextOpen);
+    toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
+    if (dom.content.contains(body)) {
+      renderDiff();
+    }
+  });
+  body.append(clampBody, toggle);
+  thread.append(body);
 
   if (comment.suggestion) {
     const box = el("div", "t-suggestion");
@@ -1084,6 +1105,7 @@ function renderDiff() {
     fragment.append(block);
   }
   dom.content.append(fragment);
+  applyCommentClamps(dom.content);
   restoreEditorFocus(focus);
   const needsMeasure =
     state.wrap ||
@@ -1518,6 +1540,17 @@ function scheduleRender() {
 }
 
 /**
+ * 幅が変わると折返しの高さも変わり、畳み判定が変わる。本文は renderDiff が
+ * 測り直すが、浮動コメント欄は描き直さないためここで測り直す。
+ */
+function scheduleResize() {
+  requestAnimationFrame(() => {
+    renderDiff();
+    applyCommentClamps(dom.floating);
+  });
+}
+
+/**
  * 1 つの折りたたみを、サーバの残りが尽きるまで展開する。
  * @param {number} index
  * @returns {Promise<boolean>} 展開できたら true。
@@ -1873,7 +1906,7 @@ dom.modalOk.addEventListener("click", () => {
   }
 });
 dom.viewport.addEventListener("scroll", scheduleRender);
-window.addEventListener("resize", scheduleRender);
+window.addEventListener("resize", scheduleResize);
 window
   .matchMedia("(prefers-color-scheme: dark)")
   .addEventListener("change", () => {
