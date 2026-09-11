@@ -62,6 +62,9 @@ impl<'a> BlameGit<'a> {
             // Why not `--ignore-revs-file=`: 空の指定は設定のファイルを読んだ後で一覧を
             // 空にするので、ファイルが無いと先に失敗する（git 2.43 で確認）。
             OsString::from("--no-ignore-revs-file"),
+            // 設定の diff.<driver>.textconv で変換した行で数えると、行番号が表示している
+            // 生の内容とずれ、変換が失敗すると blame ごと失敗するため、変換しない。
+            OsString::from("--no-textconv"),
             OsString::from("--line-porcelain"),
             OsString::from(range),
             OsString::from("--"),

@@ -1125,25 +1125,8 @@ async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() 
             .env("GIT_CONFIG_GLOBAL", &global)
             .args(["--from", &base, "--no-open", "--port", "0"]),
     );
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    let id = review["groups"][0]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|file| file["path"] == "a.txt")
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
 
-    let response = reqwest::get(format!("{}api/origin/{id}", kemi.url))
-        .await
-        .unwrap();
+    let response = fetch_origin(&kemi, "a.txt").await;
 
     assert_eq!(response.status(), 200);
     let origin: serde_json::Value = response.json().await.unwrap();
@@ -1151,12 +1134,13 @@ async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() 
     kemi.kill();
 }
 
-/// `GIT_CONFIG_GLOBAL` を一時ファイルに向けて git を呼ぶ。
+/// `GIT_CONFIG_GLOBAL` を一時ファイルに向けて、システムの設定は読ませずに git を呼ぶ。
 fn git_with_global(dir: &Path, global: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", global)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .unwrap();
     assert!(
@@ -1236,5 +1220,118 @@ async fn origin_is_found_in_a_partial_clone_whose_remote_needs_the_global_config
     let origin: serde_json::Value = response.json().await.unwrap();
     assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changed);
     assert!(kemi.child.try_wait().unwrap().is_none());
+    kemi.kill();
+}
+
+/// 利用者の本物の設定の代わりに読ませる、一時ファイルの git の全体設定。
+/// コミットに要る設定に `extra` を足す。
+fn global_config(state: &TempDir, extra: &str) -> PathBuf {
+    let global = state.path.join("gitconfig");
+    std::fs::write(
+        &global,
+        format!(
+            "[user]\n\tname = kemi\n\temail = kemi@example.com\n\
+             [core]\n\thooksPath = /dev/null\n{extra}"
+        ),
+    )
+    .unwrap();
+    global
+}
+
+/// `global` だけを git の設定として読ませて kemi を起動する。
+fn start_with_global(dir: &Path, state: &TempDir, global: &Path, args: &[&str]) -> Kemi {
+    Kemi::start(
+        kemi_command(dir, &state.path)
+            .env("GIT_CONFIG_GLOBAL", global)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(args),
+    )
+}
+
+/// 最終形の `path` のファイルの由来を取りに行く。
+async fn fetch_origin(kemi: &Kemi, path: &str) -> reqwest::Response {
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = review["groups"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == path)
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    reqwest::get(format!("{}api/origin/{id}", kemi.url))
+        .await
+        .unwrap()
+}
+
+/// `.gitattributes` で `*.txt` に表示用の変換 `cut` を割り当てたリポジトリに、
+/// 5 行目を変えるコミットと 8 行目を消すコミットを積む。(基点, 変えた, 消した) を返す。
+fn textconv_repo(dir: &TempDir, global: &Path) -> (String, String, String) {
+    let git = |args: &[&str]| git_with_global(&dir.path, global, args);
+    git(&["init", "-q"]);
+    let base_text: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+    dir.write(".gitattributes", "*.txt diff=cut\n");
+    dir.write("f.txt", &base_text);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    let changed_text = base_text.replace("line 5\n", "five\n");
+    dir.write("f.txt", &changed_text);
+    git(&["commit", "-q", "-am", "feat: five"]);
+    let changing = git(&["rev-parse", "HEAD"]);
+    dir.write("f.txt", &changed_text.replace("line 8\n", ""));
+    git(&["commit", "-q", "-am", "feat: drop eight"]);
+    let deleting = git(&["rev-parse", "HEAD"]);
+    (base, changing, deleting)
+}
+
+#[tokio::test]
+async fn origin_names_each_block_even_if_a_textconv_driver_rewrites_the_file() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    // 先頭の 2 行を落とす変換。変換後の行で数えると、行番号が 2 行ずれる。
+    let global = global_config(&state, "[diff \"cut\"]\n\ttextconv = tail -n +3\n");
+    let (base, changing, deleting) = textconv_repo(&dir, &global);
+    let kemi = start_with_global(
+        &dir.path,
+        &state,
+        &global,
+        &["--from", &base, "--no-open", "--port", "0"],
+    );
+
+    let response = fetch_origin(&kemi, "f.txt").await;
+
+    assert_eq!(response.status(), 200);
+    let origin: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changing);
+    assert_eq!(origin["blocks"][1]["entries"][0]["sha"], deleting);
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn origin_is_found_even_if_the_textconv_driver_fails() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let global = global_config(&state, "[diff \"cut\"]\n\ttextconv = false\n");
+    let (base, changing, deleting) = textconv_repo(&dir, &global);
+    let kemi = start_with_global(
+        &dir.path,
+        &state,
+        &global,
+        &["--from", &base, "--no-open", "--port", "0"],
+    );
+
+    let response = fetch_origin(&kemi, "f.txt").await;
+
+    assert_eq!(response.status(), 200);
+    let origin: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changing);
+    assert_eq!(origin["blocks"][1]["entries"][0]["sha"], deleting);
     kemi.kill();
 }
