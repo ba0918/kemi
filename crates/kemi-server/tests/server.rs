@@ -648,11 +648,20 @@ impl TempRepo {
         repo
     }
 
+    /// フィクスチャを作る git は、開発者の全体・システムの設定（署名の program、
+    /// commit.gpgsign、diff.orderFile など）を読まない。読むと、同じテストが環境によって
+    /// 失敗する。全体の設定の置き場は一時リポジトリの中の無いファイルにし、書かれても
+    /// 外へ漏れない。
     fn git(&self, args: &[&str]) -> String {
         let output = std::process::Command::new("git")
             .arg("-C")
             .arg(&self.path)
             .args(args)
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                self.path.join(".git").join("test-global-config"),
+            )
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00+00:00")
             .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00+00:00")
             .output()

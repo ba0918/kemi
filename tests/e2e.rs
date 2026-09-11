@@ -179,12 +179,25 @@ fn run_with_state(dir: &Path, args: &[&str], state: &Path) -> std::process::Outp
     kemi_command(dir, state).args(args).output().unwrap()
 }
 
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
+/// フィクスチャを作る git。開発者の全体・システムの設定（署名の program、
+/// commit.gpgsign、diff.orderFile など）を読まない。読むと、同じテストが環境によって
+/// 失敗する。全体の設定の置き場は一時リポジトリの中の無いファイルにし、書かれても
+/// 外へ漏れない。利用者の設定を kemi に読ませるテストは、これを使わず
+/// `git_with_global` で設定を明示する。
+fn fixture_git(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .current_dir(dir)
-        .output()
-        .unwrap();
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            dir.join(".git").join("test-global-config"),
+        )
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = fixture_git(dir).args(args).output().unwrap();
     assert!(
         output.status.success(),
         "git {args:?}: {}",
@@ -699,11 +712,7 @@ fn two_commit_repo(dir: &TempDir) -> String {
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Vec<u8> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
+    let output = fixture_git(dir).args(args).output().unwrap();
     assert!(output.status.success());
     output.stdout
 }
