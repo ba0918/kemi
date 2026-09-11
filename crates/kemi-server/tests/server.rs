@@ -1317,6 +1317,58 @@ async fn origin_api_large_file_opt_in() {
 }
 
 #[tokio::test]
+async fn origin_git_failure_keeps_review_and_comments_submittable() {
+    let (repo, base) = range_repo();
+    let middle = repo.git(&["rev-parse", "HEAD~1"]);
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
+    let final_form = server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    let final_a = file_in(&final_form, 0, "a.txt")["id"].clone();
+    // 範囲の途中のコミットが読めないと、由来の git log と blame が失敗する。
+    // 表示する内容（両端の版）はまだ読める。
+    std::fs::remove_file(
+        repo.path
+            .join(".git/objects")
+            .join(&middle[..2])
+            .join(&middle[2..]),
+    )
+    .unwrap();
+    let file = server
+        .get_json(&format!("api/file/{}", final_a.as_str().unwrap()))
+        .await;
+    assert_eq!(file["binary"], false);
+
+    let origin = server
+        .get_json(&format!("api/origin/{}", final_a.as_str().unwrap()))
+        .await;
+    assert!(
+        origin["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|block| block["entries"].as_array().unwrap().is_empty()),
+        "no commit may be named: {origin}"
+    );
+    let response = server
+        .post(
+            "api/comment",
+            json!({
+                "op": "add", "file_id": final_a, "side": "new",
+                "start_line": 1, "end_line": 1, "body": "残る"
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let response = server
+        .post("api/submit", json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let document = server.finish().await;
+    assert_eq!(document["comments"][0]["body"], "残る");
+}
+
+#[tokio::test]
 async fn live_refresh_both_units_adds_new_commit_unseen() {
     let (repo, base) = range_repo();
     let server =

@@ -396,28 +396,39 @@ struct OriginQuery {
 }
 
 /// 最終形のファイルの由来（R-ORIGIN）。差分とは別に、表示の後から取りに来る。
+///
+/// 由来の計算の失敗はレビューを終えない（R-SUBMIT の例外）。そのファイルの変更
+/// ブロックはどれもコミットを持たない由来として返し、画面は「特定できない」と出す。
 async fn origin(
     State(state): State<Arc<AppState>>,
     Path((_token, id)): Path<(String, String)>,
     Query(query): Query<OriginQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    find_file(&state, &id)?;
+    let (file, _) = find_file(&state, &id)?;
     let force = query.force.as_deref() == Some("1");
     let source = state.source.clone();
     let file_id = id.clone();
-    let origin = match tokio::task::spawn_blocking(move || source.origin(&file_id, force))
-        .await
-        .map_err(|error| runtime_error(&state, error))?
-    {
-        Ok(origin) => origin,
+    let origin = match tokio::task::spawn_blocking(move || source.origin(&file_id, force)).await {
+        Ok(Ok(origin)) => origin,
         // 内容の計画が差し替わる途中の食い違い（source_content と同じ）。
-        Err(SourceError::UnknownFileId(_)) => return Err(file_not_found()),
-        Err(error) => return Err(runtime_error(&state, error)),
+        Ok(Err(SourceError::UnknownFileId(_))) => return Err(file_not_found()),
+        Ok(Err(error)) => Some(unknown_origin(&file.path, error)),
+        Err(error) => Some(unknown_origin(&file.path, error)),
     };
     Ok(Json(match origin {
         Some(origin) => origin_json(&id, &origin),
         None => json!({ "id": id, "available": false }),
     }))
+}
+
+/// 計算に失敗したファイルの由来。どの変更ブロックもコミットを持たない。
+fn unknown_origin(path: &str, error: impl std::fmt::Display) -> FileOrigin {
+    eprintln!("kemi: {path} の由来を求められませんでした: {error}");
+    FileOrigin {
+        enabled: true,
+        blocks: Vec::new(),
+        commits: Vec::new(),
+    }
 }
 
 fn origin_json(id: &str, origin: &FileOrigin) -> Value {
