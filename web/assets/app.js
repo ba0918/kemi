@@ -186,6 +186,19 @@ function currentEntry() {
 }
 
 /**
+ * 表示中のファイルが指定のファイルと一致するか。
+ *
+ * 応答待ちの間に別ファイルへ切り替えて戻っても表示を更新できるよう、
+ * 一致は選択の世代ではなくファイル id で判定する。
+ * @param {string} fileId
+ * @returns {boolean}
+ */
+function isShowingFile(fileId) {
+  const entry = currentEntry();
+  return entry !== null && entry.file.id === fileId;
+}
+
+/**
  * @param {string} tag
  * @param {string} [className]
  * @returns {HTMLElement}
@@ -1324,16 +1337,15 @@ function saveDraft(key, value) {
  * @param {any} payload
  */
 async function addComment(payload) {
-  const generation = state.selectGeneration;
   try {
     const comment = await api.postComment(payload);
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
-    // コメントだけ。表示中の state は世代が同じときだけ更新する。
+    // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
     const stored = state.commentStore.get(payload.file_id);
     if (stored) {
       const comments = [...stored, comment];
       state.commentStore.set(payload.file_id, comments);
-      if (generation === state.selectGeneration) {
+      if (isShowingFile(payload.file_id)) {
         state.comments = comments;
         state.editor = null;
         state.selection = null;
@@ -1361,7 +1373,6 @@ async function addComment(payload) {
  * @param {any} comment
  */
 async function toggleResolve(comment) {
-  const generation = state.selectGeneration;
   const entry = currentEntry();
   const fileId = entry ? entry.file.id : null;
   try {
@@ -1371,13 +1382,13 @@ async function toggleResolve(comment) {
       resolved: !comment.resolved,
     });
     // 応答までに別のファイルへ切り替わっていても、置き換えるのは送信元の
-    // コメントだけ。表示中の state は世代が同じときだけ更新する。
+    // コメントだけ。表示中の state は送信元を表示中のときだけ更新する。
     if (fileId !== null) {
       const stored = state.commentStore.get(fileId);
       if (stored) {
         const comments = replaceComment(stored, updated);
         state.commentStore.set(fileId, comments);
-        if (generation === state.selectGeneration) {
+        if (isShowingFile(fileId)) {
           state.comments = comments;
           recomputeThreads();
           renderDiff();
