@@ -42,6 +42,9 @@ fn blame(
         args.push("--reverse".into());
     }
     args.extend([
+        // 設定の blame.ignoreRevsFile で飛ばされたコミットを由来から落とさないよう、
+        // 設定の後に読まれる空の指定で、無視するコミットの一覧を空に戻す。
+        OsString::from("--ignore-revs-file="),
         OsString::from("--line-porcelain"),
         OsString::from(range),
         OsString::from("--"),
@@ -591,6 +594,27 @@ mod tests {
         assert_eq!(shas(&origin.blocks[0]), vec![signed.as_str()]);
         assert_eq!(origin.blocks[0].unknown, Unknown::None);
         assert_eq!(origin.commits[0].sha, signed);
+    }
+
+    #[test]
+    fn origin_names_the_last_commit_even_if_blame_is_told_to_ignore_it() {
+        let repo = TempRepo::new();
+        let mut lines = numbered(10);
+        repo.write("f.txt", &text(&lines));
+        let base = repo.add_and_commit("base");
+        lines[3] = "four".to_string();
+        repo.write("f.txt", &text(&lines));
+        repo.add_and_commit("first");
+        lines[3] = "four again".to_string();
+        repo.write("f.txt", &text(&lines));
+        let last = repo.add_and_commit("reformat");
+        let ignore = repo.path.join(".git").join("ignore-revs");
+        std::fs::write(&ignore, format!("{last}\n")).unwrap();
+        repo.git(&["config", "blame.ignoreRevsFile", &ignore.to_string_lossy()]);
+
+        let origin = origin_of(&final_source(&repo, &base, "HEAD"), "f.txt");
+
+        assert_eq!(shas(&origin.blocks[0]), vec![last.as_str()]);
     }
 
     #[test]
