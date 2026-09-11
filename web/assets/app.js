@@ -1984,8 +1984,8 @@ async function expandSkipAt(index) {
     // 同じ折りたたみが先に展開された。取得前の位置へ挿すと表示行が重複する。
     return false;
   }
-  const rows = state.rows.slice();
-  rows.splice(index, 1, ...replacement);
+  // 50 万行の展開では、行を引数に展開する splice が引数の上限を超えて失敗する。
+  const rows = state.rows.slice(0, index).concat(replacement, state.rows.slice(index + 1));
   state.rows = rows;
   state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
   recomputeDisplay();
