@@ -676,12 +676,9 @@ struct CommitMessage {
 }
 
 fn range_messages(repo: &Path, range: &str) -> Result<Vec<CommitMessage>, SourceError> {
-    let text = git_text(
+    let text = git_log(
         repo,
         &[
-            "log",
-            // 利用者の log.showSignature で署名の検証結果が sha の前に混ざらないようにする。
-            "--no-show-signature",
             "--no-merges",
             "--reverse",
             "-z",
@@ -1090,6 +1087,15 @@ fn display_args(args: &[&OsStr]) -> String {
         .map(|arg| arg.to_string_lossy())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// コミットを読む `git log`。利用者の設定で、読み取る出力の形が変わらないようにする。
+/// log.showSignature は署名の検証結果を sha の前に混ぜ、i18n.logOutputEncoding は
+/// 件名と本文を UTF-8 以外で出すため、どちらも引数で打ち消す。
+pub(crate) fn git_log(repo: &Path, args: &[&str]) -> Result<String, SourceError> {
+    let mut full = vec!["log", "--no-show-signature", "--encoding=UTF-8"];
+    full.extend_from_slice(args);
+    git_text(repo, &full)
 }
 
 pub(crate) fn git_text(repo: &Path, args: &[&str]) -> Result<String, SourceError> {

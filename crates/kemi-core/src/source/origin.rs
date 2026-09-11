@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::content;
 use crate::domain::diff;
 use crate::domain::origin::{self as origin_domain, LineCommit, RangeCommit};
-use crate::source::git::{git_raw_os, git_text, path_from_bytes};
+use crate::source::git::{git_log, git_raw_os, git_text, path_from_bytes};
 use crate::source::{FileContent, FileOrigin, SourceError};
 
 /// マージのもう片方の親をたどる深さの上限。これを超えた行は特定できないとする。
@@ -253,12 +253,9 @@ pub(crate) fn range_commits(
     to: &str,
 ) -> Result<Vec<RangeCommit>, SourceError> {
     let range = format!("{from}..{to}");
-    let text = git_text(
+    let text = git_log(
         repo,
         &[
-            "log",
-            // 利用者の log.showSignature で署名の検証結果が sha の前に混ざらないようにする。
-            "--no-show-signature",
             "-z",
             "--topo-order",
             "--format=%H%x1f%P%x1f%s%x1f%b",

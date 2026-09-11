@@ -1335,3 +1335,83 @@ async fn origin_is_found_even_if_the_textconv_driver_fails() {
     assert_eq!(origin["blocks"][1]["entries"][0]["sha"], deleting);
     kemi.kill();
 }
+
+/// 件名と本文が日本語のコミットを 1 つ積んだリポジトリ。(基点, そのコミット) を返す。
+fn japanese_message_repo(dir: &TempDir, global: &Path) -> (String, String) {
+    let git = |args: &[&str]| git_with_global(&dir.path, global, args);
+    git(&["init", "-q"]);
+    dir.write("a.txt", "one\n");
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    dir.write("a.txt", "two\n");
+    git(&[
+        "commit",
+        "-q",
+        "-am",
+        "feat: 二行目に変える",
+        "-m",
+        "理由の本文",
+    ]);
+    let changed = git(&["rev-parse", "HEAD"]);
+    (base, changed)
+}
+
+#[tokio::test]
+async fn commit_unit_reads_utf8_messages_even_if_log_output_encoding_is_legacy() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let global = global_config(&state, "[i18n]\n\tlogOutputEncoding = Shift_JIS\n");
+    let (base, changed) = japanese_message_repo(&dir, &global);
+    let kemi = start_with_global(
+        &dir.path,
+        &state,
+        &global,
+        &[
+            "--from",
+            &base,
+            "--group-by",
+            "commit",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+    );
+
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    assert_eq!(review["groups"][0]["id"], changed);
+    assert_eq!(review["groups"][0]["title"], "feat: 二行目に変える");
+    assert_eq!(review["groups"][0]["why"], "理由の本文");
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn origin_reads_utf8_messages_even_if_log_output_encoding_is_legacy() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let global = global_config(&state, "[i18n]\n\tlogOutputEncoding = Shift_JIS\n");
+    let (base, changed) = japanese_message_repo(&dir, &global);
+    let kemi = start_with_global(
+        &dir.path,
+        &state,
+        &global,
+        &["--from", &base, "--no-open", "--port", "0"],
+    );
+
+    let response = fetch_origin(&kemi, "a.txt").await;
+
+    assert_eq!(response.status(), 200);
+    let origin: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changed);
+    assert_eq!(
+        origin["commits"][changed.as_str()]["subject"],
+        "feat: 二行目に変える"
+    );
+    kemi.kill();
+}
