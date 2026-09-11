@@ -955,6 +955,29 @@ ul.files ul {
   line-height: 1.65;
 }
 
+.t-body.clamp .clamp-body {
+  display: block;
+  max-height: 5.1em;
+  overflow: hidden;
+}
+
+.t-body.clamp[data-open="true"] .clamp-body {
+  max-height: none;
+}
+
+.clamp-toggle {
+  margin-top: 2px;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0;
+}
+
+.clamp-toggle:hover {
+  text-decoration: underline;
+}
+
 .t-suggestion {
   margin: 8px 0 0;
   border: 1px solid var(--line);

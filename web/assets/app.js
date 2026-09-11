@@ -140,6 +140,7 @@ const dom = {
  *   groupOpen: Map<string, boolean>,
  *   dirOpen: Map<string, boolean>,
  *   groupHeaderOpen: Map<string, boolean>,
+ *   commentClampOpen: Map<string, boolean>,
  * }} */
 const state = {
   review: null,
@@ -181,6 +182,7 @@ const state = {
   groupOpen: new Map(),
   dirOpen: new Map(),
   groupHeaderOpen: new Map(),
+  commentClampOpen: new Map(),
 };
 
 function currentEntry() {
@@ -771,6 +773,23 @@ function renderFloating() {
   }
 }
 
+/** 既定で見せる本文の行数。超えた分は「続きを読む」の向こうに置く。 */
+const COMMENT_CLAMP_LINES = 3;
+/** 折返し幅の概算。DOM の実測は仮想スクロールの再描画ごとに走るため使わない。 */
+const COMMENT_CLAMP_COLUMNS = 100;
+
+/**
+ * @param {string} body
+ * @returns {boolean}
+ */
+function isLongCommentBody(body) {
+  let lines = 0;
+  for (const segment of body.split("\n")) {
+    lines += Math.max(1, Math.ceil(segment.length / COMMENT_CLAMP_COLUMNS));
+  }
+  return lines > COMMENT_CLAMP_LINES;
+}
+
 /**
  * @param {any} comment
  * @returns {HTMLElement}
@@ -790,7 +809,27 @@ function renderThread(comment) {
   }
   thread.append(head);
 
-  thread.append(textEl("div", "t-body", comment.body));
+  if (isLongCommentBody(comment.body)) {
+    const body = el("div", "t-body clamp");
+    const open = state.commentClampOpen.get(comment.id) === true;
+    body.dataset.open = open ? "true" : "false";
+    const clampBody = textEl("span", "clamp-body", comment.body);
+    const toggle = button("clamp-toggle");
+    toggle.textContent = open ? "折りたたむ" : "続きを読む";
+    toggle.addEventListener("click", () => {
+      const nextOpen = body.dataset.open !== "true";
+      body.dataset.open = nextOpen ? "true" : "false";
+      state.commentClampOpen.set(comment.id, nextOpen);
+      toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
+      if (dom.content.contains(body)) {
+        renderDiff();
+      }
+    });
+    body.append(clampBody, toggle);
+    thread.append(body);
+  } else {
+    thread.append(textEl("div", "t-body", comment.body));
+  }
 
   if (comment.suggestion) {
     const box = el("div", "t-suggestion");
