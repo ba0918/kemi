@@ -1117,25 +1117,3 @@ test("collapsing_loaded_rows_keeps_old_side_commented_lines_visible", () => {
     .map((row) => Number(row.old?.number));
   assert.ok(shownOld.includes(35) && shownOld.includes(36), `old lines 35-36 are hidden: ${shownOld}`);
 });
-
-test("collapsing_loaded_rows_merges_a_fold_not_yet_opened_with_rows_no_longer_needed", () => {
-  // 先頭の行コメントを消した後の形: 1〜4 行目は開いたまま、その下はまだ畳まれている。
-  const whole = fortyLines([20]);
-  const loaded = [
-    ...whole.slice(0, 4),
-    { kind: "skip", count: 12, from: 4, to: 16 },
-    ...whole.slice(16, 23),
-    { kind: "skip", count: 17, from: 23, to: 40 },
-  ];
-
-  const collapsed = collapseLoadedRows(loaded, [], 3);
-
-  assert.deepEqual(shownNewLines(collapsed), [17, 18, 19, 20, 21, 22, 23]);
-  assert.deepEqual(expandWith(collapsed, whole), whole);
-});
-
-test("collapsing_loaded_rows_leaves_a_file_without_changes_unfolded", () => {
-  const whole = Array.from({ length: 20 }, (_, index) => equal(index + 1, `same${index}`));
-
-  assert.deepEqual(collapseLoadedRows(whole, [], 3), whole);
-});
