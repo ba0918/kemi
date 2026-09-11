@@ -22,6 +22,30 @@ impl Status {
     }
 }
 
+/// コミット範囲のグループ単位（R-UNIT）。最終形（`file`）とコミットごと（`commit`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GroupBy {
+    Commit,
+    File,
+}
+
+impl GroupBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GroupBy::Commit => "commit",
+            GroupBy::File => "file",
+        }
+    }
+
+    /// コミット範囲の、もう片方の単位。
+    pub fn other(self) -> GroupBy {
+        match self {
+            GroupBy::Commit => GroupBy::File,
+            GroupBy::File => GroupBy::Commit,
+        }
+    }
+}
+
 /// コメントや suggestion が指す側。行番号はこの側のファイルのもの。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {

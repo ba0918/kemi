@@ -7,12 +7,14 @@ mod origin;
 #[cfg(test)]
 pub(crate) mod testutil;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use crate::domain::focus;
+use crate::domain::focus::{self, FocusTargets};
 use crate::domain::origin::{BlockOrigin, RangeCommit};
-use crate::domain::review::ReviewMeta;
+use crate::domain::review::{GroupBy, ReviewMeta};
 
 #[derive(Debug)]
 pub enum SourceError {
@@ -61,8 +63,25 @@ pub struct FileOrigin {
 
 /// レビューの供給元。`review` はメタデータと統計、`content` は表示時の行内容を返す。
 pub trait ReviewSource: Send + Sync {
+    /// 起動時に表示するグループ単位のメタデータ。
     fn review(&self) -> Result<ReviewMeta, SourceError>;
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError>;
+    /// このレビューが持つグループ単位（R-UNIT）。コミット範囲では起動時の単位を先頭に
+    /// 2 つ、ほかのモードでは空（単位は 1 つだけ）。
+    fn units(&self) -> Vec<GroupBy> {
+        Vec::new()
+    }
+    /// 指定したグループ単位のメタデータ。取得し直しても、もう片方の単位のファイル id は
+    /// 引けるままで、同じグループ・パスの id は変わらない。
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        let _ = unit;
+        self.review()
+    }
+    /// `--focus` の照合で、`review()` の結果のほかに「存在する」とみなすグループ id と
+    /// パス（コミット範囲のもう片方の単位のもの）。
+    fn extra_focus_targets(&self) -> Result<FocusTargets, SourceError> {
+        Ok(FocusTargets::default())
+    }
     /// 最終形のファイルの由来。`force` で上限を超えるファイルでも求める。
     /// 由来を持たないファイル（最終形以外）では None。
     fn origin(&self, file_id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
@@ -99,20 +118,6 @@ pub(crate) struct PlannedFile {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Plan {
     pub files: Vec<PlannedFile>,
-}
-
-impl Plan {
-    pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
-        let file = self
-            .files
-            .iter()
-            .find(|file| file.id == file_id)
-            .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))?;
-        Ok(FileContent {
-            old: read_side(&file.old)?,
-            new: read_side(&file.new)?,
-        })
-    }
 }
 
 pub(crate) fn read_side(side: &SideRef) -> Result<Option<Vec<u8>>, SourceError> {
@@ -174,34 +179,52 @@ pub(crate) fn text_stats(
     (false, add, del, old_size, new_size)
 }
 
-/// `review()` が組み立てた内容参照の計画を保持する。
+/// `review()` が組み立てた内容参照の計画を保持する。コミット範囲では単位ごとに持ち、
+/// 片方を差し替えても、もう片方のファイル id は引けるままにする。
 pub(crate) struct PlanStore {
-    state: Mutex<Plan>,
+    state: Mutex<HashMap<Option<GroupBy>, Plan>>,
 }
 
 impl PlanStore {
     pub fn new() -> Self {
         PlanStore {
-            state: Mutex::new(Plan::default()),
+            state: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn update(&self, plan: Plan) {
-        *self.state.lock().expect("plan store poisoned") = plan;
+        self.update_unit(None, plan);
     }
 
-    pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+    pub fn update_unit(&self, unit: Option<GroupBy>, plan: Plan) {
         self.state
             .lock()
             .expect("plan store poisoned")
-            .content(file_id)
+            .insert(unit, plan);
+    }
+
+    pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        let file = self
+            .state
+            .lock()
+            .expect("plan store poisoned")
+            .values()
+            .flat_map(|plan| plan.files.iter())
+            .find(|file| file.id == file_id)
+            .cloned()
+            .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))?;
+        Ok(FileContent {
+            old: read_side(&file.old)?,
+            new: read_side(&file.new)?,
+        })
     }
 
     /// ディスク上の新側ファイル（worktree の監視対象）。
     pub fn disk_paths(&self) -> Vec<PathBuf> {
-        let plan = self.state.lock().expect("plan store poisoned");
-        plan.files
-            .iter()
+        let plans = self.state.lock().expect("plan store poisoned");
+        plans
+            .values()
+            .flat_map(|plan| plan.files.iter())
             .filter_map(|file| match &file.new {
                 SideRef::Disk(path) => Some(path.clone()),
                 _ => None,
@@ -216,15 +239,21 @@ impl Default for PlanStore {
     }
 }
 
-/// `--focus` を `review()` のたびに後付けする装飾ソース。
+/// `--focus` を後付けする装飾ソース。照合は起動時（最初の `review()`）に 1 回だけ行い、
+/// 取得し直したときは照合せずに後付けだけする。
 pub struct FocusSource {
     inner: Box<dyn ReviewSource>,
     layer: focus::FocusLayer,
+    validated: AtomicBool,
 }
 
 impl FocusSource {
     pub fn new(inner: Box<dyn ReviewSource>, layer: focus::FocusLayer) -> Self {
-        FocusSource { inner, layer }
+        FocusSource {
+            inner,
+            layer,
+            validated: AtomicBool::new(false),
+        }
     }
 
     /// `--focus` のファイルを読み込む。パスは `base` 相対。
@@ -242,18 +271,44 @@ impl FocusSource {
             focus::parse_focus(&text).map_err(|error| SourceError::Focus(error.to_string()))?;
         Ok(FocusSource::new(inner, layer))
     }
+
+    fn validate_once(&self, review: &ReviewMeta) -> Result<(), SourceError> {
+        if self.validated.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let mut targets = FocusTargets::of(review);
+        targets.extend(self.inner.extra_focus_targets()?);
+        focus::validate_focus(&self.layer, &targets)
+            .map_err(|error| SourceError::Focus(error.to_string()))?;
+        self.validated.store(true, Ordering::SeqCst);
+        Ok(())
+    }
 }
 
 impl ReviewSource for FocusSource {
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let mut meta = self.inner.review()?;
-        focus::apply_focus(&mut meta, &self.layer)
-            .map_err(|error| SourceError::Focus(error.to_string()))?;
+        self.validate_once(&meta)?;
+        focus::apply_focus(&mut meta, &self.layer);
         Ok(meta)
     }
 
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
         self.inner.content(file_id)
+    }
+
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        let mut meta = self.inner.review_unit(unit)?;
+        focus::apply_focus(&mut meta, &self.layer);
+        Ok(meta)
+    }
+
+    fn extra_focus_targets(&self) -> Result<FocusTargets, SourceError> {
+        self.inner.extra_focus_targets()
     }
 
     fn origin(&self, file_id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
