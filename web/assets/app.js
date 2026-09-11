@@ -638,9 +638,19 @@ function renderFileHeader() {
   copy.addEventListener("click", () => void copyPath(entry.file.path, copy));
   dom.fileHeader.append(copy);
 
-  const expand = iconButton("すべての行を展開", EXPAND_ICON);
+  const fullyExpanded = allLinesExpanded();
+  const expand = iconButton(
+    fullyExpanded ? "すべて折りたたむ" : "すべての行を展開",
+    EXPAND_ICON,
+  );
   expand.disabled = state.submitted || state.binary;
-  expand.addEventListener("click", () => void expandAll());
+  expand.addEventListener("click", () => {
+    if (fullyExpanded) {
+      collapseAll();
+    } else {
+      void expandAll();
+    }
+  });
   dom.fileHeader.append(expand);
 
   const highlight = iconButton(highlightTitle(), CODE_ICON);
@@ -1109,7 +1119,9 @@ function renderLine(line) {
     const skip = line.skip;
     const expand = button("expand-button");
     expand.textContent = `… ${skip && skip.count ? skip.count : 0} 行を表示`;
-    expand.addEventListener("click", () => void expandSkipAt(line.logicalIndex));
+    expand.addEventListener("click", () => {
+      void expandSkipAt(line.logicalIndex).then(() => renderFileHeader());
+    });
     row.append(expand);
     return row;
   }
@@ -1556,6 +1568,8 @@ async function expandAll() {
       .catch(() => undefined);
     renderNotice();
   }
+  const generation = state.selectGeneration;
+  const cacheKey = state.cacheKey;
   let index = 0;
   while (index < state.rows.length) {
     if (state.rows[index].kind !== "skip") {
@@ -1564,10 +1578,38 @@ async function expandAll() {
     }
     const expanded = await expandSkipAt(index);
     if (!expanded) {
-      return;
+      break;
     }
     index += 1;
   }
+  if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
+    // 取得中に別のファイルへ切り替わった。新しい選択が描画する。
+    return;
+  }
+  renderFileHeader();
+  renderDiff();
+}
+
+function allLinesExpanded() {
+  const data = state.cache.get(state.cacheKey);
+  if (!data || !data.collapsedRows) {
+    return false;
+  }
+  return (
+    state.rows !== data.collapsedRows &&
+    !state.rows.some((row) => row.kind === "skip")
+  );
+}
+
+function collapseAll() {
+  const data = state.cache.get(state.cacheKey);
+  if (!data || !data.collapsedRows || state.rows === data.collapsedRows) {
+    return;
+  }
+  state.rows = data.collapsedRows;
+  state.cache.set(state.cacheKey, { ...data, rows: data.collapsedRows });
+  recomputeDisplay();
+  renderFileHeader();
   renderDiff();
 }
 
@@ -1616,7 +1658,8 @@ async function selectEntry(entry, options = { scrollTop: true }) {
       // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。
       return;
     }
-    state.cache.set(key, { ...data, rows: data.rows || [] });
+    const rows = data.rows || [];
+    state.cache.set(key, { ...data, rows, collapsedRows: rows });
   }
   const data = state.cache.get(key);
   state.rows = data.rows || [];
