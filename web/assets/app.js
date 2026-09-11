@@ -1430,6 +1430,8 @@ function remeasure() {
 function resetHeights() {
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
   state.staleRows = new Set();
+  // 位置の帯の印は行の高さから描く。測る行が無くても、古い高さの印を残さない。
+  state.rulerDirty = true;
 }
 
 function openFileWideEditor() {
@@ -3104,6 +3106,9 @@ function applyTheme() {
       // テーマ切替は表示色の再取得だけ。入力中のエディタは閉じない。
       void selectEntry(entry, { scrollTop: false, keepEditor: true });
     }
+  } else if (!changed) {
+    // 明暗が同じでもプリセットが変われば追加・削除の色が変わる。位置の帯を描き直す。
+    scheduleRender();
   }
 }
 
