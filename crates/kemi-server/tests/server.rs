@@ -181,6 +181,7 @@ impl TestServer {
             source: source.clone(),
             assets: Arc::new(FakeAssets),
             token: "test-token".to_string(),
+            results: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -694,6 +695,7 @@ impl LiveServer {
             source,
             assets: Arc::new(FakeAssets),
             token: "live-token".to_string(),
+            results: None,
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。

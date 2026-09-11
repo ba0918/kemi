@@ -56,10 +56,19 @@ pub(crate) enum Stop {
     Failed(String),
 }
 
+/// submit を確定した結果を残す先（R-RESULT）。
+pub trait ResultSink: Send + Sync {
+    /// stdout に出すのと同じ JSON の文字列を残し、書いたファイルを返す。
+    fn save(&self, text: &str) -> Result<std::path::PathBuf, String>;
+    /// 保存先のディレクトリ。完了画面に出す。決められなければ None。
+    fn location(&self) -> Option<String>;
+}
+
 pub struct ServeParams {
     pub source: Arc<dyn ReviewSource>,
     pub assets: Arc<dyn Assets>,
     pub token: String,
+    pub results: Option<Arc<dyn ResultSink>>,
 }
 
 /// SSE でページへ知らせること。
@@ -81,6 +90,7 @@ pub(crate) struct AppState {
     pub source: Arc<dyn ReviewSource>,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
+    pub results: Option<Arc<dyn ResultSink>>,
     pub token: String,
     pub origin: String,
     pub host: String,
@@ -123,6 +133,7 @@ pub async fn serve(
         source: params.source,
         highlighter: std::sync::OnceLock::new(),
         assets: params.assets,
+        results: params.results,
         token: params.token,
         origin,
         host,

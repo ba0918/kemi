@@ -850,12 +850,38 @@ async fn submit(
                 }
                 *stop = Some(Stop::Submitted(document.clone()));
             }
+            let saved = save_result(&state, &document);
             let _ = state.shutdown.send(true);
-            Ok(Json(document))
+            Ok(Json(json!({ "result": document, "saved": saved })))
         }
         Err(error) => {
             *state.submit_state.lock().expect("submit poisoned") = SubmitState::Open;
             Err(error)
+        }
+    }
+}
+
+/// 確定した結果を結果ファイルに残す。失敗しても submit の結果と終了コードは変えず、
+/// stderr に警告を出して完了画面に知らせるだけにする（R-RESULT）。
+fn save_result(state: &AppState, document: &Value) -> Value {
+    let Some(sink) = &state.results else {
+        return json!({ "dir": null, "path": null, "error": null });
+    };
+    let text = match serde_json::to_string(document) {
+        Ok(json) => format!("{json}\n"),
+        Err(error) => {
+            return json!({ "dir": sink.location(), "path": null, "error": error.to_string() })
+        }
+    };
+    match sink.save(&text) {
+        Ok(path) => json!({
+            "dir": sink.location(),
+            "path": path.to_string_lossy(),
+            "error": null,
+        }),
+        Err(error) => {
+            eprintln!("kemi: 結果ファイルを保存できませんでした: {error}");
+            json!({ "dir": sink.location(), "path": null, "error": error })
         }
     }
 }
