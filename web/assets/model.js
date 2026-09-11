@@ -949,6 +949,34 @@ export function buildTree(entries) {
 }
 
 /**
+ * ツリーに描かれる順（グループ、その中のディレクトリとファイルを上から）に並べ直す。
+ * 次のファイル（n / p、j / k）はこの順で決める（R-NAV）。この順のまま `buildTree` に
+ * 渡しても、描かれるツリーは変わらない。
+ * @template {{ file: FileEntry, group: any }} T
+ * @param {T[]} entries
+ * @returns {T[]}
+ */
+export function treeOrder(entries) {
+  const byId = new Map(entries.map((item) => [item.file.id, item]));
+  /** @type {T[]} */
+  const order = [];
+  /** @param {TreeNode[]} nodes */
+  const walk = (nodes) => {
+    for (const node of nodes) {
+      if (node.type === "dir") {
+        walk(node.children);
+      } else {
+        order.push(/** @type {T} */ (byId.get(node.file.id)));
+      }
+    }
+  };
+  for (const { nodes } of buildTree(entries)) {
+    walk(nodes);
+  }
+  return order;
+}
+
+/**
  * コメントを、表示行の直下へ貼る位置に振り分ける。
  * ファイル全体のコメントと、表示行に見つからないコメントは floating に残す。
  * @param {DisplayLine[]} displayLines

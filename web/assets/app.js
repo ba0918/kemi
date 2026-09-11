@@ -39,6 +39,7 @@ import {
   sideTone,
   suggestionAllowed,
   toDisplayLines,
+  treeOrder,
   windowFor,
   withRowIndex,
 } from "./model.js";
@@ -394,9 +395,8 @@ function rebuildVisible(keepId) {
     [...byId.values()].map((entry) => entry.file),
     { focusOnly: state.focusOnly, sortBySize: state.sortBySize },
   );
-  state.visible = /** @type {Entry[]} */ (
-    files.map((file) => byId.get(file.id))
-  );
+  // n / p と j / k が次のファイルを選ぶ順は、ツリーに描かれる順（R-NAV）。
+  state.visible = treeOrder(/** @type {Entry[]} */ (files.map((file) => byId.get(file.id))));
   state.treeVersion += 1;
   if (keepId !== undefined) {
     const found = state.visible.findIndex((entry) => entry.file.id === keepId);

@@ -42,6 +42,7 @@ import {
   describeComment,
   submitSummary,
   commentCountChanges,
+  treeOrder,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -936,4 +937,50 @@ test("comment_badges_to_update_are_the_files_whose_comment_count_changed", () =>
   ]);
   assert.deepEqual(commentCountChanges(before, [second]), [{ group_id: "g1", path: "a.rs" }]);
   assert.deepEqual(commentCountChanges(before, [{ ...first, body: "edited" }, second]), []);
+});
+
+test("next_file_order_is_the_drawn_tree_order_when_sorting_by_size", () => {
+  const files = [
+    file("src/a.txt", 10, 10),
+    file("b.txt", 5, 5),
+    file("src/c.txt", 1, 1),
+    file("crlf.txt", 40, 40),
+  ];
+  const sorted = filterAndSortFiles(files, { focusOnly: false, sortBySize: true });
+
+  const order = treeOrder(sorted.map((sortedFile) => entry(sortedFile)));
+
+  assert.deepEqual(
+    order.map((item) => item.file.path),
+    ["crlf.txt", "src/a.txt", "src/c.txt", "b.txt"],
+  );
+});
+
+test("next_file_order_keeps_files_of_a_group_together_even_if_the_input_splits_them", () => {
+  const g1 = { id: "g1", title: "g1", why: "", watch: "" };
+  const g2 = { id: "g2", title: "g2", why: "", watch: "" };
+  const entries = [
+    entry(file("lib/x.rs", 1, 0), g1),
+    entry(file("y.rs", 1, 0), g2),
+    entry(file("z.rs", 1, 0), g1),
+    entry(file("lib/w.rs", 1, 0), g1),
+  ];
+
+  assert.deepEqual(
+    treeOrder(entries).map((item) => `${item.group.id}:${item.file.path}`),
+    ["g1:lib/x.rs", "g1:lib/w.rs", "g1:z.rs", "g2:y.rs"],
+  );
+});
+
+test("drawing_the_tree_from_its_own_order_draws_the_same_tree", () => {
+  const g2 = { id: "g2", title: "g2", why: "", watch: "" };
+  const entries = [
+    entry(file("src/a.rs", 1, 0)),
+    entry(file("b.rs", 1, 0), g2),
+    entry(file("README.md", 1, 0)),
+    entry(file("src/sub/c.rs", 1, 0)),
+    entry(file("src/d.rs", 1, 0)),
+  ];
+
+  assert.deepEqual(buildTree(treeOrder(entries)), buildTree(entries));
 });
