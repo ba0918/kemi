@@ -953,6 +953,7 @@ ul.files ul {
   color: var(--ink);
   white-space: pre-wrap;
   line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 
 .t-body.clamp .clamp-body {
@@ -963,6 +964,7 @@ ul.files ul {
 
 .t-body.clamp[data-open="true"] .clamp-body {
   max-height: none;
+  overflow: visible;
 }
 
 .clamp-toggle {
