@@ -315,13 +315,24 @@ function textEl(tag, className, text) {
 }
 
 /**
+ * 解析済みのアイコン。ツリーの項目ごとに markup を解析し直さず、複製して使う。
+ * @type {Map<string, SVGElement>}
+ */
+const parsedIcons = new Map();
+
+/**
  * @param {string} markup
  * @returns {SVGElement}
  */
 function svgIcon(markup) {
-  const template = document.createElement("template");
-  template.innerHTML = markup;
-  return /** @type {SVGElement} */ (template.content.firstElementChild);
+  let icon = parsedIcons.get(markup);
+  if (!icon) {
+    const template = document.createElement("template");
+    template.innerHTML = markup;
+    icon = /** @type {SVGElement} */ (template.content.firstElementChild);
+    parsedIcons.set(markup, icon);
+  }
+  return /** @type {SVGElement} */ (icon.cloneNode(true));
 }
 
 /**
