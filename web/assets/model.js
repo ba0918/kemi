@@ -817,6 +817,33 @@ export function describeComment(comment, context) {
 }
 
 /**
+ * コメントの追加・編集・削除の前後で、コメントの件数が変わったファイル（グループとパス）。
+ * ツリーのコメント件数の札は、このファイルの項目だけを描き直せば足りる。
+ * @param {any[]} before
+ * @param {any[]} after
+ * @returns {{ group_id: string, path: string }[]}
+ */
+export function commentCountChanges(before, after) {
+  /** @type {Map<string, { group_id: string, path: string, delta: number }>} */
+  const files = new Map();
+  /**
+   * @param {any} comment
+   * @param {number} delta
+   */
+  const count = (comment, delta) => {
+    const key = JSON.stringify([comment.group_id, comment.path]);
+    const found = files.get(key) ?? { group_id: comment.group_id, path: comment.path, delta: 0 };
+    found.delta += delta;
+    files.set(key, found);
+  };
+  before.forEach((comment) => count(comment, -1));
+  after.forEach((comment) => count(comment, 1));
+  return [...files.values()]
+    .filter((file) => file.delta !== 0)
+    .map(({ group_id, path }) => ({ group_id, path }));
+}
+
+/**
  * 送信の確認ダイアログに出す数。コメントは両方のグループ単位の合計、見たは表示中の単位。
  * @param {any[]} comments
  * @param {FileEntry[]} files

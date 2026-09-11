@@ -5,6 +5,7 @@ import * as api from "./api.js";
 import {
   buildTree,
   collapseDefault,
+  commentCountChanges,
   commentLabel,
   commentedLines,
   commitTypeBox,
@@ -621,6 +622,25 @@ function commentsOf(entry) {
   );
 }
 
+/**
+ * コメントの件数が変わったファイルの、ツリーの項目だけを描き直す。ツリー全体は
+ * 作り直さない（コミットごとで数万項目あると、1 回のコメントで固まる）。
+ * @param {any[]} before 変わる前のすべてのコメント
+ */
+function refreshCommentBadges(before) {
+  for (const changed of commentCountChanges(before, state.allComments)) {
+    for (const entry of state.visible) {
+      if (
+        entry.group.id === changed.group_id &&
+        entry.file.path === changed.path &&
+        state.treeItems.has(entry.file.id)
+      ) {
+        treeItem(entry, entry.file.path.split("/").pop() ?? entry.file.path, state.treeItems);
+      }
+    }
+  }
+}
+
 function renderTree() {
   if (state.treeVersion !== state.treeRenderedVersion) {
     rebuildTree();
@@ -1228,15 +1248,15 @@ function confirmDeleteComment(comment) {
  * @param {(comments: any[]) => any[]} change
  */
 function updateComments(change) {
+  const before = state.allComments;
   state.allComments = change(state.allComments);
   for (const [id, comments] of state.commentStore) {
     state.commentStore.set(id, change(comments));
   }
   state.comments = change(state.comments);
-  state.treeVersion += 1;
   recomputeThreads();
   remeasure();
-  renderTree();
+  refreshCommentBadges(before);
   renderHeader();
   renderFileHeader();
   renderDiff();
@@ -1965,10 +1985,10 @@ function saveDraft(key, value) {
 async function addComment(payload) {
   try {
     const comment = await api.postComment(payload);
+    const before = state.allComments;
     state.allComments = [...state.allComments, comment];
     state.commentOpen.set(comment.id, true);
-    state.treeVersion += 1;
-    renderTree();
+    refreshCommentBadges(before);
     renderHeader();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
     // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。

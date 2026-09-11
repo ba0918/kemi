@@ -41,6 +41,7 @@ import {
   commentedLines,
   describeComment,
   submitSummary,
+  commentCountChanges,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -922,4 +923,17 @@ test("submit_summary_counts_comments_suggestions_and_unseen_files", () => {
     total: 3,
     unseen: 2,
   });
+});
+
+test("comment_badges_to_update_are_the_files_whose_comment_count_changed", () => {
+  const first = { id: "c1", group_id: "g1", path: "a.rs", body: "x" };
+  const second = { id: "c2", group_id: "g1", path: "b.rs", body: "y" };
+  const sameFileInAnotherGroup = { id: "c3", group_id: "g2", path: "a.rs", body: "z" };
+  const before = [first, second];
+
+  assert.deepEqual(commentCountChanges(before, [...before, sameFileInAnotherGroup]), [
+    { group_id: "g2", path: "a.rs" },
+  ]);
+  assert.deepEqual(commentCountChanges(before, [second]), [{ group_id: "g1", path: "a.rs" }]);
+  assert.deepEqual(commentCountChanges(before, [{ ...first, body: "edited" }, second]), []);
 });
