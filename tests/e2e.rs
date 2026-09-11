@@ -882,12 +882,14 @@ async fn result_flag_with_a_broken_latest_file_exits_2_and_prints_nothing() {
 }
 
 #[tokio::test]
-async fn result_keeps_twenty_newest_across_repositories() {
+async fn result_keeps_twenty_across_repositories() {
+    // Why not 最初の 1 件が消えたことまで見ない: どれを消すかは送信時刻で決まり、動かして
+    // いる機械の時計が戻ると submit の順と食い違う。送信時刻の古い方から消すことは、
+    // 送信時刻を与える src/result.rs のテストで確かめる。
     let first_repo = TempDir::new();
     let second_repo = TempDir::new();
     let state = TempDir::new();
-    let (_, oldest, _) = submit_manifest(&first_repo.path, &state.path, "approved", "1 件目").await;
-    for index in 2..=21 {
+    for index in 1..=21 {
         let dir = if index % 2 == 0 {
             &second_repo.path
         } else {
@@ -896,12 +898,7 @@ async fn result_keeps_twenty_newest_across_repositories() {
         submit_manifest(dir, &state.path, "approved", &format!("{index} 件目")).await;
     }
 
-    let files = result_files(&state.path);
-
-    assert_eq!(files.len(), 20);
-    assert!(files
-        .iter()
-        .all(|file| std::fs::read_to_string(file).unwrap() != oldest));
+    assert_eq!(result_files(&state.path).len(), 20);
 }
 
 #[tokio::test]
