@@ -176,6 +176,16 @@ tr.thread-row > td { background: var(--panel); border-top: 1px solid var(--line)
 .t-suggestion .sug-head { background: var(--panel-2); padding: 4px 10px; font-size: 11px; color: var(--ink-2); }
 .t-suggestion pre { margin: 0; padding: 8px 10px; background: var(--add-bg); overflow-x: auto; }
 .t-note { margin: 6px 0 0 30px; font-size: 11.5px; color: var(--ink-3); }
+.clamp .clamp-body { max-height: 5.1em; overflow: hidden; }
+.clamp[data-open="true"] .clamp-body { max-height: none; }
+.clamp-toggle { margin-top: 2px; background: none; border: 0; color: var(--accent);
+  font: inherit; font-size: 11.5px; cursor: pointer; padding: 0; }
+.clamp-toggle:hover { text-decoration: underline; }
+.gh-toggle { background: none; border: 0; color: var(--ink-3); cursor: pointer;
+  font: inherit; font-size: 12px; padding: 0 4px 0 0; }
+.group-header[data-open="false"] .gh-why,
+.group-header[data-open="false"] .gh-watch { display: none; }
+.group-header[data-open="false"] .gh-toggle { transform: rotate(-90deg); display: inline-block; }
 .t-actions { margin: 6px 0 0 30px; display: flex; gap: 10px; font-size: 11.5px; }
 .t-actions button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
 .t-actions .resolve { color: var(--ink-3); }
@@ -296,9 +306,9 @@ html[data-wrap="on"] td.src { white-space: pre-wrap; word-break: break-word; }
   </aside>
 
   <main>
-    <div class="group-header">
-      <div class="gh-line"><span class="gh-title">1. feat: manifest の入力ソースを追加</span><span class="gh-st">+96 −12 / 4 files</span></div>
-      <p class="gh-why">レビュー対象をコミット範囲だけでなく manifest からも取れるようにした。エージェントが下書きや散文をレビューに載せるための入口になる。</p>
+    <div class="group-header" data-open="true">
+      <div class="gh-line"><button class="gh-toggle" type="button" aria-expanded="true" title="このグループの説明を畳む">▾</button><span class="gh-title">1. feat: manifest の入力ソースを追加</span><span class="gh-st">+96 −12 / 4 files</span></div>
+      <p class="gh-why">レビュー対象をコミット範囲だけでなく manifest からも取れるようにした。エージェントが下書きや散文をレビューに載せるための入口になる。加えて、互換キーの解釈・グループ id の生成・存在しないパスの扱いをこのコミットで決めた。旧ツールとの差分で迷いやすいのは、`old` と `old_path` を同時に指定した場合の優先順位と、`status` を省略したときの推論規則。移行時に必ず読むことになる場所なので、レビューでは最初にここを確認してほしい。</p>
       <div class="gh-watch"><b>見てほしい点</b>グループ id を省略したときの生成規則（g1…）と、存在しないパスを指したときの扱い。互換のために旧ツールより厳しくしている。</div>
     </div>
 
@@ -348,8 +358,8 @@ html[data-wrap="on"] td.src { white-space: pre-wrap; word-break: break-word; }
         <tr class="thread-row"><td colspan="4">
           <div class="thread">
             <div class="t-head"><span class="t-role">あなた</span><span>2 分前</span></div>
-            <div class="t-body">`old` と `old_path` の同時指定はエラーで正解。移行時に気付ける方がいい。</div>
-            
+            <div class="t-body clamp" data-open="false"><span class="clamp-body">`old` と `old_path` の同時指定はエラーで正解。移行時に気付ける方がいい。加えて、`status` を省略したときの推論は add / delete / rename / modify の順で旧ツールと同じにしてある。ただし存在しない `old_path` は旧ツールが黙って空として扱っていたのに対し、ここではエラーにした。既存の manifest を移行するときに、パスの綴り間違いがそのまま失敗として見えるので、移行作業ではそこだけ先に確認してほしい。</span><button class="clamp-toggle" type="button">続きを読む</button></div>
+            <div class="t-actions"><button class="resolve">解決</button></div>
           </div>
         </td></tr>
         <tr class="hoverable ctx">
@@ -370,7 +380,7 @@ html[data-wrap="on"] td.src { white-space: pre-wrap; word-break: break-word; }
               <div class="sug-head">提案された変更</div>
               <pre>    format!("g{}", ids.next())</pre>
             </div>
-            
+            <div class="t-actions"><button class="resolve">解決</button></div>
             <div class="t-note">この提案はコメントと一緒に JSON でエージェントへ渡る（適用はエージェント）。</div>
           </div>
         </td></tr>
@@ -505,6 +515,27 @@ html[data-wrap="on"] td.src { white-space: pre-wrap; word-break: break-word; }
       row.querySelector(".cancel").onclick = () => row.remove();
       row.querySelector(".save").onclick = () => row.remove();
     }
+  });
+
+  // グループ見出し全体の折りたたみ
+  document.addEventListener("click", (e) => {
+    const toggle = e.target.closest(".gh-toggle");
+    if (!toggle) return;
+    const box = toggle.closest(".group-header");
+    const open = box.dataset.open === "true";
+    box.dataset.open = String(!open);
+    toggle.setAttribute("aria-expanded", String(!open));
+    toggle.title = open ? "このグループの説明を開く" : "このグループの説明を畳む";
+  });
+
+  // 長文の折りたたみ
+  document.addEventListener("click", (e) => {
+    const toggle = e.target.closest(".clamp-toggle");
+    if (!toggle) return;
+    const box = toggle.closest(".clamp");
+    const open = box.dataset.open === "true";
+    box.dataset.open = String(!open);
+    toggle.textContent = open ? "続きを読む" : "折りたたむ";
   });
 
   // 承認/変更要求の confirm
