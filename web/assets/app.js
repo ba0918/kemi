@@ -157,6 +157,7 @@ const dom = {
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
  *   rendering: boolean,
+ *   measureNext: boolean,
  *   highlightOverrides: Map<string, "on" | "off">,
  *   highlightCapable: boolean,
  *   highlightEnabled: boolean,
@@ -218,6 +219,7 @@ const state = {
   binary: false,
   collapsedOverrides: {},
   rendering: false,
+  measureNext: false,
   highlightOverrides: new Map(),
   highlightCapable: false,
   highlightEnabled: false,
@@ -1058,7 +1060,7 @@ function renderComment(comment) {
     }
     chip.addEventListener("click", () => {
       state.commentOpen.set(comment.id, true);
-      resetHeights();
+      remeasure();
       renderDiff();
       renderFloating();
     });
@@ -1087,7 +1089,7 @@ function renderComment(comment) {
   fold.textContent = "畳む";
   fold.addEventListener("click", () => {
     state.commentOpen.set(comment.id, false);
-    resetHeights();
+    remeasure();
     renderDiff();
     renderFloating();
   });
@@ -1149,7 +1151,7 @@ function openCommentEditor(comment) {
     needsFocus: true,
     editId: comment.id,
   };
-  resetHeights();
+  remeasure();
   renderDiff();
   renderFloating();
 }
@@ -1180,7 +1182,7 @@ function updateComments(change) {
   state.comments = change(state.comments);
   state.treeVersion += 1;
   recomputeThreads();
-  resetHeights();
+  remeasure();
   renderTree();
   renderHeader();
   renderFileHeader();
@@ -1319,14 +1321,17 @@ function renderEditor(editor) {
 function closeEditor() {
   state.editor = null;
   state.selection = null;
-  resetHeights();
+  remeasure();
   renderDiff();
   renderFloating();
 }
 
-/** エディタやスレッドの出入りで測り直す前に、行の高さを基準値へ戻す。 */
-function resetHeights() {
-  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+/**
+ * エディタやコメント、由来の理由の出入りで、次の描画で表示中の行の高さを測り直させる。
+ * 見えていない行の測った高さは残す。捨てると、上の行が詰まって見ている位置がずれる。
+ */
+function remeasure() {
+  state.measureNext = true;
 }
 
 function openFileWideEditor() {
@@ -1442,10 +1447,12 @@ function renderDiff() {
   renderNav(offsets);
   renderRuler(offsets);
   const needsMeasure =
+    state.measureNext ||
     state.wrap ||
     state.threads.byLine.size > 0 ||
     state.originOpen.size > 0 ||
     Boolean(state.editor && !state.editor.wide);
+  state.measureNext = false;
   if (needsMeasure) {
     measureHeights(window.start);
   }
@@ -1641,7 +1648,7 @@ function renderOriginLine(line) {
       } else {
         state.originOpen.set(openKey, entry.sha);
       }
-      resetHeights();
+      remeasure();
       renderDiff();
     });
     row.append(item);
