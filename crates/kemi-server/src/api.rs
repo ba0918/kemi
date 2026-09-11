@@ -20,7 +20,7 @@ use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{
     Comment, FileEntry, GroupBy, LineRange, ReviewMeta, Side, Suggestion,
 };
-use kemi_core::source::FileOrigin;
+use kemi_core::source::{FileOrigin, SourceError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -150,16 +150,23 @@ async fn source_review(state: &AppState) -> Result<ReviewMeta, ApiError> {
         .map_err(|error| runtime_error(state, error))
 }
 
+/// 内容を読む。一覧にある id でも、再取得や裏での単位の作り直しで内容の計画が先に
+/// 差し替わると、内容の側はその id をもう知らないことがある。これは git や I/O の
+/// 失敗ではないので、レビューは終えず None を返す（一覧に無い id と同じ扱い）。
 async fn source_content(
     state: &AppState,
     file_id: &str,
-) -> Result<kemi_core::source::FileContent, ApiError> {
+) -> Result<Option<kemi_core::source::FileContent>, ApiError> {
     let source = state.source.clone();
     let file_id = file_id.to_string();
-    tokio::task::spawn_blocking(move || source.content(&file_id))
+    let result = tokio::task::spawn_blocking(move || source.content(&file_id))
         .await
-        .map_err(|error| runtime_error(state, error))?
-        .map_err(|error| runtime_error(state, error))
+        .map_err(|error| runtime_error(state, error))?;
+    match result {
+        Ok(content) => Ok(Some(content)),
+        Err(SourceError::UnknownFileId(_)) => Ok(None),
+        Err(error) => Err(runtime_error(state, error)),
+    }
 }
 
 /// レビュー中の git・I/O 失敗はサーバを止め、CLI を終了コード 2 にする（R-SUBMIT）。
@@ -317,7 +324,9 @@ async fn file(
         })));
     }
 
-    let content = source_content(&state, &id).await?;
+    let content = source_content(&state, &id)
+        .await?
+        .ok_or_else(file_not_found)?;
     let old_text = content
         .old
         .as_deref()
@@ -396,10 +405,15 @@ async fn origin(
     let force = query.force.as_deref() == Some("1");
     let source = state.source.clone();
     let file_id = id.clone();
-    let origin = tokio::task::spawn_blocking(move || source.origin(&file_id, force))
+    let origin = match tokio::task::spawn_blocking(move || source.origin(&file_id, force))
         .await
         .map_err(|error| runtime_error(&state, error))?
-        .map_err(|error| runtime_error(&state, error))?;
+    {
+        Ok(origin) => origin,
+        // 内容の計画が差し替わる途中の食い違い（source_content と同じ）。
+        Err(SourceError::UnknownFileId(_)) => return Err(file_not_found()),
+        Err(error) => return Err(runtime_error(&state, error)),
+    };
     Ok(Json(match origin {
         Some(origin) => origin_json(&id, &origin),
         None => json!({ "id": id, "available": false }),
@@ -705,7 +719,9 @@ async fn add_comment(
     };
     let (file, group_title) = find_file(state, &file_id)?;
 
-    let content = source_content(state, &file_id).await?;
+    let content = source_content(state, &file_id)
+        .await?
+        .ok_or_else(file_not_found)?;
     let lines = match side {
         Side::Old => side_lines(&content.old),
         Side::New => side_lines(&content.new),
@@ -916,7 +932,10 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
             outdated.insert(id, true);
             continue;
         }
-        let content = source_content(state, &file_id).await?;
+        let Some(content) = source_content(state, &file_id).await? else {
+            outdated.insert(id, true);
+            continue;
+        };
         let lines = match side {
             Side::Old => side_lines(&content.old),
             Side::New => side_lines(&content.new),
@@ -984,7 +1003,11 @@ fn find_file(state: &AppState, id: &str) -> Result<(FileEntry, String), ApiError
         .read()
         .expect("review lock poisoned")
         .find_file(id)
-        .ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))
+        .ok_or_else(file_not_found)
+}
+
+fn file_not_found() -> ApiError {
+    ApiError::not_found("ファイルが見つかりません")
 }
 
 fn side_lines(bytes: &Option<Vec<u8>>) -> Vec<String> {
