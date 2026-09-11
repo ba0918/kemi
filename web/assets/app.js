@@ -202,7 +202,7 @@ const dom = {
  *   toastTimer: number,
  *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
  *   modalAction: (() => void) | null,
- *   lastNav: { top: number, scrollTop: number } | null,
+ *   lastNav: { index: number, top: number, scrollTop: number } | null,
  * }} */
 const state = {
   review: null,
@@ -1432,6 +1432,8 @@ function resetHeights() {
   state.staleRows = new Set();
   // 位置の帯の印は行の高さから描く。測る行が無くても、古い高さの印を残さない。
   state.rulerDirty = true;
+  // 移った先の記録は古い行と高さでの位置なので、もう同じ行を指さない。
+  state.lastNav = null;
 }
 
 function openFileWideEditor() {
@@ -2226,16 +2228,23 @@ function showOverlay(title, detail) {
 function measureHeights(start, offsets) {
   const children = Array.from(dom.content.children);
   const scrollTop = dom.viewport.scrollTop;
+  // 移動の直後は、移った先の行より上の行の伸び縮みをすべて打ち消す。初めて測る行
+  // （折り返した行など）が基準値より高いと、移った先が下へずれて見えなくなるため。
+  const nav = activeNav();
   let changed = false;
   let shift = 0;
+  let growth = 0;
   children.forEach((child, offset) => {
     const index = start + offset;
     const stale = state.staleRows.delete(index);
     const height = /** @type {HTMLElement} */ (child).offsetHeight;
     if (height > 0 && state.heights[index] !== height) {
-      if (stale && offsets[index + 1] <= scrollTop) {
-        shift += height - state.heights[index];
+      const delta = height - state.heights[index];
+      const above = nav ? index < nav.index : stale && offsets[index + 1] <= scrollTop;
+      if (above) {
+        shift += delta;
       }
+      growth += delta;
       state.heights[index] = height;
       changed = true;
     }
@@ -2246,7 +2255,15 @@ function measureHeights(start, offsets) {
   if (shift !== 0) {
     // 見ている位置より上で古い高さのまま残っていた行の伸び縮みを、スクロール位置で
     // 打ち消す。ずれた配置のまま表示されないよう、同じ描画のうちに描き直す。
-    dom.viewport.scrollTop = scrollTop + shift;
+    // 全体の高さを先に広げる。古い高さのままでは、送った位置が末尾で切り詰められる。
+    dom.content.style.height = `${(offsets[offsets.length - 1] || 0) + growth}px`;
+    if (nav) {
+      const top = (offsets[nav.index] ?? nav.top) + shift;
+      dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
+      state.lastNav = { index: nav.index, top, scrollTop: dom.viewport.scrollTop };
+    } else {
+      dom.viewport.scrollTop = scrollTop + shift;
+    }
     renderDiff();
     return;
   }
@@ -2414,23 +2431,34 @@ function renderNav(offsets) {
 }
 
 /**
- * @param {number} top
+ * 表示行 `index` を、上端から NAV_MARGIN の位置へ送る。
+ * @param {number} index
+ * @param {number[]} offsets
  */
-function scrollToTop(top) {
+function scrollToRow(index, offsets) {
+  const top = offsets[index] ?? 0;
   dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
   // 末尾近くでは止まる場所を上端まで送れない。移った先を覚えておき、利用者が
   // スクロールするまではそこを今の位置として扱う（同じ場所で n が空回りしないように）。
-  state.lastNav = { top, scrollTop: dom.viewport.scrollTop };
+  // 移った先の行より上の行を初めて測って高さが変わったら、measureHeights がこの行を
+  // 同じ位置に保つ。
+  state.lastNav = { index, top, scrollTop: dom.viewport.scrollTop };
   scheduleRender();
+}
+
+/** 移動の後、利用者がまだスクロールしていなければ、その移動の記録。 */
+function activeNav() {
+  const last = state.lastNav;
+  if (last && Math.abs(dom.viewport.scrollTop - last.scrollTop) < 2) {
+    return last;
+  }
+  return null;
 }
 
 /** 変更間の移動で使う今の位置。 */
 function navPosition() {
-  const last = state.lastNav;
-  if (last && Math.abs(dom.viewport.scrollTop - last.scrollTop) < 2) {
-    return last.top;
-  }
-  return dom.viewport.scrollTop + NAV_MARGIN;
+  const nav = activeNav();
+  return nav ? nav.top : dom.viewport.scrollTop + NAV_MARGIN;
 }
 
 /**
@@ -2478,10 +2506,11 @@ async function navigate(direction) {
     return;
   }
   const offsets = lineOffsets(state.heights);
-  const tops = reachableStops().map((index) => offsets[index] ?? 0);
+  const stops = reachableStops();
+  const tops = stops.map((index) => offsets[index] ?? 0);
   const index = nextStop(tops, navPosition(), direction);
   if (index !== null) {
-    scrollToTop(tops[index]);
+    scrollToRow(stops[index], offsets);
     return;
   }
   const visible = state.visible;
@@ -2566,13 +2595,13 @@ function applyPendingJump() {
   const stops = reachableStops();
   if (jump === "first" || jump === "last") {
     if (stops.length > 0) {
-      scrollToTop(offsets[jump === "first" ? stops[0] : stops[stops.length - 1]]);
+      scrollToRow(jump === "first" ? stops[0] : stops[stops.length - 1], offsets);
     }
     return;
   }
   const index = state.display.findIndex((line) => lineHasAnchor(line, jump.side, jump.line));
   if (index >= 0) {
-    scrollToTop(offsets[index]);
+    scrollToRow(index, offsets);
   }
 }
 
