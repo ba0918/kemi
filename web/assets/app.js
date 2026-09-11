@@ -153,6 +153,7 @@ const dom = {
  *   rows: LogicalRow[],
  *   display: DisplayLine[],
  *   heights: number[],
+ *   staleRows: Set<number>,
  *   threads: { byLine: Map<number, any[]>, floating: any[] },
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
@@ -215,6 +216,7 @@ const state = {
   rows: [],
   display: [],
   heights: [],
+  staleRows: new Set(),
   threads: { byLine: new Map(), floating: [] },
   binary: false,
   collapsedOverrides: {},
@@ -1374,9 +1376,22 @@ function closeEditor() {
 /**
  * エディタやコメント、由来の理由の出入りで、次の描画で表示中の行の高さを測り直させる。
  * 見えていない行の測った高さは残す。捨てると、上の行が詰まって見ている位置がずれる。
+ * 基準値と違う高さの行は中身が変わったかもしれないので、窓の外の行も、次に描いたときに
+ * 測り直すよう覚えておく。
  */
 function remeasure() {
   state.measureNext = true;
+  state.heights.forEach((height, index) => {
+    if (height !== ROW_HEIGHT) {
+      state.staleRows.add(index);
+    }
+  });
+}
+
+/** 表示する行が変わったときや折返しを切り替えたとき、行の高さを基準値へ戻す。 */
+function resetHeights() {
+  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  state.staleRows = new Set();
 }
 
 function openFileWideEditor() {
@@ -1495,13 +1510,14 @@ function renderDiff() {
   renderRuler(offsets);
   const needsMeasure =
     state.measureNext ||
+    state.staleRows.size > 0 ||
     state.wrap ||
     state.threads.byLine.size > 0 ||
     state.originOpen.size > 0 ||
     Boolean(state.editor && !state.editor.wide);
   state.measureNext = false;
   if (needsMeasure) {
-    measureHeights(window.start);
+    measureHeights(window.start, offsets);
   }
 }
 
@@ -2160,20 +2176,34 @@ function showOverlay(title, detail) {
 
 /**
  * @param {number} start
+ * @param {number[]} offsets 描いたときの各行の上端
  */
-function measureHeights(start) {
+function measureHeights(start, offsets) {
   const children = Array.from(dom.content.children);
+  const scrollTop = dom.viewport.scrollTop;
   let changed = false;
+  let shift = 0;
   children.forEach((child, offset) => {
     const index = start + offset;
+    const stale = state.staleRows.delete(index);
     const height = /** @type {HTMLElement} */ (child).offsetHeight;
     if (height > 0 && state.heights[index] !== height) {
+      if (stale && offsets[index + 1] <= scrollTop) {
+        shift += height - state.heights[index];
+      }
       state.heights[index] = height;
       changed = true;
     }
   });
   if (changed) {
     state.rulerDirty = true;
+  }
+  if (shift !== 0) {
+    // 見ている位置より上で古い高さのまま残っていた行の伸び縮みを、スクロール位置で
+    // 打ち消す。ずれた配置のまま表示されないよう、同じ描画のうちに描き直す。
+    dom.viewport.scrollTop = scrollTop + shift;
+    renderDiff();
+    return;
   }
   if (changed && !state.rendering) {
     state.rendering = true;
@@ -2809,7 +2839,7 @@ function recomputeDisplay() {
   state.display = toDisplayLines(withRowIndex(state.rows), state.mode, {
     origin: originShown(),
   });
-  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  resetHeights();
   state.skipRanges = new Map();
   state.rows.forEach((row, index) => {
     if (row.kind === "skip") {
@@ -2857,7 +2887,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     state.loading = true;
     state.rows = [];
     state.display = [];
-    state.heights = [];
+    resetHeights();
     state.threads = { byLine: new Map(), floating: [] };
     renderTree();
     renderGroupHeader();
@@ -3041,7 +3071,7 @@ function handleKey(event) {
     }
   } else if (action.type === "wrap") {
     state.wrap = Boolean(action.value);
-    state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+    resetHeights();
     renderHeader();
     renderDiff();
   }
@@ -3074,7 +3104,7 @@ dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
 dom.btnWrap.addEventListener("click", () => {
   state.wrap = !state.wrap;
-  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  resetHeights();
   renderHeader();
   renderDiff();
 });
