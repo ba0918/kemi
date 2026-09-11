@@ -639,3 +639,89 @@ fn digest_mode_bounded_thirty_thousand_files() {
     );
     assert!(stdout.len() < 100_000, "digest was {} bytes", stdout.len());
 }
+
+/// base → 2 コミットの小さなリポジトリ。base の sha を返す。
+fn two_commit_repo(dir: &TempDir) -> String {
+    git(&dir.path, &["init", "-q"]);
+    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
+    git(&dir.path, &["config", "user.name", "kemi"]);
+    git(&dir.path, &["config", "core.hooksPath", "/dev/null"]);
+    dir.write("a.txt", "one\n");
+    git(&dir.path, &["add", "-A"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    let base = String::from_utf8(run_git(&dir.path, &["rev-parse", "HEAD"])).unwrap();
+    dir.write("a.txt", "two\n");
+    git(&dir.path, &["commit", "-q", "-am", "feat: two"]);
+    dir.write("b.txt", "b\n");
+    git(&dir.path, &["add", "-A"]);
+    git(&dir.path, &["commit", "-q", "-m", "feat: b"]);
+    base.trim().to_string()
+}
+
+fn run_git(dir: &Path, args: &[&str]) -> Vec<u8> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    output.stdout
+}
+
+#[tokio::test]
+async fn cli_default_group_by_file_starts_in_final_form() {
+    let dir = TempDir::new();
+    let base = two_commit_repo(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--from", &base, "--no-open", "--port", "0"]);
+
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    assert_eq!(review["unit"], "file");
+    assert_eq!(review["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(review["groups"][0]["id"], "all");
+    kemi.kill();
+}
+
+#[test]
+fn digest_default_final_form_has_one_group() {
+    let dir = TempDir::new();
+    let base = two_commit_repo(&dir);
+
+    let output = run(&dir.path, &["--from", &base, "--digest"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let digest: serde_json::Value =
+        serde_json::from_str(String::from_utf8(output.stdout).unwrap().trim()).unwrap();
+    let groups = digest["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["id"], "all");
+    assert_eq!(digest["totals"]["files"], 2);
+}
+
+#[test]
+fn cli_result_usage_errors_exit_2() {
+    let dir = TempDir::new();
+    two_commit_repo(&dir);
+    dir.write("manifest.json", MANIFEST);
+
+    for args in [
+        &["--result", "--from", "HEAD~1"][..],
+        &["--result", "--port", "0"],
+        &["--result", "--worktree"],
+        &["--result", "manifest.json"],
+        &["--result", "--digest"],
+        &["--any"],
+        &["--workspace", "."],
+        &["--result", "--any", "--workspace", "."],
+        &["--worktree", "--group-by", "commit"],
+    ] {
+        let output = run(&dir.path, args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+}

@@ -20,7 +20,7 @@ kemi: 使い方:
 共通のフラグ:
   --focus <path>     focus レイヤの JSON（--base 相対）
   --base <dir>       manifest と --focus の相対パスの基準（既定 .）
-  --group-by <mode>  commit | file（既定 commit）
+  --group-by <mode>  起動時のグループ単位 file（最終形）| commit（コミットごと）。既定 file
   --port <n>         待ち受けポート（既定 0 = 空きを選ぶ）
   --no-open          ブラウザを自動で開かない
   --serve            互換のための受理のみ（既定で常にサーブする）
@@ -102,8 +102,8 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
 
 fn group_by(cli: &Cli) -> Result<GroupBy, String> {
     match cli.group_by.as_deref() {
-        None | Some("commit") => Ok(GroupBy::Commit),
-        Some("file") => Ok(GroupBy::File),
+        None | Some("file") => Ok(GroupBy::File),
+        Some("commit") => Ok(GroupBy::Commit),
         Some(other) => Err(format!("--group-by は commit か file です: {other}")),
     }
 }
