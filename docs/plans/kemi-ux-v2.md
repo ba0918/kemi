@@ -650,8 +650,8 @@ Shown by: external — このリポジトリ自身の範囲をブラウザ自動
 `app.js` / `index.html` の文言に一覧外の英語が無いことは、目で点検して報告に書く。
 
 Left to the implementer: 色の値（D2）、仕様が決めていない文言の細部。
-Stop and hand back if: テーマのプリセット名（light / dark / solarized など）の英語が
-`#R-DIST` の一覧に入るかどうか、判断が要る場合。仕様の一覧には、テーマ名が無い。
+Stop and hand back if: なし（一般の条件のみ）。テーマのプリセット名の英語は、`#R-DIST` の
+一覧で許されている。
 
 ## Step 14 — 全体の検証と文書
 
