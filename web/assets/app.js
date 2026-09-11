@@ -180,7 +180,6 @@ const dom = {
  *   dirOpen: Map<string, boolean>,
  *   groupHeaderOpen: Map<string, boolean>,
  *   commentOpen: Map<string, boolean>,
- *   justAdded: Set<string>,
  *   commented: Set<number>,
  *   loading: boolean,
  *   origins: Map<string, any>,
@@ -243,7 +242,6 @@ const state = {
   dirOpen: new Map(),
   groupHeaderOpen: new Map(),
   commentOpen: new Map(),
-  justAdded: new Set(),
   commented: new Set(),
   loading: false,
   origins: new Map(),
@@ -1080,17 +1078,14 @@ function renderCommentOrEditor(comment) {
 
 /**
  * コメントを、既定では本文の 1 行目を見せる札に畳んで出し、押すと吹き出しで本文をすべて
- * 見せる。付けた直後のコメントは開いて出す。開閉はページを開いている間だけ覚える。
+ * 見せる。付けた直後のコメントは開いて出し、別のファイルへ移って戻っても開いたままに
+ * する（addComment が開いた状態として覚える）。開閉はページを開いている間だけ覚える。
  * @param {any} comment
  * @returns {HTMLElement}
  */
 function renderComment(comment) {
   const where = commentLabel(comment);
-  // 付けた直後は、そのファイルを出している間だけ開いて出す。利用者が開閉したら、
-  // その状態をページを開いている間だけ覚える。
-  const open = state.commentOpen.has(comment.id)
-    ? state.commentOpen.get(comment.id) === true
-    : state.justAdded.has(comment.id);
+  const open = state.commentOpen.get(comment.id) === true;
   if (!open) {
     const chip = button(`cchip${comment.outdated ? " outdated" : ""}`);
     // 札と吹き出しの「畳む」は同じ鍵を持ち、開閉の後もフォーカスが行き来する。
@@ -1960,7 +1955,7 @@ async function addComment(payload) {
   try {
     const comment = await api.postComment(payload);
     state.allComments = [...state.allComments, comment];
-    state.justAdded.add(comment.id);
+    state.commentOpen.set(comment.id, true);
     state.treeVersion += 1;
     renderTree();
     renderHeader();
@@ -2872,9 +2867,6 @@ async function selectIndex(index, options = { scrollTop: true }) {
  * @param {{ scrollTop?: boolean, keepEditor?: boolean }} [options]
  */
 async function selectEntry(entry, options = { scrollTop: true }) {
-  if (state.current !== entry) {
-    state.justAdded.clear();
-  }
   state.current = entry;
   state.lastNav = null;
   const id = entry.file.id;
