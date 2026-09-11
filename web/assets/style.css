@@ -1355,72 +1355,261 @@ ul.files ul {
 
 /* ---------- インラインコメント ---------- */
 
-.thread-row {
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  padding: 11px 14px;
+/* 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める（R-VIEW）。 */
+.bal-row {
+  position: relative;
+  padding: 4px 16px 8px calc(8.4em + 1px);
   font-family: var(--sans);
   font-size: 13.5px;
+  white-space: normal;
+  line-height: 1.6;
 }
 
-.thread + .thread {
-  border-top: 1px solid var(--line-soft);
+.bal-row.mode-split.side-old {
+  padding-left: calc(4.8em + 1px);
 }
 
-.thread.outdated {
-  border-left: 3px solid var(--focus);
-  padding-left: 11px;
+.bal-row.mode-split.side-new {
+  padding-left: calc(50% + 4.8em);
 }
 
-.t-head {
+.bal-row.floating {
+  padding: 4px 0;
+}
+
+.bal {
+  position: relative;
+  max-width: 72ch;
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
+  border-radius: 8px;
+  padding: 7px 12px 8px;
+  color: var(--ink);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--note-line) 40%, transparent);
+}
+
+/* 尾で対象の行を指す。 */
+.bal::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 18px;
+  width: 12px;
+  height: 12px;
+  background: var(--note-bg);
+  border-left: 1px solid var(--note-line);
+  border-top: 1px solid var(--note-line);
+  transform: rotate(45deg);
+}
+
+.bal-row.floating .bal::before {
+  display: none;
+}
+
+.bal .bh {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--ink-2);
+  font-size: 12px;
+  color: var(--note-ink);
+}
+
+.bal .bh .where,
+.cchip .where {
+  font-family: var(--mono);
+}
+
+.bal .bh .acts {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.bal .bh .acts button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--note-ink);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bal.outdated,
+.cchip.outdated {
+  border-style: dashed;
+}
+
+/* 既定の 1 行の札。本文の 1 行目を見せ、収まらなければ省略記号で切る。 */
+.cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 72ch;
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
+  color: var(--note-ink);
   font-size: 12.5px;
 }
 
-.t-role {
-  font-weight: 600;
+.cchip .tx {
+  min-width: 0;
   color: var(--ink);
-  font-size: 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge-suggest {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--note-ink);
+  border: 1px solid var(--note-line);
   border-radius: 999px;
-  padding: 0 8px;
+  padding: 0 6px;
+}
+
+.t-outdated-mark {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
 }
 
 .t-body {
-  margin: 6px 0 0 0;
+  margin: 4px 0 0;
   color: var(--ink);
   white-space: pre-wrap;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
-.t-body.clamp .clamp-body {
-  display: block;
-  max-height: 5.1em;
-  overflow: hidden;
+/* 範囲の行には、行番号の欄の左端にコメントの色の線を付ける。 */
+.row.commented > .no-cell:first-child,
+.row.split.commented > .cell > .no-cell {
+  box-shadow: inset 3px 0 0 var(--note-line);
 }
 
-.t-body.clamp[data-open="true"] .clamp-body {
-  max-height: none;
-  overflow: visible;
+/* コメントの一覧。上部の入口から開き、閉じると消える（常設パネルではない）。 */
+.comment-list {
+  position: fixed;
+  top: 56px;
+  right: 18px;
+  z-index: 30;
+  width: min(560px, calc(100vw - 36px));
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
 }
 
-.clamp-toggle {
-  margin-top: 2px;
+.cl-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.cl-close {
+  margin-left: auto;
   background: none;
   border: 0;
   color: var(--accent);
-  font-size: 12px;
-  padding: 0;
+  font-size: 12.5px;
 }
 
-.clamp-toggle:hover {
-  text-decoration: underline;
+.cl-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--ink-3);
+}
+
+.cl-items {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.cl-item + .cl-item {
+  border-top: 1px solid var(--line-soft);
+}
+
+.cl-target {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.cl-target:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.cl-target:disabled {
+  opacity: 1;
+}
+
+.cl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.cl-unit {
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.cl-unit.vanished {
+  color: var(--ink-2);
+  border-style: dashed;
+}
+
+.cl-path,
+.cl-where {
+  font-family: var(--mono);
+}
+
+.cl-subject {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.cl-first {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cl-body {
+  margin: 0 8px 8px;
+  padding: 6px 10px;
+  background: var(--note-bg);
+  border: 1px dashed var(--note-line);
+  border-radius: 6px;
+  white-space: pre-wrap;
 }
 
 .t-suggestion {

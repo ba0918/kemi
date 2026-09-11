@@ -71,6 +71,10 @@
         <button class="iconbtn" id="btn-theme" type="button" title="テーマ切替">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>
         </button>
+        <button class="iconbtn" id="btn-comments" type="button" title="コメントの一覧" aria-expanded="false">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 3v-3h-2z"/></svg>
+          <span id="comment-count">0</span>
+        </button>
         <button id="update-badge" type="button" class="update-badge" hidden>
           更新あり
         </button>
@@ -78,6 +82,8 @@
         <button class="btn danger" id="btn-changes" type="button">変更要求</button>
       </div>
     </header>
+
+    <div class="comment-list" id="comment-list" role="dialog" aria-label="コメントの一覧" hidden></div>
 
     <div class="layout">
       <aside class="tree" id="tree" aria-label="ファイルツリー"></aside>

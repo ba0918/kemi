@@ -6,8 +6,11 @@ import {
   buildTree,
   collapseDefault,
   commentLabel,
+  commentedLines,
   commitTypeBox,
   currentStopIndex,
+  describeComment,
+  firstLine,
   hasStops,
   navStops,
   nextFileIndex,
@@ -112,6 +115,9 @@ const dom = {
   chipFocus: /** @type {HTMLButtonElement} */ (must("#chip-focus")),
   chipSort: /** @type {HTMLButtonElement} */ (must("#chip-sort")),
   btnTheme: /** @type {HTMLButtonElement} */ (must("#btn-theme")),
+  btnComments: /** @type {HTMLButtonElement} */ (must("#btn-comments")),
+  commentCount: must("#comment-count"),
+  commentList: must("#comment-list"),
   updateBadge: /** @type {HTMLButtonElement} */ (must("#update-badge")),
   submitApproved: /** @type {HTMLButtonElement} */ (must("#btn-approve")),
   submitChanges: /** @type {HTMLButtonElement} */ (must("#btn-changes")),
@@ -127,7 +133,7 @@ const dom = {
 /**
  * @typedef {{ file: FileEntry, group: any }} Entry
  * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection
- * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean }} Editor
+ * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean, editId?: string }} Editor
  */
 
 /** @type {{
@@ -170,7 +176,9 @@ const dom = {
  *   groupOpen: Map<string, boolean>,
  *   dirOpen: Map<string, boolean>,
  *   groupHeaderOpen: Map<string, boolean>,
- *   commentClampOpen: Map<string, boolean>,
+ *   commentOpen: Map<string, boolean>,
+ *   justAdded: Set<string>,
+ *   commented: Set<number>,
  *   loading: boolean,
  *   origins: Map<string, any>,
  *   originForced: Set<string>,
@@ -229,7 +237,9 @@ const state = {
   groupOpen: new Map(),
   dirOpen: new Map(),
   groupHeaderOpen: new Map(),
-  commentClampOpen: new Map(),
+  commentOpen: new Map(),
+  justAdded: new Set(),
+  commented: new Set(),
   loading: false,
   origins: new Map(),
   originForced: new Set(),
@@ -464,6 +474,7 @@ function renderHeader() {
   }
   renderUnitSwitch();
   renderProgress();
+  dom.commentCount.textContent = String(state.allComments.length);
   dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
@@ -776,6 +787,12 @@ function renderFileHeader() {
   }
   const letter = statusLetter(entry.file.status);
   dom.fileHeader.append(textEl("span", `sl ${letter}`, letter));
+  const comments = commentsOf(entry).length;
+  if (comments > 0) {
+    const badge = textEl("span", "cbadge", `💬 ${comments}`);
+    badge.title = `このファイルのコメント ${comments} 件（ファイル全体へのコメントを含む）`;
+    dom.fileHeader.append(badge);
+  }
   dom.fileHeader.append(fileStatsEl(entry.file));
   if (entry.file.focus) {
     dom.fileHeader.append(textEl("span", "badge focus", "重要"));
@@ -979,10 +996,12 @@ function renderNotice() {
   }
 }
 
+/** ファイル全体へのコメント（と、表示中の行に見つからないコメント）を、ヘッダの下に吹き出しで出す。 */
+/** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ吹き出しで出す。 */
 function renderFloating() {
   dom.floating.textContent = "";
   const floating = state.threads.floating;
-  const wideEditor = state.editor && state.editor.wide ? state.editor : null;
+  const wideEditor = state.editor && state.editor.wide && !state.editor.editId ? state.editor : null;
   if (floating.length === 0 && !wideEditor) {
     dom.floating.hidden = true;
     return;
@@ -992,115 +1011,87 @@ function renderFloating() {
     dom.floating.append(renderEditor(wideEditor));
   }
   for (const comment of floating) {
-    const wrap = el("div", "floating-thread");
-    wrap.append(textEl("div", "floating-where", commentLabel(comment)));
-    wrap.append(renderThread(comment));
-    dom.floating.append(wrap);
-  }
-  applyCommentClamps(dom.floating);
-}
-
-/**
- * 折りたたみで実際に隠れるかを、描画後の高さで測る。畳み高さは CSS の
- * max-height が正典なので、文字数からの概算ではなく折りたたみ時の
- * scrollHeight と clientHeight を比べる。文字幅も折返し幅も見なくて済む。
- * @param {HTMLElement} body .t-body.clamp
- * @returns {boolean}
- */
-function commentBodyIsClamped(body) {
-  const clampBody = body.querySelector(".clamp-body");
-  if (!(clampBody instanceof HTMLElement)) {
-    return false;
-  }
-  // 開いていると max-height が外れて隠れていないため、畳んだ状態で測る。
-  const wasOpen = body.dataset.open === "true";
-  if (wasOpen) {
-    body.dataset.open = "false";
-  }
-  const clamped = clampBody.scrollHeight > clampBody.clientHeight;
-  if (wasOpen) {
-    body.dataset.open = "true";
-  }
-  return clamped;
-}
-
-/**
- * 描画済みの本文を実測し、隠れるものへ畳みとトグルを付け、隠れないものから外す。
- * 幅が広がって畳みを外した浮動コメントも、狭くなればここで畳み直す。
- * @param {HTMLElement} root
- */
-function applyCommentClamps(root) {
-  for (const body of root.querySelectorAll(".t-body")) {
-    if (!(body instanceof HTMLElement)) {
-      continue;
-    }
-    // 畳み判定は clamp を付けた見た目で行うため、先に付けてから測る。
-    body.classList.add("clamp");
-    if (commentBodyIsClamped(body)) {
-      if (!body.querySelector(".clamp-toggle")) {
-        const commentId = body.dataset.commentId;
-        if (commentId !== undefined) {
-          body.append(clampToggle(body, commentId));
-        }
-      }
-      continue;
-    }
-    const toggle = body.querySelector(".clamp-toggle");
-    if (toggle) {
-      toggle.remove();
-    }
-    body.classList.remove("clamp");
+    const row = el("div", "bal-row floating");
+    row.append(renderCommentOrEditor(comment));
+    dom.floating.append(row);
   }
 }
 
 /**
- * 畳みトグルを作る。renderThread が最初に付け、幅が戻って再び畳みが
- * 要るようになった浮動コメントには applyCommentClamps が付け直す。
- * @param {HTMLElement} body .t-body
- * @param {string} commentId
- * @returns {HTMLButtonElement}
- */
-function clampToggle(body, commentId) {
-  const toggle = button("clamp-toggle");
-  toggle.textContent = body.dataset.open === "true" ? "折りたたむ" : "続きを読む";
-  toggle.addEventListener("click", () => {
-    const nextOpen = body.dataset.open !== "true";
-    body.dataset.open = nextOpen ? "true" : "false";
-    state.commentClampOpen.set(commentId, nextOpen);
-    toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
-    if (dom.content.contains(body)) {
-      renderDiff();
-    }
-  });
-  return toggle;
-}
-
-/**
+ * 編集中ならエディタ、そうでなければコメント（札か吹き出し）。
  * @param {any} comment
  * @returns {HTMLElement}
  */
-function renderThread(comment) {
-  const thread = el("div", "thread");
-  if (comment.outdated) {
-    thread.classList.add("outdated");
+function renderCommentOrEditor(comment) {
+  const editor = state.editor;
+  if (editor && editor.editId === comment.id) {
+    return renderEditor(editor);
   }
-  const head = el("div", "t-head");
-  head.append(textEl("span", "t-role", "あなた"));
-  if (comment.suggestion) {
-    head.append(textEl("span", "badge-focus", "提案"));
-  }
-  if (comment.resolved) {
-    head.append(textEl("span", "badge resolved", "解決済み"));
-  }
-  thread.append(head);
+  return renderComment(comment);
+}
 
-  const body = el("div", "t-body clamp");
-  const open = state.commentClampOpen.get(comment.id) === true;
-  body.dataset.open = open ? "true" : "false";
-  body.dataset.commentId = comment.id;
-  const clampBody = textEl("span", "clamp-body", comment.body);
-  body.append(clampBody, clampToggle(body, comment.id));
-  thread.append(body);
+/**
+ * コメントを、既定では本文の 1 行目を見せる札に畳んで出し、押すと吹き出しで本文をすべて
+ * 見せる。付けた直後のコメントは開いて出す。開閉はページを開いている間だけ覚える。
+ * @param {any} comment
+ * @returns {HTMLElement}
+ */
+function renderComment(comment) {
+  const where = commentLabel(comment);
+  // 付けた直後は、そのファイルを出している間だけ開いて出す。利用者が開閉したら、
+  // その状態をページを開いている間だけ覚える。
+  const open = state.commentOpen.has(comment.id)
+    ? state.commentOpen.get(comment.id) === true
+    : state.justAdded.has(comment.id);
+  if (!open) {
+    const chip = button(`cchip${comment.outdated ? " outdated" : ""}`);
+    chip.title = comment.body;
+    chip.append(
+      document.createTextNode("💬"),
+      textEl("span", "where", where),
+      textEl("span", "tx", firstLine(comment.body)),
+    );
+    if (comment.suggestion) {
+      chip.append(textEl("span", "badge-suggest", "提案"));
+    }
+    chip.addEventListener("click", () => {
+      state.commentOpen.set(comment.id, true);
+      resetHeights();
+      renderDiff();
+      renderFloating();
+    });
+    return chip;
+  }
+  const balloon = el("div", `bal${comment.outdated ? " outdated" : ""}`);
+  const head = el("div", "bh");
+  head.append(textEl("span", "where", where));
+  if (comment.suggestion) {
+    head.append(textEl("span", "badge-suggest", "提案"));
+  }
+  if (comment.outdated) {
+    head.append(textEl("span", "t-outdated-mark", "古いコメント"));
+  }
+  const actions = el("span", "acts");
+  if (!state.submitted) {
+    const edit = button("");
+    edit.textContent = "編集";
+    edit.addEventListener("click", () => openCommentEditor(comment));
+    const remove = button("");
+    remove.textContent = "削除";
+    remove.addEventListener("click", () => confirmDeleteComment(comment));
+    actions.append(edit, remove);
+  }
+  const fold = button("");
+  fold.textContent = "畳む";
+  fold.addEventListener("click", () => {
+    state.commentOpen.set(comment.id, false);
+    resetHeights();
+    renderDiff();
+    renderFloating();
+  });
+  actions.append(fold);
+  head.append(actions);
+  balloon.append(head, textEl("p", "t-body", comment.body));
 
   if (comment.suggestion) {
     const box = el("div", "t-suggestion");
@@ -1111,8 +1102,8 @@ function renderThread(comment) {
         ? "（行の削除）"
         : comment.suggestion.replacement;
     box.append(pre);
-    thread.append(box);
-    thread.append(
+    balloon.append(box);
+    balloon.append(
       textEl(
         "div",
         "t-note",
@@ -1120,9 +1111,8 @@ function renderThread(comment) {
       ),
     );
   }
-
   if (comment.outdated) {
-    thread.append(
+    balloon.append(
       textEl(
         "div",
         "t-outdated",
@@ -1130,8 +1120,85 @@ function renderThread(comment) {
       ),
     );
   }
+  return balloon;
+}
 
-  return thread;
+/**
+ * コメントの本文と suggestion を編集する。行レンジは変えない（R-COMMENT）。
+ * @param {any} comment
+ */
+function openCommentEditor(comment) {
+  const entry = currentEntry();
+  if (!entry || state.submitted) {
+    return;
+  }
+  const wide = comment.start_line === null || comment.start_line === undefined;
+  state.selection = null;
+  state.editor = {
+    fileId: entry.file.id,
+    side: comment.side,
+    start: wide ? 0 : Number(comment.start_line),
+    end: wide ? 0 : Number(comment.end_line ?? comment.start_line),
+    anchor: wide ? 0 : Number(comment.end_line ?? comment.start_line),
+    wide,
+    body: comment.body,
+    suggestion: comment.suggestion ? comment.suggestion.replacement : "",
+    suggestionOn: Boolean(comment.suggestion),
+    needsFocus: true,
+    editId: comment.id,
+  };
+  resetHeights();
+  renderDiff();
+  renderFloating();
+}
+
+/**
+ * 削除は確認を 1 回挟む（R-COMMENT）。
+ * @param {any} comment
+ */
+function confirmDeleteComment(comment) {
+  dom.modalTitle.textContent = "コメントを削除しますか？";
+  dom.modalBody.textContent = `${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`;
+  dom.modalOk.textContent = "削除";
+  dom.modalOk.className = "btn danger";
+  dom.modalCancel.textContent = "戻る";
+  state.modalAction = () => void deleteComment(comment);
+  dom.modal.hidden = false;
+}
+
+/**
+ * 表示とキャッシュのコメントを差し替える。
+ * @param {(comments: any[]) => any[]} change
+ */
+function updateComments(change) {
+  state.allComments = change(state.allComments);
+  for (const [id, comments] of state.commentStore) {
+    state.commentStore.set(id, change(comments));
+  }
+  state.comments = change(state.comments);
+  state.treeVersion += 1;
+  recomputeThreads();
+  resetHeights();
+  renderTree();
+  renderHeader();
+  renderFileHeader();
+  renderDiff();
+  renderFloating();
+  if (!dom.commentList.hidden) {
+    renderCommentList();
+  }
+}
+
+/**
+ * @param {any} comment
+ */
+async function deleteComment(comment) {
+  try {
+    await api.postComment({ op: "delete", id: comment.id });
+    updateComments((comments) => comments.filter((item) => item.id !== comment.id));
+  } catch (error) {
+    showOverlay("コメントを削除できません", String(error));
+  }
 }
 
 /**
@@ -1155,7 +1222,10 @@ function renderEditor(editor) {
   body.value = editor.body;
   body.addEventListener("input", () => {
     editor.body = body.value;
-    saveDraft(key, body.value);
+    // 下書きは新しいコメントだけに残す。編集中の本文はコメント自身にある。
+    if (!editor.editId) {
+      saveDraft(key, body.value);
+    }
   });
   body.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -1197,12 +1267,21 @@ function renderEditor(editor) {
   cancel.addEventListener("click", closeEditor);
   const submit = /** @type {HTMLButtonElement} */ (el("button", "btn primary"));
   submit.type = "submit";
-  submit.textContent = "コメント";
+  submit.textContent = editor.editId ? "保存" : "コメント";
   actions.append(cancel, submit);
   form.append(actions);
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (editor.editId) {
+      void editComment({
+        op: "edit",
+        id: editor.editId,
+        body: body.value,
+        suggestion: suggestion && suggestion.checkbox.checked ? suggestion.textarea.value : null,
+      });
+      return;
+    }
     const payload = /** @type {any} */ ({
       op: "add",
       file_id: editor.fileId,
@@ -1357,7 +1436,6 @@ function renderDiff() {
     fragment.append(block);
   }
   dom.content.append(fragment);
-  applyCommentClamps(dom.content);
   restoreEditorFocus(focus);
   renderNav(offsets);
   renderRuler(offsets);
@@ -1412,7 +1490,11 @@ function restoreEditorFocus(focus) {
 function renderBlock(line, index) {
   const block = /** @type {HTMLDivElement} */ (el("div", "row-block"));
   block.dataset.kemiRow = "1";
-  block.append(renderLine(line));
+  const rendered = renderLine(line);
+  if (state.commented.has(index)) {
+    rendered.classList.add("commented");
+  }
+  block.append(rendered);
   if (line.kind === "origin") {
     const reason = renderOriginReason(line);
     if (reason) {
@@ -1422,8 +1504,9 @@ function renderBlock(line, index) {
   const threads = state.threads.byLine.get(index);
   if (threads) {
     for (const comment of threads) {
-      const row = el("div", "thread-row");
-      row.append(renderThread(comment));
+      // 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める。
+      const row = el("div", `bal-row mode-${state.mode} side-${comment.side}`);
+      row.append(renderCommentOrEditor(comment));
       block.append(row);
     }
   }
@@ -1432,6 +1515,7 @@ function renderBlock(line, index) {
   if (
     editorState &&
     !editorState.wide &&
+    !editorState.editId &&
     editorState.fileId === (entry ? entry.file.id : "") &&
     lineHasAnchor(line, editorState.side, editorState.anchor)
   ) {
@@ -1601,7 +1685,12 @@ function renderOriginReason(line) {
     const jump = button("btn origin-jump");
     jump.textContent = "このコミットで見る";
     jump.addEventListener("click", () => {
-      void switchUnit("commit", { sha, target: target.target });
+      const to = target.target;
+      void switchUnit("commit", {
+        find: (entries) => originJumpTarget(entries, sha, to),
+        side: to.side,
+        line: to.line,
+      });
     });
     panel.append(jump);
   }
@@ -1797,8 +1886,10 @@ async function addComment(payload) {
   try {
     const comment = await api.postComment(payload);
     state.allComments = [...state.allComments, comment];
+    state.justAdded.add(comment.id);
     state.treeVersion += 1;
     renderTree();
+    renderHeader();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
     // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
     const stored = state.commentStore.get(payload.file_id);
@@ -1826,6 +1917,21 @@ async function addComment(payload) {
     localStorage.removeItem(draftKey(payload.file_id, selection));
   } catch (error) {
     showOverlay("コメントを追加できません", String(error));
+  }
+}
+
+/**
+ * @param {any} payload
+ */
+async function editComment(payload) {
+  try {
+    const updated = await api.postComment(payload);
+    state.editor = null;
+    updateComments((comments) =>
+      comments.map((item) => (item.id === updated.id ? updated : item)),
+    );
+  } catch (error) {
+    showOverlay("コメントを編集できません", String(error));
   }
 }
 
@@ -1928,13 +2034,11 @@ function scheduleRender() {
 }
 
 /**
- * 幅が変わると折返しの高さも変わり、畳み判定が変わる。本文は renderDiff が
- * 測り直すが、浮動コメント欄は描き直さないためここで測り直す。
+ * 幅が変わると折返しの高さも変わる。本文は renderDiff が測り直す。
  */
 function scheduleResize() {
   requestAnimationFrame(() => {
     renderDiff();
-    applyCommentClamps(dom.floating);
   });
 }
 
@@ -2284,7 +2388,7 @@ function applyReview(review, fresh) {
  * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
  * 最初のコミット）を出す。由来から移るときは、そのコミットの該当行を出す。
  * @param {string} unit
- * @param {{ sha: string, target: { path: string, side: string, line: number } } | null} jump
+ * @param {{ find: (entries: Entry[]) => number, side: string, line: number | null } | null} jump
  */
 async function switchUnit(unit, jump) {
   if (unit === state.unit && !jump) {
@@ -2314,7 +2418,7 @@ async function switchUnit(unit, jump) {
     review = await api.getReview(false, unit);
   }
   applyReview(review, fresh);
-  let index = jump ? originJumpTarget(state.entries, jump.sha, jump.target) : -1;
+  let index = jump ? jump.find(state.entries) : -1;
   if (index < 0) {
     index = unitSwitchTarget(state.entries, path);
   }
@@ -2331,7 +2435,7 @@ async function switchUnit(unit, jump) {
   }
   const entry = state.entries[index];
   if (jump) {
-    state.pendingJump = { side: jump.target.side, line: jump.target.line };
+    state.pendingJump = jump.line === null ? null : { side: jump.side, line: jump.line };
     revealInTree(entry);
   }
   const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
@@ -2365,6 +2469,115 @@ function openUnitFailure(status) {
   dom.modal.hidden = false;
 }
 
+/** コミットごとの単位の、グループ id と件名（読んであれば）。 */
+function commitGroups() {
+  const review = state.reviews.get("commit");
+  if (!review) {
+    return null;
+  }
+  return new Map(review.groups.map((/** @type {any} */ group) => [group.id, group.title]));
+}
+
+/** 上部の入口から開く、すべてのグループ単位のコメントの一覧（常設のパネルではない）。 */
+function renderCommentList() {
+  dom.commentList.textContent = "";
+  const head = el("div", "cl-head");
+  head.append(textEl("b", "", `コメント ${state.allComments.length} 件`));
+  const close = button("cl-close");
+  close.textContent = "閉じる";
+  close.addEventListener("click", closeCommentList);
+  head.append(close);
+  dom.commentList.append(head);
+  if (state.allComments.length === 0) {
+    dom.commentList.append(textEl("p", "cl-empty", "まだコメントはありません"));
+    return;
+  }
+  const context = { range: state.units.length > 0, commitGroups: commitGroups() };
+  const list = el("ul", "cl-items");
+  for (const comment of state.allComments) {
+    const info = describeComment(comment, context);
+    const item = el("li", "cl-item");
+    const target = button("cl-target");
+    target.disabled = info.vanished;
+    const meta = el("span", "cl-meta");
+    if (info.vanished) {
+      meta.append(textEl("span", "cl-unit vanished", "消えたコミット"));
+    } else if (info.unit) {
+      meta.append(textEl("span", "cl-unit", UNIT_LABELS[info.unit] || info.unit));
+    }
+    meta.append(
+      textEl("span", "cl-path", comment.path),
+      textEl("span", "cl-where", commentLabel(comment)),
+    );
+    if (comment.outdated || info.vanished) {
+      meta.append(textEl("span", "t-outdated-mark", "古いコメント"));
+    }
+    target.append(meta);
+    if (info.subject) {
+      target.append(textEl("span", "cl-subject", info.subject));
+    }
+    target.append(textEl("span", "cl-first", firstLine(comment.body)));
+    if (!info.vanished) {
+      target.addEventListener("click", () => {
+        closeCommentList();
+        void goToComment(comment, info.unit);
+      });
+    }
+    item.append(target);
+    // 消えたコミットのコメントは移り先が無いので、本文をここで見せる。
+    if (info.vanished) {
+      item.append(textEl("p", "cl-body", comment.body));
+    }
+    list.append(item);
+  }
+  dom.commentList.append(list);
+}
+
+function openCommentList() {
+  renderCommentList();
+  dom.commentList.hidden = false;
+  dom.btnComments.setAttribute("aria-expanded", "true");
+}
+
+function closeCommentList() {
+  dom.commentList.hidden = true;
+  dom.btnComments.setAttribute("aria-expanded", "false");
+}
+
+/**
+ * コメント一覧から、そのコメントの単位へ切り替えて、その行へ移る。
+ * @param {any} comment
+ * @param {string | null} unit
+ */
+async function goToComment(comment, unit) {
+  const line =
+    comment.start_line === null || comment.start_line === undefined
+      ? null
+      : Number(comment.start_line);
+  state.commentOpen.set(comment.id, true);
+  /** @param {Entry[]} entries */
+  const find = (entries) =>
+    entries.findIndex(
+      (entry) => entry.group.id === comment.group_id && entry.file.path === comment.path,
+    );
+  if (unit && unit !== state.unit) {
+    await switchUnit(unit, { find, side: comment.side, line });
+    return;
+  }
+  const index = find(state.entries);
+  if (index < 0) {
+    return;
+  }
+  const entry = state.entries[index];
+  revealInTree(entry);
+  state.pendingJump = line === null ? null : { side: comment.side, line };
+  const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
+  if (visibleIndex >= 0) {
+    state.index = visibleIndex;
+  }
+  await selectEntry(entry, { scrollTop: true });
+}
+
 /** もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。 */
 async function onUnitEvent() {
   const review = await api.getReview(false);
@@ -2386,6 +2599,7 @@ async function onUnitEvent() {
 
 function recomputeThreads() {
   state.threads = placeThreads(state.display, state.comments);
+  state.commented = commentedLines(state.display, state.comments);
   state.stops = navStops(state.display, state.comments);
   state.rulerDirty = true;
 }
@@ -2427,6 +2641,9 @@ async function selectIndex(index, options = { scrollTop: true }) {
  * @param {{ scrollTop?: boolean, keepEditor?: boolean }} [options]
  */
 async function selectEntry(entry, options = { scrollTop: true }) {
+  if (state.current !== entry) {
+    state.justAdded.clear();
+  }
   state.current = entry;
   state.lastNav = null;
   const id = entry.file.id;
@@ -2569,6 +2786,10 @@ function handleKey(event) {
       closeModal();
       return;
     }
+    if (!dom.commentList.hidden) {
+      closeCommentList();
+      return;
+    }
     if (state.editor) {
       closeEditor();
       return;
@@ -2671,6 +2892,23 @@ dom.modalOk.addEventListener("click", () => {
   closeModal();
   if (action) {
     action();
+  }
+});
+dom.btnComments.addEventListener("click", () => {
+  if (dom.commentList.hidden) {
+    openCommentList();
+  } else {
+    closeCommentList();
+  }
+});
+document.addEventListener("click", (event) => {
+  const target = /** @type {Node} */ (event.target);
+  if (
+    !dom.commentList.hidden &&
+    !dom.commentList.contains(target) &&
+    !dom.btnComments.contains(target)
+  ) {
+    closeCommentList();
   }
 });
 dom.navPrev.addEventListener("click", () => void navigate(-1));

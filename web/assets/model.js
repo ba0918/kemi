@@ -707,6 +707,66 @@ export function seenProgress(files) {
 }
 
 /**
+ * コメントの札に出す、本文の最初の空でない行。
+ * @param {string} body
+ * @returns {string}
+ */
+export function firstLine(body) {
+  return body.split("\n").find((line) => line.trim() !== "") ?? "";
+}
+
+/**
+ * 行コメントの範囲に入る表示行（行番号の欄の左端にコメントの色の線を付ける行）。
+ * @param {DisplayLine[]} display
+ * @param {any[]} comments
+ * @returns {Set<number>}
+ */
+export function commentedLines(display, comments) {
+  /** @type {Set<number>} */
+  const covered = new Set();
+  const ranges = comments.filter(
+    (comment) => comment.start_line !== null && comment.start_line !== undefined,
+  );
+  if (ranges.length === 0) {
+    return covered;
+  }
+  display.forEach((line, index) => {
+    for (const comment of ranges) {
+      const target = comment.side === "old" ? line.oldLine : line.newLine;
+      if (!target) {
+        continue;
+      }
+      const number = Number(target.number);
+      const end = comment.end_line ?? comment.start_line;
+      if (number >= Number(comment.start_line) && number <= Number(end)) {
+        covered.add(index);
+        break;
+      }
+    }
+  });
+  return covered;
+}
+
+/**
+ * コメント一覧の 1 項目の、グループ単位と件名。コミット範囲で、付けたコミットが履歴の
+ * 書き換えで消えていれば vanished（「消えたコミット」）。コミットごとの単位をまだ
+ * 読んでいない（commitGroups が null）ときは消えたと決めない。
+ * @param {any} comment
+ * @param {{ range: boolean, commitGroups: Map<string, string> | null }} context
+ * @returns {{ unit: string | null, subject: string, vanished: boolean }}
+ */
+export function describeComment(comment, context) {
+  if (!context.range) {
+    return { unit: null, subject: "", vanished: false };
+  }
+  if (comment.group_id === "all") {
+    return { unit: "file", subject: "", vanished: false };
+  }
+  const vanished = context.commitGroups !== null && !context.commitGroups.has(comment.group_id);
+  return { unit: "commit", subject: comment.group_title || "", vanished };
+}
+
+/**
  * @param {number} bytes
  * @returns {string}
  */

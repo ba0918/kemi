@@ -37,6 +37,9 @@ import {
   seenProgress,
   currentStopIndex,
   rulerMarks,
+  firstLine,
+  commentedLines,
+  describeComment,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -840,4 +843,54 @@ test("keyAction_moves_between_changes_and_toggles_seen", () => {
   assert.deepEqual(keyAction("n", "unified", 3, 0), { type: "nav", direction: 1 });
   assert.deepEqual(keyAction("p", "unified", 3, 0), { type: "nav", direction: -1 });
   assert.deepEqual(keyAction("v", "unified", 3, 0), { type: "seen" });
+});
+
+test("chip_shows_the_first_line_of_the_body", () => {
+  assert.equal(firstLine("一行目\n二行目"), "一行目");
+  assert.equal(firstLine("\n\n本文"), "本文");
+  assert.equal(firstLine(""), "");
+});
+
+test("commented_lines_cover_the_whole_range_on_its_side", () => {
+  const display = toDisplayLines(
+    [equal(1, "a"), replaceAt(2, "o", "n"), equal(3, "c"), equal(4, "d")],
+    "unified",
+  );
+  const comments = [
+    { side: "new", start_line: 2, end_line: 3 },
+    { side: "old", start_line: 4, end_line: 4 },
+    { side: "new", start_line: null, end_line: null },
+  ];
+
+  assert.deepEqual([...commentedLines(display, comments)].sort(), [2, 3, 4]);
+});
+
+test("comment_list_names_the_unit_and_the_commit", () => {
+  const groups = new Map([["abc", "feat: 足す"]]);
+
+  assert.deepEqual(
+    describeComment({ group_id: "all", group_title: "x...y" }, { range: true, commitGroups: groups }),
+    { unit: "file", subject: "", vanished: false },
+  );
+  assert.deepEqual(
+    describeComment({ group_id: "abc", group_title: "feat: 足す" }, { range: true, commitGroups: groups }),
+    { unit: "commit", subject: "feat: 足す", vanished: false },
+  );
+  assert.deepEqual(
+    describeComment({ group_id: "g1", group_title: "" }, { range: false, commitGroups: null }),
+    { unit: null, subject: "", vanished: false },
+  );
+});
+
+test("comment_list_marks_comments_of_vanished_commits", () => {
+  const groups = new Map([["new-sha", "fix: 後"]]);
+
+  assert.deepEqual(
+    describeComment({ group_id: "old-sha", group_title: "fix: 前" }, { range: true, commitGroups: groups }),
+    { unit: "commit", subject: "fix: 前", vanished: true },
+  );
+  assert.equal(
+    describeComment({ group_id: "old-sha", group_title: "fix: 前" }, { range: true, commitGroups: null }).vanished,
+    false,
+  );
 });
