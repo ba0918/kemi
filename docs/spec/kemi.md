@@ -23,7 +23,8 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 - README は英語、UI と docs（この仕様を含む）は日本語。ただし UI の次のものは英語の
   ままでよい: 状態の `A` / `D` / `R` / `M`、コミットの種類（`R-VIEW` の形式に合う
   もの）、`unified` / `split`、テーマのプリセット名（`light` / `dark` / `solarized light` /
-  `solarized dark`）、`JSON`、sha、パス・コード・コマンド名、`CONTEXT.md` に英語の
+  `solarized dark`）、`JSON`、キー名（`Cmd` / `Ctrl` / `Enter` / `Esc`、`n` / `p` / `v` など
+  キーボードの刻印やキー操作として示すもの）、sha、パス・コード・コマンド名、`CONTEXT.md` に英語の
   見出しで載っている語（suggestion、digest など、その見出しの一覧に限る）。文章と
   ボタンの文言は日本語にする。
 - 対応ターゲットは次の 4 つ:
