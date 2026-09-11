@@ -19,6 +19,34 @@ pub fn lines(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// `lines` の各行が、git の数え方（LF だけで区切る）で何行目にあたるか（1 始まり）。
+/// 単独の CR は表示では行を分けるが、git blame などは分けない。git が返す行番号を
+/// 表示の行番号へ対応させるのに使う。
+pub fn git_line_numbers(content: &str) -> Vec<u32> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let bytes = content.as_bytes();
+    let mut numbers = vec![1];
+    let mut git_line = 1;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'\n' => {
+                git_line += 1;
+                numbers.push(git_line);
+            }
+            // CRLF の CR は、続く LF と合わせて 1 つの改行にする。
+            b'\r' if bytes.get(index + 1) != Some(&b'\n') => numbers.push(git_line),
+            _ => {}
+        }
+    }
+    // 最終行の改行の後には行を作らない（`lines` と同じ）。
+    if matches!(bytes.last(), Some(b'\n' | b'\r')) {
+        numbers.pop();
+    }
+    numbers
+}
+
 /// 片側がこの行数を超えたら、ハイライトと由来を自動では求めない（R-VIEW, R-ORIGIN）。
 pub const AUTO_MAX_LINES: usize = 10_000;
 /// 片側がこのバイト数を超えたら、ハイライトと由来を自動では求めない。

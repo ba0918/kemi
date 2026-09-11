@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::content;
 use crate::domain::diff;
-use crate::domain::origin::{self as origin_domain, LineCommit, RangeCommit};
-use crate::source::git::{git_log, git_raw_os, git_text, path_from_bytes};
+use crate::domain::origin::{self as origin_domain, BlockOrigin, LineCommit, RangeCommit};
+use crate::domain::review::Side;
+use crate::source::git::{git_log, git_raw_os, git_text, path_from_bytes, show};
 use crate::source::{FileContent, FileOrigin, SourceError};
 
 /// マージのもう片方の親をたどる深さの上限。これを超えた行は特定できないとする。
@@ -191,11 +192,14 @@ pub(crate) fn file_origin(
     if is_binary(&file.old) || is_binary(&file.new) {
         return Ok(None);
     }
-    let text = |side: &Option<Vec<u8>>| {
-        side.as_deref()
-            .map(|bytes| content::normalize(&String::from_utf8_lossy(bytes)))
-    };
-    let (old_text, new_text) = (text(&file.old), text(&file.new));
+    let (old_raw, new_raw) = (
+        file.old.as_deref().map(String::from_utf8_lossy),
+        file.new.as_deref().map(String::from_utf8_lossy),
+    );
+    let (old_text, new_text) = (
+        old_raw.as_deref().map(content::normalize),
+        new_raw.as_deref().map(content::normalize),
+    );
     if !force && !content::within_auto_limit(old_text.as_deref(), new_text.as_deref()) {
         return Ok(Some(FileOrigin {
             enabled: false,
@@ -211,26 +215,37 @@ pub(crate) fn file_origin(
     let needs_new_side = blocks
         .iter()
         .any(|block| rows[block.clone()].iter().any(|row| row.new.is_some()));
-    let deleted_lines: Vec<u32> = blocks
+    // git は LF だけで行を数え、表示は単独の CR でも行を分ける。git へ渡す行番号は git の
+    // 数え方に直し、git の行番号で返る結果は表示の行番号で引けるように並べ直す。
+    let old_git_lines = content::git_line_numbers(old_raw.as_deref().unwrap_or_default());
+    let new_git_lines = content::git_line_numbers(new_raw.as_deref().unwrap_or_default());
+    let mut deleted_lines: Vec<u32> = blocks
         .iter()
         .filter(|block| rows[(*block).clone()].iter().all(|row| row.new.is_none()))
         .flat_map(|block| rows[block.clone()].iter())
         .filter_map(|row| row.old.as_ref().map(|line| line.number))
+        .map(|line| old_git_lines[line as usize - 1])
         .collect();
+    deleted_lines.dedup();
 
     let commits = range_commits(repo, &range.from, &range.to)?;
     let git = BlameGit::new(repo);
     let new_side = match (&paths.new, needs_new_side) {
-        (Some(path), true) => new_side_commits(&git, &range.from, &range.to, path)?,
+        (Some(path), true) => by_display_line(
+            &new_side_commits(&git, &range.from, &range.to, path)?,
+            &new_git_lines,
+        ),
         _ => Vec::new(),
     };
     let old_side = match (&paths.old, deleted_lines.is_empty()) {
-        (Some(path), false) => {
-            deleted_line_commits(&git, &range.merge_base, &range.to, path, &deleted_lines)?
-        }
+        (Some(path), false) => by_display_line(
+            &deleted_line_commits(&git, &range.merge_base, &range.to, path, &deleted_lines)?,
+            &old_git_lines,
+        ),
         _ => Vec::new(),
     };
-    let blocks = origin_domain::assign_origins(&rows, &new_side, &old_side, &commits);
+    let mut blocks = origin_domain::assign_origins(&rows, &new_side, &old_side, &commits);
+    display_targets(repo, &mut blocks);
     let referenced: Vec<RangeCommit> = commits
         .into_iter()
         .filter(|commit| {
@@ -244,6 +259,50 @@ pub(crate) fn file_origin(
         blocks,
         commits: referenced,
     }))
+}
+
+/// git の行番号（`by_git_line[n - 1]` が n 行目）で並んだ行ごとのコミットを、表示の
+/// 行番号で並べ直す。`git_lines[i]` は表示の i + 1 行目が git で何行目か。
+fn by_display_line(by_git_line: &[Vec<LineCommit>], git_lines: &[u32]) -> Vec<Vec<LineCommit>> {
+    git_lines
+        .iter()
+        .map(|&line| {
+            by_git_line
+                .get(line as usize - 1)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// 「このコミットで見る」の移り先の行番号を、git blame の数え方から、そのコミットの
+/// グループの表示の数え方に直す。新側はそのコミットの版、削除だけのブロックはその親の
+/// 版（削除の由来はマージ以外のコミットなので親は 1 つ）の内容で数える。読める版の数は
+/// 移り先を持つ由来のコミットの数までで、行の数によらない。読めなければ git の行番号の
+/// まま残す（単独の CR が無ければ同じ番号）。
+fn display_targets(repo: &Path, blocks: &mut [BlockOrigin]) {
+    let mut numbering: HashMap<OsString, Option<Vec<u32>>> = HashMap::new();
+    for entry in blocks.iter_mut().flat_map(|block| block.entries.iter_mut()) {
+        let Some(target) = entry.target.as_mut() else {
+            continue;
+        };
+        let revision = match target.side {
+            Side::New => entry.sha.clone(),
+            Side::Old => format!("{}^", entry.sha),
+        };
+        let spec = OsString::from(format!("{revision}:{}", target.path));
+        let git_lines = numbering.entry(spec).or_insert_with_key(|spec| {
+            show(repo, spec)
+                .ok()
+                .map(|bytes| content::git_line_numbers(&String::from_utf8_lossy(&bytes)))
+        });
+        if let Some(display) = git_lines
+            .as_deref()
+            .and_then(|lines| lines.iter().position(|&line| line == target.line))
+        {
+            target.line = display as u32 + 1;
+        }
+    }
 }
 
 /// 範囲内のコミットを新しい順（子が親より先）に返す。
@@ -495,6 +554,7 @@ impl<'a> Tracer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::content;
     use crate::domain::origin::{BlockOrigin, OriginTarget, Unknown};
     use crate::domain::review::{ReviewMeta, Side};
     use crate::source::git::{GitMode, GitSource, GroupBy};
@@ -581,6 +641,111 @@ mod tests {
             .map(|commit| commit.subject.as_str())
             .collect();
         assert!(subjects.contains(&"first") && subjects.contains(&"second"));
+    }
+
+    /// 2 行目に単独の CR を 2 つ含む（表示では 3 行、git では 1 行）。
+    fn lines_with_lone_cr() -> Vec<String> {
+        let mut lines = numbered(10);
+        lines[1] = "x\ry\rz".to_string();
+        lines
+    }
+
+    #[test]
+    fn origin_blocks_after_a_lone_cr_name_the_commits_git_blame_names() {
+        let repo = TempRepo::new();
+        let mut lines = lines_with_lone_cr();
+        repo.write("f.txt", &text(&lines));
+        let base = repo.add_and_commit("base");
+        lines[4] = "five from A".to_string();
+        repo.write("f.txt", &text(&lines));
+        let a = repo.add_and_commit("A");
+        lines[6] = "seven from B".to_string();
+        repo.write("f.txt", &text(&lines));
+        let b = repo.add_and_commit("B");
+
+        let origin = origin_of(&final_source(&repo, &base, "HEAD"), "f.txt");
+
+        assert_eq!(origin.blocks.len(), 2);
+        assert_eq!(shas(&origin.blocks[0]), vec![a.as_str()]);
+        assert_eq!(origin.blocks[0].unknown, Unknown::None);
+        assert_eq!(shas(&origin.blocks[1]), vec![b.as_str()]);
+        assert_eq!(origin.blocks[1].unknown, Unknown::None);
+    }
+
+    #[test]
+    fn origin_deletion_after_a_lone_cr_is_the_commit_that_removed_the_line() {
+        let repo = TempRepo::new();
+        let mut lines = lines_with_lone_cr();
+        repo.write("f.txt", &text(&lines));
+        let base = repo.add_and_commit("base");
+        lines.remove(5);
+        repo.write("f.txt", &text(&lines));
+        let deleting = repo.add_and_commit("delete six");
+
+        let origin = origin_of(&final_source(&repo, &base, "HEAD"), "f.txt");
+
+        assert_eq!(origin.blocks.len(), 1);
+        assert_eq!(shas(&origin.blocks[0]), vec![deleting.as_str()]);
+        assert_eq!(origin.blocks[0].unknown, Unknown::None);
+    }
+
+    /// 「このコミットで見る」の移り先の行を、そのコミットのグループの表示で読む。
+    fn line_in_commit_view(
+        repo: &TempRepo,
+        from: &str,
+        target: &OriginTarget,
+        sha: &str,
+    ) -> String {
+        let source = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: from.to_string(),
+                to: "HEAD".to_string(),
+                group_by: GroupBy::Commit,
+            },
+        );
+        let review = source.review().unwrap();
+        let file = review
+            .groups
+            .iter()
+            .filter(|group| group.id == sha)
+            .flat_map(|group| group.files.iter())
+            .find(|file| file.path == target.path)
+            .expect("target file in the commit group");
+        let content = source.content(&file.id).unwrap();
+        let side = match target.side {
+            Side::Old => content.old,
+            Side::New => content.new,
+        };
+        let lines = content::lines(&String::from_utf8_lossy(&side.expect("target side")));
+        lines[target.line as usize - 1].clone()
+    }
+
+    #[test]
+    fn origin_targets_after_a_lone_cr_point_at_the_lines_shown_in_that_commit() {
+        let repo = TempRepo::new();
+        let mut lines = lines_with_lone_cr();
+        repo.write("f.txt", &text(&lines));
+        let base = repo.add_and_commit("base");
+        lines[4] = "five from A".to_string();
+        repo.write("f.txt", &text(&lines));
+        let a = repo.add_and_commit("A");
+        lines.remove(6);
+        repo.write("f.txt", &text(&lines));
+        let deleting = repo.add_and_commit("delete seven");
+
+        let origin = origin_of(&final_source(&repo, &base, "HEAD"), "f.txt");
+
+        let changed = origin.blocks[0].entries[0].target.as_ref().unwrap();
+        assert_eq!(
+            line_in_commit_view(&repo, &base, changed, &a),
+            "five from A"
+        );
+        let deleted = origin.blocks[1].entries[0].target.as_ref().unwrap();
+        assert_eq!(
+            line_in_commit_view(&repo, &base, deleted, &deleting),
+            "line 7"
+        );
     }
 
     #[test]
