@@ -40,6 +40,7 @@ import {
   firstLine,
   commentedLines,
   describeComment,
+  submitSummary,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -893,4 +894,21 @@ test("comment_list_marks_comments_of_vanished_commits", () => {
     describeComment({ group_id: "old-sha", group_title: "fix: 前" }, { range: true, commitGroups: null }).vanished,
     false,
   );
+});
+
+test("submit_summary_counts_comments_suggestions_and_unseen_files", () => {
+  const comments = [
+    { id: "c1", suggestion: { replacement: "x" } },
+    { id: "c2", suggestion: null },
+    { id: "c3", suggestion: { replacement: "" } },
+  ];
+  const files = [file("a", 1, 0, { seen: true }), file("b", 1, 0), file("c", 1, 0)];
+
+  assert.deepEqual(submitSummary(comments, files), {
+    comments: 3,
+    suggestions: 2,
+    seen: 1,
+    total: 3,
+    unseen: 2,
+  });
 });

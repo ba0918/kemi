@@ -767,6 +767,23 @@ export function describeComment(comment, context) {
 }
 
 /**
+ * 送信の確認ダイアログに出す数。コメントは両方のグループ単位の合計、見たは表示中の単位。
+ * @param {any[]} comments
+ * @param {FileEntry[]} files
+ * @returns {{ comments: number, suggestions: number, seen: number, total: number, unseen: number }}
+ */
+export function submitSummary(comments, files) {
+  const progress = seenProgress(files);
+  return {
+    comments: comments.length,
+    suggestions: comments.filter((comment) => Boolean(comment.suggestion)).length,
+    seen: progress.seen,
+    total: progress.total,
+    unseen: progress.total - progress.seen,
+  };
+}
+
+/**
  * @param {number} bytes
  * @returns {string}
  */

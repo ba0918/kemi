@@ -1,60 +1,72 @@
+/*
+ * 配色は意味ごとの役割に分ける（R-VIEW）。役割の色の値はプリセットごとにここで決める（D2）。
+ *   藍（--ai）: 進捗・見た・主な操作      付箋（--note-*）: コメント
+ *   藤（--star）: 重要・見てほしい点      追加（--add-*）/ 削除（--del-*）: 差分
+ * 追加と削除以外の役割に赤系の色を使わない（削除と見分けがつかなくなるため）。
+ */
 :root {
   color-scheme: light;
   --bg: #ffffff;
-  --panel: #f6f8fa;
-  --panel-2: #eef1f4;
-  --ink: #1f2328;
-  --ink-2: #59636e;
-  --ink-3: #818b98;
-  --line: #d0d7de;
-  --line-soft: #e7ebef;
-  --accent: #0969da;
-  --accent-soft: #ddf4ff;
-  --add-bg: #e6ffec;
-  --add-mark: #abf2bc;
-  --add-ink: #1a7f37;
-  --del-bg: #ffebe9;
-  --del-mark: #ffc9c4;
-  --del-ink: #cf222e;
+  --panel: #f5f6f8;
+  --panel-2: #eceef2;
+  --ink: #1b1f24;
+  --ink-2: #555e6a;
+  --ink-3: #7c8490;
+  --line: #d6dae0;
+  --line-soft: #e8ebef;
+  --ai: #3b4ea8;
+  --ai-soft: #e9ecfa;
+  --ai-ink: #ffffff;
+  --add-bg: #e8f7ec;
   --add-gut: #cdeed6;
+  --add-mark: #a9e5b9;
+  --add-ink: #1a7f37;
+  --del-bg: #fdeceb;
   --del-gut: #f8d3cf;
-  --focus: #9a6700;
-  --focus-bg: #fff8c5;
-  --hatch: repeating-linear-gradient(135deg, transparent 0 5px, var(--line-soft) 5px 6px);
+  --del-mark: #f5bdb6;
+  --del-ink: #c62a2a;
   --note-bg: #fff6d6;
   --note-line: #e0ac2b;
   --note-ink: #7a5200;
-  --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "IPAMincho", serif;
+  --star: #7b4fd0;
+  --star-soft: #f1eafd;
+  --accent: var(--ai);
+  --accent-soft: var(--ai-soft);
+  --focus: var(--star);
+  --focus-bg: var(--star-soft);
+  --hatch: repeating-linear-gradient(135deg, transparent 0 5px, var(--line-soft) 5px 6px);
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+  --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "IPAMincho", serif;
   --row-height: 24px;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0d1117;
-  --panel: #161b22;
-  --panel-2: #21262d;
-  --ink: #e6edf3;
-  --ink-2: #9198a1;
-  --ink-3: #6e7681;
-  --line: #30363d;
-  --line-soft: #21262d;
-  --accent: #4493f8;
-  --accent-soft: #121d2f;
-  --add-bg: #12261e;
-  --add-mark: #2ea04366;
-  --add-ink: #3fb950;
-  --del-bg: #25171c;
-  --del-mark: #f8514966;
-  --del-ink: #f85149;
+  --bg: #0f1216;
+  --panel: #161a20;
+  --panel-2: #1e232b;
+  --ink: #e4e8ee;
+  --ink-2: #9aa3ae;
+  --ink-3: #737c88;
+  --line: #2c323b;
+  --line-soft: #20252d;
+  --ai: #8b9cf0;
+  --ai-soft: #1d2340;
+  --ai-ink: #0f1216;
+  --add-bg: #11261a;
   --add-gut: #18351f;
+  --add-mark: #2a5c3a;
+  --add-ink: #4ac26b;
+  --del-bg: #2a1618;
   --del-gut: #3d1e1f;
+  --del-mark: #6d2d2b;
+  --del-ink: #f0645c;
   --note-bg: #2b2512;
   --note-line: #9c7a1f;
   --note-ink: #e8c060;
-  --focus: #d29922;
-  --focus-bg: #272115;
+  --star: #b69af5;
+  --star-soft: #261d3d;
 }
 
 :root[data-theme="solarized-light"] {
@@ -64,24 +76,25 @@
   --panel-2: #e4ddc8;
   --ink: #073642;
   --ink-2: #586e75;
-  --ink-3: #93a1a1;
+  --ink-3: #7f8f90;
   --line: #d3cbb7;
   --line-soft: #e4ddc8;
-  --accent: #268bd2;
-  --accent-soft: #d9e8f2;
-  --add-bg: #e3f2df;
-  --add-mark: #b6d7ab;
-  --add-ink: #586e75;
-  --del-bg: #fbe3e1;
-  --del-mark: #f0b8b1;
-  --del-ink: #dc322f;
-  --add-gut: #cfe5c6;
-  --del-gut: #f3cfca;
-  --note-bg: #fbf0c8;
-  --note-line: #d4a012;
-  --note-ink: #7a5a00;
-  --focus: #b58900;
-  --focus-bg: #f7ecc9;
+  --ai: #3d58a8;
+  --ai-soft: #e2e3ec;
+  --ai-ink: #fdf6e3;
+  --add-bg: #e6f0d6;
+  --add-gut: #d3e4bb;
+  --add-mark: #b8d38c;
+  --add-ink: #5b7a00;
+  --del-bg: #f9e2dc;
+  --del-gut: #f2cbc2;
+  --del-mark: #eaa89c;
+  --del-ink: #c9302c;
+  --note-bg: #f6ebc4;
+  --note-line: #b58900;
+  --note-ink: #6e5200;
+  --star: #6c71c4;
+  --star-soft: #e8e5f1;
 }
 
 :root[data-theme="solarized-dark"] {
@@ -91,24 +104,25 @@
   --panel-2: #0d4250;
   --ink: #eee8d5;
   --ink-2: #93a1a1;
-  --ink-3: #839496;
+  --ink-3: #74878a;
   --line: #0f4a58;
   --line-soft: #0d4250;
-  --accent: #268bd2;
-  --accent-soft: #0b3a4d;
-  --add-bg: #0c2f2a;
-  --add-mark: #2f6b4f;
-  --add-ink: #859900;
-  --del-bg: #37222a;
+  --ai: #7d95e0;
+  --ai-soft: #10304a;
+  --ai-ink: #002b36;
+  --add-bg: #0c3226;
+  --add-gut: #11412f;
+  --add-mark: #2f6b3a;
+  --add-ink: #9fbf1a;
+  --del-bg: #37202a;
+  --del-gut: #4a2833;
   --del-mark: #7a3a44;
-  --del-ink: #dc322f;
-  --add-gut: #123b33;
-  --del-gut: #472a33;
-  --note-bg: #2f2c14;
-  --note-line: #a07a10;
-  --note-ink: #e0c060;
-  --focus: #b58900;
-  --focus-bg: #3a3113;
+  --del-ink: #ef5f58;
+  --note-bg: #2e3217;
+  --note-line: #b58900;
+  --note-ink: #e3c35a;
+  --star: #a7a3ea;
+  --star-soft: #1d2c50;
 }
 
 * {
@@ -318,17 +332,19 @@ button:disabled {
   font-size: 13.5px;
 }
 
+/* 主な操作は藍。変更要求や削除も赤にしない（赤は差分の削除の色）。 */
 .btn.primary {
-  background: #1f883d;
-  border-color: #1f883d;
-  color: #fff;
+  background: var(--ai);
+  border-color: var(--ai);
+  color: var(--ai-ink);
   font-weight: 600;
 }
 
-.btn.danger {
+.btn.secondary {
   background: var(--bg);
-  border-color: var(--del-ink);
-  color: var(--del-ink);
+  border-color: var(--ink-2);
+  color: var(--ink);
+  font-weight: 600;
 }
 
 /* グループ単位の切り替え（R-UNIT）。上部で文字ラベルを持つ操作の 1 つ。 */
@@ -1284,7 +1300,7 @@ ul.files ul {
   align-items: center;
   justify-content: center;
   background: var(--accent);
-  color: #fff;
+  color: var(--ai-ink);
   border: 0;
   border-radius: 4px;
   font-size: 14px;
@@ -1721,7 +1737,7 @@ ul.files ul {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 18px 20px;
-  width: 380px;
+  width: min(470px, calc(100vw - 32px));
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
@@ -1742,6 +1758,30 @@ ul.files ul {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.modal .sum {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 14px;
+  margin: 4px 0 10px;
+  font-size: 13.5px;
+}
+
+.modal .sum dt {
+  color: var(--ink-3);
+}
+
+.modal .sum dd {
+  margin: 0;
+}
+
+.modal .warn {
+  border-left: 3px solid var(--note-line);
+  background: var(--note-bg);
+  color: var(--ink);
+  padding: 6px 10px;
+  border-radius: 0 6px 6px 0;
 }
 
 #overlay {
@@ -1778,4 +1818,64 @@ ul.files ul {
 
 .overlay-close {
   align-self: flex-end;
+}
+
+/* 送信後の完了画面。 */
+#overlay-card.finish {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 22px 24px;
+}
+
+.finish-body {
+  grid-column: -2 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.finish-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.finish-meta,
+.finish-save {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.finish-save {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.finish-save.failed {
+  color: var(--ink);
+  font-weight: 600;
+  border-left: 3px solid var(--note-line);
+  background: var(--note-bg);
+  padding: 4px 8px;
+  border-radius: 0 6px 6px 0;
+}
+
+.finish-json {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
 }

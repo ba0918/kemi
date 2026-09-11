@@ -19,6 +19,7 @@ import {
   rulerMarks,
   seenProgress,
   statusLetter,
+  submitSummary,
   unitSwitchTarget,
   draftKey,
   filterAndSortFiles,
@@ -1160,7 +1161,7 @@ function confirmDeleteComment(comment) {
   dom.modalTitle.textContent = "コメントを削除しますか？";
   dom.modalBody.textContent = `${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`;
   dom.modalOk.textContent = "削除";
-  dom.modalOk.className = "btn danger";
+  dom.modalOk.className = "btn secondary";
   dom.modalCancel.textContent = "戻る";
   state.modalAction = () => void deleteComment(comment);
   dom.modal.hidden = false;
@@ -1936,21 +1937,47 @@ async function editComment(payload) {
 }
 
 /**
+ * 送信の前の確認。取り消せないことと verdict に加えて、送るコメントの件数（両方の
+ * グループ単位の合計）と、表示中の単位の見たファイル数を出す（R-SUBMIT）。
  * @param {"approved" | "changes_requested"} verdict
  */
 function openConfirm(verdict) {
+  if (state.submitted) {
+    return;
+  }
   state.pendingVerdict = verdict;
   state.modalAction = () => void submitReview(verdict);
   dom.modalCancel.textContent = "戻る";
   const approve = verdict === "approved";
-  dom.modalTitle.textContent = approve
-    ? "承認しますか？"
-    : "変更要求として送信しますか？";
-  dom.modalBody.textContent = approve
-    ? "レビューを終了して、承認の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。"
-    : "レビューを終了して、変更要求の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。";
+  const summary = submitSummary(
+    state.allComments,
+    state.entries.map((entry) => entry.file),
+  );
+  dom.modalTitle.textContent = approve ? "承認して終了しますか？" : "変更要求で終了しますか？";
+  dom.modalBody.textContent = "";
+  const list = el("dl", "sum");
+  const seenLabel = state.unit ? `見たファイル（${UNIT_LABELS[state.unit] || state.unit}）` : "見たファイル";
+  list.append(
+    textEl("dt", "", "コメント"),
+    textEl("dd", "", `${summary.comments} 件（うち suggestion 付き ${summary.suggestions} 件）`),
+    textEl("dt", "", seenLabel),
+    textEl("dd", "", `${summary.seen} / ${summary.total}`),
+  );
+  dom.modalBody.append(list);
+  if (summary.unseen > 0) {
+    dom.modalBody.append(
+      textEl("p", "warn", `まだ見ていないファイルが ${summary.unseen} あります。`),
+    );
+  }
+  dom.modalBody.append(
+    textEl(
+      "p",
+      "",
+      `レビューを終了して、${approve ? "承認" : "変更要求"}の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。`,
+    ),
+  );
   dom.modalOk.textContent = approve ? "承認して終了" : "変更要求で終了";
-  dom.modalOk.className = approve ? "btn primary" : "btn danger";
+  dom.modalOk.className = approve ? "btn primary" : "btn secondary";
   dom.modal.hidden = false;
 }
 
@@ -1968,20 +1995,81 @@ async function submitReview(verdict) {
     return;
   }
   try {
-    await api.submit(verdict);
+    const answer = await api.submit(verdict);
     state.submitted = true;
     state.selection = null;
     state.editor = null;
+    renderSubmitButtons();
     renderDiff();
     renderFloating();
     renderFileHeader();
-    showOverlay(
-      verdict === "approved" ? "承認しました" : "変更要求を送りました",
-      "kemi はコメントの JSON を出力して終了しました。",
-    );
+    showCompletion(verdict, answer);
   } catch (error) {
     showOverlay("送信できませんでした", String(error));
   }
+}
+
+/** 送信後は承認と変更要求のボタンを押せなくする（R-SUBMIT）。 */
+function renderSubmitButtons() {
+  dom.submitApproved.disabled = state.submitted;
+  dom.submitChanges.disabled = state.submitted;
+}
+
+/**
+ * 送信後の完了画面。結果の JSON（stdout と同じ）と、写す操作、結果ファイルの保存先を出す。
+ * 承認のときは「閲」の印を押す（R-SUBMIT, R-RESULT）。
+ * @param {"approved" | "changes_requested"} verdict
+ * @param {any} answer submit の応答（result と saved）
+ */
+function showCompletion(verdict, answer) {
+  const result = answer && answer.result ? answer.result : answer;
+  const saved = (answer && answer.saved) || {};
+  const json = JSON.stringify(result);
+  const comments = Array.isArray(result && result.comments) ? result.comments : [];
+  dom.overlay.hidden = false;
+  dom.overlayCard.textContent = "";
+  dom.overlayCard.className = "finish";
+  if (verdict === "approved") {
+    const seal = textEl("span", "seal big", "閲");
+    seal.setAttribute("aria-hidden", "true");
+    dom.overlayCard.append(seal);
+  }
+  const body = el("div", "finish-body");
+  body.append(
+    textEl("h2", "overlay-title", verdict === "approved" ? "承認を送りました" : "変更要求を送りました"),
+    textEl(
+      "p",
+      "overlay-detail",
+      "kemi は結果を標準出力に書いて終了しました。エージェントが反応しないときは、この JSON をコピーして会話に貼れば済みます。",
+    ),
+  );
+  const row = el("div", "finish-row");
+  const copy = button("btn primary");
+  copy.textContent = "JSON をコピー";
+  copy.addEventListener("click", () => {
+    navigator.clipboard
+      .writeText(json)
+      .then(() => {
+        copy.textContent = "コピーしました";
+      })
+      .catch((error) => {
+        copy.textContent = `コピーできません: ${error}`;
+      });
+  });
+  const suggestions = comments.filter((/** @type {any} */ comment) => comment.suggestion).length;
+  row.append(copy, textEl("span", "finish-meta", `コメント ${comments.length} 件 / suggestion ${suggestions} 件`));
+  body.append(row);
+  if (saved.error) {
+    body.append(textEl("p", "finish-save failed", `保存できませんでした: ${saved.error}`));
+  } else if (saved.path) {
+    body.append(textEl("p", "finish-save", `結果ファイル: ${saved.path}（kemi --result で読めます）`));
+  } else if (saved.dir) {
+    body.append(textEl("p", "finish-save", `結果ファイルの保存先: ${saved.dir}`));
+  }
+  const pre = el("pre", "finish-json");
+  pre.textContent = json;
+  body.append(pre);
+  dom.overlayCard.append(body);
 }
 
 /**
@@ -1991,11 +2079,12 @@ async function submitReview(verdict) {
 function showOverlay(title, detail) {
   dom.overlay.hidden = false;
   dom.overlayCard.textContent = "";
+  dom.overlayCard.className = "";
   dom.overlayCard.append(textEl("h2", "overlay-title", title));
   if (detail) {
     dom.overlayCard.append(textEl("p", "overlay-detail", detail));
   }
-  const close = button("overlay-close");
+  const close = button("btn overlay-close");
   close.textContent = "閉じる";
   close.addEventListener("click", () => {
     dom.overlay.hidden = true;
