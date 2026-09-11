@@ -203,7 +203,7 @@ const dom = {
  *   toastTimer: number,
  *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
  *   modalAction: (() => void) | null,
- *   lastNav: { index: number, top: number, scrollTop: number } | null,
+ *   lastNav: { index: number, top: number, scrollTop: number, pinned: boolean } | null,
  * }} */
 const state = {
   review: null,
@@ -1419,10 +1419,14 @@ function closeEditor() {
  * 測り直すよう覚えておく。
  */
 function remeasure() {
-  // 利用者の操作で行の高さが変わったら、n / p で移った先を保つのをやめる。保ったままだと、
-  // 移った先より上で開いたエディタや吹き出しの高さだけスクロール位置が送られ、いま触った
-  // 行が画面の外へ動く。
-  state.lastNav = null;
+  // 利用者の操作で行の高さが変わったら、n / p で移った先を画面の同じ位置に留めるのをやめる。
+  // 留めたままだと、移った先より上で開いたエディタや吹き出しの高さだけスクロール位置が
+  // 送られ、いま触った行が画面の外へ動く。
+  // Why not 移った先の記録ごと捨てない: 末尾近くで上端まで送れなかった止まる場所では、
+  // 記録が今の位置なので、捨てると数が一つ前に戻り、次の n が同じ場所へ空回りする。
+  if (state.lastNav) {
+    state.lastNav = { ...state.lastNav, pinned: false };
+  }
   state.measureNext = true;
   state.heights.forEach((height, index) => {
     if (height !== ROW_HEIGHT) {
@@ -2236,19 +2240,28 @@ function measureHeights(start, offsets) {
   const scrollTop = dom.viewport.scrollTop;
   // 移動の直後は、移った先の行より上の行の伸び縮みをすべて打ち消す。初めて測る行
   // （折り返した行など）が基準値より高いと、移った先が下へずれて見えなくなるため。
+  // 利用者の操作の後は打ち消さないが、移った先の上端は上の行の伸び縮みの分だけ動かし、
+  // 今の位置として使い続ける。
   const nav = activeNav();
+  const pinned = nav && nav.pinned ? nav : null;
   let changed = false;
   let shift = 0;
   let growth = 0;
+  let growthAboveNav = 0;
   children.forEach((child, offset) => {
     const index = start + offset;
     const stale = state.staleRows.delete(index);
     const height = /** @type {HTMLElement} */ (child).offsetHeight;
     if (height > 0 && state.heights[index] !== height) {
       const delta = height - state.heights[index];
-      const above = nav ? index < nav.index : stale && offsets[index + 1] <= scrollTop;
+      const above = pinned
+        ? index < pinned.index
+        : stale && offsets[index + 1] <= scrollTop;
       if (above) {
         shift += delta;
+      }
+      if (nav && index < nav.index) {
+        growthAboveNav += delta;
       }
       growth += delta;
       state.heights[index] = height;
@@ -2263,15 +2276,19 @@ function measureHeights(start, offsets) {
     // 打ち消す。ずれた配置のまま表示されないよう、同じ描画のうちに描き直す。
     // 全体の高さを先に広げる。古い高さのままでは、送った位置が末尾で切り詰められる。
     dom.content.style.height = `${(offsets[offsets.length - 1] || 0) + growth}px`;
-    if (nav) {
-      const top = (offsets[nav.index] ?? nav.top) + shift;
+    if (pinned) {
+      const top = (offsets[pinned.index] ?? pinned.top) + shift;
       dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
-      state.lastNav = { index: nav.index, top, scrollTop: dom.viewport.scrollTop };
+      state.lastNav = { ...pinned, top, scrollTop: dom.viewport.scrollTop };
     } else {
       dom.viewport.scrollTop = scrollTop + shift;
+      followNav(nav, offsets, growthAboveNav);
     }
     renderDiff();
     return;
+  }
+  if (growthAboveNav !== 0) {
+    followNav(nav, offsets, growthAboveNav);
   }
   if (changed && !state.rendering) {
     state.rendering = true;
@@ -2280,6 +2297,24 @@ function measureHeights(start, offsets) {
       renderDiff();
     });
   }
+}
+
+/**
+ * 画面に留めるのをやめた移った先の上端を、上の行の伸び縮みの分だけ動かす。スクロール
+ * 位置は測った後のものを覚え直し、利用者がスクロールするまで今の位置として使う。
+ * @param {{ index: number, top: number, scrollTop: number, pinned: boolean } | null} nav
+ * @param {number[]} offsets 描いたときの各行の上端
+ * @param {number} growthAbove 移った先より上の行の伸び縮みの合計
+ */
+function followNav(nav, offsets, growthAbove) {
+  if (!nav) {
+    return;
+  }
+  state.lastNav = {
+    ...nav,
+    top: (offsets[nav.index] ?? nav.top) + growthAbove,
+    scrollTop: dom.viewport.scrollTop,
+  };
 }
 
 function scheduleRender() {
@@ -2451,8 +2486,9 @@ function scrollToRow(index, offsets) {
   // 末尾近くでは止まる場所を上端まで送れない。移った先を覚えておき、利用者が
   // スクロールするまではそこを今の位置として扱う（同じ場所で n が空回りしないように）。
   // 移った先の行より上の行を初めて測って高さが変わったら、measureHeights がこの行を
-  // 同じ位置に保つ。
-  state.lastNav = { index, top, scrollTop: dom.viewport.scrollTop };
+  // 同じ位置に保つ。利用者の操作で行の高さが変わった後は、同じ位置には保たず、今の位置
+  // としてだけ使う（remeasure）。
+  state.lastNav = { index, top, scrollTop: dom.viewport.scrollTop, pinned: true };
   scheduleRender();
 }
 
