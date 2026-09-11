@@ -21,6 +21,10 @@
   --focus: #9a6700;
   --focus-bg: #fff8c5;
   --hatch: repeating-linear-gradient(135deg, transparent 0 5px, var(--line-soft) 5px 6px);
+  --note-bg: #fff6d6;
+  --note-line: #e0ac2b;
+  --note-ink: #7a5200;
+  --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "IPAMincho", serif;
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
   --row-height: 24px;
@@ -46,6 +50,9 @@
   --del-ink: #f85149;
   --add-gut: #18351f;
   --del-gut: #3d1e1f;
+  --note-bg: #2b2512;
+  --note-line: #9c7a1f;
+  --note-ink: #e8c060;
   --focus: #d29922;
   --focus-bg: #272115;
 }
@@ -70,6 +77,9 @@
   --del-ink: #dc322f;
   --add-gut: #cfe5c6;
   --del-gut: #f3cfca;
+  --note-bg: #fbf0c8;
+  --note-line: #d4a012;
+  --note-ink: #7a5a00;
   --focus: #b58900;
   --focus-bg: #f7ecc9;
 }
@@ -94,6 +104,9 @@
   --del-ink: #dc322f;
   --add-gut: #123b33;
   --del-gut: #472a33;
+  --note-bg: #2f2c14;
+  --note-line: #a07a10;
+  --note-ink: #e0c060;
   --focus: #b58900;
   --focus-bg: #3a3113;
 }
@@ -318,6 +331,62 @@ button:disabled {
   color: var(--del-ink);
 }
 
+/* グループ単位の切り替え（R-UNIT）。上部で文字ラベルを持つ操作の 1 つ。 */
+.unit-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.unit-button {
+  border: 0;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.unit-button + .unit-button {
+  border-left: 1px solid var(--line);
+}
+
+.unit-button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.unit-button.failed {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.progress .bar {
+  width: 110px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.progress .bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
 .update-badge {
   border-color: var(--accent);
   color: var(--accent);
@@ -340,10 +409,111 @@ button:disabled {
   min-height: 0;
 }
 
+#diff-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 #diff-viewport {
   flex: 1;
   overflow: auto;
   position: relative;
+  min-width: 0;
+}
+
+/* スクロールバーの横の位置の帯（R-NAV）。印は canvas に縮めて描く。 */
+#ruler {
+  position: relative;
+  flex: 0 0 12px;
+  background: var(--panel);
+  border-left: 1px solid var(--line-soft);
+  cursor: pointer;
+}
+
+#ruler-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#ruler-view {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
+.navpill {
+  position: absolute;
+  right: 30px;
+  bottom: 18px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 12.5px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.navpill button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+}
+
+.navpill button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg) 18%, transparent);
+}
+
+.navpill .pos {
+  padding: 0 8px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.navpill kbd {
+  background: transparent;
+  color: inherit;
+  border-color: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+#toast {
+  position: absolute;
+  right: 30px;
+  bottom: 62px;
+  z-index: 7;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 13px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--ink-3);
+  background: var(--bg);
 }
 
 #diff-content {
@@ -416,47 +586,81 @@ button:disabled {
   white-space: nowrap;
 }
 
-.group-head .st {
-  font-family: var(--mono);
-  font-size: 11.5px;
+.g-progress {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.g-count {
+  font-size: 12px;
+  font-weight: 400;
   color: var(--ink-3);
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-bar {
+  margin: 0 8px 6px 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.g-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.group.done .gtitle {
+  color: var(--ink-2);
+}
+
+/* 「閲」の印。グループのファイルをすべて見たとき（ツリーのグループ見出し）と、承認の
+   完了画面だけで使う（R-SEEN）。 */
+.seal {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--serif);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transform: rotate(-10deg);
+  box-shadow: inset 0 0 0 1.5px var(--bg), inset 0 0 0 2.5px var(--accent);
+}
+
+.seal.big {
+  width: 76px;
+  height: 76px;
+  font-size: 38px;
+  border-width: 3px;
+  box-shadow: inset 0 0 0 3px var(--bg), inset 0 0 0 5px var(--accent);
+}
+
+/* コミットの種類（feat など）を示す、色の無い小さな枠。 */
+.ctype {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 5px;
 }
 
 .group-body {
-  margin: 6px 0 14px;
+  margin: 2px 0 12px;
 }
 
 .group[data-open="false"] .group-body {
   display: none;
-}
-
-.why {
-  margin: 4px 8px 4px 22px;
-  color: var(--ink-2);
-  font-size: 13px;
-  line-height: 1.6;
-  border-left: 2px solid var(--line);
-  padding-left: 8px;
-}
-
-.watch {
-  margin: 6px 8px 8px 22px;
-  font-size: 13px;
-  color: var(--ink-2);
-  background: var(--focus-bg);
-  border: 1px solid var(--focus);
-  border-radius: 6px;
-  padding: 6px 8px;
-  line-height: 1.6;
-}
-
-.watch b {
-  display: block;
-  font-size: 11.5px;
-  letter-spacing: 0.06em;
-  color: var(--focus);
-  margin-bottom: 2px;
 }
 
 ul.files {
@@ -531,7 +735,74 @@ ul.files ul {
 
 .file.seen .fname {
   color: var(--ink-3);
-  text-decoration: line-through;
+}
+
+/* 見たかどうかは左端の丸いチェックで示す。 */
+.chk {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  display: inline-grid;
+  place-items: center;
+}
+
+.file.seen .chk {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.file.seen .chk::after,
+.seen-toggle.on .chk::after {
+  content: "";
+  width: 6px;
+  height: 3px;
+  border: solid var(--bg);
+  border-width: 0 0 1.5px 1.5px;
+  transform: rotate(-45deg) translate(0.5px, -0.5px);
+}
+
+/* 状態の 1 文字。変更（M）は目立たせない。 */
+.sl {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sl.A {
+  color: var(--add-ink);
+}
+
+.sl.D {
+  color: var(--del-ink);
+}
+
+.sl.R {
+  color: var(--ink);
+}
+
+.sl.M {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.cbadge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--note-ink);
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
+  border-radius: 999px;
+  padding: 0 5px;
+  white-space: nowrap;
 }
 
 .file .st {
@@ -607,70 +878,70 @@ ul.files ul {
 .group-header {
   background: var(--bg);
   border-bottom: 1px solid var(--line);
-  padding: 14px 20px;
   max-height: 34vh;
   overflow-y: auto;
+  font-size: 13.5px;
 }
 
 .group-header .gh-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
+  padding: 7px 16px;
 }
 
 .group-header .gh-title {
   font-weight: 700;
-  font-size: 16px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .group-header .gh-st {
-  font-family: var(--mono);
+  flex: 0 0 auto;
   font-size: 12px;
   color: var(--ink-3);
 }
 
 .group-header .gh-toggle {
+  margin-left: auto;
+  flex: 0 0 auto;
   background: none;
   border: 0;
-  color: var(--ink-3);
-  font-size: 12px;
-  padding: 0 4px 0 0;
+  color: var(--accent);
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
-.group-header[data-open="false"] .gh-why,
-.group-header[data-open="false"] .gh-watch {
+/* why（説明）は既定で畳む。watch（見てほしい点）は畳まずに常に出す。 */
+.group-header[data-open="false"] .gh-why {
   display: none;
 }
 
-.group-header[data-open="false"] .gh-toggle {
-  transform: rotate(-90deg);
-  display: inline-block;
-}
-
 .group-header .gh-why {
-  margin: 6px 0 0;
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
   color: var(--ink-2);
   white-space: pre-wrap;
   line-height: 1.6;
 }
 
 .group-header .gh-watch {
-  margin-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  border-left: 3px solid var(--focus);
   background: var(--focus-bg);
-  border: 1px solid var(--focus);
-  border-radius: 6px;
-  padding: 7px 10px;
-  color: var(--ink-2);
-  font-size: 13.5px;
+  padding: 5px 13px;
+  color: var(--ink);
   line-height: 1.6;
 }
 
 .group-header .gh-watch b {
   color: var(--focus);
-  font-size: 11.5px;
-  letter-spacing: 0.06em;
-  display: block;
-  margin-bottom: 2px;
+  font-size: 12px;
+  margin-right: 6px;
 }
 
 .file-header {
@@ -719,6 +990,49 @@ ul.files ul {
   background: var(--focus-bg);
   border-radius: 6px;
   padding: 1px 7px;
+}
+
+.seen-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.seen-toggle .chk {
+  border-color: currentColor;
+}
+
+.seen-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.seen-toggle.on .chk {
+  background: var(--bg);
+  border-color: var(--bg);
+}
+
+.seen-toggle.on .chk::after {
+  border-color: var(--accent);
+}
+
+.seen-toggle.on kbd {
+  background: transparent;
+  color: inherit;
+  border-color: color-mix(in srgb, var(--bg) 50%, transparent);
+}
+
+.file-header .sl {
+  font-size: 12px;
 }
 
 .file-header button.copied {
@@ -1228,6 +1542,7 @@ ul.files ul {
 }
 
 .modal p {
+  white-space: pre-wrap;
   margin: 0 0 14px;
   color: var(--ink-2);
   font-size: 13.5px;

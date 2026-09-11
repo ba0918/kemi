@@ -315,7 +315,7 @@ function firstIndexAtOrAfter(offsets, value, total) {
  * @param {number} count
  * @param {number} index
  * @param {boolean} [wrap]
- * @returns {{ type: string, index?: number, mode?: string, value?: boolean }}
+ * @returns {{ type: string, index?: number, mode?: string, value?: boolean, direction?: 1 | -1 }}
  */
 export function keyAction(key, _mode, count, index, wrap = false) {
   switch (key) {
@@ -333,6 +333,12 @@ export function keyAction(key, _mode, count, index, wrap = false) {
       return { type: "file", index: Math.max(0, count - 1) };
     case "g":
       return { type: "file", index: 0 };
+    case "n":
+      return { type: "nav", direction: 1 };
+    case "p":
+      return { type: "nav", direction: -1 };
+    case "v":
+      return { type: "seen" };
     default:
       return { type: "none" };
   }
@@ -588,6 +594,116 @@ export function nextFileIndex(files, index, direction, navigable) {
     }
   }
   return null;
+}
+
+/**
+ * 今の位置で見ている止まる場所（上端が位置以上に来ていない最後のもの）。まだ最初の
+ * 止まる場所より上なら -1。
+ * @param {number[]} tops
+ * @param {number} position
+ * @returns {number}
+ */
+export function currentStopIndex(tops, position) {
+  let current = -1;
+  tops.forEach((top, index) => {
+    if (top <= position + 1) {
+      current = index;
+    }
+  });
+  return current;
+}
+
+/** 位置の帯の印の種類と、1 画素の中で重なったときの印。 */
+const RULER_KINDS = /** @type {const} */ (["add", "del", "note"]);
+
+/**
+ * スクロールバーの横の帯に置く印（R-NAV）。行ごとの種類（`add` / `del` / `note` / 空）を
+ * 行の位置で帯の高さに縮め、同じ種類が続く画素をまとめる。印の数は帯の高さの 3 倍を
+ * 超えないので、50 万行でも DOM に全行を描かない。
+ * @param {string[]} kinds 表示行ごとの種類
+ * @param {number[]} offsets 表示行の上端（最後に全体の高さ）
+ * @param {number} height 帯の高さ（画素）
+ * @returns {{ kind: string, top: number, bottom: number }[]}
+ */
+export function rulerMarks(kinds, offsets, height) {
+  const total = offsets[offsets.length - 1] || 0;
+  const rows = Math.max(0, Math.floor(height));
+  if (total <= 0 || rows === 0) {
+    return [];
+  }
+  const masks = new Uint8Array(rows);
+  kinds.forEach((kind, index) => {
+    const bit = RULER_KINDS.indexOf(/** @type {any} */ (kind));
+    if (bit < 0) {
+      return;
+    }
+    const top = Math.min(rows - 1, Math.floor((offsets[index] / total) * rows));
+    const bottom = Math.min(rows, Math.max(top + 1, Math.ceil((offsets[index + 1] / total) * rows)));
+    for (let row = top; row < bottom; row += 1) {
+      masks[row] |= 1 << bit;
+    }
+  });
+  /** @type {{ kind: string, top: number, bottom: number }[]} */
+  const marks = [];
+  RULER_KINDS.forEach((kind, bit) => {
+    let start = -1;
+    for (let row = 0; row <= rows; row += 1) {
+      const on = row < rows && (masks[row] & (1 << bit)) !== 0;
+      if (on && start < 0) {
+        start = row;
+      } else if (!on && start >= 0) {
+        marks.push({ kind, top: start, bottom: row });
+        start = -1;
+      }
+    }
+  });
+  return marks.sort(
+    (left, right) =>
+      left.top - right.top || RULER_KINDS.indexOf(/** @type {any} */ (left.kind)) - RULER_KINDS.indexOf(/** @type {any} */ (right.kind)),
+  );
+}
+
+/**
+ * グループ単位を切り替えたときに出すファイル。同じパスの最初のファイル（コミットごと
+ * ではそのパスを含む最初のコミット）、無ければ先頭。ファイルが無ければ -1。
+ * @param {{ file: FileEntry, group: any }[]} entries 切り替え先の単位の並び
+ * @param {string} path
+ * @returns {number}
+ */
+export function unitSwitchTarget(entries, path) {
+  if (entries.length === 0) {
+    return -1;
+  }
+  const found = entries.findIndex((entry) => entry.file.path === path);
+  return found < 0 ? 0 : found;
+}
+
+/**
+ * 由来の「このコミットで見る」の移り先。そのコミットのグループの、そのコミット時点の
+ * パスのファイル。旧側の移り先は、そのコミットの旧側のパス（改名なら改名元）で探す。
+ * @param {{ file: FileEntry, group: any }[]} entries コミットごとの単位の並び
+ * @param {string} sha
+ * @param {{ path: string, side: string, line: number }} target
+ * @returns {number}
+ */
+export function originJumpTarget(entries, sha, target) {
+  return entries.findIndex((entry) => {
+    if (entry.group.id !== sha) {
+      return false;
+    }
+    const path = target.side === "old" ? entry.file.old_path ?? entry.file.path : entry.file.path;
+    return path === target.path;
+  });
+}
+
+/**
+ * 見た数と全数。全部見たら done（「閲」の印を出す）。
+ * @param {FileEntry[]} files
+ * @returns {{ seen: number, total: number, done: boolean }}
+ */
+export function seenProgress(files) {
+  const seen = files.filter((file) => file.seen).length;
+  return { seen, total: files.length, done: files.length > 0 && seen === files.length };
 }
 
 /**

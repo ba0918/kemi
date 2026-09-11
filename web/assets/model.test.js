@@ -32,6 +32,11 @@ import {
   statusLetter,
   rangeAfterSkip,
   sideTone,
+  unitSwitchTarget,
+  originJumpTarget,
+  seenProgress,
+  currentStopIndex,
+  rulerMarks,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -752,4 +757,87 @@ test("unified_colors_each_line_by_the_side_it_shows", () => {
   assert.equal(sideTone("replace-new", null), "add");
   assert.equal(sideTone("insert", null), "add");
   assert.equal(sideTone("equal", null), "");
+});
+
+/**
+ * @param {string} groupId
+ * @param {FileEntry} entry
+ */
+function inGroup(groupId, entry) {
+  return { file: entry, group: { id: groupId } };
+}
+
+test("unit_switch_shows_the_first_file_with_the_same_path", () => {
+  const entries = [
+    inGroup("c1", file("a.rs", 1, 0)),
+    inGroup("c2", file("b.rs", 1, 0)),
+    inGroup("c3", file("b.rs", 2, 0)),
+  ];
+
+  assert.equal(unitSwitchTarget(entries, "b.rs"), 1);
+  assert.equal(unitSwitchTarget(entries, "missing.rs"), 0);
+  assert.equal(unitSwitchTarget([], "a.rs"), -1);
+});
+
+test("origin_jump_goes_to_the_path_at_that_commit", () => {
+  const renamed = file("new.rs", 1, 1, { status: "rename", old_path: "old.rs" });
+  const entries = [
+    inGroup("c1", file("old.rs", 1, 0)),
+    inGroup("c2", renamed),
+    inGroup("c3", file("new.rs", 1, 0)),
+  ];
+
+  assert.equal(originJumpTarget(entries, "c1", { path: "old.rs", side: "new", line: 3 }), 0);
+  assert.equal(originJumpTarget(entries, "c3", { path: "new.rs", side: "new", line: 3 }), 2);
+  assert.equal(originJumpTarget(entries, "c2", { path: "old.rs", side: "old", line: 7 }), 1);
+  assert.equal(originJumpTarget(entries, "c9", { path: "new.rs", side: "new", line: 1 }), -1);
+});
+
+test("seen_progress_counts_seen_files_and_marks_done", () => {
+  assert.deepEqual(seenProgress([file("a", 1, 0, { seen: true }), file("b", 1, 0)]), {
+    seen: 1,
+    total: 2,
+    done: false,
+  });
+  assert.deepEqual(seenProgress([file("a", 1, 0, { seen: true })]), { seen: 1, total: 1, done: true });
+  assert.deepEqual(seenProgress([]), { seen: 0, total: 0, done: false });
+});
+
+test("current_stop_is_the_last_one_at_or_above_the_position", () => {
+  const tops = [100, 400, 900];
+
+  assert.equal(currentStopIndex(tops, 50), -1);
+  assert.equal(currentStopIndex(tops, 100), 0);
+  assert.equal(currentStopIndex(tops, 898), 1);
+  assert.equal(currentStopIndex(tops, 5000), 2);
+});
+
+test("ruler_marks_place_changes_and_comments_by_position_and_merge_per_pixel", () => {
+  const kinds = ["", "add", "add", "", "del", "note"];
+  const offsets = [0, 10, 20, 30, 40, 50, 60];
+
+  const marks = rulerMarks(kinds, offsets, 60);
+
+  assert.deepEqual(marks, [
+    { kind: "add", top: 10, bottom: 30 },
+    { kind: "del", top: 40, bottom: 50 },
+    { kind: "note", top: 50, bottom: 60 },
+  ]);
+});
+
+test("ruler_marks_stay_bounded_for_huge_files", () => {
+  const kinds = new Array(500_000).fill("add");
+  const offsets = Array.from({ length: 500_001 }, (_, index) => index * 24);
+
+  const marks = rulerMarks(kinds, offsets, 800);
+
+  assert.ok(marks.length <= 800, `${marks.length} marks`);
+  assert.equal(marks[0].top, 0);
+  assert.equal(marks[marks.length - 1].bottom, 800);
+});
+
+test("keyAction_moves_between_changes_and_toggles_seen", () => {
+  assert.deepEqual(keyAction("n", "unified", 3, 0), { type: "nav", direction: 1 });
+  assert.deepEqual(keyAction("p", "unified", 3, 0), { type: "nav", direction: -1 });
+  assert.deepEqual(keyAction("v", "unified", 3, 0), { type: "seen" });
 });

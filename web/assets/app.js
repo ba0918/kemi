@@ -6,6 +6,17 @@ import {
   buildTree,
   collapseDefault,
   commentLabel,
+  commitTypeBox,
+  currentStopIndex,
+  hasStops,
+  navStops,
+  nextFileIndex,
+  nextStop,
+  originJumpTarget,
+  rulerMarks,
+  seenProgress,
+  statusLetter,
+  unitSwitchTarget,
   draftKey,
   filterAndSortFiles,
   formatBytes,
@@ -21,7 +32,6 @@ import {
   rangeAfterSkip,
   resolveTheme,
   sideTone,
-  statusLabel,
   suggestionAllowed,
   toDisplayLines,
   windowFor,
@@ -34,6 +44,11 @@ import {
 
 const ROW_HEIGHT = 24;
 const OVERSCAN = 12;
+/** 変更間の移動で、止まる場所を画面の上端からこの分だけ下に置く（前の文脈を見せる）。 */
+const NAV_MARGIN = 48;
+
+/** @type {Record<string, string>} */
+const UNIT_LABELS = { file: "最終形", commit: "コミットごと" };
 
 const FILE_ICON =
   '<svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>';
@@ -49,8 +64,6 @@ const CODE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4 2 8l2.5 4M11.5 4 14 8l-2.5 4M9.5 2.5l-3 11"/></svg>';
 const ORIGIN_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="4" r="1.8"/><circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="8" r="1.8"/><path d="M4 5.8v4.4M5.6 4.8 10.4 7.2"/></svg>';
-const EYE_ICON =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/></svg>';
 
 /** @type {Record<string, string>} */
 const THEME_LABELS = {
@@ -72,7 +85,19 @@ function must(selector) {
 const dom = {
   title: must("#review-title"),
   subtitle: must("#review-subtitle"),
+  unitSwitch: must("#unit-switch"),
   meta: must("#review-meta"),
+  progress: must("#progress"),
+  progressBar: must("#progress-bar"),
+  progressText: must("#progress-text"),
+  ruler: must("#ruler"),
+  rulerCanvas: /** @type {HTMLCanvasElement} */ (must("#ruler-canvas")),
+  rulerView: must("#ruler-view"),
+  nav: must("#nav"),
+  navPrev: /** @type {HTMLButtonElement} */ (must("#nav-prev")),
+  navNext: /** @type {HTMLButtonElement} */ (must("#nav-next")),
+  navPos: must("#nav-pos"),
+  toast: must("#toast"),
   tree: must("#tree"),
   groupHeader: must("#group-header"),
   fileHeader: must("#file-header"),
@@ -151,6 +176,18 @@ const dom = {
  *   originForced: Set<string>,
  *   originOpen: Map<string, string>,
  *   skipRanges: Map<number, any>,
+ *   units: any[],
+ *   unit: string | null,
+ *   reviews: Map<string, any>,
+ *   pendingUnit: { unit: string, jump: any } | null,
+ *   allComments: any[],
+ *   stops: number[],
+ *   rulerDirty: boolean,
+ *   pendingJump: { side: string, line: number } | "first" | "last" | null,
+ *   toastTimer: number,
+ *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
+ *   modalAction: (() => void) | null,
+ *   lastNav: { top: number, scrollTop: number } | null,
  * }} */
 const state = {
   review: null,
@@ -198,6 +235,18 @@ const state = {
   originForced: new Set(),
   originOpen: new Map(),
   skipRanges: new Map(),
+  units: [],
+  unit: null,
+  reviews: new Map(),
+  pendingUnit: null,
+  allComments: [],
+  stops: [],
+  rulerDirty: true,
+  pendingJump: null,
+  toastTimer: 0,
+  groupHeads: new Map(),
+  modalAction: null,
+  lastNav: null,
 };
 
 function currentEntry() {
@@ -335,24 +384,6 @@ function rebuildVisible(keepId) {
 }
 
 /**
- * @param {string} groupId
- * @returns {{ files: number, add: number, del: number }}
- */
-function groupStatsFor(groupId) {
-  let files = 0;
-  let add = 0;
-  let del = 0;
-  for (const entry of state.entries) {
-    if (entry.group.id === groupId) {
-      files += 1;
-      add += entry.file.add;
-      del += entry.file.del;
-    }
-  }
-  return { files, add, del };
-}
-
-/**
  * @param {FileEntry} file
  * @returns {HTMLElement}
  */
@@ -385,8 +416,9 @@ async function refresh() {
   state.selectGeneration += 1;
   state.cache.clear();
   state.commentStore.clear();
-  state.review = await api.getReview(true);
-  state.entries = flatten(state.review);
+  state.origins.clear();
+  state.reviews.clear();
+  applyReview(await api.getReview(true, state.unit), true);
   const current = currentEntry();
   const keepId = current ? current.file.id : undefined;
   const keep =
@@ -430,11 +462,105 @@ function renderHeader() {
       dom.meta.append(span);
     }
   }
+  renderUnitSwitch();
+  renderProgress();
   dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
   dom.chipFocus.setAttribute("aria-pressed", String(state.focusOnly));
   dom.chipSort.setAttribute("aria-pressed", String(state.sortBySize));
+}
+
+/** コミット範囲だけに出す「最終形 | コミットごと」の切り替え（R-UNIT）。 */
+function renderUnitSwitch() {
+  dom.unitSwitch.textContent = "";
+  dom.unitSwitch.hidden = state.units.length === 0;
+  for (const status of state.units) {
+    const unit = String(status.unit);
+    const item = button("unit-button");
+    const pending = state.pendingUnit && state.pendingUnit.unit === unit;
+    let label = UNIT_LABELS[unit] || unit;
+    if (status.state === "failed") {
+      label = `${label}（作れなかった）`;
+      item.classList.add("failed");
+      item.title = `作れなかった: ${status.error || ""}（押すと理由と再試行）`;
+    } else if (status.state === "building" && pending) {
+      label = `${label}（読み込み中…）`;
+    }
+    item.textContent = label;
+    item.setAttribute("aria-pressed", String(unit === state.unit));
+    item.addEventListener("click", () => void switchUnit(unit, null));
+    dom.unitSwitch.append(item);
+  }
+}
+
+/** 上部の、表示中のグループ単位の見たの進捗（R-SEEN）。 */
+function renderProgress() {
+  const progress = seenProgress(state.entries.map((entry) => entry.file));
+  dom.progress.hidden = !state.review || progress.total === 0;
+  dom.progressBar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
+  dom.progressText.textContent = `見た ${progress.seen} / ${progress.total}`;
+}
+
+/**
+ * グループの見出しの題。コミットごとでは件名の種類を枠で示し、件名から外す。
+ * @param {HTMLElement} parent
+ * @param {any} group
+ * @param {string} className
+ */
+function appendGroupTitle(parent, group, className) {
+  const title = el("span", className);
+  const box = state.unit === "commit" ? commitTypeBox(group.title || "") : null;
+  if (box) {
+    title.append(textEl("span", "ctype", box.type), document.createTextNode(box.title));
+  } else {
+    title.append(document.createTextNode(group.title || group.id));
+  }
+  parent.append(title);
+}
+
+/**
+ * @param {string} groupId
+ * @returns {{ seen: number, total: number, done: boolean }}
+ */
+function groupProgressFor(groupId) {
+  return seenProgress(
+    state.entries.filter((entry) => entry.group.id === groupId).map((entry) => entry.file),
+  );
+}
+
+/**
+ * ツリーのグループ見出しの進捗。全部見たら数の代わりに「閲」の印を出す。
+ * @param {string} groupId
+ */
+function updateGroupHead(groupId) {
+  const head = state.groupHeads.get(groupId);
+  if (!head) {
+    return;
+  }
+  const progress = groupProgressFor(groupId);
+  head.root.classList.toggle("done", progress.done);
+  head.count.textContent = "";
+  if (progress.done) {
+    const seal = textEl("span", "seal", "閲");
+    seal.title = "すべて見た";
+    head.count.append(seal);
+  } else {
+    head.count.append(textEl("span", "g-count", `${progress.seen} / ${progress.total}`));
+  }
+  head.bar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
+}
+
+/**
+ * ファイルのコメント（ファイル全体のコメントを含む）。コメントの JSON は submit の契約の
+ * 形でファイル id を持たないので、サーバが id を振るのと同じ（グループ, パス）で対応付ける。
+ * @param {Entry} entry
+ * @returns {any[]}
+ */
+function commentsOf(entry) {
+  return state.allComments.filter(
+    (comment) => comment.group_id === entry.group.id && comment.path === entry.file.path,
+  );
 }
 
 function renderTree() {
@@ -450,6 +576,7 @@ function rebuildTree() {
   /** 前回のボタンを使い回す。同じファイルの項目は作り直さない。 */
   const items = new Map(state.treeItems);
   dom.tree.textContent = "";
+  state.groupHeads = new Map();
   const fragment = document.createDocumentFragment();
   for (const { group, nodes } of groups) {
     const open = state.groupOpen.get(group.id) !== false;
@@ -460,16 +587,10 @@ function rebuildTree() {
     head.title = group.title || group.id;
     head.setAttribute("aria-expanded", String(open));
     const caret = textEl("span", "caret", open ? "▾" : "▸");
-    const stats = groupStatsFor(group.id);
-    head.append(
-      caret,
-      textEl("span", "gtitle", group.title || group.id),
-      textEl(
-        "span",
-        "st",
-        `${stats.files} files  +${stats.add} −${stats.del}`,
-      ),
-    );
+    const count = el("span", "g-progress");
+    head.append(caret);
+    appendGroupTitle(head, group, "gtitle");
+    head.append(count);
     head.addEventListener("click", () => {
       const nextOpen = groupEl.dataset.open === "false";
       groupEl.dataset.open = nextOpen ? "true" : "false";
@@ -477,24 +598,19 @@ function rebuildTree() {
       head.setAttribute("aria-expanded", String(nextOpen));
       caret.textContent = nextOpen ? "▾" : "▸";
     });
-    groupEl.append(head);
+    const barTrack = el("div", "g-bar");
+    const bar = el("i");
+    barTrack.append(bar);
+    groupEl.append(head, barTrack);
+    // ツリーのグループ見出しには why と watch を出さない（グループ帯に出す）。
     const body = el("div", "group-body");
-    if (group.why) {
-      body.append(textEl("p", "why", group.why));
-    }
-    if (group.watch) {
-      const watch = el("div", "watch");
-      watch.append(
-        textEl("b", "", "見てほしい点"),
-        document.createTextNode(group.watch),
-      );
-      body.append(watch);
-    }
     const list = el("ul", "files");
     appendNodes(list, nodes, group, items);
     body.append(list);
     groupEl.append(body);
     fragment.append(groupEl);
+    state.groupHeads.set(group.id, { root: groupEl, count, bar });
+    updateGroupHead(group.id);
   }
   dom.tree.append(fragment);
   state.treeItems = items;
@@ -558,19 +674,25 @@ function treeItem(entry, label, items) {
   }
   item.textContent = "";
   item.title = entry.file.path;
+  // 見たは左端のチェックで示す。取り消し線は削除と見分けがつかないので使わない。
   item.classList.toggle("seen", entry.file.seen);
+  const letter = statusLetter(entry.file.status);
   item.append(
+    el("span", "chk"),
     svgIcon(FILE_ICON),
     textEl("span", "fname", label),
-    textEl("span", "badge status", statusLabel(entry.file.status)),
-    fileStatsEl(entry.file),
   );
+  const comments = commentsOf(entry).length;
+  if (comments > 0) {
+    item.append(textEl("span", "cbadge", `💬 ${comments}`));
+  }
   if (entry.file.focus) {
     item.append(textEl("span", "badge-focus", "重要"));
   }
   if (entry.file.noise) {
     item.append(textEl("span", "badge-noise", "ノイズ"));
   }
+  item.append(textEl("span", `sl ${letter}`, letter), fileStatsEl(entry.file));
   return item;
 }
 
@@ -589,32 +711,33 @@ function updateTreeActive() {
   state.treeActiveId = nextId;
 }
 
+/** 本文側のグループ帯。why は既定で畳み（開閉はページを開いている間だけ覚える）、watch は常に出す。 */
 function renderGroupHeader() {
   const entry = currentEntry();
   dom.groupHeader.textContent = "";
   if (!entry) {
     return;
   }
-  const open = state.groupHeaderOpen.get(entry.group.id) !== false;
+  const open = state.groupHeaderOpen.get(entry.group.id) === true;
   dom.groupHeader.dataset.open = open ? "true" : "false";
-  const stats = groupStatsFor(entry.group.id);
   const line = el("div", "gh-line");
-  const toggle = button("gh-toggle");
-  toggle.textContent = "▾";
-  toggle.setAttribute("aria-expanded", String(open));
-  toggle.title = open ? "このグループの説明を畳む" : "このグループの説明を開く";
-  toggle.addEventListener("click", () => {
-    const nextOpen = dom.groupHeader.dataset.open === "false";
-    dom.groupHeader.dataset.open = nextOpen ? "true" : "false";
-    state.groupHeaderOpen.set(entry.group.id, nextOpen);
-    toggle.setAttribute("aria-expanded", String(nextOpen));
-    toggle.title = nextOpen ? "このグループの説明を畳む" : "このグループの説明を開く";
-  });
-  line.append(
-    toggle,
-    textEl("span", "gh-title", entry.group.title || entry.group.id),
-    textEl("span", "gh-st", `+${stats.add} −${stats.del} / ${stats.files} files`),
-  );
+  appendGroupTitle(line, entry.group, "gh-title");
+  const progress = groupProgressFor(entry.group.id);
+  line.append(textEl("span", "gh-st", `${progress.seen} / ${progress.total} 見た`));
+  if (entry.group.why) {
+    const toggle = button("gh-toggle");
+    const label = () => (dom.groupHeader.dataset.open === "true" ? "説明を畳む" : "説明を開く");
+    toggle.textContent = label();
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.addEventListener("click", () => {
+      const nextOpen = dom.groupHeader.dataset.open !== "true";
+      dom.groupHeader.dataset.open = nextOpen ? "true" : "false";
+      state.groupHeaderOpen.set(entry.group.id, nextOpen);
+      toggle.setAttribute("aria-expanded", String(nextOpen));
+      toggle.textContent = label();
+    });
+    line.append(toggle);
+  }
   dom.groupHeader.append(line);
   if (entry.group.why) {
     dom.groupHeader.append(textEl("p", "gh-why", entry.group.why));
@@ -651,9 +774,8 @@ function renderFileHeader() {
       textEl("span", "file-old", `← ${entry.file.old_path}`),
     );
   }
-  dom.fileHeader.append(
-    textEl("span", "badge status", statusLabel(entry.file.status)),
-  );
+  const letter = statusLetter(entry.file.status);
+  dom.fileHeader.append(textEl("span", `sl ${letter}`, letter));
   dom.fileHeader.append(fileStatsEl(entry.file));
   if (entry.file.focus) {
     dom.fileHeader.append(textEl("span", "badge focus", "重要"));
@@ -729,9 +851,12 @@ function renderFileHeader() {
     dom.fileHeader.append(origin);
   }
 
-  const seen = iconButton(entry.file.seen ? "見た（取り消す）" : "見た", EYE_ICON);
+  // 見たは文字付きのチェック。キー v でも付け外しできる（R-SEEN）。
+  const seen = button(`seen-toggle${entry.file.seen ? " on" : ""}`);
+  seen.title = entry.file.seen ? "見たを取り消す（v）" : "見たにする（v）";
   seen.disabled = busy;
   seen.setAttribute("aria-pressed", String(entry.file.seen));
+  seen.append(el("span", "chk"), document.createTextNode("見た"), textEl("kbd", "", "v"));
   seen.addEventListener("click", () => void toggleSeen(entry.file));
   dom.fileHeader.append(seen);
 }
@@ -1207,6 +1332,8 @@ function renderDiff() {
     collapseDefault(entry.file, state.collapsedOverrides)
   ) {
     dom.content.style.height = "0px";
+    renderNav([0]);
+    renderRuler([0]);
     return;
   }
   const offsets = lineOffsets(state.heights);
@@ -1232,6 +1359,8 @@ function renderDiff() {
   dom.content.append(fragment);
   applyCommentClamps(dom.content);
   restoreEditorFocus(focus);
+  renderNav(offsets);
+  renderRuler(offsets);
   const needsMeasure =
     state.wrap ||
     state.threads.byLine.size > 0 ||
@@ -1465,6 +1594,17 @@ function renderOriginReason(line) {
   panel.append(
     textEl("p", "origin-body", commit.body || "（本文はありません）"),
   );
+  const block = origin.blocks.get(Number(line.block));
+  const target = block ? block.entries.find((/** @type {any} */ item) => item.sha === sha) : null;
+  // マージの由来は理由を開くだけで、移り先を持たない。
+  if (target && !target.merge && target.target) {
+    const jump = button("btn origin-jump");
+    jump.textContent = "このコミットで見る";
+    jump.addEventListener("click", () => {
+      void switchUnit("commit", { sha, target: target.target });
+    });
+    panel.append(jump);
+  }
   return panel;
 }
 
@@ -1656,6 +1796,9 @@ function saveDraft(key, value) {
 async function addComment(payload) {
   try {
     const comment = await api.postComment(payload);
+    state.allComments = [...state.allComments, comment];
+    state.treeVersion += 1;
+    renderTree();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
     // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
     const stored = state.commentStore.get(payload.file_id);
@@ -1691,6 +1834,8 @@ async function addComment(payload) {
  */
 function openConfirm(verdict) {
   state.pendingVerdict = verdict;
+  state.modalAction = () => void submitReview(verdict);
+  dom.modalCancel.textContent = "戻る";
   const approve = verdict === "approved";
   dom.modalTitle.textContent = approve
     ? "承認しますか？"
@@ -1706,6 +1851,7 @@ function openConfirm(verdict) {
 function closeModal() {
   dom.modal.hidden = true;
   state.pendingVerdict = null;
+  state.modalAction = null;
 }
 
 /**
@@ -1765,6 +1911,9 @@ function measureHeights(start) {
       changed = true;
     }
   });
+  if (changed) {
+    state.rulerDirty = true;
+  }
   if (changed && !state.rendering) {
     state.rendering = true;
     requestAnimationFrame(() => {
@@ -1904,8 +2053,341 @@ function collapseAll() {
   renderFloating();
 }
 
+/** 表示中のファイルで止まれる場所。畳まれたノイズやバイナリでは止まらない。 */
+function reachableStops() {
+  const entry = currentEntry();
+  if (!entry || state.binary || collapseDefault(entry.file, state.collapsedOverrides)) {
+    return [];
+  }
+  return state.stops;
+}
+
+/**
+ * 右下の「前の変更 / 次の変更」と「現在 / 全体」（R-NAV）。
+ * @param {number[]} offsets
+ */
+function renderNav(offsets) {
+  const entry = currentEntry();
+  dom.nav.hidden = !entry;
+  if (!entry) {
+    return;
+  }
+  const tops = reachableStops().map((index) => offsets[index] ?? 0);
+  const current = currentStopIndex(tops, navPosition());
+  dom.navPos.textContent = `${current < 0 ? "–" : current + 1} / ${tops.length}`;
+  dom.navPrev.disabled = state.loading;
+  dom.navNext.disabled = state.loading;
+}
+
+/**
+ * @param {number} top
+ */
+function scrollToTop(top) {
+  dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
+  // 末尾近くでは止まる場所を上端まで送れない。移った先を覚えておき、利用者が
+  // スクロールするまではそこを今の位置として扱う（同じ場所で n が空回りしないように）。
+  state.lastNav = { top, scrollTop: dom.viewport.scrollTop };
+  scheduleRender();
+}
+
+/** 変更間の移動で使う今の位置。 */
+function navPosition() {
+  const last = state.lastNav;
+  if (last && Math.abs(dom.viewport.scrollTop - last.scrollTop) < 2) {
+    return last.top;
+  }
+  return dom.viewport.scrollTop + NAV_MARGIN;
+}
+
+/**
+ * @param {string} message
+ */
+function showToast(message) {
+  dom.toast.textContent = message;
+  dom.toast.hidden = false;
+  window.clearTimeout(state.toastTimer);
+  state.toastTimer = window.setTimeout(() => {
+    dom.toast.hidden = true;
+  }, 2_000);
+}
+
+/**
+ * 移ったファイルが見えるよう、ツリーのグループとディレクトリをそこまで開く。
+ * @param {Entry} entry
+ */
+function revealInTree(entry) {
+  let changed = state.groupOpen.get(entry.group.id) === false;
+  state.groupOpen.set(entry.group.id, true);
+  const segments = entry.file.path.split("/");
+  let prefix = "";
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    prefix = prefix ? `${prefix}/${segments[index]}` : segments[index];
+    const key = `${entry.group.id}:${prefix}`;
+    if (state.dirOpen.get(key) === false) {
+      changed = true;
+    }
+    state.dirOpen.set(key, true);
+  }
+  if (changed) {
+    state.treeVersion += 1;
+  }
+}
+
+/**
+ * n / p: ファイルの中の次（前）の止まる場所へ。端では、見えている順で次（前）のファイルの
+ * 最初（最後）の止まる場所へ移る。最後（最初）のファイルでは止まって知らせる（R-NAV）。
+ * @param {1 | -1} direction
+ */
+async function navigate(direction) {
+  const entry = currentEntry();
+  if (!entry || state.loading) {
+    return;
+  }
+  const offsets = lineOffsets(state.heights);
+  const tops = reachableStops().map((index) => offsets[index] ?? 0);
+  const index = nextStop(tops, navPosition(), direction);
+  if (index !== null) {
+    scrollToTop(tops[index]);
+    return;
+  }
+  const files = state.visible.map((candidate) => candidate.file);
+  const here = files.findIndex((file) => file.id === entry.file.id);
+  const next = nextFileIndex(files, here < 0 ? state.index : here, direction, (file) => {
+    const candidate = state.visible.find((item) => item.file.id === file.id);
+    return hasStops(file, candidate ? commentsOf(candidate) : [], state.collapsedOverrides);
+  });
+  if (next === null) {
+    showToast(direction > 0 ? "最後の変更です" : "最初の変更です");
+    return;
+  }
+  revealInTree(state.visible[next]);
+  state.pendingJump = direction > 0 ? "first" : "last";
+  await selectIndex(next, { scrollTop: true });
+}
+
+/** ファイルを表示し終えた後の移り先（次のファイルの最初の変更や、由来の該当行）へ移る。 */
+function applyPendingJump() {
+  const jump = state.pendingJump;
+  state.pendingJump = null;
+  if (!jump) {
+    return;
+  }
+  const offsets = lineOffsets(state.heights);
+  const stops = reachableStops();
+  if (jump === "first" || jump === "last") {
+    if (stops.length > 0) {
+      scrollToTop(offsets[jump === "first" ? stops[0] : stops[stops.length - 1]]);
+    }
+    return;
+  }
+  const index = state.display.findIndex((line) => lineHasAnchor(line, jump.side, jump.line));
+  if (index >= 0) {
+    scrollToTop(offsets[index]);
+  }
+}
+
+/**
+ * @param {DisplayLine} line
+ * @param {number} index
+ * @returns {string}
+ */
+function rulerKind(line, index) {
+  if (state.threads.byLine.has(index)) {
+    return "note";
+  }
+  switch (line.kind) {
+    case "delete":
+    case "replace-old":
+      return "del";
+    case "insert":
+    case "replace-new":
+    case "replace":
+      return "add";
+    default:
+      return "";
+  }
+}
+
+/**
+ * スクロールバーの横の位置の帯。印は帯の高さに縮めて描くので、全行を DOM に描かない。
+ * @param {number[]} offsets
+ */
+function renderRuler(offsets) {
+  const height = dom.ruler.clientHeight;
+  const total = offsets[offsets.length - 1] || 0;
+  const canvas = dom.rulerCanvas;
+  const ratio = window.devicePixelRatio || 1;
+  const width = dom.ruler.clientWidth;
+  if (canvas.height !== Math.round(height * ratio) || canvas.width !== Math.round(width * ratio)) {
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    state.rulerDirty = true;
+  }
+  if (state.rulerDirty) {
+    state.rulerDirty = false;
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      const styles = getComputedStyle(document.documentElement);
+      /** @type {Record<string, string>} */
+      const colors = {
+        add: styles.getPropertyValue("--add-ink").trim(),
+        del: styles.getPropertyValue("--del-ink").trim(),
+        note: styles.getPropertyValue("--note-line").trim(),
+      };
+      const stops = reachableStops().length > 0 || state.display.length > 0;
+      const kinds = stops ? state.display.map(rulerKind) : [];
+      for (const mark of rulerMarks(kinds, offsets, height)) {
+        context.fillStyle = colors[mark.kind];
+        if (mark.kind === "note") {
+          context.fillRect(1, mark.top, width - 2, Math.max(3, mark.bottom - mark.top));
+        } else {
+          context.fillRect(3, mark.top, width - 6, mark.bottom - mark.top);
+        }
+      }
+    }
+  }
+  const viewportHeight = dom.viewport.clientHeight;
+  dom.rulerView.hidden = total <= viewportHeight;
+  if (total > 0) {
+    dom.rulerView.style.top = `${(dom.viewport.scrollTop / total) * height}px`;
+    dom.rulerView.style.height = `${Math.max(4, (viewportHeight / total) * height)}px`;
+  }
+}
+
+/**
+ * レビューの応答を表示に取り込む。コメントは両方の単位の分を持つので、取得し直した
+ * 応答（fresh）のときだけ置き換える。
+ * @param {any} review
+ * @param {boolean} fresh
+ */
+function applyReview(review, fresh) {
+  state.review = review;
+  state.unit = review.unit ?? null;
+  if (Array.isArray(review.units)) {
+    state.units = review.units;
+  }
+  if (fresh) {
+    state.allComments = review.comments || [];
+  }
+  if (state.unit) {
+    state.reviews.set(state.unit, review);
+  }
+  state.entries = flatten(review);
+  state.treeItems = new Map();
+  state.treeVersion += 1;
+  rebuildVisible();
+}
+
+/**
+ * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
+ * 最初のコミット）を出す。由来から移るときは、そのコミットの該当行を出す。
+ * @param {string} unit
+ * @param {{ sha: string, target: { path: string, side: string, line: number } } | null} jump
+ */
+async function switchUnit(unit, jump) {
+  if (unit === state.unit && !jump) {
+    return;
+  }
+  const status = state.units.find((candidate) => candidate.unit === unit);
+  if (!status) {
+    return;
+  }
+  if (status.state === "failed") {
+    openUnitFailure(status);
+    return;
+  }
+  if (status.state !== "ready") {
+    state.pendingUnit = { unit, jump };
+    renderUnitSwitch();
+    showToast(`${UNIT_LABELS[unit] || unit}を読み込み中です`);
+    // 手元の状態が古いこともあるので読み直す。できていればそのまま切り替わる。
+    void onUnitEvent();
+    return;
+  }
+  state.pendingUnit = null;
+  const path = currentEntry()?.file.path ?? "";
+  let review = unit === state.unit ? state.review : state.reviews.get(unit);
+  const fresh = !review;
+  if (!review) {
+    review = await api.getReview(false, unit);
+  }
+  applyReview(review, fresh);
+  let index = jump ? originJumpTarget(state.entries, jump.sha, jump.target) : -1;
+  if (index < 0) {
+    index = unitSwitchTarget(state.entries, path);
+  }
+  renderHeader();
+  renderFooter();
+  if (index < 0) {
+    state.current = null;
+    renderTree();
+    renderGroupHeader();
+    renderFileHeader();
+    renderNotice();
+    renderDiff();
+    return;
+  }
+  const entry = state.entries[index];
+  if (jump) {
+    state.pendingJump = { side: jump.target.side, line: jump.target.line };
+    revealInTree(entry);
+  }
+  const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
+  if (visibleIndex >= 0) {
+    state.index = visibleIndex;
+  }
+  await selectEntry(entry, { scrollTop: true });
+}
+
+/**
+ * 作れなかった単位の理由と、作り直しの操作。
+ * @param {any} status
+ */
+function openUnitFailure(status) {
+  const unit = String(status.unit);
+  dom.modalTitle.textContent = `${UNIT_LABELS[unit] || unit}の単位を作れなかった`;
+  dom.modalBody.textContent = `理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`;
+  dom.modalOk.textContent = "再試行";
+  dom.modalOk.className = "btn primary";
+  dom.modalCancel.textContent = "閉じる";
+  state.modalAction = () => {
+    state.pendingUnit = { unit, jump: null };
+    api
+      .retryUnit(unit)
+      .then((answer) => {
+        state.units = answer.units || state.units;
+        renderUnitSwitch();
+      })
+      .catch((error) => showOverlay("作り直せませんでした", String(error)));
+  };
+  dom.modal.hidden = false;
+}
+
+/** もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。 */
+async function onUnitEvent() {
+  const review = await api.getReview(false);
+  state.units = review.units || [];
+  renderUnitSwitch();
+  const pending = state.pendingUnit;
+  if (!pending) {
+    return;
+  }
+  const status = state.units.find((candidate) => candidate.unit === pending.unit);
+  if (status && status.state === "ready") {
+    void switchUnit(pending.unit, pending.jump);
+  } else if (status && status.state === "failed") {
+    state.pendingUnit = null;
+    renderUnitSwitch();
+    openUnitFailure(status);
+  }
+}
+
 function recomputeThreads() {
   state.threads = placeThreads(state.display, state.comments);
+  state.stops = navStops(state.display, state.comments);
+  state.rulerDirty = true;
 }
 
 function recomputeDisplay() {
@@ -1946,6 +2428,7 @@ async function selectIndex(index, options = { scrollTop: true }) {
  */
 async function selectEntry(entry, options = { scrollTop: true }) {
   state.current = entry;
+  state.lastNav = null;
   const id = entry.file.id;
   const override = state.highlightOverrides.get(id);
   const key = `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
@@ -1998,6 +2481,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   renderNotice();
   renderFloating();
   renderDiff();
+  applyPendingJump();
   void loadOrigin(entry);
 }
 
@@ -2011,6 +2495,12 @@ async function toggleSeen(file) {
   const next = !file.seen;
   file.seen = next;
   state.treeItems.get(file.id)?.classList.toggle("seen", next);
+  const entry = currentEntry();
+  if (entry) {
+    updateGroupHead(entry.group.id);
+    renderGroupHeader();
+  }
+  renderProgress();
   renderFileHeader();
   try {
     await api.postState({ file_id: file.id, seen: next });
@@ -2025,6 +2515,7 @@ function applyTheme() {
   const dark = isDarkTheme(resolved);
   const changed = state.dark !== dark;
   state.dark = dark;
+  state.rulerDirty = true;
   document.documentElement.dataset.theme = resolved;
   const current =
     THEME_LABELS[state.theme] || THEME_LABELS.auto;
@@ -2091,6 +2582,9 @@ function handleKey(event) {
   ) {
     return;
   }
+  if (event.ctrlKey || event.metaKey || event.altKey || !dom.modal.hidden) {
+    return;
+  }
   const action = keyAction(
     event.key,
     state.mode,
@@ -2102,6 +2596,13 @@ function handleKey(event) {
     void selectIndex(Number(action.index), { scrollTop: true });
   } else if (action.type === "mode") {
     setMode(action.mode === "split" ? "split" : "unified");
+  } else if (action.type === "nav") {
+    void navigate(action.direction === -1 ? -1 : 1);
+  } else if (action.type === "seen") {
+    const entry = currentEntry();
+    if (entry) {
+      void toggleSeen(entry.file);
+    }
   } else if (action.type === "wrap") {
     state.wrap = Boolean(action.value);
     state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
@@ -2111,10 +2612,7 @@ function handleKey(event) {
 }
 
 async function boot() {
-  state.review = await api.getReview(false);
-  state.entries = flatten(state.review);
-  state.visible = state.entries.slice();
-  state.treeVersion += 1;
+  applyReview(await api.getReview(false), true);
   renderHeader();
   renderTree();
   renderFooter();
@@ -2123,10 +2621,13 @@ async function boot() {
   } else {
     renderNotice();
   }
-  api.subscribeEvents(() => {
-    state.updateAvailable = true;
-    renderUpdateBadge();
-  });
+  api.subscribeEvents(
+    () => {
+      state.updateAvailable = true;
+      renderUpdateBadge();
+    },
+    () => void onUnitEvent(),
+  );
 }
 
 document.addEventListener("keydown", handleKey);
@@ -2166,14 +2667,26 @@ dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
 dom.modalCancel.addEventListener("click", closeModal);
 dom.modalOk.addEventListener("click", () => {
-  const verdict = state.pendingVerdict;
+  const action = state.modalAction;
   closeModal();
-  if (verdict) {
-    void submitReview(verdict);
+  if (action) {
+    action();
   }
 });
+dom.navPrev.addEventListener("click", () => void navigate(-1));
+dom.navNext.addEventListener("click", () => void navigate(1));
+dom.ruler.addEventListener("click", (event) => {
+  const rect = dom.ruler.getBoundingClientRect();
+  const total = lineOffsets(state.heights).at(-1) || 0;
+  const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
+  dom.viewport.scrollTop = Math.max(0, ratio * total - dom.viewport.clientHeight / 2);
+  scheduleRender();
+});
 dom.viewport.addEventListener("scroll", scheduleRender);
-window.addEventListener("resize", scheduleResize);
+window.addEventListener("resize", () => {
+  state.rulerDirty = true;
+  scheduleResize();
+});
 window
   .matchMedia("(prefers-color-scheme: dark)")
   .addEventListener("change", () => {

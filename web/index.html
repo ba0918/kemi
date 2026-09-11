@@ -13,7 +13,12 @@
         <div class="title" id="review-title"></div>
         <div class="subtitle" id="review-subtitle" hidden></div>
       </div>
+      <div class="unit-switch" id="unit-switch" role="group" aria-label="グループ単位" hidden></div>
       <div class="meta" id="review-meta"></div>
+      <div class="progress" id="progress" title="見たファイル / 全ファイル" hidden>
+        <span class="bar"><i id="progress-bar"></i></span>
+        <span id="progress-text"></span>
+      </div>
       <span class="spacer"></span>
       <div class="tools">
         <div class="seg" role="group" aria-label="表示モード">
@@ -81,7 +86,19 @@
         <div class="file-header" id="file-header"></div>
         <div id="floating-threads" hidden></div>
         <div id="notice" hidden></div>
-        <div id="diff-viewport"><div id="diff-content"></div></div>
+        <div id="diff-area">
+          <div id="diff-viewport"><div id="diff-content"></div></div>
+          <div id="ruler" title="変更とコメントの位置">
+            <canvas id="ruler-canvas"></canvas>
+            <div id="ruler-view"></div>
+          </div>
+          <div class="navpill" id="nav" role="group" aria-label="変更間の移動" hidden>
+            <button type="button" id="nav-prev" title="前の変更（p）"><kbd>p</kbd>前の変更</button>
+            <span class="pos" id="nav-pos"></span>
+            <button type="button" id="nav-next" title="次の変更（n）">次の変更<kbd>n</kbd></button>
+          </div>
+          <div id="toast" role="status" hidden></div>
+        </div>
       </main>
     </div>
 
