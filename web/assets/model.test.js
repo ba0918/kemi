@@ -23,6 +23,13 @@ import {
   suggestionAllowed,
   toDisplayLines,
   windowFor,
+  withRowIndex,
+  navStops,
+  nextStop,
+  nextFileIndex,
+  hasStops,
+  commitTypeBox,
+  statusLetter,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -53,6 +60,22 @@ function replace(oldText, newText) {
     kind: "replace",
     old: { number: 5, text: oldText },
     new: { number: 5, text: newText },
+    old_segments: [{ text: oldText, changed: true }],
+    new_segments: [{ text: newText, changed: true }],
+  };
+}
+
+/**
+ * @param {number} number
+ * @param {string} oldText
+ * @param {string} newText
+ * @returns {import("./model.js").LogicalRow}
+ */
+function replaceAt(number, oldText, newText) {
+  return {
+    kind: "replace",
+    old: { number, text: oldText },
+    new: { number, text: newText },
     old_segments: [{ text: oldText, changed: true }],
     new_segments: [{ text: newText, changed: true }],
   };
@@ -130,16 +153,57 @@ function file(path, add, del, extra = {}) {
   };
 }
 
-test("toDisplayLines_unified_expands_replace_and_keeps_skip", () => {
-  const rows = [equal(1, "a"), replace("old", "new"), deleted(6, "gone"), inserted(6, "added"), skip(7)];
+test("unified_shows_removed_block_before_added_block", () => {
+  const rows = [
+    equal(1, "a"),
+    replaceAt(2, "old2", "new2"),
+    replaceAt(3, "old3", "new3"),
+    replaceAt(4, "old4", "new4"),
+    equal(5, "e"),
+  ];
+
   const lines = toDisplayLines(rows, "unified");
 
   assert.deepEqual(
     lines.map((line) => line.kind),
-    ["equal", "replace-old", "replace-new", "delete", "insert", "skip"],
+    ["equal", "replace-old", "replace-old", "replace-old", "replace-new", "replace-new", "replace-new", "equal"],
   );
-  assert.equal(lines[0].logicalIndex, 0);
-  assert.equal(lines[5].logicalIndex, 4);
+  assert.deepEqual(
+    lines.slice(1, 7).map((line) => (line.oldLine ?? line.newLine)?.text),
+    ["old2", "old3", "old4", "new2", "new3", "new4"],
+  );
+});
+
+test("unified_keeps_leftover_deletes_with_the_removed_block_and_inserts_with_the_added_block", () => {
+  const rows = [replaceAt(2, "old2", "new2"), deleted(3, "gone"), equal(4, "d"), replaceAt(5, "o", "n"), inserted(6, "added"), skip(7)];
+
+  const lines = toDisplayLines(rows, "unified");
+
+  assert.deepEqual(
+    lines.map((line) => line.kind),
+    ["replace-old", "delete", "replace-new", "equal", "replace-old", "replace-new", "insert", "skip"],
+  );
+});
+
+test("unified_keeps_word_highlights_with_each_side_of_the_pair", () => {
+  const lines = toDisplayLines([replaceAt(2, "old2", "new2"), replaceAt(3, "old3", "new3")], "unified");
+
+  assert.deepEqual(lines[1].oldSegments, [{ text: "old3", changed: true }]);
+  assert.deepEqual(lines[1].newSegments, []);
+  assert.deepEqual(lines[3].newSegments, [{ text: "new3", changed: true }]);
+  assert.deepEqual(lines[3].oldSegments, []);
+});
+
+test("unified_reordering_keeps_logical_index_for_expanding_skips", () => {
+  const rows = [skip(3), replaceAt(4, "o4", "n4"), replaceAt(5, "o5", "n5"), skip(2)];
+
+  const lines = toDisplayLines(rows, "unified");
+
+  assert.deepEqual(
+    lines.map((line) => line.logicalIndex),
+    [0, 1, 2, 1, 2, 3],
+  );
+  assert.equal(lines[5].skip, rows[3]);
 });
 
 test("toDisplayLines_split_keeps_one_line_per_logical_row", () => {
@@ -477,3 +541,166 @@ test("lineAnchor_prefers_new_side_and_falls_back_to_old", () => {
   assert.equal(lineAnchor(empty), null);
 });
 
+
+test("range_comment_sits_under_last_line", () => {
+  const display = toDisplayLines(
+    [equal(1, "a"), equal(2, "b"), equal(3, "c"), equal(4, "d")],
+    "unified",
+  );
+  const comments = [{ id: "c1", side: "new", start_line: 2, end_line: 3 }];
+
+  const placed = placeThreads(display, comments);
+
+  assert.deepEqual(
+    (placed.byLine.get(2) || []).map((comment) => comment.id),
+    ["c1"],
+  );
+  assert.equal(placed.byLine.get(1), undefined);
+});
+
+test("with_row_index_numbers_rows_by_their_place_in_the_whole_file", () => {
+  const rows = [
+    { kind: "skip", count: 3, from: 0, to: 3 },
+    equal(4, "d"),
+    replaceAt(5, "o", "n"),
+    { kind: "skip", count: 10, from: 5, to: 15 },
+    equal(16, "p"),
+  ];
+
+  assert.deepEqual(
+    withRowIndex(rows).map((row) => row.row),
+    [0, 3, 4, 5, 15],
+  );
+});
+
+test("origin_lines_sit_above_each_change_block_only_when_asked", () => {
+  const rows = withRowIndex([equal(1, "a"), replaceAt(2, "o", "n"), equal(3, "c"), inserted(4, "x")]);
+
+  const withOrigin = toDisplayLines(rows, "unified", { origin: true });
+  const without = toDisplayLines(rows, "split");
+
+  assert.deepEqual(
+    withOrigin.map((line) => line.kind),
+    ["equal", "origin", "replace-old", "replace-new", "equal", "origin", "insert"],
+  );
+  assert.deepEqual(
+    withOrigin.filter((line) => line.kind === "origin").map((line) => line.block),
+    [1, 3],
+  );
+  assert.ok(!without.some((line) => line.kind === "origin"));
+  assert.deepEqual(
+    toDisplayLines(rows, "split", { origin: true }).map((line) => line.kind),
+    ["equal", "origin", "replace", "equal", "origin", "insert"],
+  );
+});
+
+test("nav_stops_at_each_change_block_start", () => {
+  const display = toDisplayLines(
+    [equal(1, "a"), replaceAt(2, "o", "n"), deleted(3, "d"), equal(4, "b"), inserted(5, "x")],
+    "unified",
+  );
+
+  assert.deepEqual(navStops(display, []), [1, 5]);
+});
+
+test("nav_stops_at_origin_line_when_the_block_has_one", () => {
+  const display = toDisplayLines(
+    withRowIndex([equal(1, "a"), replaceAt(2, "o", "n")]),
+    "unified",
+    { origin: true },
+  );
+
+  assert.deepEqual(navStops(display, []), [1]);
+  assert.equal(display[1].kind, "origin");
+});
+
+test("nav_stops_at_first_line_of_a_comment_outside_blocks", () => {
+  const display = toDisplayLines(
+    [equal(1, "a"), equal(2, "b"), equal(3, "c"), inserted(4, "x")],
+    "unified",
+  );
+  const comments = [{ id: "c1", side: "new", start_line: 2, end_line: 3 }];
+
+  assert.deepEqual(navStops(display, comments), [1, 3]);
+});
+
+test("nav_stops_do_not_add_a_stop_for_a_comment_starting_inside_a_block", () => {
+  const display = toDisplayLines(
+    [equal(1, "a"), inserted(2, "x"), inserted(3, "y"), equal(4, "b")],
+    "unified",
+  );
+  const comments = [{ id: "c1", side: "new", start_line: 3, end_line: 4 }];
+
+  assert.deepEqual(navStops(display, comments), [1]);
+});
+
+test("nav_stops_ignore_file_wide_comments", () => {
+  const display = toDisplayLines([equal(1, "a"), inserted(2, "x")], "unified");
+  const comments = [{ id: "c1", side: "new", start_line: null, end_line: null }];
+
+  assert.deepEqual(navStops(display, comments), [1]);
+});
+
+test("nav_next_and_previous_stop_follow_the_view_and_stop_at_the_ends", () => {
+  const tops = [100, 400, 900];
+
+  assert.equal(nextStop(tops, 0, 1), 0);
+  assert.equal(nextStop(tops, 100, 1), 1);
+  assert.equal(nextStop(tops, 900, 1), null);
+  assert.equal(nextStop(tops, 900, -1), 1);
+  assert.equal(nextStop(tops, 100, -1), null);
+});
+
+test("next_file_follows_the_visible_order_across_groups_and_stops_at_the_ends", () => {
+  const files = [file("a.rs", 1, 0), file("b.rs", 2, 0), file("c.rs", 3, 0)];
+  const navigable = () => true;
+
+  assert.equal(nextFileIndex(files, 0, 1, navigable), 1);
+  assert.equal(nextFileIndex(files, 2, 1, navigable), null);
+  assert.equal(nextFileIndex(files, 0, -1, navigable), null);
+  assert.equal(nextFileIndex(files, 2, -1, navigable), 1);
+});
+
+test("next_file_skips_noise_binary_and_files_without_stops_but_not_seen_ones", () => {
+  const files = [
+    file("a.rs", 1, 0),
+    file("Cargo.lock", 5, 5, { noise: true, collapsed: true }),
+    file("logo.png", 0, 0, { binary: true }),
+    file("moved.rs", 0, 0, { status: "rename" }),
+    file("seen.rs", 1, 1, { seen: true }),
+  ];
+  const navigable = (/** @type {FileEntry} */ entry) => hasStops(entry, [], {});
+
+  assert.equal(nextFileIndex(files, 0, 1, navigable), 4);
+  assert.equal(nextFileIndex(files, 4, -1, navigable), 0);
+});
+
+test("next_file_counts_a_line_comment_as_a_stop", () => {
+  const moved = file("moved.rs", 0, 0, { status: "rename" });
+
+  assert.equal(hasStops(moved, [{ side: "new", start_line: 1, end_line: 1 }], {}), true);
+  assert.equal(hasStops(moved, [{ side: "new", start_line: null, end_line: null }], {}), false);
+  assert.equal(
+    hasStops(file("Cargo.lock", 5, 5, { noise: true, collapsed: true }), [], { "f-Cargo.lock": false }),
+    true,
+  );
+});
+
+test("commit_type_box_splits_a_conventional_subject", () => {
+  assert.deepEqual(commitTypeBox("feat: 足す"), { type: "feat", title: "足す" });
+  assert.deepEqual(commitTypeBox("fix(ui)!: 直す"), { type: "fix(ui)!", title: "直す" });
+});
+
+test("commit_type_box_leaves_other_subjects_alone", () => {
+  assert.equal(commitTypeBox("Merge branch 'main'"), null);
+  assert.equal(commitTypeBox("Feat: 大文字"), null);
+  assert.equal(commitTypeBox("feat:空白なし"), null);
+  assert.equal(commitTypeBox("docs(:x"), null);
+});
+
+test("status_letter_is_one_character", () => {
+  assert.equal(statusLetter("add"), "A");
+  assert.equal(statusLetter("delete"), "D");
+  assert.equal(statusLetter("rename"), "R");
+  assert.equal(statusLetter("modify"), "M");
+});

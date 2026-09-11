@@ -15,6 +15,7 @@
  *   to?: number,
  *   old_start?: number|null,
  *   new_start?: number|null,
+ *   row?: number,
  * }} LogicalRow
  * @typedef {{
  *   id: string, path: string, old_path: string|null, status: string,
@@ -25,20 +26,82 @@
  *   kind: string, oldLine: Line|null, newLine: Line|null,
  *   oldSegments: Segment[], newSegments: Segment[],
  *   logicalIndex: number, skip: LogicalRow|null,
+ *   block?: number,
  * }} DisplayLine
  */
 
 /**
- * 論理行を表示行に変換する。unified では replace を 2 行に分ける。
+ * 各行に、ファイル全体を整列した行の中での位置（`row`）を付ける。サーバは畳んだ
+ * 範囲を skip の `from` / `to` で返すので、その間の行は続き番号になる。由来は
+ * この位置で変更ブロックを指す。
+ * @param {LogicalRow[]} rows
+ * @returns {LogicalRow[]}
+ */
+export function withRowIndex(rows) {
+  let next = 0;
+  return rows.map((row) => {
+    if (row.kind === "skip") {
+      const from = Number(row.from ?? next);
+      next = Number(row.to ?? from);
+      return { ...row, row: from };
+    }
+    const indexed = { ...row, row: next };
+    next += 1;
+    return indexed;
+  });
+}
+
+/** 追加・削除・書き換えの表示行の種類。 */
+const CHANGE_KINDS = new Set(["replace", "replace-old", "replace-new", "delete", "insert"]);
+
+/**
+ * @param {string} kind
+ * @returns {boolean}
+ */
+export function isChangeKind(kind) {
+  return CHANGE_KINDS.has(kind);
+}
+
+/**
+ * 論理行を表示行に変換する。1 列（unified）では、連続する変更を「消した行の塊 →
+ * 足した行の塊」の順に並べる（書き換えの旧と新を 1 行ずつ交互にしない）。
+ * `origin` を指定すると、各変更ブロックのすぐ上に由来の行を置く。
  * @param {LogicalRow[]} rows
  * @param {"unified"|"split"} mode
+ * @param {{ origin?: boolean }} [options]
  * @returns {DisplayLine[]}
  */
-export function toDisplayLines(rows, mode) {
+export function toDisplayLines(rows, mode, options = {}) {
   /** @type {DisplayLine[]} */
   const lines = [];
+  /** @type {DisplayLine[]} */
+  let removed = [];
+  /** @type {DisplayLine[]} */
+  let added = [];
+  let inBlock = false;
+  const flush = () => {
+    lines.push(...removed, ...added);
+    removed = [];
+    added = [];
+  };
   rows.forEach((row, logicalIndex) => {
     const base = { oldSegments: [], newSegments: [], skip: null, logicalIndex };
+    const changed = row.kind === "replace" || row.kind === "delete" || row.kind === "insert";
+    if (!changed) {
+      flush();
+      inBlock = false;
+    } else if (!inBlock) {
+      inBlock = true;
+      if (options.origin) {
+        lines.push({
+          ...base,
+          kind: "origin",
+          oldLine: null,
+          newLine: null,
+          block: row.row ?? logicalIndex,
+        });
+      }
+    }
     switch (row.kind) {
       case "equal":
         lines.push({
@@ -48,22 +111,24 @@ export function toDisplayLines(rows, mode) {
           newLine: row.new ?? null,
         });
         break;
-      case "delete":
-        lines.push({
-          ...base,
-          kind: "delete",
-          oldLine: row.old ?? null,
-          newLine: null,
-        });
+      case "delete": {
+        const line = { ...base, kind: "delete", oldLine: row.old ?? null, newLine: null };
+        if (mode === "split") {
+          lines.push(line);
+        } else {
+          removed.push(line);
+        }
         break;
-      case "insert":
-        lines.push({
-          ...base,
-          kind: "insert",
-          oldLine: null,
-          newLine: row.new ?? null,
-        });
+      }
+      case "insert": {
+        const line = { ...base, kind: "insert", oldLine: null, newLine: row.new ?? null };
+        if (mode === "split") {
+          lines.push(line);
+        } else {
+          added.push(line);
+        }
         break;
+      }
       case "replace":
         if (mode === "split") {
           lines.push({
@@ -75,14 +140,14 @@ export function toDisplayLines(rows, mode) {
             newSegments: row.new_segments ?? [],
           });
         } else {
-          lines.push({
+          removed.push({
             ...base,
             kind: "replace-old",
             oldLine: row.old ?? null,
             newLine: null,
             oldSegments: row.old_segments ?? [],
           });
-          lines.push({
+          added.push({
             ...base,
             kind: "replace-new",
             oldLine: null,
@@ -98,6 +163,7 @@ export function toDisplayLines(rows, mode) {
         break;
     }
   });
+  flush();
   return lines;
 }
 
@@ -326,6 +392,142 @@ export function statusLabel(status) {
 }
 
 /**
+ * 状態の 1 文字（A 追加 / D 削除 / R 改名 / M 変更）。
+ * @param {string} status
+ * @returns {string}
+ */
+export function statusLetter(status) {
+  switch (status) {
+    case "add":
+      return "A";
+    case "delete":
+      return "D";
+    case "rename":
+      return "R";
+    default:
+      return "M";
+  }
+}
+
+/**
+ * 件名がコミットの種類で始まるとき（例 `feat: `、`fix(ui)!: `）、`:` の前までの種類と
+ * 残りの件名に分ける。形式に合わない件名は null。
+ * @param {string} subject
+ * @returns {{ type: string, title: string } | null}
+ */
+export function commitTypeBox(subject) {
+  const match = /^([a-z]+(?:\([^()]*\))?!?): (.+)$/s.exec(subject);
+  return match ? { type: match[1], title: match[2] } : null;
+}
+
+/**
+ * 変更間の移動で止まる場所（表示行の位置、昇順）。変更ブロックの先頭（由来の行が
+ * あればその行）と、ブロックの外で始まる行コメントの範囲の最初の行。ブロックの中で
+ * 始まるコメントはブロックの先頭で一緒に止まり、ファイル全体のコメントは含めない。
+ * @param {DisplayLine[]} display
+ * @param {any[]} comments
+ * @returns {number[]}
+ */
+export function navStops(display, comments) {
+  /** @type {Set<number>} */
+  const stops = new Set();
+  const inBlock = new Array(display.length).fill(false);
+  let blockStart = -1;
+  display.forEach((line, index) => {
+    if (line.kind === "origin" || isChangeKind(line.kind)) {
+      if (blockStart < 0) {
+        blockStart = index;
+        stops.add(index);
+      }
+      inBlock[index] = true;
+      return;
+    }
+    blockStart = -1;
+  });
+  /** @type {Map<string, number>} */
+  const anchors = new Map();
+  display.forEach((line, index) => {
+    for (const [side, target] of [
+      ["old", line.oldLine],
+      ["new", line.newLine],
+    ]) {
+      const key = target ? `${side}:${Number(/** @type {Line} */ (target).number)}` : null;
+      if (key && !anchors.has(key)) {
+        anchors.set(key, index);
+      }
+    }
+  });
+  for (const comment of comments) {
+    if (comment.start_line === null || comment.start_line === undefined) {
+      continue;
+    }
+    const index = anchors.get(`${comment.side}:${Number(comment.start_line)}`);
+    if (index !== undefined && !inBlock[index]) {
+      stops.add(index);
+    }
+  }
+  return [...stops].sort((left, right) => left - right);
+}
+
+/**
+ * 今の位置から見た次（`direction` 1）か前（-1）の止まる場所。無ければ null（端で止まる）。
+ * @param {number[]} tops 止まる場所の上端（昇順）
+ * @param {number} position 今の位置
+ * @param {1 | -1} direction
+ * @returns {number | null}
+ */
+export function nextStop(tops, position, direction) {
+  if (direction > 0) {
+    const index = tops.findIndex((top) => top > position + 1);
+    return index < 0 ? null : index;
+  }
+  for (let index = tops.length - 1; index >= 0; index -= 1) {
+    if (tops[index] < position - 1) {
+      return index;
+    }
+  }
+  return null;
+}
+
+/**
+ * ファイルに止まる場所がありそうか。内容を読まずにメタデータで決める。バイナリと、
+ * 畳まれたノイズと、変更もコメントも無いファイル（改名だけなど）は持たない。
+ * @param {FileEntry} file
+ * @param {any[]} comments そのファイルのコメント
+ * @param {Record<string, boolean>} collapsedMap
+ * @returns {boolean}
+ */
+export function hasStops(file, comments, collapsedMap) {
+  if (file.binary || collapseDefault(file, collapsedMap)) {
+    return false;
+  }
+  if (file.add + file.del > 0) {
+    return true;
+  }
+  return comments.some(
+    (comment) => comment.start_line !== null && comment.start_line !== undefined,
+  );
+}
+
+/**
+ * 見えている順で、次（`direction` 1）か前（-1）の移動先のファイル。見たのファイルも
+ * 飛ばさない。端では null。
+ * @param {FileEntry[]} files
+ * @param {number} index 今のファイルの位置
+ * @param {1 | -1} direction
+ * @param {(file: FileEntry) => boolean} navigable
+ * @returns {number | null}
+ */
+export function nextFileIndex(files, index, direction, navigable) {
+  for (let next = index + direction; next >= 0 && next < files.length; next += direction) {
+    if (navigable(files[next])) {
+      return next;
+    }
+  }
+  return null;
+}
+
+/**
  * @param {number} bytes
  * @returns {string}
  */
@@ -436,10 +638,12 @@ export function placeThreads(displayLines, comments) {
   /** @type {any[]} */
   const floating = [];
   for (const comment of comments) {
+    // 範囲のコメントは範囲の最後の行の直下に置き、範囲の行を上下に分けない。
+    const last = comment.end_line ?? comment.start_line;
     const key =
       comment.start_line === null || comment.start_line === undefined
         ? null
-        : `${comment.side}:${Number(comment.start_line)}`;
+        : `${comment.side}:${Number(last)}`;
     const index = key === null ? -1 : anchors.get(key) ?? -1;
     if (index < 0) {
       floating.push(comment);
