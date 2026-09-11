@@ -439,6 +439,7 @@ function rebuildTree() {
     groupEl.dataset.group = group.id;
     groupEl.dataset.open = open ? "true" : "false";
     const head = button("group-head");
+    head.title = group.title || group.id;
     head.setAttribute("aria-expanded", String(open));
     const caret = textEl("span", "caret", open ? "▾" : "▸");
     const stats = groupStatsFor(group.id);
@@ -538,6 +539,7 @@ function treeItem(entry, label, items) {
     items.set(entry.file.id, item);
   }
   item.textContent = "";
+  item.title = entry.file.path;
   item.classList.toggle("seen", entry.file.seen);
   item.append(
     svgIcon(FILE_ICON),
