@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::content;
 use crate::domain::diff;
 use crate::domain::origin::{self as origin_domain, LineCommit, RangeCommit};
-use crate::source::git::{git_raw_os, git_text, path_from_bytes};
+use crate::source::git::{git_raw, git_raw_os_env, git_text, path_from_bytes};
 use crate::source::{FileContent, FileOrigin, SourceError};
 
 /// マージのもう片方の親をたどる深さの上限。これを超えた行は特定できないとする。
@@ -29,29 +29,78 @@ struct BlameLine {
     boundary: bool,
 }
 
-/// `git blame --line-porcelain` を、対象の版の行番号順（`final` の順）に読む。
-/// `--reverse` では対象の版は範囲の始点になる。
-fn blame(
-    repo: &Path,
-    range: &str,
-    path: &Path,
-    reverse: bool,
-) -> Result<Vec<Option<BlameLine>>, SourceError> {
-    let mut args: Vec<OsString> = vec!["-c".into(), "core.quotePath=false".into(), "blame".into()];
-    if reverse {
-        args.push("--reverse".into());
+/// blame を呼ぶ git。利用者の全体とシステムの設定を読ませずに blame を動かす。
+///
+/// Why not `-c blame.ignoreRevsFile=` や `--ignore-revs-file=` だけで済ませない:
+/// 設定の blame.ignoreRevsFile が無いファイルを指すと、blame は一覧を読む時点で
+/// 失敗し、後からの空の指定では取り消せない（git 2.43 で確認）。全体の設定を外すと
+/// 一緒に消える safe.directory だけは、同じ値をコマンドラインの設定として渡し直す。
+struct BlameGit<'a> {
+    repo: &'a Path,
+    /// 全体とシステムの設定にある safe.directory を、読んだ順に `-c` で渡す引数。
+    trusted: Vec<OsString>,
+}
+
+impl<'a> BlameGit<'a> {
+    fn new(repo: &'a Path) -> Self {
+        // 値が無いと git config は失敗する。そのときは渡し直すものが無い。
+        let listing = git_raw(
+            repo,
+            &[
+                "config",
+                "--show-scope",
+                "-z",
+                "--get-all",
+                "safe.directory",
+            ],
+        )
+        .unwrap_or_default();
+        let mut fields = listing.split(|byte| *byte == 0);
+        let mut trusted = Vec::new();
+        // 空の値は一覧を空に戻す意味を持つので、空も順番どおりに渡す。
+        while let (Some(scope), Some(value)) = (fields.next(), fields.next()) {
+            if scope == b"system" || scope == b"global" {
+                let mut setting = OsString::from("safe.directory=");
+                setting.push(path_from_bytes(value).as_os_str());
+                trusted.extend([OsString::from("-c"), setting]);
+            }
+        }
+        BlameGit { repo, trusted }
     }
-    args.extend([
-        // 設定の blame.ignoreRevsFile で飛ばされたコミットを由来から落とさないよう、
-        // 設定の後に読まれる空の指定で、無視するコミットの一覧を空に戻す。
-        OsString::from("--ignore-revs-file="),
-        OsString::from("--line-porcelain"),
-        OsString::from(range),
-        OsString::from("--"),
-        path.as_os_str().to_os_string(),
-    ]);
-    let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
-    Ok(parse_line_porcelain(&git_raw_os(repo, &args)?))
+
+    /// `git blame --line-porcelain` を、対象の版の行番号順（`final` の順）に読む。
+    /// `--reverse` では対象の版は範囲の始点になる。
+    fn blame(
+        &self,
+        range: &str,
+        path: &Path,
+        reverse: bool,
+    ) -> Result<Vec<Option<BlameLine>>, SourceError> {
+        let mut args = self.trusted.clone();
+        args.extend(["-c".into(), "core.quotePath=false".into(), "blame".into()]);
+        if reverse {
+            args.push("--reverse".into());
+        }
+        args.extend([
+            // リポジトリの設定の blame.ignoreRevsFile で飛ばされたコミットを由来から
+            // 落とさないよう、設定の後に読まれる空の指定で、無視する一覧を空に戻す。
+            OsString::from("--ignore-revs-file="),
+            OsString::from("--line-porcelain"),
+            OsString::from(range),
+            OsString::from("--"),
+            path.as_os_str().to_os_string(),
+        ]);
+        let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
+        let output = git_raw_os_env(
+            self.repo,
+            &args,
+            &[
+                ("GIT_CONFIG_GLOBAL", "/dev/null"),
+                ("GIT_CONFIG_NOSYSTEM", "1"),
+            ],
+        )?;
+        Ok(parse_line_porcelain(&output))
+    }
 }
 
 fn parse_line_porcelain(bytes: &[u8]) -> Vec<Option<BlameLine>> {
@@ -194,13 +243,14 @@ pub(crate) fn file_origin(
         .collect();
 
     let commits = range_commits(repo, &range.from, &range.to)?;
+    let git = BlameGit::new(repo);
     let new_side = match (&paths.new, needs_new_side) {
-        (Some(path), true) => new_side_commits(repo, &range.from, &range.to, path)?,
+        (Some(path), true) => new_side_commits(&git, &range.from, &range.to, path)?,
         _ => Vec::new(),
     };
     let old_side = match (&paths.old, deleted_lines.is_empty()) {
         (Some(path), false) => {
-            deleted_line_commits(repo, &range.merge_base, &range.to, path, &deleted_lines)?
+            deleted_line_commits(&git, &range.merge_base, &range.to, path, &deleted_lines)?
         }
         _ => Vec::new(),
     };
@@ -257,13 +307,14 @@ pub(crate) fn range_commits(
 }
 
 /// 新側の各行を最後に変えたコミット。範囲の外（boundary）の行は空。
-pub(crate) fn new_side_commits(
-    repo: &Path,
+fn new_side_commits(
+    git: &BlameGit,
     from: &str,
     to: &str,
     path: &Path,
 ) -> Result<Vec<Vec<LineCommit>>, SourceError> {
-    Ok(blame(repo, &format!("{from}..{to}"), path, false)?
+    Ok(git
+        .blame(&format!("{from}..{to}"), path, false)?
         .into_iter()
         .map(|line| match line {
             Some(line) if !line.boundary => vec![line_commit(&line.sha, &line)],
@@ -273,14 +324,14 @@ pub(crate) fn new_side_commits(
 }
 
 /// 旧側（`start` の版の `path`）の、指定した行を消したコミット。`lines` 以外の行は空。
-pub(crate) fn deleted_line_commits(
-    repo: &Path,
+fn deleted_line_commits(
+    git: &BlameGit,
     start: &str,
     tip: &str,
     path: &Path,
     lines: &[u32],
 ) -> Result<Vec<Vec<LineCommit>>, SourceError> {
-    let mut tracer = Tracer::new(repo);
+    let mut tracer = Tracer::new(git);
     // 最上位の reverse blame の失敗は、レビュー中の git の失敗としてそのまま返す。
     tracer.reverse_blame(start, tip, path)?;
     let mut result: Vec<Vec<LineCommit>> = Vec::new();
@@ -318,7 +369,7 @@ struct Graph {
 }
 
 struct Tracer<'a> {
-    repo: &'a Path,
+    git: &'a BlameGit<'a>,
     reverse: HashMap<(String, String, PathBuf), Vec<Option<BlameLine>>>,
     forward: HashMap<(String, String, PathBuf), Vec<Option<BlameLine>>>,
     graphs: HashMap<(String, String), Graph>,
@@ -326,9 +377,9 @@ struct Tracer<'a> {
 }
 
 impl<'a> Tracer<'a> {
-    fn new(repo: &'a Path) -> Self {
+    fn new(git: &'a BlameGit<'a>) -> Self {
         Tracer {
-            repo,
+            git,
             reverse: HashMap::new(),
             forward: HashMap::new(),
             graphs: HashMap::new(),
@@ -344,7 +395,7 @@ impl<'a> Tracer<'a> {
     ) -> Result<&[Option<BlameLine>], SourceError> {
         let key = (start.to_string(), tip.to_string(), path.to_path_buf());
         if !self.reverse.contains_key(&key) {
-            let lines = blame(self.repo, &format!("{start}..{tip}"), path, true)?;
+            let lines = self.git.blame(&format!("{start}..{tip}"), path, true)?;
             self.reverse.insert(key.clone(), lines);
         }
         Ok(&self.reverse[&key])
@@ -354,7 +405,10 @@ impl<'a> Tracer<'a> {
     fn forward_line(&mut self, base: &str, tip: &str, path: &Path, line: u32) -> Option<BlameLine> {
         let key = (base.to_string(), tip.to_string(), path.to_path_buf());
         if !self.forward.contains_key(&key) {
-            let lines = blame(self.repo, &format!("{base}..{tip}"), path, false).ok()?;
+            let lines = self
+                .git
+                .blame(&format!("{base}..{tip}"), path, false)
+                .ok()?;
             self.forward.insert(key.clone(), lines);
         }
         self.forward[&key].get(line as usize - 1).cloned().flatten()
@@ -362,7 +416,7 @@ impl<'a> Tracer<'a> {
 
     fn graph(&mut self, start: &str, tip: &str) -> &Graph {
         let key = (start.to_string(), tip.to_string());
-        let repo = self.repo;
+        let repo = self.git.repo;
         self.graphs.entry(key).or_insert_with(|| {
             let range = format!("{start}..{tip}");
             let mut graph = Graph::default();
@@ -388,7 +442,7 @@ impl<'a> Tracer<'a> {
 
     fn merge_base(&mut self, left: &str, right: &str) -> Option<String> {
         let key = (left.to_string(), right.to_string());
-        let repo = self.repo;
+        let repo = self.git.repo;
         self.merge_bases
             .entry(key)
             .or_insert_with(|| {

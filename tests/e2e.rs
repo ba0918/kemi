@@ -83,8 +83,12 @@ impl Kemi {
     }
 
     fn spawn_with_state(dir: &Path, args: &[&str], state: &Path) -> Self {
-        let mut child = kemi_command(dir, state)
-            .args(args)
+        Kemi::start(kemi_command(dir, state).args(args))
+    }
+
+    /// 組み立てたコマンドで起動し、stderr の URL の行を待つ。
+    fn start(command: &mut Command) -> Self {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1080,4 +1084,53 @@ async fn result_location_is_printed_on_its_own_stderr_line() {
             .any(|line| line.contains(&location) && !line.contains("http://")),
         "{lines:?}"
     );
+}
+
+// ---- 利用者の git の設定 ----
+
+#[tokio::test]
+async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() {
+    let dir = TempDir::new();
+    let base = two_commit_repo(&dir);
+    let changed_a = String::from_utf8(run_git(&dir.path, &["rev-parse", "HEAD~1"])).unwrap();
+    let state = TempDir::new();
+    // 利用者の本物の設定の代わりに、一時ファイルを git の全体設定として読ませる。
+    let global = state.path.join("gitconfig");
+    std::fs::write(
+        &global,
+        format!(
+            "[blame]\n\tignoreRevsFile = {}\n",
+            state.path.join("missing-ignore-revs").display()
+        ),
+    )
+    .unwrap();
+    let kemi = Kemi::start(
+        kemi_command(&dir.path, &state.path)
+            .env("GIT_CONFIG_GLOBAL", &global)
+            .args(["--from", &base, "--no-open", "--port", "0"]),
+    );
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = review["groups"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "a.txt")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = reqwest::get(format!("{}api/origin/{id}", kemi.url))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let origin: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changed_a.trim());
+    kemi.kill();
 }
