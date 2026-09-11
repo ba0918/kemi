@@ -13,10 +13,17 @@ shift 2
 
 cd "$fixture"
 
+# 壁時計（date）は時刻合わせで前後に飛ぶことがあり、計測値が負や数十秒になる。
+# 単調増加の時計でミリ秒を取る。
+now_ms() {
+  perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
+    -e 'printf "%d\n", clock_gettime(CLOCK_MONOTONIC) * 1000'
+}
+
 times=()
 for run in 1 2 3; do
   stderr_file=$(mktemp)
-  start=$(date +%s%3N)
+  start=$(now_ms)
   "$binary" --worktree --port 0 --no-open >/dev/null 2>"$stderr_file" &
   pid=$!
   url=""
@@ -30,7 +37,7 @@ for run in 1 2 3; do
     sleep 0.01
   done
   curl -s -o /dev/null "${url}api/review"
-  end=$(date +%s%3N)
+  end=$(now_ms)
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   rm -f "$stderr_file"
