@@ -16,6 +16,11 @@ use crate::source::{FileOrigin, Plan, PlanStore, PlannedFile, ReviewSource, Side
 /// 内容を読まずに統計だけを出す untracked の上限（D6）。
 pub const UNTRACKED_LIMIT: u64 = 1_048_576;
 
+/// porcelain の `git diff` に渡し、利用者の diff.orderFile を空の並びで打ち消す。
+/// その設定は出力の順（一覧の既定の並び、R-VIEW）を変え、指すファイルが無いと
+/// diff ごと失敗する。plumbing（diff-files / diff-tree）はこの設定を読まない。
+const NO_ORDER_FILE: &str = "-O/dev/null";
+
 #[derive(Clone, Debug)]
 pub enum GitMode {
     Worktree,
@@ -428,7 +433,14 @@ impl ReviewSource for GitSource {
 
         let final_paths = git_raw(
             &self.repo,
-            &["diff", "--name-only", "-z", "-M", &format!("{from}...{to}")],
+            &[
+                "diff",
+                NO_ORDER_FILE,
+                "--name-only",
+                "-z",
+                "-M",
+                &format!("{from}...{to}"),
+            ],
         )?;
         let commit_paths = if shas.is_empty() {
             Vec::new()
@@ -532,7 +544,14 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
         git_raw(repo, &["diff-files", "--name-status", "-z", "--no-renames"])?,
         git_raw(
             repo,
-            &["diff", "--name-status", "-z", "--no-renames", "--cached"],
+            &[
+                "diff",
+                NO_ORDER_FILE,
+                "--name-status",
+                "-z",
+                "--no-renames",
+                "--cached",
+            ],
         )?,
     ] {
         for (status, path) in parse_name_status_z(&listing) {
@@ -553,7 +572,7 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
     if paths.len() < 256 {
         return Ok(parse_numstat(&git_raw(
             repo,
-            &["diff", "--numstat", "-z", "-M", "HEAD"],
+            &["diff", NO_ORDER_FILE, "--numstat", "-z", "-M", "HEAD"],
         )?));
     }
 
@@ -584,6 +603,7 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
             move || -> Result<Vec<Numstat>, SourceError> {
                 let mut args: Vec<OsString> = vec![
                     "diff".into(),
+                    NO_ORDER_FILE.into(),
                     "--numstat".into(),
                     "-z".into(),
                     "-M".into(),
@@ -636,11 +656,11 @@ pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 }
 
 fn diff_entries(repo: &Path, range_args: &[&str]) -> Result<Vec<DiffEntry>, SourceError> {
-    let mut args = vec!["diff", "--numstat", "-z", "-M"];
+    let mut args = vec!["diff", NO_ORDER_FILE, "--numstat", "-z", "-M"];
     args.extend_from_slice(range_args);
     let numstat = parse_numstat(&git_raw(repo, &args)?);
 
-    let mut args = vec!["diff", "--name-status", "-z", "-M"];
+    let mut args = vec!["diff", NO_ORDER_FILE, "--name-status", "-z", "-M"];
     args.extend_from_slice(range_args);
     let name_status = parse_name_status(&git_raw(repo, &args)?);
     Ok(combine_entries(name_status, numstat))
@@ -1281,6 +1301,65 @@ mod tests {
         let review = source.review().unwrap();
 
         assert!(review.groups[0].files.is_empty());
+    }
+
+    /// a.txt / b.txt / c.txt を、範囲のコミット・index・作業ツリーのそれぞれで変え、
+    /// 利用者の設定として diff.orderFile を置いたリポジトリ。git commit も
+    /// diff.orderFile を読むので、設定は最後に置く。
+    fn repo_with_diff_order_file(order_file: &str) -> (TempRepo, String) {
+        let repo = TempRepo::new();
+        let names = ["a.txt", "b.txt", "c.txt"];
+        names.iter().for_each(|name| repo.write(name, "base\n"));
+        let base = repo.add_and_commit("base");
+        names.iter().for_each(|name| repo.write(name, "range\n"));
+        repo.add_and_commit("change");
+        names.iter().for_each(|name| repo.write(name, "staged\n"));
+        repo.git(&["add", "-A"]);
+        names.iter().for_each(|name| repo.write(name, "worktree\n"));
+        let order_file = repo.path.join(".git").join(order_file);
+        repo.git(&["config", "diff.orderFile", order_file.to_str().unwrap()]);
+        (repo, base)
+    }
+
+    /// 最終形・worktree・staged のそれぞれで、一覧に並ぶパス。
+    fn listed_paths_in_each_mode(repo: &TempRepo, base: &str) -> Vec<Vec<String>> {
+        let range = GitMode::Range {
+            from: base.to_string(),
+            to: "HEAD".to_string(),
+            group_by: GroupBy::File,
+        };
+        [range, GitMode::Worktree, GitMode::Staged]
+            .into_iter()
+            .map(|mode| {
+                let review = source(repo, mode.clone())
+                    .review()
+                    .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+                review.groups[0]
+                    .files
+                    .iter()
+                    .map(|file| file.path.clone())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn missing_diff_order_file_does_not_stop_the_review() {
+        let (repo, base) = repo_with_diff_order_file("missing-order");
+
+        for paths in listed_paths_in_each_mode(&repo, &base) {
+            assert_eq!(paths, ["a.txt", "b.txt", "c.txt"]);
+        }
+    }
+
+    #[test]
+    fn diff_order_file_does_not_reorder_the_file_list() {
+        let (repo, base) = repo_with_diff_order_file("order");
+        std::fs::write(repo.path.join(".git").join("order"), "c.txt\nb.txt\n").unwrap();
+
+        for paths in listed_paths_in_each_mode(&repo, &base) {
+            assert_eq!(paths, ["a.txt", "b.txt", "c.txt"]);
+        }
     }
 
     #[test]
