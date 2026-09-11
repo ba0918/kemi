@@ -698,6 +698,11 @@ function rebuildTree() {
     updateGroupHead(group.id);
   }
   dom.tree.append(fragment);
+  // 使い回したボタンに前の選択の印が残ると、2 つのファイルが選ばれて見える。印を外してから
+  // 選び直させる。
+  if (state.treeActiveId) {
+    items.get(state.treeActiveId)?.classList.remove("active");
+  }
   state.treeItems = items;
   state.treeActiveId = null;
 }
