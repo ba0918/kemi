@@ -585,6 +585,16 @@ enum CommentRequest {
         #[serde(default)]
         suggestion: Option<String>,
     },
+    /// 本文と suggestion を書き換える。suggestion を省くか null にすると外す。
+    Edit {
+        id: String,
+        body: String,
+        #[serde(default)]
+        suggestion: Option<String>,
+    },
+    Delete {
+        id: String,
+    },
     Reply {
         id: String,
         body: String,
@@ -614,13 +624,46 @@ async fn comment_api(
             )
             .await
         }
+        CommentRequest::Edit {
+            id,
+            body,
+            suggestion,
+        } => {
+            let mut session = state.session.lock().expect("session poisoned");
+            let comment = session
+                .comments
+                .iter_mut()
+                .find(|comment| comment.id == id)
+                .ok_or_else(comment_not_found)?;
+            // 行レンジ・side・quote・作成時の内容ハッシュは変えない（R-COMMENT）。
+            let range = comment
+                .start_line
+                .zip(comment.end_line)
+                .map(|(start, end)| LineRange { start, end });
+            comment::validate_comment(comment.side, range, suggestion.as_deref())
+                .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
+            comment.body = body;
+            comment.suggestion = suggestion.map(|replacement| Suggestion { replacement });
+            Ok(Json(comment_json(comment)))
+        }
+        CommentRequest::Delete { id } => {
+            let mut session = state.session.lock().expect("session poisoned");
+            let index = session
+                .comments
+                .iter()
+                .position(|comment| comment.id == id)
+                .ok_or_else(comment_not_found)?;
+            // id は再利用しない。採番は next_comment が進むだけで、削除では戻さない。
+            session.comments.remove(index);
+            Ok(Json(json!({ "id": id, "deleted": true })))
+        }
         CommentRequest::Reply { id, body } => {
             let mut session = state.session.lock().expect("session poisoned");
             let comment = session
                 .comments
                 .iter_mut()
                 .find(|comment| comment.id == id)
-                .ok_or_else(|| ApiError::not_found("コメントが見つかりません"))?;
+                .ok_or_else(comment_not_found)?;
             comment.replies.push(body);
             let value = comment_json(comment);
             drop(session);
@@ -632,7 +675,7 @@ async fn comment_api(
                 .comments
                 .iter_mut()
                 .find(|comment| comment.id == id)
-                .ok_or_else(|| ApiError::not_found("コメントが見つかりません"))?;
+                .ok_or_else(comment_not_found)?;
             comment.resolved = resolved;
             let value = comment_json(comment);
             drop(session);
@@ -709,6 +752,10 @@ async fn add_comment(
         location
     );
     Ok(Json(comment_json(&comment)))
+}
+
+fn comment_not_found() -> ApiError {
+    ApiError::not_found("コメントが見つかりません")
 }
 
 fn parse_side(side: &str) -> Result<Side, ApiError> {

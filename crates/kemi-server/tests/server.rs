@@ -1409,3 +1409,142 @@ async fn range_startup_reads_no_content_including_background_build() {
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     server.stop();
 }
+
+// ---- R-COMMENT（編集と削除）----
+
+impl TestServer {
+    async fn comment(&self, body: Value) -> reqwest::Response {
+        self.post("api/comment", body).await
+    }
+
+    async fn add_new_side_comment(&self) -> Value {
+        self.comment(json!({
+            "op": "add", "file_id": "f1", "side": "new",
+            "start_line": 11, "end_line": 11, "body": "元の本文", "suggestion": "NEW\n"
+        }))
+        .await
+        .json()
+        .await
+        .unwrap()
+    }
+
+    async fn submit_comments(self) -> Vec<Value> {
+        let response = self
+            .post("api/submit", json!({"verdict": "approved"}))
+            .await;
+        assert_eq!(response.status(), 200);
+        self.finish().await["comments"].as_array().unwrap().clone()
+    }
+}
+
+#[tokio::test]
+async fn comment_edit_changes_only_body_and_suggestion() {
+    let server = TestServer::start().await;
+    let created = server.add_new_side_comment().await;
+
+    let response = server
+        .comment(json!({"op": "edit", "id": "c1", "body": "直した本文", "suggestion": "NEWER\n"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let comments = server.submit_comments().await;
+
+    let edited = &comments[0];
+    assert_eq!(edited["body"], "直した本文");
+    assert_eq!(edited["suggestion"]["replacement"], "NEWER\n");
+    for field in [
+        "id",
+        "side",
+        "start_line",
+        "end_line",
+        "quote",
+        "group_id",
+        "path",
+    ] {
+        assert_eq!(edited[field], created[field], "{field} must not change");
+    }
+    assert_eq!(edited["outdated"], false);
+}
+
+#[tokio::test]
+async fn comment_edit_can_drop_the_suggestion() {
+    let server = TestServer::start().await;
+    server.add_new_side_comment().await;
+
+    let edited: Value = server
+        .comment(json!({"op": "edit", "id": "c1", "body": "提案なし", "suggestion": null}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(edited["suggestion"], Value::Null);
+}
+
+#[tokio::test]
+async fn comment_edit_rejects_suggestion_on_old_side_and_file_wide() {
+    let server = TestServer::start().await;
+    server
+        .comment(json!({
+            "op": "add", "file_id": "f1", "side": "old",
+            "start_line": 11, "end_line": 11, "body": "旧側"
+        }))
+        .await;
+    server
+        .comment(json!({"op": "add", "file_id": "f1", "side": "new", "body": "全体"}))
+        .await;
+
+    for id in ["c1", "c2"] {
+        let response = server
+            .comment(json!({"op": "edit", "id": id, "body": "x", "suggestion": "y"}))
+            .await;
+        assert_eq!(response.status(), 400, "{id}");
+    }
+    let comments = server.submit_comments().await;
+    assert!(comments
+        .iter()
+        .all(|comment| comment["suggestion"] == Value::Null && comment["body"] != "x"));
+}
+
+#[tokio::test]
+async fn comment_delete_removes_it_from_submit() {
+    let server = TestServer::start().await;
+    server.add_new_side_comment().await;
+    server.add_new_side_comment().await;
+
+    let response = server.comment(json!({"op": "delete", "id": "c1"})).await;
+    assert_eq!(response.status(), 200);
+    let comments = server.submit_comments().await;
+
+    let ids: Vec<&str> = comments
+        .iter()
+        .map(|comment| comment["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["c2"]);
+}
+
+#[tokio::test]
+async fn comment_delete_never_reuses_the_id() {
+    let server = TestServer::start().await;
+    server.add_new_side_comment().await;
+    server.add_new_side_comment().await;
+    server.comment(json!({"op": "delete", "id": "c2"})).await;
+
+    let added = server.add_new_side_comment().await;
+
+    assert_eq!(added["id"], "c3");
+}
+
+#[tokio::test]
+async fn comment_edit_and_delete_of_unknown_id_are_not_found() {
+    let server = TestServer::start().await;
+
+    for body in [
+        json!({"op": "edit", "id": "c9", "body": "x"}),
+        json!({"op": "delete", "id": "c9"}),
+    ] {
+        let response = server.comment(body).await;
+        assert_eq!(response.status(), 404);
+        let error: Value = response.json().await.unwrap();
+        assert_eq!(error["error"], "コメントが見つかりません");
+    }
+}
