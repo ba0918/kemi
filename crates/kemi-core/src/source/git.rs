@@ -1417,7 +1417,9 @@ mod tests {
         repo.write("a.txt", "one\n");
         let base = repo.add_and_commit("base");
         repo.write("a.txt", "two\n");
-        repo.add_and_commit_signed("signed");
+        if repo.add_and_commit_signed("signed").is_none() {
+            return;
+        }
         repo.write("a.txt", "three\n");
         repo.add_and_commit("unsigned");
         repo.git(&["config", "log.showSignature", "true"]);

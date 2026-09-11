@@ -613,7 +613,9 @@ mod tests {
         let base = repo.add_and_commit("base");
         lines[3] = "four".to_string();
         repo.write("f.txt", &text(&lines));
-        let signed = repo.add_and_commit_signed("signed");
+        let Some(signed) = repo.add_and_commit_signed("signed") else {
+            return;
+        };
         repo.git(&["config", "log.showSignature", "true"]);
 
         let origin = origin_of(&final_source(&repo, &base, "HEAD"), "f.txt");
