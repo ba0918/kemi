@@ -18,7 +18,6 @@ import {
   nextHighlightOverride,
   nextTheme,
   placeThreads,
-  replaceComment,
   resolveTheme,
   statusLabel,
   suggestionAllowed,
@@ -806,14 +805,6 @@ function renderThread(comment) {
     );
   }
 
-  if (!state.submitted) {
-    const actions = el("div", "t-actions");
-    const resolve = button("resolve");
-    resolve.textContent = comment.resolved ? "解決を戻す" : "解決";
-    resolve.addEventListener("click", () => void toggleResolve(comment));
-    actions.append(resolve);
-    thread.append(actions);
-  }
   return thread;
 }
 
@@ -1376,38 +1367,6 @@ async function addComment(payload) {
     localStorage.removeItem(draftKey(payload.file_id, selection));
   } catch (error) {
     showOverlay("コメントを追加できません", String(error));
-  }
-}
-
-/**
- * @param {any} comment
- */
-async function toggleResolve(comment) {
-  const entry = currentEntry();
-  const fileId = entry ? entry.file.id : null;
-  try {
-    const updated = await api.postComment({
-      op: "resolve",
-      id: comment.id,
-      resolved: !comment.resolved,
-    });
-    // 応答までに別のファイルへ切り替わっていても、置き換えるのは送信元の
-    // コメントだけ。表示中の state は送信元を表示中のときだけ更新する。
-    if (fileId !== null) {
-      const stored = state.commentStore.get(fileId);
-      if (stored) {
-        const comments = replaceComment(stored, updated);
-        state.commentStore.set(fileId, comments);
-        if (isShowingFile(fileId)) {
-          state.comments = comments;
-          recomputeThreads();
-          renderDiff();
-          renderFloating();
-        }
-      }
-    }
-  } catch (error) {
-    showOverlay("解決状態を変えられません", String(error));
   }
 }
 
