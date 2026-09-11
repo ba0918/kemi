@@ -217,6 +217,17 @@ test("unified_reordering_keeps_logical_index_for_expanding_skips", () => {
   assert.equal(lines[5].skip, rows[3]);
 });
 
+test("unified_shows_a_500k_line_file_rewritten_wholesale", () => {
+  const count = 500_000;
+  const rows = Array.from({ length: count }, (_, index) => replaceAt(index + 1, `o${index}`, `n${index}`));
+
+  const lines = toDisplayLines(rows, "unified");
+
+  assert.equal(lines.length, count * 2);
+  assert.equal(lines[count - 1].oldLine?.text, `o${count - 1}`);
+  assert.equal(lines[count].newLine?.text, "n0");
+});
+
 test("toDisplayLines_split_keeps_one_line_per_logical_row", () => {
   const rows = [equal(1, "a"), replace("old", "new"), deleted(6, "gone"), skip(7)];
   const lines = toDisplayLines(rows, "split");

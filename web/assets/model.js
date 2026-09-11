@@ -80,7 +80,14 @@ export function toDisplayLines(rows, mode, options = {}) {
   let added = [];
   let inBlock = false;
   const flush = () => {
-    lines.push(...removed, ...added);
+    // Why not push(...removed, ...added): 丸ごと書き換えた大きなファイルでは塊が
+    // 数十万行になり、引数の数の上限を超えて RangeError になる。
+    for (const line of removed) {
+      lines.push(line);
+    }
+    for (const line of added) {
+      lines.push(line);
+    }
     removed = [];
     added = [];
   };
