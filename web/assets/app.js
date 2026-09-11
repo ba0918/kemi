@@ -799,12 +799,24 @@ function commentBodyIsClamped(body) {
 }
 
 /**
- * 描画済みの本文を実測し、隠れるものだけ畳みとトグルを残す。
+ * 描画済みの本文を実測し、隠れるものへ畳みとトグルを付け、隠れないものから外す。
+ * 幅が広がって畳みを外した浮動コメントも、狭くなればここで畳み直す。
  * @param {HTMLElement} root
  */
 function applyCommentClamps(root) {
-  for (const body of root.querySelectorAll(".t-body.clamp")) {
-    if (!(body instanceof HTMLElement) || commentBodyIsClamped(body)) {
+  for (const body of root.querySelectorAll(".t-body")) {
+    if (!(body instanceof HTMLElement)) {
+      continue;
+    }
+    // 畳み判定は clamp を付けた見た目で行うため、先に付けてから測る。
+    body.classList.add("clamp");
+    if (commentBodyIsClamped(body)) {
+      if (!body.querySelector(".clamp-toggle")) {
+        const commentId = body.dataset.commentId;
+        if (commentId !== undefined) {
+          body.append(clampToggle(body, commentId));
+        }
+      }
       continue;
     }
     const toggle = body.querySelector(".clamp-toggle");
@@ -813,6 +825,28 @@ function applyCommentClamps(root) {
     }
     body.classList.remove("clamp");
   }
+}
+
+/**
+ * 畳みトグルを作る。renderThread が最初に付け、幅が戻って再び畳みが
+ * 要るようになった浮動コメントには applyCommentClamps が付け直す。
+ * @param {HTMLElement} body .t-body
+ * @param {string} commentId
+ * @returns {HTMLButtonElement}
+ */
+function clampToggle(body, commentId) {
+  const toggle = button("clamp-toggle");
+  toggle.textContent = body.dataset.open === "true" ? "折りたたむ" : "続きを読む";
+  toggle.addEventListener("click", () => {
+    const nextOpen = body.dataset.open !== "true";
+    body.dataset.open = nextOpen ? "true" : "false";
+    state.commentClampOpen.set(commentId, nextOpen);
+    toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
+    if (dom.content.contains(body)) {
+      renderDiff();
+    }
+  });
+  return toggle;
 }
 
 /**
@@ -837,19 +871,9 @@ function renderThread(comment) {
   const body = el("div", "t-body clamp");
   const open = state.commentClampOpen.get(comment.id) === true;
   body.dataset.open = open ? "true" : "false";
+  body.dataset.commentId = comment.id;
   const clampBody = textEl("span", "clamp-body", comment.body);
-  const toggle = button("clamp-toggle");
-  toggle.textContent = open ? "折りたたむ" : "続きを読む";
-  toggle.addEventListener("click", () => {
-    const nextOpen = body.dataset.open !== "true";
-    body.dataset.open = nextOpen ? "true" : "false";
-    state.commentClampOpen.set(comment.id, nextOpen);
-    toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
-    if (dom.content.contains(body)) {
-      renderDiff();
-    }
-  });
-  body.append(clampBody, toggle);
+  body.append(clampBody, clampToggle(body, comment.id));
   thread.append(body);
 
   if (comment.suggestion) {
