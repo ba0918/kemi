@@ -437,6 +437,9 @@ function renderUpdateBadge() {
 }
 
 async function refresh() {
+  if (state.submitted) {
+    return;
+  }
   state.updateAvailable = false;
   renderUpdateBadge();
   const scrollTop = dom.viewport.scrollTop;
@@ -2188,6 +2191,11 @@ function showCompletion(verdict, answer) {
  * @param {string|null} detail
  */
 function showOverlay(title, detail) {
+  if (state.submitted) {
+    // 送信後はサーバが止まっているので、失敗を出しても直せない。完了画面（結果の JSON と
+    // その写し）を失敗の知らせで置き換えない（R-SUBMIT）。
+    return;
+  }
   dom.overlay.hidden = false;
   dom.overlayCard.textContent = "";
   dom.overlayCard.className = "";
@@ -2458,7 +2466,7 @@ function revealInTree(entry) {
  */
 async function navigate(direction) {
   const entry = currentEntry();
-  if (!entry || state.loading || state.navigating) {
+  if (!entry || state.loading || state.navigating || state.submitted) {
     return;
   }
   const offsets = lineOffsets(state.heights);
@@ -2663,7 +2671,7 @@ function applyReview(review, fresh) {
  * @param {{ find: (entries: Entry[]) => number, side: string, line: number | null, missing: () => void } | null} jump
  */
 async function switchUnit(unit, jump) {
-  if (unit === state.unit && !jump) {
+  if (state.submitted || (unit === state.unit && !jump)) {
     return;
   }
   const status = state.units.find((candidate) => candidate.unit === unit);
@@ -2896,6 +2904,9 @@ async function goToComment(comment, unit) {
 
 /** もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。 */
 async function onUnitEvent() {
+  if (state.submitted) {
+    return;
+  }
   const review = await api.getReview(false);
   state.units = review.units || [];
   renderUnitSwitch();
@@ -2968,6 +2979,10 @@ function fileCacheKey(entry) {
  * @param {{ scrollTop?: boolean, keepEditor?: boolean }} [options]
  */
 async function selectEntry(entry, options = { scrollTop: true }) {
+  if (state.submitted) {
+    // 送信後はサーバが止まっていて、まだ読んでいないファイルは取れない。完了画面を残す。
+    return;
+  }
   state.current = entry;
   state.lastNav = null;
   const id = entry.file.id;
@@ -3044,7 +3059,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
  * @param {FileEntry} file
  */
 async function toggleSeen(file) {
-  if (state.loading || !isShowingFile(file.id)) {
+  if (state.submitted || state.loading || !isShowingFile(file.id)) {
     return;
   }
   const next = !file.seen;
@@ -3076,7 +3091,7 @@ function applyTheme() {
     THEME_LABELS[state.theme] || THEME_LABELS.auto;
   const next = THEME_LABELS[nextTheme(state.theme)] || "";
   dom.btnTheme.title = `テーマ: ${current}（クリックで ${next}）`;
-  if (changed) {
+  if (changed && !state.submitted) {
     state.cache.clear();
     const entry = currentEntry();
     if (entry) {
@@ -3119,6 +3134,10 @@ function renderFooter() {
  * @param {KeyboardEvent} event
  */
 function handleKey(event) {
+  if (state.submitted) {
+    // 送信後は完了画面だけを出す。ファイルの移動や見たの切り替えはしない。
+    return;
+  }
   if (event.key === "Escape") {
     if (!dom.modal.hidden) {
       closeModal();
