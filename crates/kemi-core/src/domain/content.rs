@@ -19,6 +19,19 @@ pub fn lines(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// 片側がこの行数を超えたら、ハイライトと由来を自動では求めない（R-VIEW, R-ORIGIN）。
+pub const AUTO_MAX_LINES: usize = 10_000;
+/// 片側がこのバイト数を超えたら、ハイライトと由来を自動では求めない。
+pub const AUTO_MAX_BYTES: usize = 1_048_576;
+
+/// 自動で行ごとの計算（ハイライト・由来）をしてよい規模か。片側が行数かバイト数の
+/// 上限を超えたら false。無い側は数えない。
+pub fn within_auto_limit(old: Option<&str>, new: Option<&str>) -> bool {
+    let within =
+        |text: &str| text.len() <= AUTO_MAX_BYTES && text.lines().count() <= AUTO_MAX_LINES;
+    old.is_none_or(within) && new.is_none_or(within)
+}
+
 /// バイナリらしさの判定（D6）。NUL を含むか、UTF-8 として読めなければバイナリ。
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
