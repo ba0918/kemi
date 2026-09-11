@@ -12,6 +12,7 @@ import {
   currentStopIndex,
   describeComment,
   firstLine,
+  hasLoadedStops,
   hasStops,
   navStops,
   nextFileIndex,
@@ -184,6 +185,7 @@ const dom = {
  *   commentOpen: Map<string, boolean>,
  *   commented: Set<number>,
  *   loading: boolean,
+ *   navigating: boolean,
  *   origins: Map<string, any>,
  *   originForced: Set<string>,
  *   originOpen: Map<string, string>,
@@ -246,6 +248,7 @@ const state = {
   commentOpen: new Map(),
   commented: new Set(),
   loading: false,
+  navigating: false,
   origins: new Map(),
   originForced: new Set(),
   originOpen: new Map(),
@@ -2390,8 +2393,8 @@ function renderNav(offsets) {
   const tops = reachableStops().map((index) => offsets[index] ?? 0);
   const current = currentStopIndex(tops, navPosition());
   dom.navPos.textContent = `${current < 0 ? "–" : current + 1} / ${tops.length}`;
-  dom.navPrev.disabled = state.loading;
-  dom.navNext.disabled = state.loading;
+  dom.navPrev.disabled = state.loading || state.navigating;
+  dom.navNext.disabled = state.loading || state.navigating;
 }
 
 /**
@@ -2455,7 +2458,7 @@ function revealInTree(entry) {
  */
 async function navigate(direction) {
   const entry = currentEntry();
-  if (!entry || state.loading) {
+  if (!entry || state.loading || state.navigating) {
     return;
   }
   const offsets = lineOffsets(state.heights);
@@ -2465,19 +2468,75 @@ async function navigate(direction) {
     scrollToTop(tops[index]);
     return;
   }
-  const files = state.visible.map((candidate) => candidate.file);
+  const visible = state.visible;
+  const files = visible.map((candidate) => candidate.file);
   const here = files.findIndex((file) => file.id === entry.file.id);
-  const next = nextFileIndex(files, here < 0 ? state.index : here, direction, (file) => {
-    const candidate = state.visible.find((item) => item.file.id === file.id);
-    return hasStops(file, candidate ? commentsOf(candidate) : [], state.collapsedOverrides);
-  });
-  if (next === null) {
-    showToast(direction > 0 ? "最後の変更です" : "最初の変更です");
-    return;
+  const generation = state.selectGeneration;
+  state.navigating = true;
+  scheduleRender();
+  try {
+    let from = here < 0 ? state.index : here;
+    for (;;) {
+      const next = nextFileIndex(files, from, direction, (file) => {
+        const candidate = visible.find((item) => item.file.id === file.id);
+        return hasStops(file, candidate ? commentsOf(candidate) : [], state.collapsedOverrides);
+      });
+      if (next === null) {
+        showToast(direction > 0 ? "最後の変更です" : "最初の変更です");
+        return;
+      }
+      // 増減数があっても、改行コードだけの変更などは表示で変更ブロックにならない。
+      // 内容を読んで止まる場所が無ければ、移らずにその次を探す（R-NAV）。
+      const data = await loadForNavigation(visible[next], generation);
+      if (generation !== state.selectGeneration || state.visible !== visible) {
+        // 読んでいる間に別のファイルが選ばれたか、並びが変わった。
+        return;
+      }
+      if (data === null || hasLoadedStops(data.rows || [], commentsOf(visible[next]))) {
+        state.navigating = false;
+        revealInTree(visible[next]);
+        state.pendingJump = direction > 0 ? "first" : "last";
+        await selectIndex(next, { scrollTop: true });
+        return;
+      }
+      from = next;
+    }
+  } finally {
+    state.navigating = false;
+    scheduleRender();
   }
-  revealInTree(state.visible[next]);
-  state.pendingJump = direction > 0 ? "first" : "last";
-  await selectIndex(next, { scrollTop: true });
+}
+
+/**
+ * n / p の移り先の候補の行データを読み、キャッシュに入れる。読めなければ null を返し、
+ * 移った先でいつもどおり読み込みの失敗を出す。
+ * @param {Entry} entry
+ * @param {number} generation 読み始めた時の選択の世代
+ * @returns {Promise<any>}
+ */
+async function loadForNavigation(entry, generation) {
+  const key = fileCacheKey(entry);
+  if (state.cache.has(key)) {
+    return state.cache.get(key);
+  }
+  /** @type {any} */
+  let data;
+  try {
+    data = await api.getFile(entry.file.id, null, {
+      dark: state.dark,
+      highlight: state.highlightOverrides.get(entry.file.id),
+    });
+  } catch {
+    return null;
+  }
+  if (generation !== state.selectGeneration) {
+    // 読み直し（テーマや更新）で消えたキャッシュへ、古い行を戻さない。
+    return null;
+  }
+  const rows = data.rows || [];
+  const stored = { ...data, rows, collapsedRows: rows };
+  state.cache.set(key, stored);
+  return stored;
 }
 
 /** ファイルを表示し終えた後の移り先（次のファイルの最初の変更や、由来の該当行）へ移る。 */
@@ -2894,6 +2953,17 @@ async function selectIndex(index, options = { scrollTop: true }) {
 }
 
 /**
+ * ファイルの行データのキャッシュの鍵。着色は表示色とハイライトの指定で変わる。
+ * @param {Entry} entry
+ * @returns {string}
+ */
+function fileCacheKey(entry) {
+  const id = entry.file.id;
+  const override = state.highlightOverrides.get(id);
+  return `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
+}
+
+/**
  * @param {Entry} entry
  * @param {{ scrollTop?: boolean, keepEditor?: boolean }} [options]
  */
@@ -2902,7 +2972,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   state.lastNav = null;
   const id = entry.file.id;
   const override = state.highlightOverrides.get(id);
-  const key = `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
+  const key = fileCacheKey(entry);
   state.cacheKey = key;
   const generation = ++state.selectGeneration;
   if (!state.cache.has(key)) {

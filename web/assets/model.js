@@ -629,6 +629,17 @@ export function hasStops(file, comments, collapsedMap) {
 }
 
 /**
+ * 内容を読んだファイルに止まる場所があるか。改行コードだけ、または最終行の改行だけの
+ * 変更は、増減数があっても表示では変更ブロックにならない（R-VIEW）ので、読んだ行で決める。
+ * @param {LogicalRow[]} rows
+ * @param {any[]} comments そのファイルのコメント
+ * @returns {boolean}
+ */
+export function hasLoadedStops(rows, comments) {
+  return navStops(toDisplayLines(withRowIndex(rows), "unified"), comments).length > 0;
+}
+
+/**
  * 見えている順で、次（`direction` 1）か前（-1）の移動先のファイル。見たのファイルも
  * 飛ばさない。端では null。
  * @param {FileEntry[]} files

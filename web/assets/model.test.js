@@ -43,6 +43,7 @@ import {
   submitSummary,
   commentCountChanges,
   treeOrder,
+  hasLoadedStops,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -983,4 +984,20 @@ test("drawing_the_tree_from_its_own_order_draws_the_same_tree", () => {
   ];
 
   assert.deepEqual(buildTree(treeOrder(entries)), buildTree(entries));
+});
+
+test("a_loaded_file_whose_changes_vanish_on_screen_has_no_stops", () => {
+  // 改行コードだけ、または最終行の改行だけの変更。増減数はあっても、表示では変更ブロックが無い。
+  const rows = [equal(1, "a"), equal(2, "b"), equal(3, "c")];
+
+  assert.equal(hasLoadedStops(rows, []), false);
+  assert.equal(hasLoadedStops(rows, [{ side: "new", start_line: null, end_line: null }]), false);
+});
+
+test("a_loaded_file_has_stops_at_a_change_block_or_a_line_comment", () => {
+  assert.equal(hasLoadedStops([equal(1, "a"), inserted(2, "x")], []), true);
+  assert.equal(
+    hasLoadedStops([equal(1, "a"), equal(2, "b")], [{ side: "new", start_line: 2, end_line: 2 }]),
+    true,
+  );
 });
