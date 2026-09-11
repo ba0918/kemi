@@ -231,20 +231,25 @@ fn push_segment(segments: &mut Vec<Segment>, text: &str, changed: bool) {
 }
 
 /// 変更の前後に `context` 行だけ残し、長い等しい行の並びを Skip にする。
+/// `keep` が真を返す等しい行（コメントの付いた行など）も、変更の行と同じく畳まない。
 /// ファイル全体が等しい場合は畳まずに全行を返す。
-pub fn collapse(rows: &[Row], context: usize) -> Vec<DisplayRow> {
+pub fn collapse(rows: &[Row], context: usize, keep: impl Fn(&Row) -> bool) -> Vec<DisplayRow> {
+    if rows.iter().all(|row| row.kind == RowKind::Equal) {
+        return rows.iter().cloned().map(DisplayRow::Diff).collect();
+    }
+    let foldable = |row: &Row| row.kind == RowKind::Equal && !keep(row);
     let mut display = Vec::new();
     let mut index = 0;
 
     while index < rows.len() {
-        if rows[index].kind != RowKind::Equal {
+        if !foldable(&rows[index]) {
             display.push(DisplayRow::Diff(rows[index].clone()));
             index += 1;
             continue;
         }
 
         let start = index;
-        while index < rows.len() && rows[index].kind == RowKind::Equal {
+        while index < rows.len() && foldable(&rows[index]) {
             index += 1;
         }
         let end = index;
@@ -429,7 +434,7 @@ mod tests {
         let old = s(&["a", "b", "old", "c", "d"]);
         let new = s(&["a", "b", "new", "c", "d"]);
         let rows = align(&old, &new);
-        let display = collapse(&rows, 3);
+        let display = collapse(&rows, 3, |_| false);
 
         assert_eq!(display.len(), 5);
         assert!(display.iter().all(|row| matches!(row, DisplayRow::Diff(_))));
@@ -445,7 +450,7 @@ mod tests {
         new.extend(numbered("bottom", 10));
         let rows = align(&old, &new);
 
-        let display = collapse(&rows, 2);
+        let display = collapse(&rows, 2, |_| false);
         let skips: Vec<&Skip> = display
             .iter()
             .filter_map(|row| match row {
@@ -474,7 +479,7 @@ mod tests {
         new.extend(numbered("tail", 3));
         let rows = align(&old, &new);
 
-        let display = collapse(&rows, 1);
+        let display = collapse(&rows, 1, |_| false);
         let first = match &display[0] {
             DisplayRow::Skip(skip) => skip,
             other => panic!("expected leading skip, got {other:?}"),
@@ -490,9 +495,46 @@ mod tests {
     #[test]
     fn collapse_keeps_all_equal_rows_when_nothing_to_fold_around() {
         let rows = align(&numbered("same", 10), &numbered("same", 10));
-        let display = collapse(&rows, 2);
+        let display = collapse(&rows, 2, |_| false);
 
         assert_eq!(display.len(), 10);
+        assert!(display.iter().all(|row| matches!(row, DisplayRow::Diff(_))));
+    }
+
+    #[test]
+    fn collapse_keeps_rows_asked_to_keep_like_changes() {
+        let old = numbered("line", 40);
+        let mut new = old.clone();
+        new[4] = "changed".to_string();
+        new[29] = "changed".to_string();
+        let rows = align(&old, &new);
+        let kept = [1, 17, 38];
+
+        let display = collapse(&rows, 3, |row| {
+            row.new
+                .as_ref()
+                .is_some_and(|line| kept.contains(&line.number))
+        });
+
+        for number in kept {
+            assert!(
+                display.iter().any(|row| matches!(
+                    row,
+                    DisplayRow::Diff(row) if row.new.as_ref().is_some_and(|line| line.number == number)
+                )),
+                "new line {number} is hidden: {display:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn collapse_keeps_all_equal_rows_even_with_rows_to_keep() {
+        let rows = align(&numbered("same", 20), &numbered("same", 20));
+        let display = collapse(&rows, 2, |row| {
+            row.new.as_ref().is_some_and(|line| line.number == 10)
+        });
+
+        assert_eq!(display.len(), 20);
         assert!(display.iter().all(|row| matches!(row, DisplayRow::Diff(_))));
     }
 
@@ -506,7 +548,7 @@ mod tests {
             new
         };
         let rows = align(&old, &new);
-        let display = collapse(&rows, 2);
+        let display = collapse(&rows, 2, |_| false);
         let skip = match &display[0] {
             DisplayRow::Skip(skip) => skip,
             other => panic!("expected skip, got {other:?}"),

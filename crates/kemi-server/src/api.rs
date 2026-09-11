@@ -2,6 +2,7 @@
 //!
 //! 内部 API の JSON 形は D7 としてここで決める。
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -372,7 +373,19 @@ async fn file(
         })));
     }
 
-    let display = diff::collapse(&rows, diff::DEFAULT_CONTEXT);
+    // 行コメントの付いた行は、変更の行と同じく畳まない。止まる場所と吹き出しは見えている
+    // 行にしか置けないので、畳むと、展開したかどうかで止まる場所の数が変わり、コメント
+    // 一覧からも移れなくなる（R-NAV, R-VIEW）。
+    let (old_commented, new_commented) = commented_lines(&state, &id);
+    let display = diff::collapse(&rows, diff::DEFAULT_CONTEXT, |row| {
+        row.old
+            .as_ref()
+            .is_some_and(|line| old_commented.contains(&line.number))
+            || row
+                .new
+                .as_ref()
+                .is_some_and(|line| new_commented.contains(&line.number))
+    });
     let rows_json = display
         .iter()
         .map(|row| display_row_json(row, &rows, highlighted.as_ref()))
@@ -499,6 +512,27 @@ fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
         .filter(|comment| comment.file_id == file_id)
         .map(comment_json)
         .collect()
+}
+
+/// そのファイルの行コメントが範囲に含む行番号（旧側、新側）。
+fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u32>) {
+    let session = state.session.lock().expect("session poisoned");
+    let (mut old, mut new) = (HashSet::new(), HashSet::new());
+    for comment in session
+        .comments
+        .iter()
+        .filter(|comment| comment.file_id == file_id)
+    {
+        let Some(start) = comment.start_line else {
+            continue;
+        };
+        let end = comment.end_line.unwrap_or(start);
+        match comment.side {
+            Side::Old => old.extend(start..=end),
+            Side::New => new.extend(start..=end),
+        }
+    }
+    (old, new)
 }
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
