@@ -1,6 +1,6 @@
 # 残課題
 
-最終更新: 2026-09-11（kemi v1 と UI 改訂のサイクル完了時点）
+最終更新: 2026-09-11（UX 改訂 v2 の仕様承認時点）
 
 ## レビューで記録のみになった指摘（修正要求ではない）
 
@@ -25,9 +25,11 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
 
 ## 納品後の環境更新
 
-- `~/.local/bin/diff-review`（旧 Python ツール）を kemi に置き換える
-- `diff-review-viewer` スキルを更新する（kemi の呼び方、stdout の JSON 契約、`--out`
-  廃止、suggestion はエージェントが適用する）
+- `~/.local/bin/diff-review`（旧 Python ツール）を消す。kemi は `cargo install --path .`
+  で `~/.cargo/bin/kemi` に入れてあり、リリース後は mise に置き換える
+- `diff-review-viewer` スキルは kemi 向けに更新済み（バックグラウンドで起動して終了を
+  待つ、stdout の JSON 契約、suggestion はエージェントが適用する）。UX 改訂 v2 の実装後に
+  `kemi --result` の案内と、`--group-by` の既定が最終形に変わったことを足す
 
 ## リリース
 
