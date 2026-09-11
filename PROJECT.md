@@ -5,7 +5,7 @@
 kemi は、変更をブラウザで読むためのローカルなレビュー道具。単一バイナリを
 GitHub Releases で配り、`mise use -g github:ba0918/kemi` でインストールする。
 人間がページで行コメントと suggestion を付け、「承認」か「変更要求」でレビューを
-終えると、注釈が 1 つの JSON として実行ターミナル（通常はレビューを頼んだ
+終えると、コメントが 1 つの JSON として実行ターミナル（通常はレビューを頼んだ
 エージェント）へ返る。元データは manifest / コミット範囲 / worktree / staged の
 4 モードで与える。名前は「閲する（けみする）」から。
 
@@ -36,7 +36,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Lint | `cargo clippy -- -D warnings` / `cargo fmt --check` / `npx tsc -p web --noEmit` |
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
-| Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` |
+| Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
 | Release plan | `dist plan`（cargo-dist をローカルに入れて実行） |
 
 ## Conventions specific to this project
@@ -57,10 +57,13 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - 配布: Linux x86_64・aarch64（musl 静的）と macOS x86_64・arm64。Windows は対象外。
 - セキュリティ: 127.0.0.1 のみ、URL トークン、Origin / Host 検証。kemi は git の状態を
   書き換えない（suggestion の適用はエージェントが行う）。静的 HTML は書き出さない。
-- セッションはメモリのみで、プロセス終了で消える。submit の stdout JSON が唯一の出口。
+- セッションはメモリのみで、プロセス終了で消える。submit の結果は stdout の JSON で
+  返し、同じ JSON を結果ファイル（`$XDG_STATE_HOME/kemi/results/`）にも残す
+  （`R-RESULT`）。
 
 ## Glossary
 
 正典は `CONTEXT.md`。特に kemi / レビュー / manifest / グループ / コメント /
 suggestion / 適用 / quote / outdated / submit / verdict / digest / ノイズ /
-focus / 重要 / 更新バッジ。
+focus / 重要 / 更新バッジ / グループ単位 / 表示モード / 変更ブロック / 由来 /
+結果ファイル。

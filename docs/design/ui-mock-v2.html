@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kemi UX 改善モック v2</title>
+<style>
+/* ===== 提案トークン ===== */
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #f5f6f8; --panel-2: #eceef2;
+  --ink: #1b1f24; --ink-2: #555e6a; --ink-3: #858d99;
+  --line: #d6dae0; --line-soft: #e8ebef;
+  --ai: #3b4ea8; --ai-soft: #e9ecfa; --ai-ink: #ffffff;
+  --add-bg: #e8f7ec; --add-gut: #cdeed6; --add-mark: #a9e5b9; --add-ink: #1a7f37;
+  --del-bg: #fdeceb; --del-gut: #f8d3cf; --del-mark: #f5bdb6; --del-ink: #c62a2a;
+  --note-bg: #fff6d6; --note-line: #e0ac2b; --note-ink: #7a5200;
+  --star: #7b4fd0; --star-soft: #f1eafd;
+  --hatch: repeating-linear-gradient(135deg, transparent 0 5px, var(--line-soft) 5px 6px);
+  --syn-tag: #1f5fbf; --syn-attr: #6f42c1; --syn-str: #0a6b3d;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+  --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "IPAMincho", serif;
+  /* 現行（比較用） */
+  --c-add-bg: #e6ffec; --c-add-mark: #abf2bc; --c-add-ink: #1a7f37;
+  --c-del-bg: #ffebe9; --c-del-mark: #ffc9c4; --c-del-ink: #cf222e;
+  --c-accent: #0969da; --c-accent-soft: #ddf4ff; --c-focus: #9a6700; --c-focus-bg: #fff8c5;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1216; --panel: #161a20; --panel-2: #1e232b;
+  --ink: #e4e8ee; --ink-2: #9aa3ae; --ink-3: #6b7480;
+  --line: #2c323b; --line-soft: #20252d;
+  --ai: #8b9cf0; --ai-soft: #1d2340; --ai-ink: #0f1216;
+  --add-bg: #11261a; --add-gut: #18351f; --add-mark: #2a5c3a; --add-ink: #4ac26b;
+  --del-bg: #2a1618; --del-gut: #3d1e1f; --del-mark: #6d2d2b; --del-ink: #f0645c;
+  --note-bg: #2b2512; --note-line: #9c7a1f; --note-ink: #e8c060;
+  --star: #b69af5; --star-soft: #261d3d;
+  --syn-tag: #79b8ff; --syn-attr: #c8a6ff; --syn-str: #7ee0a2;
+  --c-add-bg: #12261e; --c-add-mark: #2ea04366; --c-add-ink: #3fb950;
+  --c-del-bg: #25171c; --c-del-mark: #f8514966; --c-del-ink: #f85149;
+  --c-accent: #4493f8; --c-accent-soft: #121d2f; --c-focus: #d29922; --c-focus-bg: #272115;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.7; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+
+/* ===== 文書の枠 ===== */
+.docnav {
+  position: sticky; top: 0; z-index: 30; background: var(--panel);
+  border-bottom: 1px solid var(--line); padding-inline: 20px;
+}
+.docnav .in { max-width: 1280px; margin: 0 auto; display: flex; gap: 14px; align-items: center; min-height: 48px; flex-wrap: wrap; }
+.docnav b { font-size: 15px; }
+.docnav a { color: var(--ink-2); text-decoration: none; font-size: 13.5px; }
+.docnav a:hover { color: var(--ai); }
+.docnav .sp { flex: 1; }
+.docnav button { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; font-size: 13px; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-inline: 20px; padding-block: 12px 80px; }
+section { padding-block: 34px 10px; border-bottom: 1px solid var(--line-soft); }
+h1 { font-size: 26px; margin: 18px 0 6px; }
+h2 { font-size: 21px; margin: 0 0 4px; }
+h3 { font-size: 16px; margin: 22px 0 6px; }
+.lead { color: var(--ink-2); max-width: 78ch; margin: 0 0 10px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; max-width: 90ch; margin: 10px 0 16px; font-size: 14px; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; }
+.tag { display: inline-block; font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+.tag.bug { border-color: var(--del-ink); color: var(--del-ink); }
+.tag.design { border-color: var(--ai); color: var(--ai); }
+.tag.spec { border-color: var(--star); color: var(--star); background: var(--star-soft); }
+.cmp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin: 12px 0; }
+.cmp.one { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) { .cmp { grid-template-columns: minmax(0, 1fr); } }
+.cap { font-size: 13px; color: var(--ink-3); margin: 0 0 6px; }
+.cap b { color: var(--ink); }
+.frame { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+.shot { display: block; width: 100%; border: 1px solid var(--line); border-radius: 10px; }
+.scroll-x { overflow-x: auto; }
+.note-list { margin: 8px 0 0; padding-left: 1.2em; color: var(--ink-2); font-size: 14px; max-width: 90ch; }
+.note-list li { margin: 2px 0; }
+
+/* ===== 提案 UI: アプリ全体 ===== */
+.app { display: flex; flex-direction: column; height: 800px; font-size: 15.5px; line-height: 1.5; }
+.k-top { position: relative; display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.k-brand { font-weight: 700; letter-spacing: .02em; }
+.seg2 { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; flex: 0 0 auto; }
+.seg2 button { border: 0; background: var(--bg); color: var(--ink-2); font-size: 12.5px; padding: 3px 10px; }
+.seg2 button + button { border-left: 1px solid var(--line); }
+.seg2 button.on { background: var(--ai-soft); color: var(--ai); font-weight: 600; }
+.k-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.k-meta { color: var(--ink-3); font-size: 12.5px; white-space: nowrap; }
+.k-prog { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.k-prog .bar { width: 120px; height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.k-prog .bar i { display: block; height: 100%; background: var(--ai); }
+.k-top .sp { flex: 1; }
+.ib { display: inline-flex; align-items: center; justify-content: center; height: 28px; min-width: 28px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink-2); font-size: 12.5px; gap: 5px; }
+.ib svg { width: 15px; height: 15px; }
+.ib.on { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); }
+.btn { height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); font-size: 13px; white-space: nowrap; }
+.btn.approve { background: #1f883d; border-color: #1f883d; color: #fff; font-weight: 600; }
+.btn.changes { border-color: var(--del-ink); color: var(--del-ink); }
+.btn.primary { background: var(--ai); border-color: var(--ai); color: var(--ai-ink); font-weight: 600; }
+.k-body { display: grid; grid-template-columns: 330px minmax(0, 1fr); flex: 1; min-height: 0; }
+.k-tree { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; padding: 10px 8px; font-size: 13px; }
+.k-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+/* ツリー（提案） */
+.g { margin-bottom: 6px; border-radius: 8px; }
+.g-head { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 6px; width: 100%; padding: 6px 8px 2px; background: none; border: 0; text-align: left; border-radius: 8px; }
+.g-head:hover { background: var(--panel-2); }
+.g-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-count { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.g-count.done { color: var(--ai); font-weight: 600; }
+.g-bar { margin: 3px 8px 6px 28px; height: 3px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
+.g-bar i { display: block; height: 100%; background: var(--ai); }
+.g.done .g-title { color: var(--ink-2); }
+.ctype { font-family: var(--mono); font-size: 11px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-right: 5px; font-weight: 500; }
+.f { display: grid; grid-template-columns: 16px 1fr auto auto; align-items: center; gap: 6px; width: 100%; padding: 3px 8px 3px 26px; background: none; border: 0; border-radius: 6px; text-align: left; color: var(--ink-2); }
+.f:hover { background: var(--panel-2); }
+.f.active { background: var(--ai-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--ai); }
+.f .nm { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f .dir { color: var(--ink-3); }
+.f.seen .nm { color: var(--ink-3); }
+.chk { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--ink-3); display: inline-grid; place-items: center; }
+.f.seen .chk { background: var(--ai); border-color: var(--ai); }
+.f.seen .chk::after { content: ""; width: 6px; height: 3px; border: solid var(--ai-ink); border-width: 0 0 1.5px 1.5px; transform: rotate(-45deg) translate(0.5px, -0.5px); }
+.st { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.st .p { color: var(--add-ink); } .st .m { color: var(--del-ink); }
+.sl { font-family: var(--mono); font-size: 11px; font-weight: 700; width: 14px; text-align: center; }
+.sl.A { color: var(--add-ink); } .sl.D { color: var(--del-ink); } .sl.R { color: var(--ink); } .sl.M { color: var(--ink-3); font-weight: 500; }
+.cbadge { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--note-ink); background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 999px; padding: 0 5px; line-height: 16px; }
+.seal { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--ai); color: var(--ai); font-family: var(--serif); font-size: 12px; font-weight: 700; transform: rotate(-10deg); box-shadow: inset 0 0 0 1.5px var(--bg), inset 0 0 0 2.5px var(--ai); line-height: 1; }
+.seal.big { width: 76px; height: 76px; font-size: 38px; border-width: 3px; box-shadow: inset 0 0 0 3px var(--bg), inset 0 0 0 5px var(--ai); }
+
+/* グループ帯（提案） */
+.gbar { display: flex; align-items: center; gap: 10px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--bg); font-size: 13.5px; }
+.gbar .gt { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gbar .why-toggle { margin-left: auto; background: none; border: 0; color: var(--ai); font-size: 12.5px; white-space: nowrap; }
+.gintro { padding: 12px 16px 12px 16px; border-bottom: 1px solid var(--line-soft); background: var(--panel); font-size: 13.5px; color: var(--ink-2); }
+.gintro p { margin: 0 0 6px; max-width: 76ch; }
+.watch { margin-top: 6px; border-left: 3px solid var(--star); background: var(--star-soft); padding: 5px 10px; border-radius: 0 6px 6px 0; color: var(--ink); max-width: 76ch; }
+.watch b { color: var(--star); font-size: 12px; margin-right: 6px; }
+
+/* ファイルヘッダ（提案） */
+.fh { display: flex; align-items: center; gap: 8px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--bg); flex-wrap: wrap; }
+.fh .path { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.fh .path .dir { color: var(--ink-3); font-weight: 400; }
+.fh .sp { flex: 1; }
+.seen-toggle { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); font-size: 12.5px; color: var(--ink-2); }
+.seen-toggle.on { background: var(--ai); border-color: var(--ai); color: var(--ai-ink); }
+.seen-toggle .chk { border-color: currentColor; }
+.seen-toggle.on .chk { background: var(--ai-ink); border-color: var(--ai-ink); }
+.seen-toggle.on .chk::after { content: ""; width: 6px; height: 3px; border: solid var(--ai); border-width: 0 0 1.5px 1.5px; transform: rotate(-45deg) translate(0.5px, -0.5px); }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--ink-3); background: var(--bg); }
+
+/* ===== diff（提案） ===== */
+.dv { position: relative; flex: 1; overflow: auto; font-family: var(--mono); font-size: 13.5px; }
+.d-row { display: grid; grid-template-columns: 3.4em 3.4em 1.6em 1fr; min-height: 24px; line-height: 24px; white-space: pre; }
+.d-row .n { text-align: right; padding-right: 8px; color: var(--ink-3); user-select: none; background: var(--panel); }
+.d-row .n + .n { border-right: 1px solid var(--line-soft); }
+.d-row .mk { text-align: center; user-select: none; color: var(--ink-3); }
+.d-row .c { padding-right: 16px; }
+.d-row.add { background: var(--add-bg); }
+.d-row.add .n { background: var(--add-gut); color: var(--add-ink); }
+.d-row.add .mk { color: var(--add-ink); font-weight: 700; }
+.d-row.del { background: var(--del-bg); }
+.d-row.del .n { background: var(--del-gut); color: var(--del-ink); }
+.d-row.del .mk { color: var(--del-ink); font-weight: 700; }
+.d-row.add mark { background: var(--add-mark); color: inherit; border-radius: 2px; }
+.d-row.del mark { background: var(--del-mark); color: inherit; border-radius: 2px; }
+.d-row.commented .n:first-child { box-shadow: inset 3px 0 0 var(--note-line); }
+.hunk { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 0 12px 0 0; background: var(--ai-soft); color: var(--ink-2); font-family: var(--sans); font-size: 12.5px; border-block: 1px solid var(--line-soft); }
+.hunk .exp { width: calc(6.8em + 1px); height: 30px; display: inline-grid; place-items: center; border: 0; background: color-mix(in srgb, var(--ai) 14%, transparent); color: var(--ai); font-size: 12px; }
+.hunk .ctx { font-family: var(--mono); color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hunk .rng { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.syn-tag { color: var(--syn-tag); } .syn-attr { color: var(--syn-attr); } .syn-str { color: var(--syn-str); }
+
+/* split（提案） */
+.s-row { display: grid; grid-template-columns: 3.2em 1.4em 1fr 3.2em 1.4em 1fr; min-height: 24px; line-height: 24px; white-space: pre; font-family: var(--mono); font-size: 13.5px; }
+.s-row > span { overflow: hidden; }
+.s-row .n { text-align: right; padding-right: 6px; color: var(--ink-3); background: var(--panel); user-select: none; }
+.s-row .mk { text-align: center; color: var(--ink-3); }
+.s-row .c { padding-right: 10px; }
+.s-row .c.o { border-right: 1px solid var(--line); }
+.s-row .del-side { background: var(--del-bg); } .s-row .n.del-side { background: var(--del-gut); color: var(--del-ink); } .s-row .mk.del-side { color: var(--del-ink); font-weight: 700; }
+.s-row .add-side { background: var(--add-bg); } .s-row .n.add-side { background: var(--add-gut); color: var(--add-ink); } .s-row .mk.add-side { color: var(--add-ink); font-weight: 700; }
+.s-row .empty { background: var(--hatch), var(--panel); }
+.s-row .del-side mark { background: var(--del-mark); color: inherit; }
+.s-row .add-side mark { background: var(--add-mark); color: inherit; }
+
+/* ===== diff（現行の再現、比較用） ===== */
+.cur .d-row { grid-template-columns: 4.6em 4.6em 1.6em 1fr; line-height: 24px; min-height: 24px; font-size: 13.5px; }
+.cur .d-row .n { background: transparent; }
+.cur .d-row .n + .n { border-right: 0; }
+.cur .d-row.add { background: var(--c-add-bg); }
+.cur .d-row.add .n { background: transparent; color: var(--ink-3); }
+.cur .d-row.add .mk { color: var(--c-add-ink); font-weight: 400; }
+.cur .d-row.del { background: var(--c-del-bg); }
+.cur .d-row.del .n { background: transparent; color: var(--ink-3); }
+.cur .d-row.del .mk { color: var(--c-del-ink); font-weight: 400; }
+.cur .d-row.add mark { background: var(--c-add-mark); }
+.cur .d-row.del mark { background: var(--c-del-mark); }
+.cur .hunk { background: var(--panel-2); justify-content: center; border: 0; min-height: 24px; }
+.cur .hunk .exp { width: auto; height: auto; background: none; color: var(--c-accent); }
+.cur-thread { background: var(--panel); border-block: 1px solid var(--line); padding: 10px 14px; font-family: var(--sans); font-size: 13.5px; white-space: normal; line-height: 1.6; }
+.cur-thread .who { font-size: 12px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; background: var(--panel-2); }
+
+/* ===== コメント（提案） ===== */
+.bal-row { position: relative; padding: 6px 16px 10px calc(8.4em + 1px); font-family: var(--sans); white-space: normal; line-height: 1.6; }
+.bal { position: relative; max-width: 72ch; background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; color: var(--ink); box-shadow: 0 1px 0 color-mix(in srgb, var(--note-line) 40%, transparent); }
+.bal::before { content: ""; position: absolute; top: -7px; left: 18px; width: 12px; height: 12px; background: var(--note-bg); border-left: 1px solid var(--note-line); border-top: 1px solid var(--note-line); transform: rotate(45deg); }
+.bal .bh { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--note-ink); }
+.bal .bh .where { font-family: var(--mono); }
+.bal .bh .acts { margin-left: auto; display: flex; gap: 10px; }
+.bal .bh .acts button { background: none; border: 0; padding: 0; color: var(--note-ink); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.bal p { margin: 4px 0 0; }
+.chip-row { padding: 2px 16px 4px calc(8.4em + 1px); font-family: var(--sans); white-space: normal; }
+.cchip { display: inline-flex; align-items: center; gap: 8px; max-width: 72ch; height: 24px; padding: 0 10px 0 8px; border-radius: 999px; background: var(--note-bg); border: 1px solid var(--note-line); color: var(--note-ink); font-size: 12.5px; }
+.cchip .tx { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52ch; }
+.gut-dot { position: absolute; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--note-line); color: #fff; font-family: var(--sans); font-size: 10px; font-weight: 700; display: grid; place-items: center; transform: translateY(3px); }
+.pop { position: absolute; z-index: 5; right: 24px; width: min(420px, 60%); background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 8px; padding: 8px 12px; font-family: var(--sans); font-size: 13.5px; line-height: 1.6; white-space: normal; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+.pop::before { content: ""; position: absolute; left: -7px; top: 14px; width: 12px; height: 12px; background: var(--note-bg); border-left: 1px solid var(--note-line); border-bottom: 1px solid var(--note-line); transform: rotate(45deg); }
+
+/* ハンク移動 */
+.navpill { position: absolute; right: 26px; bottom: 16px; z-index: 4; display: flex; align-items: center; gap: 2px; background: var(--ink); color: var(--bg); border-radius: 999px; padding: 3px; font-family: var(--sans); font-size: 12.5px; box-shadow: 0 6px 18px rgba(0,0,0,.2); }
+.navpill button { background: none; border: 0; color: inherit; height: 26px; padding: 0 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
+.navpill button:hover { background: color-mix(in srgb, var(--bg) 18%, transparent); }
+.navpill .pos { padding: 0 8px; opacity: .8; font-variant-numeric: tabular-nums; }
+.navpill kbd { background: transparent; color: inherit; border-color: color-mix(in srgb, var(--bg) 40%, transparent); }
+.ruler { position: absolute; top: 0; right: 0; bottom: 0; width: 12px; background: var(--panel); border-left: 1px solid var(--line-soft); }
+.ruler i { position: absolute; right: 2px; width: 7px; border-radius: 1px; }
+.ruler i.a { background: var(--add-ink); } .ruler i.d { background: var(--del-ink); } .ruler i.n { background: var(--note-line); right: 1px; width: 9px; height: 4px !important; border-radius: 2px; }
+.ruler .vp { position: absolute; left: 0; right: 0; border: 1px solid var(--ai); background: color-mix(in srgb, var(--ai) 10%, transparent); }
+
+/* モーダル・完了画面 */
+.dlg { max-width: 470px; margin: 0 auto; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; box-shadow: 0 14px 40px rgba(0,0,0,.18); font-size: 14px; }
+.dlg h4 { margin: 0 0 8px; font-size: 16.5px; }
+.dlg .sum { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 10px 0; font-size: 13.5px; }
+.dlg .sum dt { color: var(--ink-3); }
+.dlg .sum dd { margin: 0; }
+.dlg .warn { border-left: 3px solid var(--note-line); background: var(--note-bg); padding: 6px 10px; border-radius: 0 6px 6px 0; font-size: 13px; }
+.dlg .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.finish { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: start; max-width: 720px; margin: 0 auto; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; }
+.finish > div { min-width: 0; }
+.finish h4 { margin: 0 0 4px; font-size: 18px; }
+.finish p { margin: 0 0 8px; color: var(--ink-2); font-size: 14px; }
+.finish pre { white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; max-height: 170px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+.finish .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.backdrop { background: color-mix(in srgb, var(--ink) 35%, transparent); padding: 30px 16px; border-radius: 10px; }
+
+/* パレット */
+.pal { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 720px; }
+.pal th, .pal td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+.pal th { color: var(--ink-3); font-weight: 500; font-size: 12.5px; }
+.sw { display: inline-block; width: 44px; height: 22px; border-radius: 5px; border: 1px solid var(--line); vertical-align: middle; }
+.variant-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.variant-tabs button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+.variant-tabs button[aria-pressed="true"] { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
+.rec { display: inline-block; font-size: 12px; color: var(--ai); font-weight: 600; margin-left: 4px; }
+.variant-tabs button[aria-pressed="true"] .rec { color: inherit; }
+</style>
+</head>
+<body>
+<nav class="docnav" aria-label="モックの目次">
+  <div class="in">
+    <b>kemi UX 改善モック v2</b>
+    <a href="#overall">全体像</a>
+    <a href="#s1">1 見た</a>
+    <a href="#s2">2 グループ</a>
+    <a href="#s3">3 変更間の移動</a>
+    <a href="#s4">4 diff の見やすさ</a>
+    <a href="#s5">5 コメント</a>
+    <a href="#s6">6 承認後</a>
+    <a href="#s7">7 色</a>
+    <span class="sp"></span>
+    <button type="button" id="theme">ダーク表示</button>
+  </div>
+</nav>
+
+<div class="wrap">
+<h1>kemi UX 改善モック v2</h1>
+<p class="lead"><strong>2026-09-11 に全項目を採用。振る舞いの正典は <code>docs/spec/kemi.md</code> で、このモックと食い違う箇所は仕様が正しい</strong>（とくにグループ単位は案 A と C の両取りになった: <code>R-UNIT</code>、結果の読み出しは <code>kemi --result</code>: <code>R-RESULT</code>）。</p>
+<p class="lead">使ってみて挙がった 7 点と、実際に動かして見つけた問題への改善案。各節に「現状（実際のスクリーンショットか、同じ内容の再現）」と「提案」を並べる。印の意味: <span class="tag bug">不具合</span> 仕様どおりに動いていない / <span class="tag design">設計変更</span> 仕様の範囲内で見た目・操作を変える / <span class="tag spec">仕様判断</span> <code>docs/spec/kemi.md</code> の変更が要る。</p>
+
+<!-- ================= 全体像 ================= -->
+<section id="overall">
+  <h2>全体像</h2>
+  <p class="lead">上が今の画面（1600×1000 で撮影）。差分が見える高さは 1000px 中 554px しかなく、上の 3 段（上部バー・グループ説明・ファイルヘッダ）が残りを使っている。下が提案。グループの説明（コミット本文 = why）は既定で畳み、「見てほしい点」（watch）だけは常に 1 行で見せる。ファイルの「見た」とグループの進捗を藍色で、コメントを付箋色で示す。</p>
+  <div class="cmp one">
+    <div>
+      <p class="cap"><b>現状</b> — 3 ファイルとも「見た」を付けた状態。ツリーでは取り消し線が付くだけで、グループ見出しは何も変わらない</p>
+      <img class="shot" src="ui-mock-v2-before-overall.png" alt="現状の kemi 画面。左ツリーに長いコミット本文が並び、右上にグループ説明が大きく表示されている">
+    </div>
+    <div>
+      <p class="cap"><b>提案</b> — 同じ内容を提案デザインで再現。文字サイズは今の仕様どおり（本文 15.5px、コード 13.5px、行 24px）。クリックできる箇所: 説明を開く、コメントの札、見た</p>
+      <div class="frame">
+        <div class="app" id="app">
+          <header class="k-top">
+            <span class="k-brand">kemi</span>
+            <span class="k-title">c01e476~1..f65473c</span>
+            <span class="seg2" role="group" aria-label="グループ単位"><button type="button" class="on">最終形</button><button type="button">コミットごと</button></span>
+            <span class="k-meta">27 コミット / 35 ファイル / <span class="st"><span class="p">+2374</span> <span class="m">−1076</span></span></span>
+            <span class="k-prog" title="見たファイル / 全ファイル"><span class="bar"><i style="width: 34%"></i></span>見た 12 / 35</span>
+            <span class="sp"></span>
+            <span class="ib on" title="1 列"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h12"/></svg></span>
+            <span class="ib" title="2 列"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M8 2.5v11"/></svg></span>
+            <span class="ib" title="折り返し"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h8a2 2 0 1 1 0 4H7"/><path d="M9 10.5 7 12l2 1.5"/></svg></span>
+            <span class="ib" title="重要のみ"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 9.9 5.7l4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></svg></span>
+            <span class="ib" title="変更量順"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 3v10M4 13l-2-2M4 13l2-2M9 4h5M9 8h4M9 12h3"/></svg></span>
+            <span class="ib" title="テーマ"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg></span>
+            <span class="ib" title="コメント 3 件の一覧（新設）"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 3v-3h-2z"/></svg>3</span>
+            <button class="btn approve" type="button">承認</button>
+            <button class="btn changes" type="button">変更要求</button>
+          </header>
+          <div class="k-body">
+            <aside class="k-tree" id="tree-after"></aside>
+            <div class="k-main">
+              <div class="gbar">
+                <span class="ctype">feat</span><span class="gt">UI をモック準拠に改訂する</span>
+                <span class="g-count">2 / 3 見た</span>
+                <button class="why-toggle" type="button" data-toggle="intro" aria-expanded="false">説明を開く</button>
+              </div>
+              <div class="gintro" id="intro" hidden>
+                <p>承認済みモック docs/design/ui-mock.html に合わせ、ヘッダ・ツリー・コメントの見せ方を揃える。</p>
+              </div>
+              <div class="watch" style="margin: 0; max-width: none; border-radius: 0; border-bottom: 1px solid var(--line-soft); font-size: 13.5px;"><b>見てほしい点</b>ツリーの再構築でボタンを使い回している箇所。選択状態の付け外しが漏れないか。（例文）</div>
+              <div class="fh">
+                <span class="path"><span class="dir">web/</span>index.html</span>
+                <span class="sl M">M</span>
+                <span class="st"><span class="p">+85</span> <span class="m">−30</span></span>
+                <span class="cbadge">💬 1</span>
+                <span class="sp"></span>
+                <span class="ib" title="ファイル全体にコメント"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 3v-3h-2z"/></svg></span>
+                <span class="ib" title="パスをコピー"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5"/><path d="M10.5 5.5V3A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v7A1.5 1.5 0 0 0 4 11.5h1.5"/></svg></span>
+                <span class="ib" title="すべての行を展開"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5.5 8 10l5-4.5"/><path d="M3 2.5h10"/></svg></span>
+                <button class="seen-toggle" type="button" data-seen><span class="chk"></span>見た <kbd>v</kbd></button>
+              </div>
+              <div class="dv" id="dv-overall"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 1 見た ================= -->
+<section id="s1">
+  <h2>1. グループの「見た」が終わったか分からない <span class="tag design">設計変更</span> <span class="tag bug">不具合</span></h2>
+  <dl class="kv">
+    <dt>観測</dt><dd>3 ファイルすべてに「見た」を付けても、ツリーのグループ見出し（<code>3 files +1843 −894</code>）は変わらない。ファイル名が灰色の取り消し線になるだけで、選択中の行では背景色に埋もれる。</dd>
+    <dt>原因</dt><dd>グループ見出しの描画（<code>web/assets/app.js:444-457</code>）が「見た」の数を持っていない。取り消し線は「削除されたファイル」にも見える。</dd>
+    <dt>提案</dt><dd>グループ見出しに「2 / 3」と細い進捗バー。全部見たら藍色の「閲」の印を押す。ファイル行は取り消し線をやめ、左端の丸チェックで示す。上部バーにも全体の進捗を出す。「見た」ボタンは目のアイコンではなく、文字付きのチェックにして <kbd>v</kbd> キーを割り当てる。</dd>
+    <dt>併せて直す不具合</dt><dd>ファイルを切り替えた直後、読み込みが終わるまでファイルヘッダが前のファイルのまま残る（<code>app.js:1721-1762</code>）。このあいだに「見た」を押すと<strong>前のファイル</strong>に付く。実際に再現した（開発ビルドで読み込み約 0.5 秒）。読み込み中はヘッダを新しいファイル名に切り替え、操作を無効にする。</dd>
+  </dl>
+  <div class="cmp">
+    <div>
+      <p class="cap"><b>現状</b>（ツリー部分の再現）</p>
+      <div class="frame" style="background: var(--panel); padding: 10px 8px; font-size: 13px;">
+        <div style="display:flex; gap:6px; font-weight:600; padding: 6px 8px;"><span style="color:var(--ink-3)">▾</span><span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">feat: UI をモック準拠に改訂する</span><span class="mono" style="font-size:11.5px; color:var(--ink-3); font-weight:400;">3 files +1843 −894</span></div>
+        <div style="margin: 2px 8px 6px 22px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--ink-2); font-size: 12.5px; line-height:1.6;">承認済みモック docs/design/ui-mock.html に合わせ、ヘッダ・ツリー・コメントの見せ方を揃える。 - ヘッダに title / subtitle / meta を出し、表示モード・折返し・重要のみ・変更量順・テーマを、文字ラベルの無いアイコンと…（この後 10 行続く）</div>
+        <div style="padding: 3px 8px 3px 36px; color: var(--ink-3); font-family: var(--mono); font-size:12.5px; text-decoration: line-through;">app.js</div>
+        <div style="padding: 3px 8px 3px 36px; color: var(--c-accent); background: var(--c-accent-soft); border-radius:6px; font-weight:600; font-family: var(--mono); font-size:12.5px; text-decoration: line-through;">style.css</div>
+        <div style="padding: 3px 8px 3px 22px; color: var(--ink-3); font-family: var(--mono); font-size:12.5px; text-decoration: line-through;">index.html</div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>提案</b> — 完了したグループは印が付き、未完了は残り数が見える</p>
+      <div class="frame" style="background: var(--panel); padding: 10px 8px;" id="tree-s1"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 2 グループ ================= -->
+<section id="s2">
+  <h2>2. コミット単位のグループは分かりやすいか <span class="tag spec">仕様判断</span></h2>
+  <dl class="kv">
+    <dt>観測</dt><dd>今回の範囲（27 コミット / 35 ファイル項目）で、<code>web/assets/app.js</code> が <strong>27 グループ中 21 グループ</strong>に出てくる。最初のコミット（c01e476）の後に <code>app.js</code> を触ったコミットが 20 件あり、c01e476 の時点と最終形を比べると 90 行が消えるか書き換わっている（<code>git diff --numstat c01e476 f65473c</code> で +327 −90）。最初のグループで読んだ行の一部は、最終形には残っていない。</dd>
+    <dt>判断</dt><dd>コミットがきれいに分かれている（squash や rebase で整理済み）ならコミット単位は分かりやすい。「修正コミットが積み重なったブランチ」をまとめて見るには向いていない。manifest（エージェントが意図ごとに書くグループ）は各ファイルを 1 回だけ出せるので、この問題は起きない。</dd>
+    <dt>選択肢</dt><dd>
+      <strong>A（推奨）</strong> ファイルごとに最終形を 1 回だけ出し、各変更の塊（ハンク）に「その行を最後に変えたコミット」を由来する。コミットの理由（本文）は由来から開ける。<code>R-INPUT-2</code> の変更と、表示時の <code>git blame</code> 相当の計算が要る。<br>
+      <strong>B</strong> ツールは変えず、ブランチ全体を見せるときは skill が <code>--group-by file</code> か manifest を使うよう決める。今日からできるが、<code>--group-by file</code> ではコミットの理由が消える。<br>
+      <strong>C</strong> 現状維持（コミット単位のまま）。
+    </dd>
+    <dt>分かれ目</dt><dd>レビューしたいのが「各コミットが何をしたか」なら C、「ブランチの最終形が正しいか」なら A か B。エージェントの作業ブランチをまとめて承認する使い方は後者なので A を推す（採用時は A と C の両取りに決まった）。ただし A は実装が一番重い。</dd>
+  </dl>
+  <p class="cap"><b>案 A の見た目</b> — ハンクの見出しに由来コミットを出す（複数のコミットが触った塊には複数並ぶ）。クリックでそのコミットの理由が開く</p>
+  <div class="frame scroll-x"><div class="dv" id="dv-s2" style="overflow: visible;"></div></div>
+</section>
+
+<!-- ================= 3 移動 ================= -->
+<section id="s3">
+  <h2>3. 次の変更までが遠い <span class="tag design">設計変更</span> <span class="tag spec">仕様判断（位置表示の帯のみ）</span></h2>
+  <dl class="kv">
+    <dt>観測</dt><dd>最初のグループの <code>app.js</code> は差分の高さが 33,456px、見える高さが 554px で、約 60 画面ぶんある。キー操作は <kbd>j</kbd>/<kbd>k</kbd> のファイル移動だけで、ファイル内の変更へ飛ぶ手段がない。</dd>
+    <dt>提案（仕様内）</dt><dd>差分の右下に「前の変更 / 次の変更」ボタンと現在位置（例 3 / 17）を常に出す。<kbd>n</kbd>/<kbd>p</kbd> で同じ移動。最後の変更の次は、次のファイルの最初の変更へ進む。コメントの位置にも止まる。</dd>
+    <dt>提案（要判断）</dt><dd>スクロールバーの横に、変更（緑・赤）とコメント（付箋色）の位置を示す細い帯を置き、クリックで飛ぶ。これは仕様の「作らないもの P3 ミニマップ」に近い。コードの縮小表示はしない「位置の印だけ」なので別物と扱うかを決めてほしい。</dd>
+  </dl>
+  <div class="frame" style="position: relative;">
+    <div class="dv" id="dv-s3" style="height: 330px; padding-right: 12px;"></div>
+    <div class="ruler" aria-hidden="true">
+      <i class="a" style="top: 4%; height: 3%"></i><i class="d" style="top: 9%; height: 2%"></i><i class="a" style="top: 12%; height: 6%"></i>
+      <i class="n" style="top: 15%"></i><i class="d" style="top: 31%; height: 2%"></i><i class="a" style="top: 33%; height: 4%"></i>
+      <i class="a" style="top: 52%; height: 9%"></i><i class="n" style="top: 57%"></i><i class="d" style="top: 70%; height: 3%"></i><i class="a" style="top: 88%; height: 2%"></i>
+      <span class="vp" style="top: 10%; height: 9%"></span>
+    </div>
+    <div class="navpill" role="group" aria-label="変更間の移動">
+      <button type="button" data-hunk="prev"><kbd>p</kbd>前の変更</button>
+      <span class="pos" id="hunkpos">3 / 17</span>
+      <button type="button" data-hunk="next">次の変更<kbd>n</kbd></button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 4 diff ================= -->
+<section id="s4">
+  <h2>4. diff が「なんとなく見辛い」 <span class="tag bug">不具合</span> <span class="tag design">設計変更</span></h2>
+  <p class="lead">言葉にしづらい違和感の候補を、コードと画面で確かめた順に並べる。上の 2 つは確認済みの事実で、見辛さへの寄与は推測。</p>
+  <ol class="note-list">
+    <li><strong>1 列表示で、書き換えた行が −/+/−/+ と 1 行ずつ交互に並ぶ</strong>（挙動は確認済み・<code>web/assets/model.js:77-92</code>）。<code>git diff</code> や GitHub は「消した塊」の後に「足した塊」を出すので、旧コードも新コードも続けて読める。交互だとどちらも 1 行ずつ途切れる。テスト（<code>model.test.js:133</code>）は 1 行の書き換えしか見ていないので、意図した並びかは未確認。</li>
+    <li><strong>2 列表示で、書き換えた行に背景色が付かず、旧側の変更箇所が緑で強調される</strong>（確認済み・<code>web/assets/style.css:772-885</code> に 2 列の書き換え行の指定が無い）。また、追加だけの行では空の左側まで緑、削除だけの行では空の右側まで赤になる。</li>
+    <li>行番号の欄が 2 つとも幅 4.6em で背景も無く、コードとの境目が弱い。<code>+</code>/<code>−</code> の記号も細い（推測: 視線の手がかりが少ない）。</li>
+    <li>折りたたみ行が「… 6 行を表示」だけで、どこの何行目か分からない。提案の見出しのうち行範囲（旧 7–13 → 新 7–17）は今のデータから出せる。「&lt;head&gt; の中」のような囲みの文脈は今のサーバが作っていないので、入れるなら任意でサーバ側の対応が要る。</li>
+    <li>差分の高さが画面の 55% しかない（全体像の節を参照）。</li>
+  </ol>
+  <h3>1 列: 交互 → 塊ごと</h3>
+  <div class="cmp">
+    <div><p class="cap"><b>現状</b>（同じ内容の再現）</p><div class="frame scroll-x cur"><div class="dv" id="dv-s4-before" style="overflow: visible;"></div></div></div>
+    <div><p class="cap"><b>提案</b> — 消した 3 行の後に足した 7 行。行番号の欄に色、見出しに位置</p><div class="frame scroll-x"><div class="dv" id="dv-s4-after" style="overflow: visible;"></div></div></div>
+  </div>
+  <h3>2 列: 書き換え行の色</h3>
+  <div class="cmp">
+    <div><p class="cap"><b>現状</b>（実際のスクリーンショット、<code>web/assets/style.css</code>）— 旧 6 行目 <code>--border</code> は背景が白で、変更箇所が緑。旧 3–4 行目の削除は、空の右側まで赤</p><img class="shot" src="ui-mock-v2-before-split.png" alt="現状の 2 列表示。書き換え行に背景色が無く、旧側の変更箇所が緑色で強調されている"></div>
+    <div><p class="cap"><b>提案</b> — 旧側は赤、新側は緑、相手の無い側は斜線</p><div class="frame scroll-x"><div id="split-after" style="min-width: 640px;"></div></div></div>
+  </div>
+</section>
+
+<!-- ================= 5 コメント ================= -->
+<section id="s5">
+  <h2>5. コメントで差分が分断される <span class="tag design">設計変更</span> <span class="tag spec">仕様判断（編集・削除）</span></h2>
+  <dl class="kv">
+    <dt>観測</dt><dd>コメントは画面幅いっぱいの灰色の帯で、上下に罫線が付く。本文は幅の制限がなく、1600px 幅の画面では 1 行が 115 文字まで伸びた。複数行を選んだコメントは<strong>範囲の最初の行の直下</strong>に入る（<code>model.js:439</code>）ので、選んだ範囲の途中でコードが割れる。「あなた」の札は 1 人で使う道具では情報がない。</dd>
+    <dt>併せて</dt><dd>付けたコメントを直す・消す手段がない（サーバが受け付けるのは追加・返信・解決のみ、<code>crates/kemi-server/src/api.rs:460-480</code>）。誤字もそのままエージェントへ渡る。追加には <code>R-COMMENT</code> の変更が要る。</dd>
+  </dl>
+  <p class="cap"><b>現状</b>（実際のスクリーンショット、試しに付けたコメント）</p>
+  <img class="shot" src="ui-mock-v2-before-comment.png" alt="現状のコメント表示。差分の途中に全幅の灰色の帯が入り、長い本文が横いっぱいに伸びている" style="max-width: 900px;">
+  <h3>同じ内容で案を比べる</h3>
+  <div class="variant-tabs" role="group" aria-label="コメント表示の案">
+    <button type="button" data-variant="now" aria-pressed="false">現状</button>
+    <button type="button" data-variant="v1" aria-pressed="true">案 1: 吹き出し（畳める）<span class="rec">推奨</span></button>
+    <button type="button" data-variant="v2" aria-pressed="false">案 2: 行の印 + ポップアップ</button>
+  </div>
+  <p class="cap" id="variant-cap"></p>
+  <div class="frame scroll-x" style="position: relative;"><div class="dv" id="dv-s5" style="overflow: visible; min-height: 300px;"></div></div>
+  <ul class="note-list">
+    <li><strong>案 1</strong>: 範囲の最後の行の下に、コードの位置から始まる付箋色の吹き出し。尾が対象行を指し、範囲の行は行番号の左端に付箋色の線。既定は 1 行の札に畳み、クリックで開く。畳んだ札は 1 行ぶんしか押し下げない。</li>
+    <li><strong>案 2</strong>: 差分には行を足さない。行番号の横に印だけを出し、クリックで右側に吹き出しが浮く。コードは一切ずれないが、コメントが常に隠れていて、浮いた吹き出しがコードに重なる。</li>
+    <li>推す理由: 案 1 はコードの流れを 1 行ぶんしか崩さず、しかも付けたコメントが常に目に入る。案 2 は分断ゼロだが、送信前に自分のコメントを見直すには別の一覧が要る。</li>
+  </ul>
+</section>
+
+<!-- ================= 6 承認後 ================= -->
+<section id="s6">
+  <h2>6. 承認しても黙って終わる <span class="tag design">設計変更</span> <span class="tag spec">仕様判断（結果の保存）</span></h2>
+  <dl class="kv">
+    <dt>仕組み</dt><dd>送信を確定するとサーバが止まり、結果の JSON が標準出力に 1 回だけ出て kemi が終わる（<code>src/main.rs:288-300</code>）。結果はメモリにしか無いので、エージェントがその出力を受け取っていなければ消える。ページ側は「JSON を出力して終了しました」と出すだけで、受け取られたかは分からない。</dd>
+    <dt>一番疑わしい原因</dt><dd>エージェント向けの手順書 <code>~/.claude/skills/diff-review-viewer/SKILL.md</code> が旧ツール向けのままで、「The command keeps running until interrupted」（中断するまで動き続ける）と書いてある。これを読んだエージェントは kemi が自分で終わることも、終わったときに JSON を読む必要があることも知らない。<code>TODO.md</code> の「納品後の環境更新」に更新が残っている。ただし、落ちた回にエージェントが実際にどう起動していたかは確認できていない（推測）。</dd>
+    <dt>提案</dt><dd>
+      <strong>まず手順書を直す</strong>（kemi 本体は変えない）: バックグラウンドで起動して終了通知を待ち、終わったら標準出力の JSON を読む、と書く。<br>
+      <strong>ページ側（仕様内）</strong>: 確認ダイアログにコメント件数と未読ファイル数を出す。完了画面に結果の JSON と「コピー」ボタンを出し、エージェントが反応しないときは会話に貼れるようにする。送信後は承認ボタンを無効にする（今は押せてしまい、確認ダイアログが出た後に何も起きない）。<br>
+      <strong>要判断</strong>: 結果をファイルにも残し、後から <code>kemi --result</code> で読めるようにする。「標準出力が唯一の出口」（<code>R-SUBMIT</code>）と「セッションはメモリのみ」（<code>R-SERVE</code>）に反するので仕様変更になる。手順書の修正で落ちなくなるなら不要。
+    </dd>
+  </dl>
+  <div class="cmp">
+    <div>
+      <p class="cap"><b>確認ダイアログ</b> — 送る中身が分かる</p>
+      <div class="backdrop">
+        <div class="dlg" role="dialog" aria-label="承認の確認">
+          <h4>承認して終了しますか？</h4>
+          <dl class="sum">
+            <dt>コメント</dt><dd>3 件（うち提案 1 件）</dd>
+            <dt>見たファイル</dt><dd>12 / 35</dd>
+          </dl>
+          <div class="warn">まだ見ていないファイルが 23 あります。承認は取り消せません。</div>
+          <div class="row"><button class="btn" type="button">戻る</button><button class="btn approve" type="button">承認して終了</button></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>完了画面</b> — 受け取られなかったときの逃げ道を置く</p>
+      <div class="backdrop">
+        <div class="finish">
+          <span class="seal big" aria-hidden="true">閲</span>
+          <div>
+            <h4>承認を送りました</h4>
+            <p>kemi は結果を標準出力に書いて終了しました。エージェントが反応しないときは、この JSON をコピーして会話に貼ってください。</p>
+            <div class="row"><button class="btn primary" type="button" id="copyjson">JSON をコピー</button><span class="k-meta">コメント 3 件 / 提案 1 件</span></div>
+            <pre>{"kemi":1,"title":"c01e476~1..f65473c","verdict":"approved",
+ "approval":[],"comments":[{"id":"c1","group_id":"c01e4761…",
+ "path":"web/index.html","side":"new","start_line":13,"end_line":14,
+ "quote":["        &lt;div class=\"title\" id=\"review-title\"&gt;&lt;/div&gt;", …],
+ "body":"subtitle を hidden で出し分けるなら…", …}]}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 7 色 ================= -->
+<section id="s7">
+  <h2>7. 色が単調 <span class="tag design">設計変更</span></h2>
+  <p class="lead">今は GitHub の配色（灰色と青 1 色）そのままで、「選択中」「押されたボタン」「リンク」「展開ボタン」がすべて同じ青。意味ごとに色を分ける。差分の緑と赤は慣習どおり残し、ほかの意味に赤系を使わない（削除と見分けがつかなくなるため）。上部バーのアイコンは仕様（<code>R-VIEW</code>）どおりモノクロのまま。</p>
+  <p class="lead">一か所だけ遊ぶ: 名前の由来「閲する」から、グループを見終えたときと承認したときに藍色の「閲」の印を押す。</p>
+  <div class="scroll-x">
+    <table class="pal">
+      <thead><tr><th>意味</th><th>色</th><th>使う場所</th><th>今</th></tr></thead>
+      <tbody>
+        <tr><td>藍（進捗・見た・主操作）</td><td><span class="sw" style="background: var(--ai)"></span> <span class="sw" style="background: var(--ai-soft)"></span></td><td>見たのチェック、進捗バー、閲の印、選択中のファイル、変更の見出し</td><td>青 1 色が全部を兼ねる</td></tr>
+        <tr><td>付箋（コメント）</td><td><span class="sw" style="background: var(--note-line)"></span> <span class="sw" style="background: var(--note-bg)"></span></td><td>吹き出し、コメント件数、位置の帯の印、範囲の線</td><td>灰色の帯</td></tr>
+        <tr><td>藤（重要・見てほしい点）</td><td><span class="sw" style="background: var(--star)"></span> <span class="sw" style="background: var(--star-soft)"></span></td><td>重要バッジ、見てほしい点の枠</td><td>黄土色（付箋色と取り合うので移す）</td></tr>
+        <tr><td>追加</td><td><span class="sw" style="background: var(--add-ink)"></span> <span class="sw" style="background: var(--add-gut)"></span> <span class="sw" style="background: var(--add-bg)"></span></td><td>行・行番号の欄・変更箇所</td><td>行番号の欄に色なし</td></tr>
+        <tr><td>削除</td><td><span class="sw" style="background: var(--del-ink)"></span> <span class="sw" style="background: var(--del-gut)"></span> <span class="sw" style="background: var(--del-bg)"></span></td><td>同上</td><td>同上</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="note-list">
+    <li>ツリーの状態表示は、どのファイルにも付く「変更」の札をやめ、1 文字にして「変更」だけ薄くする。珍しい状態だけが目立つ。モックは GitHub と同じ A / D / R / M にしたが、仕様の「UI に英語の未翻訳文言を混ぜない」（<code>R-DIST</code>）に触れるかもしれないので、「追 / 削 / 改 / 変」でもよい。</li>
+    <li>コミットの種類（<code>feat</code> / <code>fix</code> など）は色を付けず小さな枠で区別するだけにした。色を増やしすぎると、上の意味の色が効かなくなる。</li>
+    <li>書体は今のシステムフォントのまま。単一バイナリに書体を埋め込むとサイズが増えるわりに、見辛さの主な原因とは見ていないため（ここは未検証の判断）。</li>
+  </ul>
+</section>
+</div>
+
+<script>
+// ---- 差分データ（web/index.html の c01e476 の実際の変更） ----
+const HUNK = [
+  ["e", 7, 7, '    <link rel="stylesheet" href="assets/style.css" />'],
+  ["e", 8, 8, '  </head>'],
+  ["e", 9, 9, '  <body>'],
+  ["r", 10, 10, '    <⟦div id⟧="topbar">', '    <⟦header class⟧="topbar">'],
+  ["r", 11, 11, '      <⟦h1 id="review-title"⟧>kemi</⟦h1⟧>', '      <⟦div class="brand"⟧>kemi</⟦div⟧>'],
+  ["r", 12, 12, '      <⟦span id⟧="⟦review-stats⟧"></⟦span⟧>', '      <⟦div class⟧="⟦title-block⟧">'],
+  ["i", null, 13, '        <div class="title" id="review-title"></div>'],
+  ["i", null, 14, '        <div class="subtitle" id="review-subtitle" hidden></div>'],
+  ["i", null, 15, '      </div>'],
+  ["i", null, 16, '      <div class="meta" id="review-meta"></div>'],
+  ["e", 13, 17, '      <span class="spacer"></span>'],
+];
+const COMMENT = { start: 13, end: 14, body: "subtitle を hidden で出し分けるなら、title-block の高さが 1 行と 2 行で変わってヘッダ全体がガタつかない？ 高さを固定するか、subtitle が無いときも空の行を確保したい。" };
+
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function syn(s) {
+  // 文字列・タグ名・属性名だけを色分けする簡易ハイライト
+  const re = /("[^"]*")|(<\/?)([\w-]+)|(\s)([\w-]+)(?==)/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(s))) {
+    out += esc(s.slice(last, m.index));
+    if (m[1]) out += `<span class="syn-str">${esc(m[1])}</span>`;
+    else if (m[2]) out += esc(m[2]) + `<span class="syn-tag">${m[3]}</span>`;
+    else out += m[4] + `<span class="syn-attr">${m[5]}</span>`;
+    last = re.lastIndex;
+  }
+  return out + esc(s.slice(last));
+}
+function code(text) {
+  // ⟦ ⟧ で囲んだ部分が単語単位の変更
+  return text.split(/(⟦[^⟧]*⟧)/).map(part => part.startsWith("⟦") ? "<mark>" + esc(part.slice(1, -1)) + "</mark>" : syn(part)).join("");
+}
+function row(kind, o, n, text, extra = "") {
+  const mk = kind === "add" ? "+" : kind === "del" ? "−" : "";
+  return `<div class="d-row ${kind} ${extra}"><span class="n">${o ?? ""}</span><span class="n">${n ?? ""}</span><span class="mk">${mk}</span><span class="c">${code(text)}</span></div>`;
+}
+function hunkHead(label, ctx, rng, extraHtml = "") {
+  return `<div class="hunk"><button class="exp" type="button">${label}</button><span class="ctx">${ctx}</span>${extraHtml}<span class="rng">${rng}</span></div>`;
+}
+
+// 現行: replace を 1 行ずつ交互に出す
+function unifiedInterleaved(opts = {}) {
+  let html = `<div class="hunk"><button class="exp" type="button">… 6 行を表示</button></div>`;
+  for (const r of HUNK) {
+    if (r[0] === "e") html += row("", r[1], r[2], r[3]);
+    else if (r[0] === "r") { html += row("del", r[1], null, r[3]); html += row("add", null, r[2], r[4]); }
+    else html += row("add", null, r[2], r[3]);
+    if (opts.comment && r[0] === "i" && r[2] === COMMENT.start) html += opts.comment();
+  }
+  return html;
+}
+// 提案: 連続する変更を「消した塊 → 足した塊」に並べ替える
+function unifiedBlocks(opts = {}) {
+  let html = opts.head ?? hunkHead("↕ 6 行", "&lt;head&gt; の中", "旧 7–13 → 新 7–17");
+  let dels = [], adds = [];
+  const flush = () => {
+    for (const d of dels) html += row("del", d[0], null, d[1]);
+    for (const a of adds) {
+      const inRange = opts.comment && a[0] >= COMMENT.start && a[0] <= COMMENT.end;
+      html += row("add", null, a[0], a[1], inRange ? "commented" : "");
+      if (opts.comment && a[0] === COMMENT.end) html += opts.comment();
+    }
+    dels = []; adds = [];
+  };
+  for (const r of HUNK) {
+    if (r[0] === "e") { flush(); html += row("", r[1], r[2], r[3]); }
+    else if (r[0] === "r") { dels.push([r[1], r[3]]); adds.push([r[2], r[4]]); }
+    else adds.push([r[2], r[3]]);
+  }
+  flush();
+  return html;
+}
+function balloon() {
+  return `<div class="bal-row"><div class="bal"><div class="bh"><span class="where">新 13–14 行</span><span class="acts"><button type="button">編集</button><button type="button">削除</button><button type="button" data-collapse>畳む</button></span></div><p>${esc(COMMENT.body)}</p></div></div>`;
+}
+function chip() {
+  return `<div class="chip-row"><button class="cchip" type="button" data-expand>💬 <span class="where mono">13–14</span><span class="tx">${esc(COMMENT.body)}</span></button></div>`;
+}
+
+// ---- 全体像 ----
+const dvOverall = document.getElementById("dv-overall");
+let overallOpen = false;
+function renderOverall() {
+  const more = hunkHead("↕ 38 行", "&lt;div class=&quot;tools&quot;&gt; の中", "旧 18–55 → 新 22–92")
+    + row("", 56, 93, '      </div>') + row("del", 57, null, '    <⟦div id="layout"⟧>') + row("add", null, 94, '    <⟦main class="layout"⟧>')
+    + row("", 58, 95, '      <aside class="tree" id="tree" aria-label="ファイルツリー"></aside>');
+  dvOverall.innerHTML = unifiedBlocks({ comment: () => overallOpen ? balloon() : chip() }) + more + `<div style="height: 180px"></div>`;
+  dvOverall.insertAdjacentHTML("beforeend", `<div class="navpill" style="position: sticky; float: right; bottom: 14px; margin-right: 14px;"><button type="button"><kbd>p</kbd>前</button><span class="pos">3 / 17</span><button type="button">次<kbd>n</kbd></button></div>`);
+}
+dvOverall.addEventListener("click", e => {
+  if (e.target.closest("[data-expand]")) { overallOpen = true; renderOverall(); }
+  if (e.target.closest("[data-collapse]")) { overallOpen = false; renderOverall(); }
+});
+renderOverall();
+
+// ---- ツリー ----
+function tree(groups) {
+  return groups.map(g => {
+    const seen = g.files.filter(f => f.seen).length, all = g.files.length, done = seen === all;
+    const count = done ? `<span class="seal" title="すべて見た">閲</span>` : `<span class="g-count">${seen} / ${all}</span>`;
+    const files = g.files.map(f => `<button type="button" class="f ${f.seen ? "seen" : ""} ${f.active ? "active" : ""}"><span class="chk"></span><span class="nm">${f.name} <span class="dir">${f.dir.replace(/\/$/, "")}</span></span>${f.c ? `<span class="cbadge">💬 ${f.c}</span>` : "<span></span>"}<span class="st"><span class="sl ${f.s}">${f.s}</span> <span class="p">+${f.a}</span> <span class="m">−${f.d}</span></span></button>`).join("");
+    return `<div class="g ${done ? "done" : ""}"><button type="button" class="g-head"><span style="color: var(--ink-3)">▾</span><span class="g-title"><span class="ctype">${g.t}</span>${g.title}</span>${count}</button><div class="g-bar"><i style="width: ${Math.round(seen / all * 100)}%"></i></div>${files}</div>`;
+  }).join("");
+}
+const TREE = [
+  { t: "feat", title: "UI をモック準拠に改訂する", files: [
+    { dir: "web/assets/", name: "app.js", s: "M", a: 873, d: 474, seen: true, c: 2 },
+    { dir: "web/assets/", name: "style.css", s: "M", a: 885, d: 390, seen: true },
+    { dir: "web/", name: "index.html", s: "M", a: 85, d: 30, active: true, c: 1 } ] },
+  { t: "perf", title: "ツリー再構築でファイル項目のボタンを使い回す", files: [
+    { dir: "web/assets/", name: "app.js", s: "M", a: 2, d: 2, seen: true } ] },
+  { t: "fix", title: "インラインエディタを閉じた後に行の高さを戻す", files: [
+    { dir: "web/assets/", name: "app.js", s: "M", a: 6, d: 0 } ] },
+  { t: "docs", title: "グループ見出しの畳みとコメント本文の折りたたみを仕様とモックに反映", files: [
+    { dir: "docs/design/", name: "ui-mock.html", s: "M", a: 37, d: 6 },
+    { dir: "docs/spec/", name: "kemi.md", s: "M", a: 6, d: 2 } ] },
+];
+document.getElementById("tree-after").innerHTML = tree(TREE);
+document.getElementById("tree-s1").innerHTML = tree(TREE.slice(0, 3));
+
+// グループ説明の開閉、見たの切替
+document.querySelector("[data-toggle=intro]").addEventListener("click", e => {
+  const intro = document.getElementById("intro");
+  intro.hidden = !intro.hidden;
+  e.currentTarget.setAttribute("aria-expanded", String(!intro.hidden));
+  e.currentTarget.textContent = intro.hidden ? "説明を開く" : "説明を畳む";
+});
+document.querySelector("[data-seen]").addEventListener("click", e => e.currentTarget.classList.toggle("on"));
+
+// ---- 2 グループ（案 A） ----
+const origin = `<span style="display:inline-flex; gap:6px; margin-left: 4px;"><button type="button" class="tag design" style="background: var(--bg); font-family: var(--mono);" title="feat: UI をモック準拠に改訂する">c01e476 feat: UI をモック準拠に改訂する</button></span>`;
+document.getElementById("dv-s2").innerHTML = unifiedBlocks({ head: hunkHead("↕ 6 行", "由来:", "旧 7–13 → 新 7–17", origin) })
+  + `<div class="gintro" style="border-top: 1px solid var(--line-soft)"><p><b style="color: var(--ink)">c01e476 feat: UI をモック準拠に改訂する</b><br>承認済みモック docs/design/ui-mock.html に合わせ、ヘッダ・ツリー・コメントの見せ方を揃える。</p></div>`;
+
+// ---- 3 移動 ----
+const dv3 = document.getElementById("dv-s3");
+dv3.innerHTML = unifiedBlocks() + unifiedBlocks({ head: hunkHead("↕ 38 行", "&lt;div class=&quot;tools&quot;&gt; の中", "旧 18–55 → 新 22–92") }) + unifiedBlocks({ head: hunkHead("↕ 12 行", "&lt;footer&gt; の中", "旧 70–81 → 新 104–115") });
+let hunk = 3;
+document.querySelectorAll("[data-hunk]").forEach(b => b.addEventListener("click", () => {
+  hunk = Math.max(1, Math.min(17, hunk + (b.dataset.hunk === "next" ? 1 : -1)));
+  document.getElementById("hunkpos").textContent = `${hunk} / 17`;
+  const heads = dv3.querySelectorAll(".hunk");
+  heads[(hunk - 1) % heads.length].scrollIntoView({ block: "start", behavior: "smooth" });
+}));
+
+// ---- 4 diff ----
+document.getElementById("dv-s4-before").innerHTML = unifiedInterleaved();
+document.getElementById("dv-s4-after").innerHTML = unifiedBlocks();
+const SPLIT = [
+  ["e", 1, 1, ":root {", ":root {"],
+  ["i", null, 2, "", "  color-scheme: light;"],
+  ["e", 2, 3, "  --bg: #ffffff;", "  --bg: #ffffff;"],
+  ["d", 3, null, "  --fg: #1f2328;", ""],
+  ["d", 4, null, "  --muted: #6e7781;", ""],
+  ["e", 5, 4, "  --panel: #f6f8fa;", "  --panel: #f6f8fa;"],
+  ["r", 6, 5, "  ⟦--border: #d0d7de;⟧", "  ⟦--panel-2: #eef1f4;⟧"],
+  ["i", null, 6, "", "  --ink: #1f2328;"],
+  ["i", null, 7, "", "  --ink-2: #59636e;"],
+  ["e", 7, 8, "  --accent: #0969da;", "  --accent: #0969da;"],
+  ["r", 10, 17, "  --⟦add-fg: #1a7f37⟧;", "  --⟦del-mark: #ffc9c4⟧;"],
+  ["r", 11, 18, "  --del-⟦fg⟧: #cf222e;", "  --del-⟦ink⟧: #cf222e;"],
+];
+function codePlain(t) { return t.split(/(⟦[^⟧]*⟧)/).map(p => p.startsWith("⟦") ? "<mark>" + esc(p.slice(1, -1)) + "</mark>" : esc(p)).join(""); }
+document.getElementById("split-after").innerHTML = SPLIT.map(r => {
+  const [k, o, n, ot, nt] = r;
+  const L = k === "d" || k === "r" ? "del-side" : k === "i" ? "empty" : "";
+  const R = k === "i" || k === "r" ? "add-side" : k === "d" ? "empty" : "";
+  const lm = L === "del-side" ? "−" : "", rm = R === "add-side" ? "+" : "";
+  return `<div class="s-row"><span class="n ${L}">${o ?? ""}</span><span class="mk ${L}">${lm}</span><span class="c o ${L}">${codePlain(ot)}</span><span class="n ${R}">${n ?? ""}</span><span class="mk ${R}">${rm}</span><span class="c ${R}">${codePlain(nt)}</span></div>`;
+}).join("");
+
+// ---- 5 コメント ----
+const dv5 = document.getElementById("dv-s5");
+const CAPS = {
+  now: "現状: 範囲の最初の行（13）の直下に全幅の灰色の帯。14 行目が帯の下に分かれる",
+  v1: "案 1: 範囲の最後の行（14）の下に吹き出し。札をクリックすると開き、「畳む」で戻る",
+  v2: "案 2: 差分に行を足さず、行番号の横の印をクリックすると右に吹き出しが浮く（印をクリックして開閉）",
+};
+let variant = "v1", v1Open = false, v2Open = true;
+function renderS5() {
+  document.getElementById("variant-cap").textContent = CAPS[variant];
+  if (variant === "now") {
+    dv5.className = "dv cur";
+    dv5.innerHTML = unifiedInterleaved({ comment: () => `<div class="cur-thread"><span class="who">あなた</span><div style="margin-top: 4px;">${esc(COMMENT.body)}</div></div>` });
+  } else if (variant === "v1") {
+    dv5.className = "dv";
+    dv5.innerHTML = unifiedBlocks({ comment: () => v1Open ? balloon() : chip() });
+  } else {
+    dv5.className = "dv";
+    dv5.innerHTML = unifiedBlocks();
+    const rows = [...dv5.querySelectorAll(".d-row")];
+    const target = rows.find(r => r.querySelectorAll(".n")[1].textContent === String(COMMENT.start));
+    target.style.position = "relative";
+    target.querySelector(".n").insertAdjacentHTML("afterbegin", `<button type="button" class="gut-dot" data-pop style="border:0; padding:0;" title="コメント 1 件">1</button>`);
+    rows.filter(r => { const v = Number(r.querySelectorAll(".n")[1].textContent); return v >= COMMENT.start && v <= COMMENT.end; }).forEach(r => r.classList.add("commented"));
+    if (v2Open) {
+      target.insertAdjacentHTML("beforeend", `<div class="pop" style="top: -6px;"><div class="bh" style="display:flex; gap:8px; font-size:12px; color: var(--note-ink);"><span class="mono">新 13–14 行</span><span style="margin-left:auto">編集 削除</span></div><p style="margin: 4px 0 0">${esc(COMMENT.body)}</p></div>`);
+    }
+  }
+  document.querySelectorAll("[data-variant]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.variant === variant)));
+}
+dv5.addEventListener("click", e => {
+  if (e.target.closest("[data-expand]")) { v1Open = true; renderS5(); }
+  if (e.target.closest("[data-collapse]")) { v1Open = false; renderS5(); }
+  if (e.target.closest("[data-pop]")) { v2Open = !v2Open; renderS5(); }
+});
+document.querySelectorAll("[data-variant]").forEach(b => b.addEventListener("click", () => { variant = b.dataset.variant; renderS5(); }));
+renderS5();
+
+// ---- テーマ ----
+document.getElementById("theme").addEventListener("click", e => {
+  const dark = document.documentElement.dataset.theme !== "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  e.currentTarget.textContent = dark ? "ライト表示" : "ダーク表示";
+});
+document.getElementById("copyjson").addEventListener("click", e => { e.currentTarget.textContent = "コピーしました"; });
+</script>
+</body>
+</html>
