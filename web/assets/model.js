@@ -728,6 +728,22 @@ export function rulerMarks(kinds, offsets, height) {
   );
 }
 
+const UNIT_SWITCH_ORDER = ["file", "commit"];
+
+/**
+ * グループ単位の切り替えのボタンの並び。起動時の単位に関わらず「最終形 | コミットごと」。
+ * @template {{ unit: string }} T
+ * @param {T[]} units サーバーから受け取った単位の状態（起動時の単位が先頭）
+ * @returns {T[]}
+ */
+export function unitSwitchOrder(units) {
+  const rank = (/** @type {T} */ status) => {
+    const index = UNIT_SWITCH_ORDER.indexOf(status.unit);
+    return index < 0 ? UNIT_SWITCH_ORDER.length : index;
+  };
+  return [...units].sort((left, right) => rank(left) - rank(right));
+}
+
 /**
  * グループ単位を切り替えたときに出すファイル。同じパスの最初のファイル（コミットごと
  * ではそのパスを含む最初のコミット）、無ければ先頭。ファイルが無ければ -1。

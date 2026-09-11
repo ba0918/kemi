@@ -22,6 +22,7 @@ import {
   seenProgress,
   statusLetter,
   submitSummary,
+  unitSwitchOrder,
   unitSwitchTarget,
   draftKey,
   filterAndSortFiles,
@@ -510,7 +511,7 @@ function renderUnitSwitch() {
   const focusKey = focusKeyWithin(dom.unitSwitch);
   dom.unitSwitch.textContent = "";
   dom.unitSwitch.hidden = state.units.length === 0;
-  for (const status of state.units) {
+  for (const status of unitSwitchOrder(state.units)) {
     const unit = String(status.unit);
     const item = button("unit-button");
     const pending = state.pendingUnit && state.pendingUnit.unit === unit;

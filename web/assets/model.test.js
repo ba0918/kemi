@@ -32,6 +32,7 @@ import {
   statusLetter,
   rangeAfterSkip,
   sideTone,
+  unitSwitchOrder,
   unitSwitchTarget,
   originJumpTarget,
   seenProgress,
@@ -795,6 +796,26 @@ test("unit_switch_shows_the_first_file_with_the_same_path", () => {
   assert.equal(unitSwitchTarget(entries, "b.rs"), 1);
   assert.equal(unitSwitchTarget(entries, "missing.rs"), 0);
   assert.equal(unitSwitchTarget([], "a.rs"), -1);
+});
+
+test("unit_switch_lists_final_form_before_per_commit_whatever_the_startup_unit", () => {
+  const startedByCommit = [
+    { unit: "commit", state: "ready" },
+    { unit: "file", state: "building" },
+  ];
+  const startedByFile = [
+    { unit: "file", state: "ready" },
+    { unit: "commit", state: "building" },
+  ];
+
+  assert.deepEqual(
+    unitSwitchOrder(startedByCommit).map((status) => status.unit),
+    ["file", "commit"],
+  );
+  assert.deepEqual(
+    unitSwitchOrder(startedByFile).map((status) => status.unit),
+    ["file", "commit"],
+  );
 });
 
 test("origin_jump_goes_to_the_path_at_that_commit", () => {
