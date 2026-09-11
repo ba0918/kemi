@@ -253,42 +253,20 @@ pub fn collapse(rows: &[Row], context: usize, keep: impl Fn(&Row) -> bool) -> Ve
             index += 1;
         }
         let end = index;
-        let len = end - start;
-        let at_top = start == 0;
-        let at_bottom = end == rows.len();
+        let shown_before = if start == 0 { 0 } else { context };
+        let shown_after = if end == rows.len() { 0 } else { context };
 
-        let (mut lead, mut trail) = (0, 0);
-        match (at_top, at_bottom) {
-            (true, true) => {}
-            (true, false) => {
-                lead = len.saturating_sub(context);
-            }
-            (false, true) => {
-                trail = len.saturating_sub(context);
-            }
-            (false, false) => {
-                if len > context * 2 {
-                    lead = context;
-                    trail = context;
-                }
-            }
+        if end - start <= shown_before + shown_after {
+            display.extend(rows[start..end].iter().cloned().map(DisplayRow::Diff));
+            continue;
         }
-
-        if lead > 0 {
-            display.push(DisplayRow::Skip(Skip {
-                from: start,
-                to: start + lead,
-            }));
-        }
-        for row in &rows[start + lead..end - trail] {
-            display.push(DisplayRow::Diff(row.clone()));
-        }
-        if trail > 0 {
-            display.push(DisplayRow::Skip(Skip {
-                from: end - trail,
-                to: end,
-            }));
-        }
+        let (fold_from, fold_to) = (start + shown_before, end - shown_after);
+        display.extend(rows[start..fold_from].iter().cloned().map(DisplayRow::Diff));
+        display.push(DisplayRow::Skip(Skip {
+            from: fold_from,
+            to: fold_to,
+        }));
+        display.extend(rows[fold_to..end].iter().cloned().map(DisplayRow::Diff));
     }
 
     display
@@ -518,13 +496,81 @@ mod tests {
 
         for number in kept {
             assert!(
-                display.iter().any(|row| matches!(
-                    row,
-                    DisplayRow::Diff(row) if row.new.as_ref().is_some_and(|line| line.number == number)
-                )),
+                shows_new_line(&display, number),
                 "new line {number} is hidden: {display:?}"
             );
         }
+    }
+
+    /// 表示行のうち、新側の行番号が `number` の行が畳まれずに出ているか。
+    fn shows_new_line(display: &[DisplayRow], number: u32) -> bool {
+        display.iter().any(|row| {
+            matches!(
+                row,
+                DisplayRow::Diff(row) if row.new.as_ref().is_some_and(|line| line.number == number)
+            )
+        })
+    }
+
+    /// 変更の行の表示位置の間にある Skip の数。
+    fn skips_between_changes(display: &[DisplayRow]) -> usize {
+        let changes: Vec<usize> = display
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, DisplayRow::Diff(row) if row.kind != RowKind::Equal))
+            .map(|(index, _)| index)
+            .collect();
+        let (first, last) = (changes[0], changes[changes.len() - 1]);
+        display[first..last]
+            .iter()
+            .filter(|row| matches!(row, DisplayRow::Skip(_)))
+            .count()
+    }
+
+    #[test]
+    fn collapse_between_two_changes_keeps_context_beside_each_and_folds_the_middle() {
+        let old = numbered("line", 40);
+        let mut new = old.clone();
+        new[4] = "changed".to_string();
+        new[29] = "changed".to_string();
+        let rows = align(&old, &new);
+
+        let display = collapse(&rows, 3, |_| false);
+
+        for number in [4, 6, 29, 31] {
+            assert!(
+                shows_new_line(&display, number),
+                "new line {number} next to a change is hidden: {display:?}"
+            );
+        }
+        assert!(
+            !shows_new_line(&display, 18),
+            "the middle of the run is shown: {display:?}"
+        );
+        assert_eq!(skips_between_changes(&display), 1, "{display:?}");
+    }
+
+    #[test]
+    fn collapse_keeps_context_beside_a_kept_row_inside_a_leading_run() {
+        let old = numbered("line", 40);
+        let mut new = old.clone();
+        new[19] = "changed".to_string();
+        let rows = align(&old, &new);
+
+        let display = collapse(&rows, 3, |row| {
+            row.new.as_ref().is_some_and(|line| line.number == 1)
+        });
+
+        for number in [1, 2, 17, 18, 19] {
+            assert!(
+                shows_new_line(&display, number),
+                "new line {number} next to a kept row or a change is hidden: {display:?}"
+            );
+        }
+        assert!(
+            !shows_new_line(&display, 10),
+            "the middle of the run is shown: {display:?}"
+        );
     }
 
     #[test]
