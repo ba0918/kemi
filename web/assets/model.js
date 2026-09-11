@@ -490,6 +490,59 @@ export function commitTypeBox(subject) {
 }
 
 /**
+ * 行を持つコメント（ファイル全体へのコメントでない）か。
+ * @param {any} comment
+ * @returns {boolean}
+ */
+function hasLines(comment) {
+  return comment.start_line !== null && comment.start_line !== undefined;
+}
+
+/**
+ * コメントが指す論理行（側と行番号）の表示行 index。指された行だけを 1 回の走査で探し、
+ * 探す行が無ければ走査しない（50 万行のファイルで、全行の表を描き直しのたびに作らない）。
+ * @param {DisplayLine[]} display
+ * @param {{ side: string, number: number }[]} targets
+ * @param {boolean} first 同じ行が複数の表示行にあるとき、最初（true）か最後（false）を取る
+ * @returns {Map<string, number>} `${side}:${number}` から表示行 index
+ */
+function locateLines(display, targets, first) {
+  /** @type {Map<string, number>} */
+  const found = new Map();
+  if (targets.length === 0) {
+    return found;
+  }
+  /** @type {Record<string, Set<number>>} */
+  const wanted = { old: new Set(), new: new Set() };
+  for (const target of targets) {
+    wanted[target.side]?.add(target.number);
+  }
+  /**
+   * @param {string} side
+   * @param {Line | null} line
+   * @param {number} index
+   */
+  const record = (side, line, index) => {
+    if (!line) {
+      return;
+    }
+    const number = Number(line.number);
+    if (!wanted[side].has(number)) {
+      return;
+    }
+    const key = `${side}:${number}`;
+    if (!first || !found.has(key)) {
+      found.set(key, index);
+    }
+  };
+  for (let index = 0; index < display.length; index += 1) {
+    record("old", display[index].oldLine, index);
+    record("new", display[index].newLine, index);
+  }
+  return found;
+}
+
+/**
  * 変更間の移動で止まる場所（表示行の位置、昇順）。変更ブロックの先頭（由来の行が
  * あればその行）と、ブロックの外で始まる行コメントの範囲の最初の行。ブロックの中で
  * 始まるコメントはブロックの先頭で一緒に止まり、ファイル全体のコメントは含めない。
@@ -513,23 +566,13 @@ export function navStops(display, comments) {
     }
     blockStart = -1;
   });
-  /** @type {Map<string, number>} */
-  const anchors = new Map();
-  display.forEach((line, index) => {
-    for (const [side, target] of [
-      ["old", line.oldLine],
-      ["new", line.newLine],
-    ]) {
-      const key = target ? `${side}:${Number(/** @type {Line} */ (target).number)}` : null;
-      if (key && !anchors.has(key)) {
-        anchors.set(key, index);
-      }
-    }
-  });
-  for (const comment of comments) {
-    if (comment.start_line === null || comment.start_line === undefined) {
-      continue;
-    }
+  const lineComments = comments.filter(hasLines);
+  const anchors = locateLines(
+    display,
+    lineComments.map((comment) => ({ side: comment.side, number: Number(comment.start_line) })),
+    true,
+  );
+  for (const comment of lineComments) {
     const index = anchors.get(`${comment.side}:${Number(comment.start_line)}`);
     if (index !== undefined && !inBlock[index]) {
       stops.add(index);
@@ -879,16 +922,14 @@ export function buildTree(entries) {
  * @returns {{ byLine: Map<number, any[]>, floating: any[] }}
  */
 export function placeThreads(displayLines, comments) {
-  /** @type {Map<string, number>} */
-  const anchors = new Map();
-  displayLines.forEach((line, index) => {
-    if (line.oldLine) {
-      anchors.set(`old:${Number(line.oldLine.number)}`, index);
-    }
-    if (line.newLine) {
-      anchors.set(`new:${Number(line.newLine.number)}`, index);
-    }
-  });
+  const anchors = locateLines(
+    displayLines,
+    comments.filter(hasLines).map((comment) => ({
+      side: comment.side,
+      number: Number(comment.end_line ?? comment.start_line),
+    })),
+    false,
+  );
   /** @type {Map<number, any[]>} */
   const byLine = new Map();
   /** @type {any[]} */
@@ -896,10 +937,7 @@ export function placeThreads(displayLines, comments) {
   for (const comment of comments) {
     // 範囲のコメントは範囲の最後の行の直下に置き、範囲の行を上下に分けない。
     const last = comment.end_line ?? comment.start_line;
-    const key =
-      comment.start_line === null || comment.start_line === undefined
-        ? null
-        : `${comment.side}:${Number(last)}`;
+    const key = hasLines(comment) ? `${comment.side}:${Number(last)}` : null;
     const index = key === null ? -1 : anchors.get(key) ?? -1;
     if (index < 0) {
       floating.push(comment);
