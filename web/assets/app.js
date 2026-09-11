@@ -476,6 +476,7 @@ function renderHeader() {
   renderUnitSwitch();
   renderProgress();
   dom.commentCount.textContent = String(state.allComments.length);
+  dom.btnComments.setAttribute("aria-label", `コメントの一覧（${state.allComments.length} 件）`);
   dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
