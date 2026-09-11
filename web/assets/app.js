@@ -1418,6 +1418,10 @@ function closeEditor() {
  * 測り直すよう覚えておく。
  */
 function remeasure() {
+  // 利用者の操作で行の高さが変わったら、n / p で移った先を保つのをやめる。保ったままだと、
+  // 移った先より上で開いたエディタや吹き出しの高さだけスクロール位置が送られ、いま触った
+  // 行が画面の外へ動く。
+  state.lastNav = null;
   state.measureNext = true;
   state.heights.forEach((height, index) => {
     if (height !== ROW_HEIGHT) {
@@ -1506,6 +1510,7 @@ function openEditorAt(side, number) {
     suggestionOn: false,
     needsFocus: true,
   };
+  remeasure();
   renderDiff();
   renderFloating();
 }
