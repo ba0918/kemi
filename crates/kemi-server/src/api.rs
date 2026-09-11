@@ -292,11 +292,11 @@ async fn file(
     let old_text = content
         .old
         .as_deref()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+        .map(|bytes| content::normalize(&String::from_utf8_lossy(bytes)));
     let new_text = content
         .new
         .as_deref()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+        .map(|bytes| content::normalize(&String::from_utf8_lossy(bytes)));
     let old_lines = side_lines(&content.old);
     let new_lines = side_lines(&content.new);
     let rows = diff::align(&old_lines, &new_lines);
