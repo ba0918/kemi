@@ -1,5 +1,6 @@
 //! テスト用の一時 git リポジトリ。決定的な日付でコミットし、Drop で消す。
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -94,7 +95,10 @@ impl TempRepo {
                 .output()
             {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    eprintln!(
+                    // eprintln! ではなく stderr へ直接書く。eprintln! はテストの出力の
+                    // 捕捉に呑まれ、飛ばしたテストが何も言わずに ok と出る。
+                    let _ = writeln!(
+                        std::io::stderr(),
                         "ssh-keygen が見つからないため、署名したコミットのテストを飛ばします"
                     );
                     return None;
