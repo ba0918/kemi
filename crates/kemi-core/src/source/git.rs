@@ -680,6 +680,8 @@ fn range_messages(repo: &Path, range: &str) -> Result<Vec<CommitMessage>, Source
         repo,
         &[
             "log",
+            // 利用者の log.showSignature で署名の検証結果が sha の前に混ざらないようにする。
+            "--no-show-signature",
             "--no-merges",
             "--reverse",
             "-z",
@@ -1322,6 +1324,42 @@ mod tests {
         let content = source.content(&group.files[0].id).unwrap();
         assert_eq!(content.old, None);
         assert_eq!(content.new.unwrap(), b"b\n");
+    }
+
+    #[test]
+    fn range_commit_group_ids_are_shas_even_when_log_shows_signatures() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        let base = repo.add_and_commit("base");
+        repo.write("a.txt", "two\n");
+        repo.add_and_commit_signed("signed");
+        repo.write("a.txt", "three\n");
+        repo.add_and_commit("unsigned");
+        repo.git(&["config", "log.showSignature", "true"]);
+
+        let review = source(
+            &repo,
+            GitMode::Range {
+                from: base.clone(),
+                to: "HEAD".to_string(),
+                group_by: GroupBy::Commit,
+            },
+        )
+        .review()
+        .unwrap();
+
+        let ids: Vec<&str> = review
+            .groups
+            .iter()
+            .map(|group| group.id.as_str())
+            .collect();
+        let expected = repo.git(&[
+            "rev-list",
+            "--reverse",
+            "--no-merges",
+            &format!("{base}..HEAD"),
+        ]);
+        assert_eq!(ids, expected.lines().collect::<Vec<_>>());
     }
 
     #[test]

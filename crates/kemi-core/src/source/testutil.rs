@@ -74,6 +74,37 @@ impl TempRepo {
         self.head()
     }
 
+    /// ssh 鍵で署名したコミット。鍵は `.git` の下に作り、作業ツリーの変更に混ぜない。
+    pub fn add_and_commit_signed(&self, message: &str) -> String {
+        let key = self.path.join(".git").join("kemi-test-signing-key");
+        if !key.exists() {
+            let output = Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                .arg(&key)
+                .output()
+                .expect("run ssh-keygen");
+            assert!(
+                output.status.success(),
+                "ssh-keygen failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let signing_key = format!("user.signingkey={}", key.display());
+        self.git(&["add", "-A"]);
+        self.git(&[
+            "-c",
+            "gpg.format=ssh",
+            "-c",
+            &signing_key,
+            "commit",
+            "-q",
+            "-S",
+            "-m",
+            message,
+        ]);
+        self.head()
+    }
+
     pub fn add_and_commit_at(&self, date: &str, message: &str) -> String {
         self.git(&["add", "-A"]);
         self.git_at(date, &["commit", "-q", "-m", message]);

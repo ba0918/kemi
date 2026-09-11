@@ -228,6 +228,8 @@ pub(crate) fn range_commits(
         repo,
         &[
             "log",
+            // 利用者の log.showSignature で署名の検証結果が sha の前に混ざらないようにする。
+            "--no-show-signature",
             "-z",
             "--topo-order",
             "--format=%H%x1f%P%x1f%s%x1f%b",
@@ -571,6 +573,24 @@ mod tests {
             shas(&origin.blocks[0]),
             vec![newer.as_str(), older.as_str()]
         );
+    }
+
+    #[test]
+    fn origin_names_signed_commits_even_when_log_shows_signatures() {
+        let repo = TempRepo::new();
+        let mut lines = numbered(10);
+        repo.write("f.txt", &text(&lines));
+        let base = repo.add_and_commit("base");
+        lines[3] = "four".to_string();
+        repo.write("f.txt", &text(&lines));
+        let signed = repo.add_and_commit_signed("signed");
+        repo.git(&["config", "log.showSignature", "true"]);
+
+        let origin = origin_of(&final_source(&repo, &base, "HEAD"), "f.txt");
+
+        assert_eq!(shas(&origin.blocks[0]), vec![signed.as_str()]);
+        assert_eq!(origin.blocks[0].unknown, Unknown::None);
+        assert_eq!(origin.commits[0].sha, signed);
     }
 
     #[test]
