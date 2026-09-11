@@ -857,6 +857,22 @@ fn result_flag_without_any_result_exits_2_and_prints_nothing() {
 }
 
 #[tokio::test]
+async fn result_flag_with_a_broken_latest_file_exits_2_and_prints_nothing() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (_, stdout, _) = submit_manifest(&dir.path, &state.path, "approved", "途中で切れる").await;
+    let files = result_files(&state.path);
+    assert_eq!(files.len(), 1);
+    // 書き込みの途中で止まった結果ファイルに相当する、途中で切れた JSON。
+    std::fs::write(&files[0], &stdout.as_bytes()[..stdout.len() / 2]).unwrap();
+
+    let output = run_with_state(&dir.path, &["--result"], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+}
+
+#[tokio::test]
 async fn result_keeps_twenty_newest_across_repositories() {
     let first_repo = TempDir::new();
     let second_repo = TempDir::new();

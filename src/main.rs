@@ -167,17 +167,19 @@ fn print_result(cli: &Cli) -> ! {
     let Some(text) = result::load_latest(&dir, key.as_deref()) else {
         fail("この場所の結果はありません");
     };
-    print!("{text}");
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    // 壊れたファイルを stdout に出してから終了コード 2 にしないよう、先に読み解く。
     let verdict = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
         .and_then(|document| document["verdict"].as_str().map(str::to_string));
-    std::process::exit(match verdict.as_deref() {
+    let code = match verdict.as_deref() {
         Some("approved") => 0,
         Some("changes_requested") => 1,
-        _ => 2,
-    });
+        _ => fail("最新の結果ファイルを読み解けません"),
+    };
+    print!("{text}");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::process::exit(code);
 }
 
 /// 結果ファイルを書く先。submit を確定したときにサーバから呼ばれる。
