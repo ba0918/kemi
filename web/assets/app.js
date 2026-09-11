@@ -12,6 +12,7 @@ import {
   isDarkTheme,
   keyAction,
   lineAnchor,
+  lineHasAnchor,
   lineOffsets,
   metaItems,
   nextHighlightOverride,
@@ -97,7 +98,7 @@ const dom = {
 /**
  * @typedef {{ file: FileEntry, group: any }} Entry
  * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection
- * @typedef {{ fileId: string, side: string, start: number, end: number, displayIndex: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean }} Editor
+ * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean }} Editor
  */
 
 /** @type {{
@@ -931,7 +932,7 @@ function openFileWideEditor() {
     side: "new",
     start: 0,
     end: 0,
-    displayIndex: -1,
+    anchor: 0,
     wide: true,
     body: loadDraft(draftKey(entry.file.id, null)),
     suggestion: "",
@@ -945,9 +946,8 @@ function openFileWideEditor() {
 /**
  * @param {string} side
  * @param {number} number
- * @param {number} index
  */
-function openEditorAt(side, number, index) {
+function openEditorAt(side, number) {
   if (state.submitted) {
     return;
   }
@@ -981,7 +981,7 @@ function openEditorAt(side, number, index) {
     side,
     start,
     end,
-    displayIndex: index,
+    anchor: number,
     wide: false,
     body: loadDraft(draftKey(entry.file.id, { side, start, end })),
     suggestion: selectionText(),
@@ -1076,7 +1076,7 @@ function restoreEditorFocus(focus) {
 function renderBlock(line, index) {
   const block = /** @type {HTMLDivElement} */ (el("div", "row-block"));
   block.dataset.kemiRow = "1";
-  block.append(renderLine(line, index));
+  block.append(renderLine(line));
   const threads = state.threads.byLine.get(index);
   if (threads) {
     for (const comment of threads) {
@@ -1091,7 +1091,7 @@ function renderBlock(line, index) {
     editorState &&
     !editorState.wide &&
     editorState.fileId === (entry ? entry.file.id : "") &&
-    editorState.displayIndex === index
+    lineHasAnchor(line, editorState.side, editorState.anchor)
   ) {
     block.append(renderEditor(editorState));
   }
@@ -1100,10 +1100,9 @@ function renderBlock(line, index) {
 
 /**
  * @param {DisplayLine} line
- * @param {number} index
  * @returns {HTMLElement}
  */
-function renderLine(line, index) {
+function renderLine(line) {
   const row = el("div", `row kind-${line.kind}`);
   if (line.kind === "skip") {
     const skip = line.skip;
@@ -1124,21 +1123,19 @@ function renderLine(line, index) {
         line.oldLine,
         line.oldSegments,
         canComment && plusSide === "old",
-        index,
       ),
       sideCell(
         "new",
         line.newLine,
         line.newSegments,
         canComment && plusSide === "new",
-        index,
       ),
     );
     return row;
   }
   row.append(
-    numberCell("old", line.oldLine, canComment && plusSide === "old", index),
-    numberCell("new", line.newLine, canComment && plusSide === "new", index),
+    numberCell("old", line.oldLine, canComment && plusSide === "old"),
+    numberCell("new", line.newLine, canComment && plusSide === "new"),
     textEl("span", "mk", signFor(line.kind)),
   );
   const code = el("span", "code");
@@ -1173,14 +1170,13 @@ function signFor(kind) {
  * @param {import("./model.js").Line|null} line
  * @param {import("./model.js").Segment[]} segments
  * @param {boolean} withPlus
- * @param {number} index
  * @returns {HTMLElement}
  */
-function sideCell(side, line, segments, withPlus, index) {
+function sideCell(side, line, segments, withPlus) {
   const cell = el("span", "cell");
   const code = el("span", "code");
   fillCode(code, line, segments);
-  cell.append(numberCell(side, line, withPlus, index), code);
+  cell.append(numberCell(side, line, withPlus), code);
   return cell;
 }
 
@@ -1201,10 +1197,9 @@ function fillCode(code, line, segments) {
  * @param {"old" | "new"} side
  * @param {import("./model.js").Line|null} line
  * @param {boolean} withPlus
- * @param {number} index
  * @returns {HTMLElement}
  */
-function numberCell(side, line, withPlus, index) {
+function numberCell(side, line, withPlus) {
   const cell = el("span", "no-cell");
   const number = textEl("span", "num", line ? String(line.number) : "");
   if (line && !state.submitted) {
@@ -1226,7 +1221,7 @@ function numberCell(side, line, withPlus, index) {
     plus.setAttribute("aria-label", "この行にコメント");
     plus.addEventListener("click", (event) => {
       event.stopPropagation();
-      openEditorAt(side, Number(line.number), index);
+      openEditorAt(side, Number(line.number));
     });
     cell.append(plus);
   }

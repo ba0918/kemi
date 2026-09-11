@@ -546,6 +546,19 @@ export function isDarkTheme(resolvedTheme) {
 }
 
 /**
+ * 表示行が、指定した側の行番号を指すか。表示を組み直してもエディタを
+ * 開いた行へ対応付けられるよう、表示行 index ではなく論理行で照合する。
+ * @param {DisplayLine} line
+ * @param {string} side
+ * @param {number} number
+ * @returns {boolean}
+ */
+export function lineHasAnchor(line, side, number) {
+  const target = side === "old" ? line.oldLine : line.newLine;
+  return target !== null && Number(target.number) === number;
+}
+
+/**
  * 行にコメントを付けるときの既定の側。新側があれば新側、無ければ旧側。
  * @param {DisplayLine} line
  * @returns {{ side: string, number: number } | null}
