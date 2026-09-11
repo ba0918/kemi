@@ -944,3 +944,468 @@ async fn highlight_cap_can_be_overridden_for_one_file() {
     assert_eq!(forced["highlight"]["enabled"], true);
     assert!(forced["rows"][0]["old"]["html"].is_string());
 }
+
+// ---- R-UNIT（2 つのグループ単位）と R-ORIGIN の取得 ----
+
+use kemi_core::domain::focus::FocusTargets;
+use kemi_core::source::{FileOrigin, FocusSource};
+
+impl LiveServer {
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/s/live-token/", self.port)
+    }
+
+    async fn get_json(&self, path: &str) -> Value {
+        let response = reqwest::get(format!("{}{path}", self.url())).await.unwrap();
+        assert_eq!(response.status(), 200, "GET {path}");
+        response.json().await.unwrap()
+    }
+
+    async fn post(&self, path: &str, body: Value) -> reqwest::Response {
+        post_json(
+            &self.url(),
+            &format!("http://127.0.0.1:{}", self.port),
+            path,
+            body,
+        )
+        .await
+    }
+
+    /// もう片方の単位が `state` になるまで api/review を読み直す。
+    async fn wait_unit(&self, state: &str) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let review = self.get_json("api/review").await;
+            if review["units"][1]["state"] == state {
+                return review;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "unit never became {state}: {}",
+                review["units"]
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn finish(self) -> Value {
+        match tokio::time::timeout(Duration::from_secs(5), self.task)
+            .await
+            .expect("server did not stop")
+            .expect("server task panicked")
+            .expect("server returned error")
+        {
+            ServeOutcome::Submitted(document) => document,
+        }
+    }
+}
+
+/// 3 コミットの範囲: base → 「feat: two」（a.txt と b.txt）→ 「fix: three」（a.txt）。
+fn range_repo() -> (TempRepo, String) {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    let base = repo.commit("base");
+    repo.write("a.txt", "two\n");
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: two");
+    repo.write("a.txt", "three\n");
+    repo.commit("fix: three");
+    (repo, base)
+}
+
+fn range_source(repo: &TempRepo, from: &str, to: &str, group_by: GroupBy) -> GitSource {
+    GitSource::new(
+        repo.path.clone(),
+        GitMode::Range {
+            from: from.to_string(),
+            to: to.to_string(),
+            group_by,
+        },
+    )
+}
+
+fn files_of(review: &Value) -> Vec<Value> {
+    review["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["files"].as_array().unwrap().clone())
+        .collect()
+}
+
+fn file_in<'a>(review: &'a Value, group: usize, path: &str) -> &'a Value {
+    review["groups"][group]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == path)
+        .unwrap_or_else(|| panic!("{path} not in group {group}"))
+}
+
+/// もう片方の単位を作る処理を、合図があるまで止めておく。
+struct GatedSource {
+    inner: Box<dyn ReviewSource>,
+    gated: GroupBy,
+    gate: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl ReviewSource for GatedSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(file_id)
+    }
+
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == self.gated {
+            let _ = self.gate.lock().unwrap().recv();
+        }
+        self.inner.review_unit(unit)
+    }
+}
+
+/// 内容の取得（`content`）の呼び出しを数える。
+struct CountingSource {
+    inner: Box<dyn ReviewSource>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl ReviewSource for CountingSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.content(file_id)
+    }
+
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        self.inner.review_unit(unit)
+    }
+
+    fn extra_focus_targets(&self) -> Result<FocusTargets, SourceError> {
+        self.inner.extra_focus_targets()
+    }
+
+    fn origin(&self, file_id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
+        self.inner.origin(file_id, force)
+    }
+}
+
+#[tokio::test]
+async fn unit_background_first_review_does_not_wait_for_the_other_unit() {
+    let (repo, base) = range_repo();
+    let (release, gate) = std::sync::mpsc::channel();
+    let source = Arc::new(GatedSource {
+        inner: Box::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        gated: GroupBy::Commit,
+        gate: std::sync::Mutex::new(gate),
+    });
+    let server = LiveServer::start(source).await;
+
+    let review = tokio::time::timeout(Duration::from_secs(2), server.get_json("api/review"))
+        .await
+        .expect("api/review must not wait for the other unit");
+
+    assert_eq!(review["unit"], "file");
+    assert_eq!(review["units"][0]["unit"], "file");
+    assert_eq!(review["units"][1]["unit"], "commit");
+    assert_eq!(review["units"][1]["state"], "building");
+    release.send(()).unwrap();
+    server.wait_unit("ready").await;
+    let per_commit = server.get_json("api/review?unit=commit").await;
+    assert_eq!(per_commit["unit"], "commit");
+    assert_eq!(per_commit["groups"].as_array().unwrap().len(), 2);
+    server.stop();
+}
+
+#[tokio::test]
+async fn unit_failure_keeps_review_and_retries() {
+    let (repo, base) = range_repo();
+    repo.git(&["branch", "topic"]);
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "topic", GroupBy::File))).await;
+    repo.git(&["branch", "-D", "topic"]);
+
+    let review = server.get_json("api/review").await;
+    let failed = server.wait_unit("failed").await;
+
+    let reason = failed["units"][1]["error"].as_str().unwrap();
+    assert!(reason.contains("topic"), "{reason}");
+    let file_id = review["groups"][0]["files"][0]["id"].as_str().unwrap();
+    let file = reqwest::get(format!("{}api/file/{file_id}", server.url()))
+        .await
+        .unwrap();
+    assert_eq!(file.status(), 200, "the review must go on");
+
+    repo.git(&["branch", "topic"]);
+    let retry = server
+        .post("api/unit", json!({"op": "retry", "unit": "commit"}))
+        .await;
+    assert_eq!(retry.status(), 200);
+    server.wait_unit("ready").await;
+    server.stop();
+}
+
+#[tokio::test]
+async fn unit_comments_both_in_submit_with_their_group_ids() {
+    let (repo, base) = range_repo();
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
+    let final_form = server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    let per_commit = server.get_json("api/review?unit=commit").await;
+    let first_sha = per_commit["groups"][0]["id"].as_str().unwrap().to_string();
+
+    for (file, body) in [
+        (file_in(&final_form, 0, "a.txt"), "最終形へ"),
+        (file_in(&per_commit, 0, "a.txt"), "コミットへ"),
+    ] {
+        let response = server
+            .post(
+                "api/comment",
+                json!({
+                    "op": "add", "file_id": file["id"], "side": "new",
+                    "start_line": 1, "end_line": 1, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+    // 単位を行き来して表示しても、前の単位のコメントは古くならない。
+    let _ = server.get_json("api/review?unit=file").await;
+    let response = server
+        .post("api/submit", json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let document = server.finish().await;
+
+    let comments = document["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0]["group_id"], "all");
+    assert_eq!(comments[0]["body"], "最終形へ");
+    assert_eq!(comments[1]["group_id"], first_sha.as_str());
+    assert_eq!(comments[1]["group_title"], "feat: two");
+    assert!(comments.iter().all(|comment| comment["outdated"] == false));
+}
+
+#[tokio::test]
+async fn unit_seen_separate_per_unit() {
+    let (repo, base) = range_repo();
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
+    let final_form = server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    let final_a = file_in(&final_form, 0, "a.txt")["id"].clone();
+
+    let response = server
+        .post("api/state", json!({"file_id": final_a, "seen": true}))
+        .await;
+    assert_eq!(response.status(), 200);
+
+    let final_form = server.get_json("api/review?unit=file").await;
+    let per_commit = server.get_json("api/review?unit=commit").await;
+    assert_eq!(file_in(&final_form, 0, "a.txt")["seen"], true);
+    assert!(files_of(&per_commit)
+        .iter()
+        .filter(|file| file["path"] == "a.txt")
+        .all(|file| file["seen"] == false));
+    server.stop();
+}
+
+#[tokio::test]
+async fn unit_focus_applies_to_both_units() {
+    let (repo, base) = range_repo();
+    repo.write(
+        "focus.json",
+        r#"{"files":[{"path":"a.txt","note":"ここ"}]}"#,
+    );
+    let source = FocusSource::from_path(
+        Box::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        std::path::Path::new("focus.json"),
+        &repo.path,
+    )
+    .unwrap();
+    let server = LiveServer::start(Arc::new(source)).await;
+
+    let final_form = server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    let per_commit = server.get_json("api/review?unit=commit").await;
+
+    assert_eq!(file_in(&final_form, 0, "a.txt")["focus"], true);
+    let marked: Vec<Value> = files_of(&per_commit)
+        .into_iter()
+        .filter(|file| file["path"] == "a.txt")
+        .collect();
+    assert_eq!(marked.len(), 2);
+    assert!(marked
+        .iter()
+        .all(|file| file["focus"] == true && file["note"] == "ここ"));
+    server.stop();
+}
+
+#[tokio::test]
+async fn origin_api_returns_blocks_for_final_files_only() {
+    let (repo, base) = range_repo();
+    let last = repo.git(&["rev-parse", "HEAD"]);
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
+    let final_form = server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    let per_commit = server.get_json("api/review?unit=commit").await;
+
+    let final_a = file_in(&final_form, 0, "a.txt")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let origin = server.get_json(&format!("api/origin/{final_a}")).await;
+    assert_eq!(origin["available"], true);
+    assert_eq!(origin["enabled"], true);
+    let block = &origin["blocks"][0];
+    assert_eq!(block["entries"][0]["sha"], last.as_str());
+    assert_eq!(block["entries"][0]["target"]["side"], "new");
+    assert_eq!(block["unknown"], "none");
+    assert_eq!(origin["commits"][last.as_str()]["subject"], "fix: three");
+
+    let commit_a = file_in(&per_commit, 0, "a.txt")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let none = server.get_json(&format!("api/origin/{commit_a}")).await;
+    assert_eq!(none["available"], false);
+    server.stop();
+}
+
+#[tokio::test]
+async fn origin_api_large_file_opt_in() {
+    let repo = TempRepo::new();
+    let lines: String = (1..=10_001).map(|n| format!("line {n}\n")).collect();
+    repo.write("big.txt", &lines);
+    let base = repo.commit("base");
+    repo.write("big.txt", &lines.replacen("line 5000\n", "changed\n", 1));
+    repo.commit("change");
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
+    let review = server.get_json("api/review").await;
+    let id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let default = server.get_json(&format!("api/origin/{id}")).await;
+    assert_eq!(default["available"], true);
+    assert_eq!(default["enabled"], false);
+    assert_eq!(default["blocks"], json!([]));
+
+    let forced = server.get_json(&format!("api/origin/{id}?force=1")).await;
+    assert_eq!(forced["enabled"], true);
+    assert_eq!(forced["blocks"].as_array().unwrap().len(), 1);
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_refresh_both_units_adds_new_commit_unseen() {
+    let (repo, base) = range_repo();
+    let server =
+        LiveServer::start(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
+    server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    let per_commit = server.get_json("api/review?unit=commit").await;
+    let first_a = file_in(&per_commit, 0, "a.txt")["id"].clone();
+    server
+        .post("api/state", json!({"file_id": first_a, "seen": true}))
+        .await;
+    server
+        .post(
+            "api/comment",
+            json!({"op": "add", "file_id": first_a, "side": "new",
+                   "start_line": 1, "end_line": 1, "body": "残る"}),
+        )
+        .await;
+
+    repo.write("c.txt", "c\n");
+    let new_sha = repo.commit("feat: c");
+    let refreshed = server.get_json("api/review?refresh=1&unit=commit").await;
+
+    let groups = refreshed["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 3);
+    assert_eq!(groups[2]["id"], new_sha.as_str());
+    assert!(groups[2]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|file| file["seen"] == false));
+    assert_eq!(file_in(&refreshed, 0, "a.txt")["id"], first_a);
+    assert_eq!(file_in(&refreshed, 0, "a.txt")["seen"], true);
+    assert_eq!(refreshed["comments"][0]["body"], "残る");
+    let final_form = server.get_json("api/review?unit=file").await;
+    assert!(files_of(&final_form)
+        .iter()
+        .any(|file| file["path"] == "c.txt"));
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_rewritten_history_comment_outdated_with_original_group() {
+    let (repo, base) = range_repo();
+    let server = LiveServer::start(Arc::new(range_source(
+        &repo,
+        &base,
+        "HEAD",
+        GroupBy::Commit,
+    )))
+    .await;
+    let per_commit = server.get_json("api/review").await;
+    let old_sha = per_commit["groups"][1]["id"].as_str().unwrap().to_string();
+    let file = file_in(&per_commit, 1, "a.txt")["id"].clone();
+    server
+        .post(
+            "api/comment",
+            json!({"op": "add", "file_id": file, "side": "new",
+                   "start_line": 1, "end_line": 1, "body": "書き換え前"}),
+        )
+        .await;
+
+    repo.git(&["commit", "--amend", "-q", "-m", "fix: three (amended)"]);
+    let refreshed = server.get_json("api/review?refresh=1").await;
+    assert_ne!(refreshed["groups"][1]["id"], old_sha.as_str());
+    let response = server
+        .post("api/submit", json!({"verdict": "changes_requested"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let document = server.finish().await;
+
+    let comment = &document["comments"][0];
+    assert_eq!(comment["group_id"], old_sha.as_str());
+    assert_eq!(comment["group_title"], "fix: three");
+    assert_eq!(comment["outdated"], true);
+}
+
+#[tokio::test]
+async fn range_startup_reads_no_content_including_background_build() {
+    let (repo, base) = range_repo();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let source = CountingSource {
+        inner: Box::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        reads: reads.clone(),
+    };
+    let server = LiveServer::start(Arc::new(source)).await;
+
+    server.get_json("api/review").await;
+    server.wait_unit("ready").await;
+    server.get_json("api/review?unit=commit").await;
+
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    server.stop();
+}

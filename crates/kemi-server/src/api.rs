@@ -8,7 +8,7 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -16,7 +16,11 @@ use futures_util::StreamExt;
 use kemi_core::domain::comment::{self, CommentError};
 use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
-use kemi_core::domain::review::{Comment, FileEntry, LineRange, ReviewMeta, Side, Suggestion};
+use kemi_core::domain::origin::Unknown;
+use kemi_core::domain::review::{
+    Comment, FileEntry, GroupBy, LineRange, ReviewMeta, Side, Suggestion,
+};
+use kemi_core::source::FileOrigin;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -24,7 +28,8 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::highlight::{self, HighlightedLine, Highlighter};
 use crate::session::{comment_json, Session};
-use crate::{stop_with_error, AppState, ServerError, Stop, SubmitState};
+use crate::units::{self, Unavailable};
+use crate::{stop_with_error, AppState, Event, ServerError, Stop, SubmitState};
 
 /// 1 ファイル分の左右のハイライト結果。
 struct Highlighted {
@@ -41,6 +46,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/assets/{*path}", get(asset))
         .route("/s/{token}/api/review", get(review))
         .route("/s/{token}/api/file/{id}", get(file))
+        .route("/s/{token}/api/origin/{id}", get(origin))
+        .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
         .route("/s/{token}/api/state", post(state_api))
         .route("/s/{token}/api/submit", post(submit))
@@ -193,6 +200,17 @@ fn serve_asset(state: &AppState, path: &str) -> Result<Response, ApiError> {
 struct ReviewQuery {
     #[serde(default)]
     refresh: Option<String>,
+    /// `file` か `commit`。省略時は起動時の単位。
+    #[serde(default)]
+    unit: Option<String>,
+}
+
+fn parse_unit(unit: &str) -> Result<GroupBy, ApiError> {
+    match unit {
+        "file" => Ok(GroupBy::File),
+        "commit" => Ok(GroupBy::Commit),
+        _ => Err(ApiError::bad_request("unit は file か commit です")),
+    }
 }
 
 async fn review(
@@ -200,15 +218,28 @@ async fn review(
     Path(_token): Path<String>,
     Query(query): Query<ReviewQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let review: Arc<ReviewMeta> = if query.refresh.as_deref() == Some("1") {
-        let review = Arc::new(source_review(&state).await?);
-        *state.meta.write().expect("meta lock poisoned") = review.clone();
-        review
-    } else {
-        state.meta.read().expect("meta lock poisoned").clone()
+    let unit = query.unit.as_deref().map(parse_unit).transpose()?;
+    if query.refresh.as_deref() == Some("1") {
+        let _guard = state.refresh.lock().await;
+        let startup = Arc::new(source_review(&state).await?);
+        state.review.write().expect("review lock poisoned").startup = startup;
+        units::refresh_other(&state).await;
+    }
+    let body = {
+        let review = state.review.read().expect("review lock poisoned");
+        let (shown, meta) = review.meta(unit).map_err(|reason| match reason {
+            Unavailable::NoSuchUnit => ApiError::not_found("その単位はありません"),
+            Unavailable::NotReady => ApiError::conflict("その単位はまだ作っていません"),
+        })?;
+        let session = state.session.lock().expect("session poisoned");
+        let mut body = review_json(meta.as_ref(), &session);
+        body["unit"] = json!(shown.map(GroupBy::as_str));
+        body["units"] = review.units_json();
+        body
     };
-    let session = state.session.lock().expect("session poisoned");
-    Ok(Json(review_json(review.as_ref(), &session)))
+    // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
+    units::start_if_waiting(&state);
+    Ok(Json(body))
 }
 
 fn review_json(review: &ReviewMeta, session: &Session) -> Value {
@@ -270,9 +301,7 @@ async fn file(
     Path((_token, id)): Path<(String, String)>,
     Query(query): Query<ExpandQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let review = state.meta.read().expect("meta lock poisoned").clone();
-    let file =
-        find_file(&review, &id).ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))?;
+    let (file, _) = find_file(&state, &id)?;
 
     let dark = query.dark.as_deref() == Some("1");
 
@@ -348,6 +377,93 @@ async fn file(
         "comments": comments_for(&state, &id),
         "highlight": highlight_info,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct OriginQuery {
+    /// "1" で上限を超えるファイルでも由来を求める。
+    #[serde(default)]
+    force: Option<String>,
+}
+
+/// 最終形のファイルの由来（R-ORIGIN）。差分とは別に、表示の後から取りに来る。
+async fn origin(
+    State(state): State<Arc<AppState>>,
+    Path((_token, id)): Path<(String, String)>,
+    Query(query): Query<OriginQuery>,
+) -> Result<Json<Value>, ApiError> {
+    find_file(&state, &id)?;
+    let force = query.force.as_deref() == Some("1");
+    let source = state.source.clone();
+    let file_id = id.clone();
+    let origin = tokio::task::spawn_blocking(move || source.origin(&file_id, force))
+        .await
+        .map_err(|error| runtime_error(&state, error))?
+        .map_err(|error| runtime_error(&state, error))?;
+    Ok(Json(match origin {
+        Some(origin) => origin_json(&id, &origin),
+        None => json!({ "id": id, "available": false }),
+    }))
+}
+
+fn origin_json(id: &str, origin: &FileOrigin) -> Value {
+    let commits: serde_json::Map<String, Value> = origin
+        .commits
+        .iter()
+        .map(|commit| {
+            (
+                commit.sha.clone(),
+                json!({ "subject": commit.subject, "body": commit.body, "merge": commit.merge }),
+            )
+        })
+        .collect();
+    json!({
+        "id": id,
+        "available": true,
+        "enabled": origin.enabled,
+        "blocks": origin.blocks.iter().map(|block| json!({
+            "row": block.row,
+            "unknown": match block.unknown {
+                Unknown::None => "none",
+                Unknown::Some => "some",
+                Unknown::All => "all",
+            },
+            "entries": block.entries.iter().map(|entry| json!({
+                "sha": entry.sha,
+                "merge": entry.merge,
+                "target": entry.target.as_ref().map(|target| json!({
+                    "path": target.path,
+                    "side": target.side.as_str(),
+                    "line": target.line,
+                })),
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "commits": commits,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum UnitRequest {
+    /// 作れなかった単位を作り直す。
+    Retry { unit: String },
+}
+
+async fn unit_api(
+    State(state): State<Arc<AppState>>,
+    Path(_token): Path<String>,
+    Json(request): Json<UnitRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let UnitRequest::Retry { unit } = request;
+    if !units::retry(&state, parse_unit(&unit)?) {
+        return Err(ApiError::conflict("作り直せる状態ではありません"));
+    }
+    let units = state
+        .review
+        .read()
+        .expect("review lock poisoned")
+        .units_json();
+    Ok(Json(json!({ "units": units })))
 }
 
 fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
@@ -544,10 +660,7 @@ async fn add_comment(
             ))
         }
     };
-    let review = state.meta.read().expect("meta lock poisoned").clone();
-    let file = find_file(&review, &file_id)
-        .ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))?;
-    let group_title = group_title(&review, &file.group_id);
+    let (file, group_title) = find_file(state, &file_id)?;
 
     let content = source_content(state, &file_id).await?;
     let lines = match side {
@@ -635,12 +748,7 @@ async fn state_api(
     Path(_token): Path<String>,
     Json(request): Json<StateRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    {
-        let review = state.meta.read().expect("meta lock poisoned").clone();
-        if find_file(&review, &request.file_id).is_none() {
-            return Err(ApiError::not_found("ファイルが見つかりません"));
-        }
-    }
+    find_file(&state, &request.file_id)?;
     let mut session = state.session.lock().expect("session poisoned");
     if let Some(seen) = request.seen {
         if seen {
@@ -706,7 +814,12 @@ async fn submit(
 }
 
 async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value, ApiError> {
-    let review = state.meta.read().expect("meta lock poisoned").clone();
+    let review = state
+        .review
+        .read()
+        .expect("review lock poisoned")
+        .startup
+        .clone();
     let snapshot: Vec<(String, String, Side, String)> = {
         let session = state.session.lock().expect("session poisoned");
         session
@@ -724,8 +837,9 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
     };
     let mut outdated = std::collections::HashMap::new();
     for (id, file_id, side, created_hash) in snapshot {
-        // 再取得で一覧から消えたファイルは内容を引けないので古い扱いにする。
-        if find_file(&review, &file_id).is_none() {
+        // 再取得で一覧から消えたファイル（履歴の書き換えで消えたグループのものを含む）は
+        // 内容を引けないので古い扱いにする。
+        if find_file(state, &file_id).is_err() {
             outdated.insert(id, true);
             continue;
         }
@@ -761,7 +875,7 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
 async fn events(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
-) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+) -> Result<Sse<impl futures_util::Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     let receiver = state.events.subscribe();
     let mut shutdown = state.shutdown.subscribe();
     // submit 後の graceful shutdown は接続が閉じるまで待つので、SSE は停止通知で終端する。
@@ -777,25 +891,27 @@ async fn events(
     };
     let stream = BroadcastStream::new(receiver)
         .take_until(stop)
-        .map(|_| Ok::<_, Infallible>(Event::default().event("update").data("{}")));
+        .filter_map(|event| async move {
+            match event {
+                Ok(Event::Update) => Some(Ok::<_, Infallible>(
+                    SseEvent::default().event("update").data("{}"),
+                )),
+                Ok(Event::Unit) => Some(Ok(SseEvent::default().event("unit").data("{}"))),
+                // 取りこぼした通知は、更新があったものとして知らせる。
+                Err(_) => Some(Ok(SseEvent::default().event("update").data("{}"))),
+            }
+        });
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-fn find_file<'a>(review: &'a ReviewMeta, id: &str) -> Option<&'a FileEntry> {
-    review
-        .groups
-        .iter()
-        .flat_map(|group| group.files.iter())
-        .find(|file| file.id == id)
-}
-
-fn group_title(review: &ReviewMeta, group_id: &str) -> String {
-    review
-        .groups
-        .iter()
-        .find(|group| group.id == group_id)
-        .map(|group| group.title.clone())
-        .unwrap_or_default()
+/// どちらかのグループ単位にあるファイルと、そのグループの title。
+fn find_file(state: &AppState, id: &str) -> Result<(FileEntry, String), ApiError> {
+    state
+        .review
+        .read()
+        .expect("review lock poisoned")
+        .find_file(id)
+        .ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))
 }
 
 fn side_lines(bytes: &Option<Vec<u8>>) -> Vec<String> {

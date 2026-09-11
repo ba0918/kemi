@@ -3,12 +3,12 @@
 mod api;
 mod highlight;
 mod session;
+mod units;
 mod watch;
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, RwLock};
 
-use kemi_core::domain::review::ReviewMeta;
 use kemi_core::source::ReviewSource;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, watch as shutdown_watch};
@@ -62,6 +62,15 @@ pub struct ServeParams {
     pub token: String,
 }
 
+/// SSE でページへ知らせること。
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Event {
+    /// 新側の供給元が変わった（R-LIVE の更新バッジ）。
+    Update,
+    /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。
+    Unit,
+}
+
 /// submit の同時受理を 1 つに絞るための状態。
 pub(crate) enum SubmitState {
     Open,
@@ -75,9 +84,11 @@ pub(crate) struct AppState {
     pub token: String,
     pub origin: String,
     pub host: String,
-    pub meta: RwLock<Arc<ReviewMeta>>,
+    pub review: RwLock<units::ReviewState>,
+    /// 再取得を 1 つずつ行う。同じ単位を同時に作り直して計画が入れ替わらないように。
+    pub refresh: tokio::sync::Mutex<()>,
     pub session: Mutex<Session>,
-    pub events: broadcast::Sender<()>,
+    pub events: broadcast::Sender<Event>,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
     pub shutdown: shutdown_watch::Sender<bool>,
     pub stop: Mutex<Option<Stop>>,
@@ -104,6 +115,7 @@ pub async fn serve(
     let host = format!("127.0.0.1:{}", address.port());
 
     let review = params.source.review().map_err(ServerError::Source)?;
+    let units = params.source.units();
     let (events, _) = broadcast::channel(16);
     let (shutdown, _) = shutdown_watch::channel(false);
 
@@ -114,7 +126,8 @@ pub async fn serve(
         token: params.token,
         origin,
         host,
-        meta: RwLock::new(Arc::new(review)),
+        review: RwLock::new(units::ReviewState::new(&units, review)),
+        refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::default()),
         events,
         shutdown,
