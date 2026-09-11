@@ -488,6 +488,7 @@ function renderHeader() {
 
 /** コミット範囲だけに出す「最終形 | コミットごと」の切り替え（R-UNIT）。 */
 function renderUnitSwitch() {
+  const focusKey = focusKeyWithin(dom.unitSwitch);
   dom.unitSwitch.textContent = "";
   dom.unitSwitch.hidden = state.units.length === 0;
   for (const status of state.units) {
@@ -503,9 +504,39 @@ function renderUnitSwitch() {
       label = `${label}（読み込み中…）`;
     }
     item.textContent = label;
+    item.dataset.focusKey = `unit:${unit}`;
     item.setAttribute("aria-pressed", String(unit === state.unit));
     item.addEventListener("click", () => void switchUnit(unit, null));
     dom.unitSwitch.append(item);
+  }
+  restoreFocusKey(dom.unitSwitch, focusKey);
+}
+
+/**
+ * 描き直しで作り直す操作にフォーカスがあれば、その操作の鍵（data-focus-key）。
+ * 作り直した後に同じ鍵の要素へフォーカスを戻し、キーボードの操作を続けられるようにする。
+ * @param {HTMLElement} container
+ * @returns {string | null}
+ */
+function focusKeyWithin(container) {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || !container.contains(active)) {
+    return null;
+  }
+  return active.dataset.focusKey ?? null;
+}
+
+/**
+ * @param {HTMLElement} container
+ * @param {string | null} key
+ */
+function restoreFocusKey(container, key) {
+  if (!key) {
+    return;
+  }
+  const next = container.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
+  if (next instanceof HTMLElement && next !== document.activeElement) {
+    next.focus({ preventScroll: true });
   }
 }
 
@@ -778,6 +809,7 @@ function highlightTitle() {
 }
 
 function renderFileHeader() {
+  const focusKey = focusKeyWithin(dom.fileHeader);
   dom.fileHeader.textContent = "";
   const entry = currentEntry();
   if (!entry) {
@@ -810,10 +842,12 @@ function renderFileHeader() {
   const busy = state.loading;
   const comment = iconButton("ファイル全体にコメント", COMMENT_ICON);
   comment.disabled = state.submitted || busy;
+  comment.dataset.focusKey = "file-comment";
   comment.addEventListener("click", openFileWideEditor);
   dom.fileHeader.append(comment);
 
   const copy = iconButton("パスをコピー", COPY_ICON);
+  copy.dataset.focusKey = "file-copy";
   copy.addEventListener("click", () => void copyPath(entry.file.path, copy));
   dom.fileHeader.append(copy);
 
@@ -823,6 +857,7 @@ function renderFileHeader() {
     EXPAND_ICON,
   );
   expand.disabled = state.submitted || state.binary || busy;
+  expand.dataset.focusKey = "file-expand";
   expand.addEventListener("click", () => {
     if (fullyExpanded) {
       collapseAll();
@@ -834,6 +869,7 @@ function renderFileHeader() {
 
   const highlight = iconButton(highlightTitle(), CODE_ICON);
   highlight.disabled = busy;
+  highlight.dataset.focusKey = "file-highlight";
   highlight.classList.toggle("active", state.highlightEnabled);
   highlight.setAttribute("aria-pressed", String(state.highlightEnabled));
   highlight.addEventListener("click", () => {
@@ -857,6 +893,7 @@ function renderFileHeader() {
       ORIGIN_ICON,
     );
     origin.disabled = busy;
+    origin.dataset.focusKey = "file-origin";
     origin.setAttribute("aria-pressed", String(forced));
     origin.addEventListener("click", () => {
       if (forced) {
@@ -876,10 +913,12 @@ function renderFileHeader() {
   const seen = button(`seen-toggle${entry.file.seen ? " on" : ""}`);
   seen.title = entry.file.seen ? "見たを取り消す（v）" : "見たにする（v）";
   seen.disabled = busy;
+  seen.dataset.focusKey = "file-seen";
   seen.setAttribute("aria-pressed", String(entry.file.seen));
   seen.append(el("span", "chk"), document.createTextNode("見た"), textEl("kbd", "", "v"));
   seen.addEventListener("click", () => void toggleSeen(entry.file));
   dom.fileHeader.append(seen);
+  restoreFocusKey(dom.fileHeader, focusKey);
 }
 
 /** 最終形（由来を持つ単位）を表示しているか。 */
@@ -1003,6 +1042,7 @@ function renderNotice() {
 /** ファイル全体へのコメント（と、表示中の行に見つからないコメント）を、ヘッダの下に吹き出しで出す。 */
 /** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ吹き出しで出す。 */
 function renderFloating() {
+  const focusKey = focusKeyWithin(dom.floating);
   dom.floating.textContent = "";
   const floating = state.threads.floating;
   const wideEditor = state.editor && state.editor.wide && !state.editor.editId ? state.editor : null;
@@ -1019,6 +1059,7 @@ function renderFloating() {
     row.append(renderCommentOrEditor(comment));
     dom.floating.append(row);
   }
+  restoreFocusKey(dom.floating, focusKey);
 }
 
 /**
@@ -1049,6 +1090,8 @@ function renderComment(comment) {
     : state.justAdded.has(comment.id);
   if (!open) {
     const chip = button(`cchip${comment.outdated ? " outdated" : ""}`);
+    // 札と吹き出しの「畳む」は同じ鍵を持ち、開閉の後もフォーカスが行き来する。
+    chip.dataset.focusKey = `comment:${comment.id}`;
     chip.title = comment.body;
     chip.append(
       document.createTextNode("💬"),
@@ -1087,6 +1130,7 @@ function renderComment(comment) {
   }
   const fold = button("");
   fold.textContent = "畳む";
+  fold.dataset.focusKey = `comment:${comment.id}`;
   fold.addEventListener("click", () => {
     state.commentOpen.set(comment.id, false);
     remeasure();
@@ -1411,6 +1455,7 @@ function openEditorAt(side, number) {
 function renderDiff() {
   const entry = currentEntry();
   const focus = captureEditorFocus();
+  const focusKey = focusKeyWithin(dom.content);
   dom.content.textContent = "";
   if (
     !entry ||
@@ -1444,6 +1489,7 @@ function renderDiff() {
   }
   dom.content.append(fragment);
   restoreEditorFocus(focus);
+  restoreFocusKey(dom.content, focusKey);
   renderNav(offsets);
   renderRuler(offsets);
   const needsMeasure =
@@ -1638,6 +1684,7 @@ function renderOriginLine(line) {
     const commit = (origin.commits || {})[entry.sha] || { subject: "", body: "" };
     const short = String(entry.sha).slice(0, 7);
     const item = button("origin-entry");
+    item.dataset.focusKey = `origin:${openKey}:${entry.sha}`;
     item.textContent = entry.merge ? `マージ ${short}` : `${short} ${commit.subject}`;
     item.title = commit.subject || short;
     const open = state.originOpen.get(openKey) === entry.sha;
