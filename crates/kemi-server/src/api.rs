@@ -395,6 +395,7 @@ async fn file(
         "binary": false,
         "old_total": old_lines.len(),
         "new_total": new_lines.len(),
+        "context": diff::DEFAULT_CONTEXT,
         "rows": rows_json,
         "comments": comments_for(&state, &id),
         "highlight": highlight_info,

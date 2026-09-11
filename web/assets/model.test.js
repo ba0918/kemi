@@ -45,6 +45,7 @@ import {
   commentCountChanges,
   treeOrder,
   hasLoadedStops,
+  collapseLoadedRows,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1021,4 +1022,120 @@ test("a_loaded_file_has_stops_at_a_change_block_or_a_line_comment", () => {
     hasLoadedStops([equal(1, "a"), equal(2, "b")], [{ side: "new", start_line: 2, end_line: 2 }]),
     true,
   );
+});
+
+/**
+ * 40 行のファイルの全行。`changed` の行番号だけ書き換えにする。
+ * @param {number[]} changed
+ * @returns {LogicalRow[]}
+ */
+function fortyLines(changed) {
+  return Array.from({ length: 40 }, (_, index) =>
+    changed.includes(index + 1)
+      ? replaceAt(index + 1, `line${index + 1}`, "changed")
+      : equal(index + 1, `line${index + 1}`),
+  );
+}
+
+/**
+ * 畳まれずに出ている行の新側の行番号。
+ * @param {LogicalRow[]} rows
+ * @returns {number[]}
+ */
+function shownNewLines(rows) {
+  return rows.filter((row) => row.kind !== "skip" && row.new).map((row) => Number(row.new?.number));
+}
+
+/**
+ * 折りたたみをすべて、ファイル全体の行 `whole` で開いた行。
+ * @param {LogicalRow[]} rows
+ * @param {LogicalRow[]} whole
+ * @returns {LogicalRow[]}
+ */
+function expandWith(rows, whole) {
+  return rows.flatMap((row) =>
+    row.kind === "skip" ? whole.slice(Number(row.from), Number(row.to)) : [row],
+  );
+}
+
+/**
+ * 変更の行の間にある折りたたみの数。
+ * @param {LogicalRow[]} rows
+ * @returns {number}
+ */
+function foldsBetweenChanges(rows) {
+  const changes = rows.flatMap((row, index) => (row.kind === "replace" ? [index] : []));
+  return rows
+    .slice(changes[0], changes[changes.length - 1])
+    .filter((row) => row.kind === "skip").length;
+}
+
+test("collapsing_loaded_rows_keeps_context_beside_each_change_and_folds_the_middle", () => {
+  const whole = fortyLines([5, 30]);
+
+  const collapsed = collapseLoadedRows(whole, [], 3);
+
+  const shown = shownNewLines(collapsed);
+  for (const number of [4, 6, 29, 31]) {
+    assert.ok(shown.includes(number), `new line ${number} next to a change is hidden: ${shown}`);
+  }
+  assert.ok(!shown.includes(18), `the middle of the run is shown: ${shown}`);
+  assert.equal(foldsBetweenChanges(collapsed), 1);
+});
+
+test("collapsing_loaded_rows_leaves_folds_that_open_to_the_rows_they_hid", () => {
+  const whole = fortyLines([5, 30]);
+
+  const collapsed = collapseLoadedRows(whole, [], 3);
+
+  assert.deepEqual(expandWith(collapsed, whole), whole);
+  for (const row of collapsed.filter((candidate) => candidate.kind === "skip")) {
+    assert.equal(row.count, Number(row.to) - Number(row.from));
+  }
+});
+
+test("collapsing_loaded_rows_keeps_commented_lines_and_their_neighbours_visible", () => {
+  const whole = fortyLines([20]);
+  const comments = [{ id: "c1", side: "new", start_line: 1, end_line: 1 }];
+
+  const shown = shownNewLines(collapseLoadedRows(whole, comments, 3));
+
+  for (const number of [1, 2, 17, 18, 19]) {
+    assert.ok(shown.includes(number), `new line ${number} is hidden: ${shown}`);
+  }
+  assert.ok(!shown.includes(10), `the middle of the run is shown: ${shown}`);
+});
+
+test("collapsing_loaded_rows_keeps_old_side_commented_lines_visible", () => {
+  const whole = fortyLines([20]);
+  const comments = [{ id: "c1", side: "old", start_line: 35, end_line: 36 }];
+
+  const collapsed = collapseLoadedRows(whole, comments, 3);
+
+  const shownOld = collapsed
+    .filter((row) => row.kind !== "skip" && row.old)
+    .map((row) => Number(row.old?.number));
+  assert.ok(shownOld.includes(35) && shownOld.includes(36), `old lines 35-36 are hidden: ${shownOld}`);
+});
+
+test("collapsing_loaded_rows_merges_a_fold_not_yet_opened_with_rows_no_longer_needed", () => {
+  // 先頭の行コメントを消した後の形: 1〜4 行目は開いたまま、その下はまだ畳まれている。
+  const whole = fortyLines([20]);
+  const loaded = [
+    ...whole.slice(0, 4),
+    { kind: "skip", count: 12, from: 4, to: 16 },
+    ...whole.slice(16, 23),
+    { kind: "skip", count: 17, from: 23, to: 40 },
+  ];
+
+  const collapsed = collapseLoadedRows(loaded, [], 3);
+
+  assert.deepEqual(shownNewLines(collapsed), [17, 18, 19, 20, 21, 22, 23]);
+  assert.deepEqual(expandWith(collapsed, whole), whole);
+});
+
+test("collapsing_loaded_rows_leaves_a_file_without_changes_unfolded", () => {
+  const whole = Array.from({ length: 20 }, (_, index) => equal(index + 1, `same${index}`));
+
+  assert.deepEqual(collapseLoadedRows(whole, [], 3), whole);
 });

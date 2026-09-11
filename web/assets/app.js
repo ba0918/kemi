@@ -5,6 +5,7 @@ import * as api from "./api.js";
 import {
   buildTree,
   collapseDefault,
+  collapseLoadedRows,
   commentCountChanges,
   commentLabel,
   commentedLines,
@@ -904,7 +905,7 @@ function renderFileHeader() {
   expand.dataset.focusKey = "file-expand";
   expand.addEventListener("click", () => {
     if (fullyExpanded) {
-      void collapseAll();
+      collapseAll();
     } else {
       void expandAll();
     }
@@ -2396,34 +2397,17 @@ function allLinesExpanded() {
   );
 }
 
-async function collapseAll() {
-  const entry = currentEntry();
+function collapseAll() {
   const data = state.cache.get(state.cacheKey);
-  if (!entry || !data || !data.collapsedRows || state.rows === data.collapsedRows) {
+  if (!data || !data.collapsedRows || state.rows === data.collapsedRows) {
     return;
   }
-  // 最初に読んだ畳んだ形には、展開してから付けたコメントの行が無い。畳む形をサーバに
-  // 作り直させ、コメントの付いた行を残す（R-NAV）。
-  const generation = state.selectGeneration;
-  const cacheKey = state.cacheKey;
-  /** @type {any} */
-  let fresh;
-  try {
-    fresh = await api.getFile(entry.file.id, null, {
-      dark: state.dark,
-      highlight: state.highlightOverrides.get(entry.file.id),
-    });
-  } catch (error) {
-    showOverlay("ファイルを読み込めません", String(error));
-    return;
-  }
-  if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
-    // 取得中に別のファイルや表示条件に変わった。古い応答で表示を上書きしない。
-    return;
-  }
-  const rows = fresh.rows || [];
+  // 最初に読んだ畳んだ形には、展開してから付けたコメントの行が無い。かといって畳む形を
+  // サーバから読み直すと、更新バッジを押す前にディスクの新しい内容へ差し替わり（R-LIVE）、
+  // ファイルが消えていればレビューが終わる。いまページにある行から畳み直す。
+  const rows = collapseLoadedRows(state.rows, state.comments, Number(data.context));
   state.rows = rows;
-  state.cache.set(cacheKey, { ...data, rows, collapsedRows: rows });
+  state.cache.set(state.cacheKey, { ...data, rows, collapsedRows: rows });
   recomputeDisplay();
   renderFileHeader();
   renderDiff();

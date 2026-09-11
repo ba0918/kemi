@@ -212,6 +212,91 @@ export function rangeAfterSkip(rows, skipIndex) {
 }
 
 /**
+ * ページが持っている行（開いた行と、まだ開いていない折りたたみ）から、畳んだ形を作り
+ * 直す。変更の行と行コメントの範囲の行を見せる行とし、その前後 `context` 行を残して、
+ * ほかの等しい行を折りたたみにまとめる。まだ開いていない折りたたみは畳んだ側に入れる。
+ * 変更の無いファイルは畳まない（サーバの折りたたみと同じ形）。
+ * @param {LogicalRow[]} rows
+ * @param {any[]} comments そのファイルのコメント
+ * @param {number} context
+ * @returns {LogicalRow[]}
+ */
+export function collapseLoadedRows(rows, comments, context) {
+  if (!rows.some((row) => row.kind !== "equal")) {
+    return rows;
+  }
+  /** @type {Record<string, Set<number>>} */
+  const commented = { old: new Set(), new: new Set() };
+  for (const comment of comments.filter(hasLines)) {
+    const start = Number(comment.start_line);
+    const end = Number(comment.end_line ?? comment.start_line);
+    for (let number = start; number <= end; number += 1) {
+      commented[comment.side]?.add(number);
+    }
+  }
+  const indexed = withRowIndex(rows);
+  const mustShow = indexed.map(
+    (row) =>
+      row.kind !== "skip" &&
+      (row.kind !== "equal" ||
+        (row.old ? commented.old.has(Number(row.old.number)) : false) ||
+        (row.new ? commented.new.has(Number(row.new.number)) : false)),
+  );
+  const shown = [...mustShow];
+  let previous = -Infinity;
+  indexed.forEach((row, index) => {
+    if (mustShow[index]) {
+      previous = Number(row.row);
+    } else if (row.kind !== "skip" && Number(row.row) - previous <= context) {
+      shown[index] = true;
+    }
+  });
+  let following = Infinity;
+  for (let index = indexed.length - 1; index >= 0; index -= 1) {
+    const row = indexed[index];
+    if (mustShow[index]) {
+      following = Number(row.row);
+    } else if (row.kind !== "skip" && following - Number(row.row) <= context) {
+      shown[index] = true;
+    }
+  }
+
+  /** @type {LogicalRow[]} */
+  const collapsed = [];
+  /** @type {LogicalRow | null} */
+  let fold = null;
+  indexed.forEach((row, index) => {
+    if (shown[index]) {
+      if (fold) {
+        collapsed.push(fold);
+        fold = null;
+      }
+      collapsed.push(rows[index]);
+      return;
+    }
+    const from = Number(row.row);
+    const to = row.kind === "skip" ? Number(row.to) : from + 1;
+    if (fold) {
+      fold.to = to;
+      fold.count = to - Number(fold.from);
+      return;
+    }
+    fold = {
+      kind: "skip",
+      count: to - from,
+      from,
+      to,
+      old_start: row.kind === "skip" ? (row.old_start ?? null) : (row.old?.number ?? null),
+      new_start: row.kind === "skip" ? (row.new_start ?? null) : (row.new?.number ?? null),
+    };
+  });
+  if (fold) {
+    collapsed.push(fold);
+  }
+  return collapsed;
+}
+
+/**
  * 表示行の色の役割。2 列では側ごとに、書き換えの旧側を削除、新側を追加の色にし、
  * 相手の無い側は色を付けない（`empty`）。1 列では `side` に null を渡し、行の側で決める。
  * @param {string} kind
