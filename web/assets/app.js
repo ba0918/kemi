@@ -535,6 +535,7 @@ function treeItem(entry, label, items) {
       );
       void selectIndex(index, { scrollTop: true });
     });
+    items.set(entry.file.id, item);
   }
   item.textContent = "";
   item.classList.toggle("seen", entry.file.seen);
