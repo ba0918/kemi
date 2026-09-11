@@ -1514,6 +1514,7 @@ async function expandSkipAt(index) {
   state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
   recomputeDisplay();
   renderDiff();
+  renderFloating();
   return true;
 }
 
@@ -1549,6 +1550,7 @@ async function expandAll() {
   }
   renderFileHeader();
   renderDiff();
+  renderFloating();
 }
 
 function allLinesExpanded() {
@@ -1572,6 +1574,7 @@ function collapseAll() {
   recomputeDisplay();
   renderFileHeader();
   renderDiff();
+  renderFloating();
 }
 
 function recomputeThreads() {
