@@ -1597,7 +1597,7 @@ async function selectIndex(index, options = { scrollTop: true }) {
 
 /**
  * @param {Entry} entry
- * @param {{ scrollTop?: boolean }} [options]
+ * @param {{ scrollTop?: boolean, keepEditor?: boolean }} [options]
  */
 async function selectEntry(entry, options = { scrollTop: true }) {
   state.current = entry;
@@ -1625,8 +1625,10 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   const storedComments = state.commentStore.get(id);
   state.comments = storedComments || data.comments || [];
   state.commentStore.set(id, state.comments);
-  state.selection = null;
-  state.editor = null;
+  if (!options.keepEditor) {
+    state.selection = null;
+    state.editor = null;
+  }
   if (options.scrollTop) {
     dom.viewport.scrollTop = 0;
   }
@@ -1669,7 +1671,8 @@ function applyTheme() {
     state.cache.clear();
     const entry = currentEntry();
     if (entry) {
-      void selectEntry(entry, { scrollTop: false });
+      // テーマ切替は表示色の再取得だけ。入力中のエディタは閉じない。
+      void selectEntry(entry, { scrollTop: false, keepEditor: true });
     }
   }
 }
