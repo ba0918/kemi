@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::content;
 use crate::domain::diff;
 use crate::domain::origin::{self as origin_domain, LineCommit, RangeCommit};
-use crate::source::git::{git_raw, git_raw_os_env, git_text, path_from_bytes};
+use crate::source::git::{git_raw_os, git_text, path_from_bytes};
 use crate::source::{FileContent, FileOrigin, SourceError};
 
 /// マージのもう片方の親をたどる深さの上限。これを超えた行は特定できないとする。
@@ -29,43 +29,18 @@ struct BlameLine {
     boundary: bool,
 }
 
-/// blame を呼ぶ git。利用者の全体とシステムの設定を読ませずに blame を動かす。
+/// blame を呼ぶ git。
 ///
-/// Why not `-c blame.ignoreRevsFile=` や `--ignore-revs-file=` だけで済ませない:
-/// 設定の blame.ignoreRevsFile が無いファイルを指すと、blame は一覧を読む時点で
-/// 失敗し、後からの空の指定では取り消せない（git 2.43 で確認）。全体の設定を外すと
-/// 一緒に消える safe.directory だけは、同じ値をコマンドラインの設定として渡し直す。
+/// Why not 利用者の全体やシステムの設定を外して呼ぶ: 部分クローンで足りない blob を
+/// 取り寄せるには、その設定（url.<base>.insteadOf、認証の helper、proxy など）が要り、
+/// 他人が所有するリポジトリを信頼する safe.directory もそこにある。
 struct BlameGit<'a> {
     repo: &'a Path,
-    /// 全体とシステムの設定にある safe.directory を、読んだ順に `-c` で渡す引数。
-    trusted: Vec<OsString>,
 }
 
 impl<'a> BlameGit<'a> {
     fn new(repo: &'a Path) -> Self {
-        // 値が無いと git config は失敗する。そのときは渡し直すものが無い。
-        let listing = git_raw(
-            repo,
-            &[
-                "config",
-                "--show-scope",
-                "-z",
-                "--get-all",
-                "safe.directory",
-            ],
-        )
-        .unwrap_or_default();
-        let mut fields = listing.split(|byte| *byte == 0);
-        let mut trusted = Vec::new();
-        // 空の値は一覧を空に戻す意味を持つので、空も順番どおりに渡す。
-        while let (Some(scope), Some(value)) = (fields.next(), fields.next()) {
-            if scope == b"system" || scope == b"global" {
-                let mut setting = OsString::from("safe.directory=");
-                setting.push(path_from_bytes(value).as_os_str());
-                trusted.extend([OsString::from("-c"), setting]);
-            }
-        }
-        BlameGit { repo, trusted }
+        BlameGit { repo }
     }
 
     /// `git blame --line-porcelain` を、対象の版の行番号順（`final` の順）に読む。
@@ -76,29 +51,24 @@ impl<'a> BlameGit<'a> {
         path: &Path,
         reverse: bool,
     ) -> Result<Vec<Option<BlameLine>>, SourceError> {
-        let mut args = self.trusted.clone();
-        args.extend(["-c".into(), "core.quotePath=false".into(), "blame".into()]);
+        let mut args: Vec<OsString> =
+            vec!["-c".into(), "core.quotePath=false".into(), "blame".into()];
         if reverse {
             args.push("--reverse".into());
         }
         args.extend([
-            // リポジトリの設定の blame.ignoreRevsFile で飛ばされたコミットを由来から
-            // 落とさないよう、設定の後に読まれる空の指定で、無視する一覧を空に戻す。
-            OsString::from("--ignore-revs-file="),
+            // 設定の blame.ignoreRevsFile で飛ばされたコミットも由来に出すため、無視する
+            // 一覧を読む前に取り消す。無いファイルを指す設定も、これで読まずに済む。
+            // Why not `--ignore-revs-file=`: 空の指定は設定のファイルを読んだ後で一覧を
+            // 空にするので、ファイルが無いと先に失敗する（git 2.43 で確認）。
+            OsString::from("--no-ignore-revs-file"),
             OsString::from("--line-porcelain"),
             OsString::from(range),
             OsString::from("--"),
             path.as_os_str().to_os_string(),
         ]);
         let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
-        let output = git_raw_os_env(
-            self.repo,
-            &args,
-            &[
-                ("GIT_CONFIG_GLOBAL", "/dev/null"),
-                ("GIT_CONFIG_NOSYSTEM", "1"),
-            ],
-        )?;
+        let output = git_raw_os(self.repo, &args)?;
         Ok(parse_line_porcelain(&output))
     }
 }

@@ -1066,20 +1066,10 @@ pub(crate) fn git_raw(repo: &Path, args: &[&str]) -> Result<Vec<u8>, SourceError
 
 /// git の引数に生のバイト列（非 UTF-8 のパスを含む pathspec）を渡せる版。
 pub(crate) fn git_raw_os(repo: &Path, args: &[&OsStr]) -> Result<Vec<u8>, SourceError> {
-    git_raw_os_env(repo, args, &[])
-}
-
-/// 環境変数 `envs` を足して git を呼ぶ版。
-pub(crate) fn git_raw_os_env(
-    repo: &Path,
-    args: &[&OsStr],
-    envs: &[(&str, &str)],
-) -> Result<Vec<u8>, SourceError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
-        .envs(envs.iter().copied())
         .output()
         .map_err(|source| SourceError::Io {
             path: repo.to_path_buf(),

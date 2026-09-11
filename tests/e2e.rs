@@ -1150,3 +1150,91 @@ async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() 
     assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changed_a.trim());
     kemi.kill();
 }
+
+/// `GIT_CONFIG_GLOBAL` を一時ファイルに向けて git を呼ぶ。
+fn git_with_global(dir: &Path, global: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", global)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+#[tokio::test]
+async fn origin_is_found_in_a_partial_clone_whose_remote_needs_the_global_config() {
+    let upstream = TempDir::new();
+    let clone = TempDir::new();
+    let state = TempDir::new();
+    // 取り寄せ先の URL は、全体の設定の url.<base>.insteadOf を通したときだけ upstream に届く。
+    let unreachable = format!("file://{}", state.path.join("nowhere").display());
+    let global = state.path.join("gitconfig");
+    std::fs::write(
+        &global,
+        format!(
+            "[user]\n\tname = kemi\n\temail = kemi@example.com\n\
+             [core]\n\thooksPath = /dev/null\n\
+             [url \"file://{}\"]\n\tinsteadOf = {unreachable}\n",
+            upstream.path.display()
+        ),
+    )
+    .unwrap();
+    let git_up = |args: &[&str]| git_with_global(&upstream.path, &global, args);
+    git_up(&["init", "-q"]);
+    git_up(&["config", "uploadpack.allowFilter", "true"]);
+    upstream.write("a.txt", "one\n");
+    git_up(&["add", "-A"]);
+    git_up(&["commit", "-q", "-m", "base"]);
+    let base = git_up(&["rev-parse", "HEAD"]);
+    // 途中の版の blob は、差分には要らず blame だけが取り寄せる。
+    upstream.write("a.txt", "two\n");
+    git_up(&["commit", "-q", "-am", "feat: two"]);
+    upstream.write("a.txt", "three\n");
+    git_up(&["commit", "-q", "-am", "feat: three"]);
+    let changed = git_up(&["rev-parse", "HEAD"]);
+    git_with_global(
+        &clone.path,
+        &global,
+        &["clone", "-q", "--filter=blob:none", &unreachable, "."],
+    );
+    let missing = git_with_global(
+        &clone.path,
+        &global,
+        &["rev-list", "--objects", "--missing=print", "--all"],
+    );
+    assert!(
+        missing.lines().any(|line| line.starts_with('?')),
+        "the clone must lack some blobs"
+    );
+    let mut kemi = Kemi::start(
+        kemi_command(&clone.path, &state.path)
+            .env("GIT_CONFIG_GLOBAL", &global)
+            .args(["--from", &base, "--no-open", "--port", "0"]),
+    );
+    let review = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = reqwest::get(format!("{}api/origin/{id}", kemi.url))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let origin: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(origin["blocks"][0]["entries"][0]["sha"], changed);
+    assert!(kemi.child.try_wait().unwrap().is_none());
+    kemi.kill();
+}
