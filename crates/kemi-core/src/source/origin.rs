@@ -65,6 +65,9 @@ impl<'a> BlameGit<'a> {
             // 設定の diff.<driver>.textconv で変換した行で数えると、行番号が表示している
             // 生の内容とずれ、変換が失敗すると blame ごと失敗するため、変換しない。
             OsString::from("--no-textconv"),
+            // 範囲内の根のコミット（取り込んだ別の履歴など）も由来に出す。既定では範囲の
+            // 外と同じ boundary になり、利用者の blame.showRoot で結果が変わってしまう。
+            OsString::from("--root"),
             OsString::from("--line-porcelain"),
             OsString::from(range),
             OsString::from("--"),
@@ -897,6 +900,33 @@ mod tests {
                 line: 15,
             })
         );
+    }
+
+    #[test]
+    fn origin_names_a_root_commit_inside_the_range() {
+        let repo = TempRepo::new();
+        repo.write("f.txt", "one\n");
+        let base = repo.add_and_commit("base");
+        repo.git(&["branch", "-M", "main"]);
+        // 別の履歴を取り込む。その根のコミットは `--from` から辿れないので範囲内にある。
+        repo.git(&["checkout", "-q", "--orphan", "imported"]);
+        repo.git(&["rm", "-q", "-r", "-f", "."]);
+        repo.write("g.txt", &text(&numbered(3)));
+        let root = repo.add_and_commit("imported root");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.git(&[
+            "merge",
+            "-q",
+            "--allow-unrelated-histories",
+            "imported",
+            "-m",
+            "merge imported",
+        ]);
+
+        let origin = origin_of(&final_source(&repo, &base, "HEAD"), "g.txt");
+
+        assert_eq!(shas(&origin.blocks[0]), vec![root.as_str()]);
+        assert_eq!(origin.blocks[0].unknown, Unknown::None);
     }
 
     #[test]
