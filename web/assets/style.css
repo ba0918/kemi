@@ -620,6 +620,24 @@ ul.files ul {
   color: var(--ink-3);
 }
 
+.group-header .gh-toggle {
+  background: none;
+  border: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  padding: 0 4px 0 0;
+}
+
+.group-header[data-open="false"] .gh-why,
+.group-header[data-open="false"] .gh-watch {
+  display: none;
+}
+
+.group-header[data-open="false"] .gh-toggle {
+  transform: rotate(-90deg);
+  display: inline-block;
+}
+
 .group-header .gh-why {
   margin: 6px 0 0;
   color: var(--ink-2);

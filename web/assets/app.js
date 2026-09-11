@@ -139,6 +139,7 @@ const dom = {
  *   treeRenderedVersion: number,
  *   groupOpen: Map<string, boolean>,
  *   dirOpen: Map<string, boolean>,
+ *   groupHeaderOpen: Map<string, boolean>,
  * }} */
 const state = {
   review: null,
@@ -179,6 +180,7 @@ const state = {
   treeRenderedVersion: -1,
   groupOpen: new Map(),
   dirOpen: new Map(),
+  groupHeaderOpen: new Map(),
 };
 
 function currentEntry() {
@@ -576,9 +578,23 @@ function renderGroupHeader() {
   if (!entry) {
     return;
   }
+  const open = state.groupHeaderOpen.get(entry.group.id) !== false;
+  dom.groupHeader.dataset.open = open ? "true" : "false";
   const stats = groupStatsFor(entry.group.id);
   const line = el("div", "gh-line");
+  const toggle = button("gh-toggle");
+  toggle.textContent = "▾";
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.title = open ? "このグループの説明を畳む" : "このグループの説明を開く";
+  toggle.addEventListener("click", () => {
+    const nextOpen = dom.groupHeader.dataset.open === "false";
+    dom.groupHeader.dataset.open = nextOpen ? "true" : "false";
+    state.groupHeaderOpen.set(entry.group.id, nextOpen);
+    toggle.setAttribute("aria-expanded", String(nextOpen));
+    toggle.title = nextOpen ? "このグループの説明を畳む" : "このグループの説明を開く";
+  });
   line.append(
+    toggle,
     textEl("span", "gh-title", entry.group.title || entry.group.id),
     textEl("span", "gh-st", `+${stats.add} −${stats.del} / ${stats.files} files`),
   );
