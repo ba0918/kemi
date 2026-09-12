@@ -39,7 +39,6 @@ import { renderNav, renderRuler } from "../views/nav.js";
 
 /** 測り直しの後の描き直しを、1 フレームに 1 回だけにする。 */
 let rendering = false;
-/** @typedef {import("../model.js").DisplayLine} DisplayLine */
 
 /**
  * 基準値と違う高さの行は、中身が変わったかもしれない。窓の外の行も含めて、次に
