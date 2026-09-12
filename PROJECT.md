@@ -34,7 +34,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 |---|---|
 | `app.js` | 結線と起動だけ。すべてを import してよい唯一のモジュール |
 | `features/` | 状態を変え、`api.js` を呼び、描き直す |
-| `views/` | `state.js` と `dom.js` を読んで要素を作る。`api.js` を呼ばず、`features/` を import しない |
+| `views/` | 要素を作る。`api.js` を除く leaf と、ほかの `views/` を import してよい（循環させない）。`api.js`・`features/`・`app.js` は import しない |
 | leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物） |
 
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
