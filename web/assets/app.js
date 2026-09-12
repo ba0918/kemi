@@ -1822,7 +1822,7 @@ function renderOriginLine(line) {
     return row;
   }
   if (origin.failed) {
-    row.append(textEl("span", "origin-unknown", "求められませんでした"));
+    row.append(textEl("span", "origin-unknown", "特定できない"));
     return row;
   }
   const block = origin.blocks.get(Number(line.block));
