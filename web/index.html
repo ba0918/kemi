@@ -13,7 +13,12 @@
         <div class="title" id="review-title"></div>
         <div class="subtitle" id="review-subtitle" hidden></div>
       </div>
+      <div class="unit-switch" id="unit-switch" role="group" aria-label="グループ単位" hidden></div>
       <div class="meta" id="review-meta"></div>
+      <div class="progress" id="progress" title="見たファイル / 全ファイル" hidden>
+        <span class="bar"><i id="progress-bar"></i></span>
+        <span id="progress-text"></span>
+      </div>
       <span class="spacer"></span>
       <div class="tools">
         <div class="seg" role="group" aria-label="表示モード">
@@ -66,13 +71,19 @@
         <button class="iconbtn" id="btn-theme" type="button" title="テーマ切替">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>
         </button>
+        <button class="iconbtn" id="btn-comments" type="button" title="コメントの一覧" aria-label="コメントの一覧" aria-expanded="false">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 3v-3h-2z"/></svg>
+          <span id="comment-count">0</span>
+        </button>
         <button id="update-badge" type="button" class="update-badge" hidden>
           更新あり
         </button>
         <button class="btn primary" id="btn-approve" type="button">承認</button>
-        <button class="btn danger" id="btn-changes" type="button">変更要求</button>
+        <button class="btn secondary" id="btn-changes" type="button">変更要求</button>
       </div>
     </header>
+
+    <div class="comment-list" id="comment-list" role="dialog" aria-label="コメントの一覧" hidden></div>
 
     <div class="layout">
       <aside class="tree" id="tree" aria-label="ファイルツリー"></aside>
@@ -81,7 +92,19 @@
         <div class="file-header" id="file-header"></div>
         <div id="floating-threads" hidden></div>
         <div id="notice" hidden></div>
-        <div id="diff-viewport"><div id="diff-content"></div></div>
+        <div id="diff-area">
+          <div id="diff-viewport"><div id="diff-content"></div></div>
+          <div id="ruler" title="変更とコメントの位置">
+            <canvas id="ruler-canvas"></canvas>
+            <div id="ruler-view"></div>
+          </div>
+          <div class="navpill" id="nav" role="group" aria-label="変更間の移動" hidden>
+            <button type="button" id="nav-prev" title="前の変更（p）"><kbd>p</kbd>前の変更</button>
+            <span class="pos" id="nav-pos"></span>
+            <button type="button" id="nav-next" title="次の変更（n）">次の変更<kbd>n</kbd></button>
+          </div>
+          <div id="toast" role="status" hidden></div>
+        </div>
       </main>
     </div>
 
@@ -90,7 +113,7 @@
     <div class="modal" id="modal" hidden>
       <div class="box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <h3 id="modal-title"></h3>
-        <p id="modal-body"></p>
+        <div id="modal-body"></div>
         <div class="row">
           <button class="btn" id="modal-cancel" type="button">戻る</button>
           <button class="btn" id="modal-ok" type="button"></button>

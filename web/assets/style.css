@@ -1,48 +1,72 @@
+/*
+ * 配色は意味ごとの役割に分ける（R-VIEW）。役割の色の値はプリセットごとにここで決める（D2）。
+ *   藍（--ai）: 進捗・見た・主な操作      付箋（--note-*）: コメント
+ *   藤（--star）: 重要・見てほしい点      追加（--add-*）/ 削除（--del-*）: 差分
+ * 追加と削除以外の役割に赤系の色を使わない（削除と見分けがつかなくなるため）。
+ */
 :root {
   color-scheme: light;
   --bg: #ffffff;
-  --panel: #f6f8fa;
-  --panel-2: #eef1f4;
-  --ink: #1f2328;
-  --ink-2: #59636e;
-  --ink-3: #818b98;
-  --line: #d0d7de;
-  --line-soft: #e7ebef;
-  --accent: #0969da;
-  --accent-soft: #ddf4ff;
-  --add-bg: #e6ffec;
-  --add-mark: #abf2bc;
+  --panel: #f5f6f8;
+  --panel-2: #eceef2;
+  --ink: #1b1f24;
+  --ink-2: #555e6a;
+  --ink-3: #7c8490;
+  --line: #d6dae0;
+  --line-soft: #e8ebef;
+  --ai: #3b4ea8;
+  --ai-soft: #e9ecfa;
+  --ai-ink: #ffffff;
+  --add-bg: #e8f7ec;
+  --add-gut: #cdeed6;
+  --add-mark: #a9e5b9;
   --add-ink: #1a7f37;
-  --del-bg: #ffebe9;
-  --del-mark: #ffc9c4;
-  --del-ink: #cf222e;
-  --focus: #9a6700;
-  --focus-bg: #fff8c5;
+  --del-bg: #fdeceb;
+  --del-gut: #f8d3cf;
+  --del-mark: #f5bdb6;
+  --del-ink: #c62a2a;
+  --note-bg: #fff6d6;
+  --note-line: #e0ac2b;
+  --note-ink: #7a5200;
+  --star: #7b4fd0;
+  --star-soft: #f1eafd;
+  --accent: var(--ai);
+  --accent-soft: var(--ai-soft);
+  --focus: var(--star);
+  --focus-bg: var(--star-soft);
+  --hatch: repeating-linear-gradient(135deg, transparent 0 5px, var(--line-soft) 5px 6px);
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+  --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "IPAMincho", serif;
   --row-height: 24px;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0d1117;
-  --panel: #161b22;
-  --panel-2: #21262d;
-  --ink: #e6edf3;
-  --ink-2: #9198a1;
-  --ink-3: #6e7681;
-  --line: #30363d;
-  --line-soft: #21262d;
-  --accent: #4493f8;
-  --accent-soft: #121d2f;
-  --add-bg: #12261e;
-  --add-mark: #2ea04366;
-  --add-ink: #3fb950;
-  --del-bg: #25171c;
-  --del-mark: #f8514966;
-  --del-ink: #f85149;
-  --focus: #d29922;
-  --focus-bg: #272115;
+  --bg: #0f1216;
+  --panel: #161a20;
+  --panel-2: #1e232b;
+  --ink: #e4e8ee;
+  --ink-2: #9aa3ae;
+  --ink-3: #737c88;
+  --line: #2c323b;
+  --line-soft: #20252d;
+  --ai: #8b9cf0;
+  --ai-soft: #1d2340;
+  --ai-ink: #0f1216;
+  --add-bg: #11261a;
+  --add-gut: #18351f;
+  --add-mark: #2a5c3a;
+  --add-ink: #4ac26b;
+  --del-bg: #2a1618;
+  --del-gut: #3d1e1f;
+  --del-mark: #6d2d2b;
+  --del-ink: #f0645c;
+  --note-bg: #2b2512;
+  --note-line: #9c7a1f;
+  --note-ink: #e8c060;
+  --star: #b69af5;
+  --star-soft: #261d3d;
 }
 
 :root[data-theme="solarized-light"] {
@@ -52,19 +76,25 @@
   --panel-2: #e4ddc8;
   --ink: #073642;
   --ink-2: #586e75;
-  --ink-3: #93a1a1;
+  --ink-3: #7f8f90;
   --line: #d3cbb7;
   --line-soft: #e4ddc8;
-  --accent: #268bd2;
-  --accent-soft: #d9e8f2;
-  --add-bg: #e3f2df;
-  --add-mark: #b6d7ab;
-  --add-ink: #586e75;
-  --del-bg: #fbe3e1;
-  --del-mark: #f0b8b1;
-  --del-ink: #dc322f;
-  --focus: #b58900;
-  --focus-bg: #f7ecc9;
+  --ai: #3d58a8;
+  --ai-soft: #e2e3ec;
+  --ai-ink: #fdf6e3;
+  --add-bg: #e6f0d6;
+  --add-gut: #d3e4bb;
+  --add-mark: #b8d38c;
+  --add-ink: #5b7a00;
+  --del-bg: #f9e2dc;
+  --del-gut: #f2cbc2;
+  --del-mark: #eaa89c;
+  --del-ink: #c9302c;
+  --note-bg: #f6ebc4;
+  --note-line: #b58900;
+  --note-ink: #6e5200;
+  --star: #6c71c4;
+  --star-soft: #e8e5f1;
 }
 
 :root[data-theme="solarized-dark"] {
@@ -74,19 +104,25 @@
   --panel-2: #0d4250;
   --ink: #eee8d5;
   --ink-2: #93a1a1;
-  --ink-3: #839496;
+  --ink-3: #74878a;
   --line: #0f4a58;
   --line-soft: #0d4250;
-  --accent: #268bd2;
-  --accent-soft: #0b3a4d;
-  --add-bg: #0c2f2a;
-  --add-mark: #2f6b4f;
-  --add-ink: #859900;
-  --del-bg: #37222a;
+  --ai: #7d95e0;
+  --ai-soft: #10304a;
+  --ai-ink: #002b36;
+  --add-bg: #0c3226;
+  --add-gut: #11412f;
+  --add-mark: #2f6b3a;
+  --add-ink: #9fbf1a;
+  --del-bg: #37202a;
+  --del-gut: #4a2833;
   --del-mark: #7a3a44;
-  --del-ink: #dc322f;
-  --focus: #b58900;
-  --focus-bg: #3a3113;
+  --del-ink: #ef5f58;
+  --note-bg: #2e3217;
+  --note-line: #b58900;
+  --note-ink: #e3c35a;
+  --star: #a7a3ea;
+  --star-soft: #1d2c50;
 }
 
 * {
@@ -296,17 +332,75 @@ button:disabled {
   font-size: 13.5px;
 }
 
+/* 主な操作は藍。変更要求や削除も赤にしない（赤は差分の削除の色）。 */
 .btn.primary {
-  background: #1f883d;
-  border-color: #1f883d;
-  color: #fff;
+  background: var(--ai);
+  border-color: var(--ai);
+  color: var(--ai-ink);
   font-weight: 600;
 }
 
-.btn.danger {
+.btn.secondary {
   background: var(--bg);
-  border-color: var(--del-ink);
-  color: var(--del-ink);
+  border-color: var(--ink-2);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* グループ単位の切り替え（R-UNIT）。上部で文字ラベルを持つ操作の 1 つ。 */
+.unit-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.unit-button {
+  border: 0;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.unit-button + .unit-button {
+  border-left: 1px solid var(--line);
+}
+
+.unit-button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.unit-button.failed {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.progress .bar {
+  width: 110px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.progress .bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
 }
 
 .update-badge {
@@ -331,10 +425,111 @@ button:disabled {
   min-height: 0;
 }
 
+#diff-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 #diff-viewport {
   flex: 1;
   overflow: auto;
   position: relative;
+  min-width: 0;
+}
+
+/* スクロールバーの横の位置の帯（R-NAV）。印は canvas に縮めて描く。 */
+#ruler {
+  position: relative;
+  flex: 0 0 12px;
+  background: var(--panel);
+  border-left: 1px solid var(--line-soft);
+  cursor: pointer;
+}
+
+#ruler-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#ruler-view {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
+.navpill {
+  position: absolute;
+  right: 30px;
+  bottom: 18px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 12.5px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.navpill button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+}
+
+.navpill button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg) 18%, transparent);
+}
+
+.navpill .pos {
+  padding: 0 8px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.navpill kbd {
+  background: transparent;
+  color: inherit;
+  border-color: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+#toast {
+  position: absolute;
+  right: 30px;
+  bottom: 62px;
+  z-index: 7;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 13px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--ink-3);
+  background: var(--bg);
 }
 
 #diff-content {
@@ -376,6 +571,12 @@ button:disabled {
   background: var(--panel);
 }
 
+/* 配置の計算をグループの中に閉じ込める。コミットごとで数万項目あるとき、1 項目の札の
+   出し入れでツリー全体を計算し直さない。paint は閉じ込めない（端のフォーカスの枠を切るため）。 */
+.group {
+  contain: layout style;
+}
+
 .group-head {
   display: flex;
   align-items: center;
@@ -407,47 +608,81 @@ button:disabled {
   white-space: nowrap;
 }
 
-.group-head .st {
-  font-family: var(--mono);
-  font-size: 11.5px;
+.g-progress {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.g-count {
+  font-size: 12px;
+  font-weight: 400;
   color: var(--ink-3);
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-bar {
+  margin: 0 8px 6px 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.g-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.group.done .gtitle {
+  color: var(--ink-2);
+}
+
+/* 「閲」の印。グループのファイルをすべて見たとき（ツリーのグループ見出し）と、承認の
+   完了画面だけで使う（R-SEEN）。 */
+.seal {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--serif);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transform: rotate(-10deg);
+  box-shadow: inset 0 0 0 1.5px var(--bg), inset 0 0 0 2.5px var(--accent);
+}
+
+.seal.big {
+  width: 76px;
+  height: 76px;
+  font-size: 38px;
+  border-width: 3px;
+  box-shadow: inset 0 0 0 3px var(--bg), inset 0 0 0 5px var(--accent);
+}
+
+/* コミットの種類（feat など）を示す、色の無い小さな枠。 */
+.ctype {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 5px;
 }
 
 .group-body {
-  margin: 6px 0 14px;
+  margin: 2px 0 12px;
 }
 
 .group[data-open="false"] .group-body {
   display: none;
-}
-
-.why {
-  margin: 4px 8px 4px 22px;
-  color: var(--ink-2);
-  font-size: 13px;
-  line-height: 1.6;
-  border-left: 2px solid var(--line);
-  padding-left: 8px;
-}
-
-.watch {
-  margin: 6px 8px 8px 22px;
-  font-size: 13px;
-  color: var(--ink-2);
-  background: var(--focus-bg);
-  border: 1px solid var(--focus);
-  border-radius: 6px;
-  padding: 6px 8px;
-  line-height: 1.6;
-}
-
-.watch b {
-  display: block;
-  font-size: 11.5px;
-  letter-spacing: 0.06em;
-  color: var(--focus);
-  margin-bottom: 2px;
 }
 
 ul.files {
@@ -522,7 +757,74 @@ ul.files ul {
 
 .file.seen .fname {
   color: var(--ink-3);
-  text-decoration: line-through;
+}
+
+/* 見たかどうかは左端の丸いチェックで示す。 */
+.chk {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  display: inline-grid;
+  place-items: center;
+}
+
+.file.seen .chk {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.file.seen .chk::after,
+.seen-toggle.on .chk::after {
+  content: "";
+  width: 6px;
+  height: 3px;
+  border: solid var(--bg);
+  border-width: 0 0 1.5px 1.5px;
+  transform: rotate(-45deg) translate(0.5px, -0.5px);
+}
+
+/* 状態の 1 文字。変更（M）は目立たせない。 */
+.sl {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sl.A {
+  color: var(--add-ink);
+}
+
+.sl.D {
+  color: var(--del-ink);
+}
+
+.sl.R {
+  color: var(--ink);
+}
+
+.sl.M {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.cbadge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--note-ink);
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
+  border-radius: 999px;
+  padding: 0 5px;
+  white-space: nowrap;
 }
 
 .file .st {
@@ -598,70 +900,70 @@ ul.files ul {
 .group-header {
   background: var(--bg);
   border-bottom: 1px solid var(--line);
-  padding: 14px 20px;
   max-height: 34vh;
   overflow-y: auto;
+  font-size: 13.5px;
 }
 
 .group-header .gh-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
+  padding: 7px 16px;
 }
 
 .group-header .gh-title {
   font-weight: 700;
-  font-size: 16px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .group-header .gh-st {
-  font-family: var(--mono);
+  flex: 0 0 auto;
   font-size: 12px;
   color: var(--ink-3);
 }
 
 .group-header .gh-toggle {
+  margin-left: auto;
+  flex: 0 0 auto;
   background: none;
   border: 0;
-  color: var(--ink-3);
-  font-size: 12px;
-  padding: 0 4px 0 0;
+  color: var(--accent);
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
-.group-header[data-open="false"] .gh-why,
-.group-header[data-open="false"] .gh-watch {
+/* why（説明）は既定で畳む。watch（見てほしい点）は畳まずに常に出す。 */
+.group-header[data-open="false"] .gh-why {
   display: none;
 }
 
-.group-header[data-open="false"] .gh-toggle {
-  transform: rotate(-90deg);
-  display: inline-block;
-}
-
 .group-header .gh-why {
-  margin: 6px 0 0;
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
   color: var(--ink-2);
   white-space: pre-wrap;
   line-height: 1.6;
 }
 
 .group-header .gh-watch {
-  margin-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  border-left: 3px solid var(--focus);
   background: var(--focus-bg);
-  border: 1px solid var(--focus);
-  border-radius: 6px;
-  padding: 7px 10px;
-  color: var(--ink-2);
-  font-size: 13.5px;
+  padding: 5px 13px;
+  color: var(--ink);
   line-height: 1.6;
 }
 
 .group-header .gh-watch b {
   color: var(--focus);
-  font-size: 11.5px;
-  letter-spacing: 0.06em;
-  display: block;
-  margin-bottom: 2px;
+  font-size: 12px;
+  margin-right: 6px;
 }
 
 .file-header {
@@ -710,6 +1012,49 @@ ul.files ul {
   background: var(--focus-bg);
   border-radius: 6px;
   padding: 1px 7px;
+}
+
+.seen-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.seen-toggle .chk {
+  border-color: currentColor;
+}
+
+.seen-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.seen-toggle.on .chk {
+  background: var(--bg);
+  border-color: var(--bg);
+}
+
+.seen-toggle.on .chk::after {
+  border-color: var(--accent);
+}
+
+.seen-toggle.on kbd {
+  background: transparent;
+  color: inherit;
+  border-color: color-mix(in srgb, var(--bg) 50%, transparent);
+}
+
+.file-header .sl {
+  font-size: 12px;
 }
 
 .file-header button.copied {
@@ -769,24 +1114,50 @@ ul.files ul {
   background: transparent;
 }
 
-.row.kind-insert,
-.row.kind-replace-new {
+/* 1 列: 行の側で色を決め、行番号の欄にも同じ色を付ける。 */
+.row.tone-add {
   background: var(--add-bg);
 }
 
-.row.kind-delete,
-.row.kind-replace-old {
+.row.tone-del {
   background: var(--del-bg);
 }
 
-.row.kind-insert .mk,
-.row.kind-replace-new .mk {
+.row.tone-add .no-cell,
+.cell.side-add .no-cell {
+  background: var(--add-gut);
   color: var(--add-ink);
 }
 
-.row.kind-delete .mk,
-.row.kind-replace-old .mk {
+.row.tone-del .no-cell,
+.cell.side-del .no-cell {
+  background: var(--del-gut);
   color: var(--del-ink);
+}
+
+.row.tone-add .mk,
+.cell.side-add .mk {
+  color: var(--add-ink);
+  font-weight: 700;
+}
+
+.row.tone-del .mk,
+.cell.side-del .mk {
+  color: var(--del-ink);
+  font-weight: 700;
+}
+
+/* 2 列: 書き換えの旧側は削除、新側は追加の色。相手の無い側は斜線の無地。 */
+.cell.side-add {
+  background: var(--add-bg);
+}
+
+.cell.side-del {
+  background: var(--del-bg);
+}
+
+.cell.side-empty {
+  background: var(--hatch), var(--panel);
 }
 
 .row.kind-equal .src,
@@ -795,26 +1166,118 @@ ul.files ul {
 }
 
 .row.kind-skip {
-  justify-content: center;
-  background: var(--panel-2);
+  background: var(--accent-soft);
   color: var(--ink-3);
+  font-family: var(--sans);
   font-size: 12.5px;
+  border-block: 1px solid var(--line-soft);
 }
 
 .expand-button {
-  margin: 0 auto;
-  font-size: 12.5px;
-  background: none;
+  flex: 0 0 auto;
+  min-width: calc(6.8em + 1px);
+  height: 100%;
+  padding: 0 10px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   border: 0;
   color: var(--accent);
 }
 
+.skip-range {
+  margin-left: auto;
+  padding-right: 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* 由来の行（R-ORIGIN）。変更ブロックのすぐ上に 1 行で出す。 */
+.origin-row {
+  gap: 6px;
+  padding-left: 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow: hidden;
+}
+
+.origin-label {
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+
+.origin-entry {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48ch;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.origin-entry[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.origin-pending,
+.origin-unknown {
+  flex: 0 0 auto;
+  font-style: italic;
+}
+
+.origin-reason {
+  padding: 8px 16px 10px calc(6.8em + 12px);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: normal;
+}
+
+.origin-reason-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.origin-sha {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.origin-body {
+  margin: 4px 0 0;
+  max-width: 76ch;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
 .no-cell {
-  flex: 0 0 4.6em;
+  flex: 0 0 3.4em;
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   padding: 0 4px 0 6px;
+  background: var(--panel);
   color: var(--ink-3);
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -843,7 +1306,7 @@ ul.files ul {
   align-items: center;
   justify-content: center;
   background: var(--accent);
-  color: #fff;
+  color: var(--ai-ink);
   border: 0;
   border-radius: 4px;
   font-size: 14px;
@@ -876,10 +1339,10 @@ ul.files ul {
   color: inherit;
 }
 
-.row.kind-delete .changed,
-.row.kind-delete .word-changed,
-.row.kind-replace-old .changed,
-.row.kind-replace-old .word-changed {
+.row.tone-del .changed,
+.row.tone-del .word-changed,
+.cell.side-del .changed,
+.cell.side-del .word-changed {
   background: var(--del-mark);
 }
 
@@ -890,6 +1353,8 @@ ul.files ul {
 .cell {
   flex: 1 1 50%;
   display: flex;
+  align-self: stretch;
+  align-items: center;
   min-width: 0;
   border-right: 1px solid var(--line);
 }
@@ -912,72 +1377,261 @@ ul.files ul {
 
 /* ---------- インラインコメント ---------- */
 
-.thread-row {
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  padding: 11px 14px;
+/* 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める（R-VIEW）。 */
+.bal-row {
+  position: relative;
+  padding: 4px 16px 8px calc(8.4em + 1px);
   font-family: var(--sans);
   font-size: 13.5px;
+  white-space: normal;
+  line-height: 1.6;
 }
 
-.thread + .thread {
-  border-top: 1px solid var(--line-soft);
+.bal-row.mode-split.side-old {
+  padding-left: calc(4.8em + 1px);
 }
 
-.thread.outdated {
-  border-left: 3px solid var(--focus);
-  padding-left: 11px;
+.bal-row.mode-split.side-new {
+  padding-left: calc(50% + 4.8em);
 }
 
-.t-head {
+.bal-row.floating {
+  padding: 4px 0;
+}
+
+.bal {
+  position: relative;
+  max-width: 72ch;
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
+  border-radius: 8px;
+  padding: 7px 12px 8px;
+  color: var(--ink);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--note-line) 40%, transparent);
+}
+
+/* 尾で対象の行を指す。 */
+.bal::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 18px;
+  width: 12px;
+  height: 12px;
+  background: var(--note-bg);
+  border-left: 1px solid var(--note-line);
+  border-top: 1px solid var(--note-line);
+  transform: rotate(45deg);
+}
+
+.bal-row.floating .bal::before {
+  display: none;
+}
+
+.bal .bh {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--ink-2);
+  font-size: 12px;
+  color: var(--note-ink);
+}
+
+.bal .bh .where,
+.cchip .where {
+  font-family: var(--mono);
+}
+
+.bal .bh .acts {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.bal .bh .acts button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--note-ink);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bal.outdated,
+.cchip.outdated {
+  border-style: dashed;
+}
+
+/* 既定の 1 行の札。本文の 1 行目を見せ、収まらなければ省略記号で切る。 */
+.cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 72ch;
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
+  color: var(--note-ink);
   font-size: 12.5px;
 }
 
-.t-role {
-  font-weight: 600;
+.cchip .tx {
+  min-width: 0;
   color: var(--ink);
-  font-size: 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge-suggest {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--note-ink);
+  border: 1px solid var(--note-line);
   border-radius: 999px;
-  padding: 0 8px;
+  padding: 0 6px;
+}
+
+.t-outdated-mark {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
 }
 
 .t-body {
-  margin: 6px 0 0 0;
+  margin: 4px 0 0;
   color: var(--ink);
   white-space: pre-wrap;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
-.t-body.clamp .clamp-body {
-  display: block;
-  max-height: 5.1em;
-  overflow: hidden;
+/* 範囲の行には、行番号の欄の左端にコメントの色の線を付ける。 */
+.row.commented > .no-cell:first-child,
+.row.split.commented > .cell > .no-cell {
+  box-shadow: inset 3px 0 0 var(--note-line);
 }
 
-.t-body.clamp[data-open="true"] .clamp-body {
-  max-height: none;
-  overflow: visible;
+/* コメントの一覧。上部の入口から開き、閉じると消える（常設パネルではない）。 */
+.comment-list {
+  position: fixed;
+  top: 56px;
+  right: 18px;
+  z-index: 30;
+  width: min(560px, calc(100vw - 36px));
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
 }
 
-.clamp-toggle {
-  margin-top: 2px;
+.cl-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.cl-close {
+  margin-left: auto;
   background: none;
   border: 0;
   color: var(--accent);
-  font-size: 12px;
-  padding: 0;
+  font-size: 12.5px;
 }
 
-.clamp-toggle:hover {
-  text-decoration: underline;
+.cl-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--ink-3);
+}
+
+.cl-items {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.cl-item + .cl-item {
+  border-top: 1px solid var(--line-soft);
+}
+
+.cl-target {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.cl-target:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.cl-target:disabled {
+  opacity: 1;
+}
+
+.cl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.cl-unit {
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.cl-unit.vanished {
+  color: var(--ink-2);
+  border-style: dashed;
+}
+
+.cl-path,
+.cl-where {
+  font-family: var(--mono);
+}
+
+.cl-subject {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.cl-first {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cl-body {
+  margin: 0 8px 8px;
+  padding: 6px 10px;
+  background: var(--note-bg);
+  border: 1px dashed var(--note-line);
+  border-radius: 6px;
+  white-space: pre-wrap;
 }
 
 .t-suggestion {
@@ -1089,7 +1743,7 @@ ul.files ul {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 18px 20px;
-  width: 380px;
+  width: min(470px, calc(100vw - 32px));
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
@@ -1099,6 +1753,7 @@ ul.files ul {
 }
 
 .modal p {
+  white-space: pre-wrap;
   margin: 0 0 14px;
   color: var(--ink-2);
   font-size: 13.5px;
@@ -1109,6 +1764,30 @@ ul.files ul {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.modal .sum {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 14px;
+  margin: 4px 0 10px;
+  font-size: 13.5px;
+}
+
+.modal .sum dt {
+  color: var(--ink-3);
+}
+
+.modal .sum dd {
+  margin: 0;
+}
+
+.modal .warn {
+  border-left: 3px solid var(--note-line);
+  background: var(--note-bg);
+  color: var(--ink);
+  padding: 6px 10px;
+  border-radius: 0 6px 6px 0;
 }
 
 #overlay {
@@ -1145,4 +1824,64 @@ ul.files ul {
 
 .overlay-close {
   align-self: flex-end;
+}
+
+/* 送信後の完了画面。 */
+#overlay-card.finish {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 22px 24px;
+}
+
+.finish-body {
+  grid-column: -2 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.finish-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.finish-meta,
+.finish-save {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.finish-save {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.finish-save.failed {
+  color: var(--ink);
+  font-weight: 600;
+  border-left: 3px solid var(--note-line);
+  background: var(--note-bg);
+  padding: 4px 8px;
+  border-radius: 0 6px 6px 0;
+}
+
+.finish-json {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
 }

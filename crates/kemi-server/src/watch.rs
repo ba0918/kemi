@@ -16,10 +16,12 @@ use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::new_debouncer;
 use tokio::sync::broadcast;
 
+use crate::Event;
+
 /// 短期間の複数書き込みを 1 回の通知にまとめる debounce 値（D6）。
 const DEBOUNCE: Duration = Duration::from_millis(500);
 
-pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<()>) {
+pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<Event>) {
     if paths.is_empty() {
         return;
     }
@@ -60,7 +62,7 @@ pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<()>) {
                     .any(|path| files.contains(&canonical(path.clone())))
             });
             if changed {
-                let _ = events.send(());
+                let _ = events.send(Event::Update);
             }
         }
     });

@@ -5,7 +5,27 @@ import * as api from "./api.js";
 import {
   buildTree,
   collapseDefault,
+  collapseLoadedRows,
+  commentCountChanges,
   commentLabel,
+  commentedLines,
+  commitTypeBox,
+  describeComment,
+  firstLine,
+  hasLoadedStops,
+  hasStops,
+  navCurrentIndex,
+  navNextTarget,
+  navPrevTarget,
+  navStops,
+  nextFileIndex,
+  originJumpTarget,
+  rulerMarks,
+  seenProgress,
+  statusLetter,
+  submitSummary,
+  unitSwitchOrder,
+  unitSwitchTarget,
   draftKey,
   filterAndSortFiles,
   formatBytes,
@@ -18,11 +38,18 @@ import {
   nextHighlightOverride,
   nextTheme,
   placeThreads,
+  rangeAfterSkip,
   resolveTheme,
-  statusLabel,
+  sideTone,
   suggestionAllowed,
   toDisplayLines,
+  treeOrder,
   windowFor,
+  withRowIndex,
+  rowAtOffset,
+  displayRowKey,
+  carryHeights,
+  anchorIndex,
 } from "./model.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
@@ -31,6 +58,11 @@ import {
 
 const ROW_HEIGHT = 24;
 const OVERSCAN = 12;
+/** 変更間の移動で、止まる場所を画面の上端からこの分だけ下に置く（前の文脈を見せる）。 */
+const NAV_MARGIN = 48;
+
+/** @type {Record<string, string>} */
+const UNIT_LABELS = { file: "最終形", commit: "コミットごと" };
 
 const FILE_ICON =
   '<svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>';
@@ -44,8 +76,8 @@ const EXPAND_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5.5 8 10l5-4.5"/><path d="M3 2.5h10"/></svg>';
 const CODE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4 2 8l2.5 4M11.5 4 14 8l-2.5 4M9.5 2.5l-3 11"/></svg>';
-const EYE_ICON =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/></svg>';
+const ORIGIN_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="4" r="1.8"/><circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="8" r="1.8"/><path d="M4 5.8v4.4M5.6 4.8 10.4 7.2"/></svg>';
 
 /** @type {Record<string, string>} */
 const THEME_LABELS = {
@@ -67,7 +99,19 @@ function must(selector) {
 const dom = {
   title: must("#review-title"),
   subtitle: must("#review-subtitle"),
+  unitSwitch: must("#unit-switch"),
   meta: must("#review-meta"),
+  progress: must("#progress"),
+  progressBar: must("#progress-bar"),
+  progressText: must("#progress-text"),
+  ruler: must("#ruler"),
+  rulerCanvas: /** @type {HTMLCanvasElement} */ (must("#ruler-canvas")),
+  rulerView: must("#ruler-view"),
+  nav: must("#nav"),
+  navPrev: /** @type {HTMLButtonElement} */ (must("#nav-prev")),
+  navNext: /** @type {HTMLButtonElement} */ (must("#nav-next")),
+  navPos: must("#nav-pos"),
+  toast: must("#toast"),
   tree: must("#tree"),
   groupHeader: must("#group-header"),
   fileHeader: must("#file-header"),
@@ -82,6 +126,9 @@ const dom = {
   chipFocus: /** @type {HTMLButtonElement} */ (must("#chip-focus")),
   chipSort: /** @type {HTMLButtonElement} */ (must("#chip-sort")),
   btnTheme: /** @type {HTMLButtonElement} */ (must("#btn-theme")),
+  btnComments: /** @type {HTMLButtonElement} */ (must("#btn-comments")),
+  commentCount: must("#comment-count"),
+  commentList: must("#comment-list"),
   updateBadge: /** @type {HTMLButtonElement} */ (must("#update-badge")),
   submitApproved: /** @type {HTMLButtonElement} */ (must("#btn-approve")),
   submitChanges: /** @type {HTMLButtonElement} */ (must("#btn-changes")),
@@ -97,7 +144,7 @@ const dom = {
 /**
  * @typedef {{ file: FileEntry, group: any }} Entry
  * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection
- * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean }} Editor
+ * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean, editId?: string }} Editor
  */
 
 /** @type {{
@@ -115,11 +162,14 @@ const dom = {
  *   commentStore: Map<string, any[]>,
  *   rows: LogicalRow[],
  *   display: DisplayLine[],
+ *   displayFileId: string | null,
  *   heights: number[],
+ *   staleRows: Set<number>,
  *   threads: { byLine: Map<number, any[]>, floating: any[] },
  *   binary: boolean,
  *   collapsedOverrides: Record<string, boolean>,
  *   rendering: boolean,
+ *   measureNext: boolean,
  *   highlightOverrides: Map<string, "on" | "off">,
  *   highlightCapable: boolean,
  *   highlightEnabled: boolean,
@@ -140,7 +190,26 @@ const dom = {
  *   groupOpen: Map<string, boolean>,
  *   dirOpen: Map<string, boolean>,
  *   groupHeaderOpen: Map<string, boolean>,
- *   commentClampOpen: Map<string, boolean>,
+ *   commentOpen: Map<string, boolean>,
+ *   commented: Set<number>,
+ *   loading: boolean,
+ *   navigating: boolean,
+ *   origins: Map<string, any>,
+ *   originForced: Set<string>,
+ *   originOpen: Map<string, string>,
+ *   skipRanges: Map<number, any>,
+ *   units: any[],
+ *   unit: string | null,
+ *   reviews: Map<string, any>,
+ *   pendingUnit: { unit: string, jump: any } | null,
+ *   allComments: any[],
+ *   stops: number[],
+ *   rulerDirty: boolean,
+ *   pendingJump: { side: string, line: number } | "first" | "last" | null,
+ *   toastTimer: number,
+ *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
+ *   modalAction: (() => void) | null,
+ *   landing: { index: number, top: number, scrollTop: number, margin: number } | null,
  * }} */
 const state = {
   review: null,
@@ -157,11 +226,14 @@ const state = {
   commentStore: new Map(),
   rows: [],
   display: [],
+  displayFileId: null,
   heights: [],
+  staleRows: new Set(),
   threads: { byLine: new Map(), floating: [] },
   binary: false,
   collapsedOverrides: {},
   rendering: false,
+  measureNext: false,
   highlightOverrides: new Map(),
   highlightCapable: false,
   highlightEnabled: false,
@@ -182,7 +254,26 @@ const state = {
   groupOpen: new Map(),
   dirOpen: new Map(),
   groupHeaderOpen: new Map(),
-  commentClampOpen: new Map(),
+  commentOpen: new Map(),
+  commented: new Set(),
+  loading: false,
+  navigating: false,
+  origins: new Map(),
+  originForced: new Set(),
+  originOpen: new Map(),
+  skipRanges: new Map(),
+  units: [],
+  unit: null,
+  reviews: new Map(),
+  pendingUnit: null,
+  allComments: [],
+  stops: [],
+  rulerDirty: true,
+  pendingJump: null,
+  toastTimer: 0,
+  groupHeads: new Map(),
+  modalAction: null,
+  landing: null,
 };
 
 function currentEntry() {
@@ -238,13 +329,24 @@ function textEl(tag, className, text) {
 }
 
 /**
+ * 解析済みのアイコン。ツリーの項目ごとに markup を解析し直さず、複製して使う。
+ * @type {Map<string, SVGElement>}
+ */
+const parsedIcons = new Map();
+
+/**
  * @param {string} markup
  * @returns {SVGElement}
  */
 function svgIcon(markup) {
-  const template = document.createElement("template");
-  template.innerHTML = markup;
-  return /** @type {SVGElement} */ (template.content.firstElementChild);
+  let icon = parsedIcons.get(markup);
+  if (!icon) {
+    const template = document.createElement("template");
+    template.innerHTML = markup;
+    icon = /** @type {SVGElement} */ (template.content.firstElementChild);
+    parsedIcons.set(markup, icon);
+  }
+  return /** @type {SVGElement} */ (icon.cloneNode(true));
 }
 
 /**
@@ -305,9 +407,8 @@ function rebuildVisible(keepId) {
     [...byId.values()].map((entry) => entry.file),
     { focusOnly: state.focusOnly, sortBySize: state.sortBySize },
   );
-  state.visible = /** @type {Entry[]} */ (
-    files.map((file) => byId.get(file.id))
-  );
+  // n / p と j / k が次のファイルを選ぶ順は、ツリーに描かれる順（R-NAV）。
+  state.visible = treeOrder(/** @type {Entry[]} */ (files.map((file) => byId.get(file.id))));
   state.treeVersion += 1;
   if (keepId !== undefined) {
     const found = state.visible.findIndex((entry) => entry.file.id === keepId);
@@ -317,24 +418,6 @@ function rebuildVisible(keepId) {
     }
   }
   state.index = Math.max(0, Math.min(state.visible.length - 1, state.index));
-}
-
-/**
- * @param {string} groupId
- * @returns {{ files: number, add: number, del: number }}
- */
-function groupStatsFor(groupId) {
-  let files = 0;
-  let add = 0;
-  let del = 0;
-  for (const entry of state.entries) {
-    if (entry.group.id === groupId) {
-      files += 1;
-      add += entry.file.add;
-      del += entry.file.del;
-    }
-  }
-  return { files, add, del };
 }
 
 /**
@@ -363,6 +446,9 @@ function renderUpdateBadge() {
 }
 
 async function refresh() {
+  if (state.submitted) {
+    return;
+  }
   state.updateAvailable = false;
   renderUpdateBadge();
   const scrollTop = dom.viewport.scrollTop;
@@ -370,8 +456,10 @@ async function refresh() {
   state.selectGeneration += 1;
   state.cache.clear();
   state.commentStore.clear();
-  state.review = await api.getReview(true);
-  state.entries = flatten(state.review);
+  state.origins.clear();
+  // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
+  state.reviews = new Map();
+  applyReview(await api.getReview(true, state.unit), true);
   const current = currentEntry();
   const keepId = current ? current.file.id : undefined;
   const keep =
@@ -415,11 +503,157 @@ function renderHeader() {
       dom.meta.append(span);
     }
   }
+  renderUnitSwitch();
+  renderProgress();
+  dom.commentCount.textContent = String(state.allComments.length);
+  dom.btnComments.setAttribute("aria-label", `コメントの一覧（${state.allComments.length} 件）`);
   dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
   dom.chipFocus.setAttribute("aria-pressed", String(state.focusOnly));
   dom.chipSort.setAttribute("aria-pressed", String(state.sortBySize));
+}
+
+/** コミット範囲だけに出す「最終形 | コミットごと」の切り替え（R-UNIT）。 */
+function renderUnitSwitch() {
+  const focusKey = focusKeyWithin(dom.unitSwitch);
+  dom.unitSwitch.textContent = "";
+  dom.unitSwitch.hidden = state.units.length === 0;
+  for (const status of unitSwitchOrder(state.units)) {
+    const unit = String(status.unit);
+    const item = button("unit-button");
+    const pending = state.pendingUnit && state.pendingUnit.unit === unit;
+    let label = UNIT_LABELS[unit] || unit;
+    if (status.state === "failed") {
+      label = `${label}（作れなかった）`;
+      item.classList.add("failed");
+      item.title = `作れなかった: ${status.error || ""}（押すと理由と再試行）`;
+    } else if (status.state === "building" && pending) {
+      label = `${label}（読み込み中…）`;
+    }
+    item.textContent = label;
+    item.dataset.focusKey = `unit:${unit}`;
+    item.setAttribute("aria-pressed", String(unit === state.unit));
+    item.addEventListener("click", () => void switchUnit(unit, null));
+    dom.unitSwitch.append(item);
+  }
+  restoreFocusKey(dom.unitSwitch, focusKey);
+}
+
+/**
+ * 描き直しで作り直す操作にフォーカスがあれば、その操作の鍵（data-focus-key）。
+ * 作り直した後に同じ鍵の要素へフォーカスを戻し、キーボードの操作を続けられるようにする。
+ * @param {HTMLElement} container
+ * @returns {string | null}
+ */
+function focusKeyWithin(container) {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || !container.contains(active)) {
+    return null;
+  }
+  return active.dataset.focusKey ?? null;
+}
+
+/**
+ * @param {HTMLElement} container
+ * @param {string | null} key
+ */
+function restoreFocusKey(container, key) {
+  if (!key) {
+    return;
+  }
+  const next = container.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
+  if (next instanceof HTMLElement && next !== document.activeElement) {
+    next.focus({ preventScroll: true });
+  }
+}
+
+/** 上部の、表示中のグループ単位の見たの進捗（R-SEEN）。 */
+function renderProgress() {
+  const progress = seenProgress(state.entries.map((entry) => entry.file));
+  dom.progress.hidden = !state.review || progress.total === 0;
+  dom.progressBar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
+  dom.progressText.textContent = `見た ${progress.seen} / ${progress.total}`;
+}
+
+/**
+ * グループの見出しの題。コミットごとでは件名の種類を枠で示し、件名から外す。
+ * @param {HTMLElement} parent
+ * @param {any} group
+ * @param {string} className
+ */
+function appendGroupTitle(parent, group, className) {
+  const title = el("span", className);
+  const box = state.unit === "commit" ? commitTypeBox(group.title || "") : null;
+  if (box) {
+    title.append(textEl("span", "ctype", box.type), document.createTextNode(box.title));
+  } else {
+    title.append(document.createTextNode(group.title || group.id));
+  }
+  parent.append(title);
+}
+
+/**
+ * @param {string} groupId
+ * @returns {{ seen: number, total: number, done: boolean }}
+ */
+function groupProgressFor(groupId) {
+  return seenProgress(
+    state.entries.filter((entry) => entry.group.id === groupId).map((entry) => entry.file),
+  );
+}
+
+/**
+ * ツリーのグループ見出しの進捗。全部見たら数の代わりに「閲」の印を出す。
+ * @param {string} groupId
+ */
+function updateGroupHead(groupId) {
+  const head = state.groupHeads.get(groupId);
+  if (!head) {
+    return;
+  }
+  const progress = groupProgressFor(groupId);
+  head.root.classList.toggle("done", progress.done);
+  head.count.textContent = "";
+  if (progress.done) {
+    const seal = textEl("span", "seal", "閲");
+    seal.title = "すべて見た";
+    head.count.append(seal);
+  } else {
+    head.count.append(textEl("span", "g-count", `${progress.seen} / ${progress.total}`));
+  }
+  head.bar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
+}
+
+/**
+ * ファイルのコメント（ファイル全体のコメントを含む）。コメントの JSON は submit の契約の
+ * 形でファイル id を持たないので、サーバが id を振るのと同じ（グループ, パス）で対応付ける。
+ * @param {Entry} entry
+ * @returns {any[]}
+ */
+function commentsOf(entry) {
+  return state.allComments.filter(
+    (comment) => comment.group_id === entry.group.id && comment.path === entry.file.path,
+  );
+}
+
+/**
+ * コメントの件数が変わったファイルの、ツリーの項目だけを描き直す。ツリー全体は
+ * 作り直さない（コミットごとで数万項目あると、1 回のコメントで固まる）。
+ * @param {any[]} before 変わる前のすべてのコメント
+ */
+function refreshCommentBadges(before) {
+  for (const changed of commentCountChanges(before, state.allComments)) {
+    for (const entry of state.visible) {
+      if (
+        entry.group.id === changed.group_id &&
+        entry.file.path === changed.path &&
+        state.treeItems.has(entry.file.id)
+      ) {
+        treeItem(entry, entry.file.path.split("/").pop() ?? entry.file.path, state.treeItems);
+      }
+    }
+  }
 }
 
 function renderTree() {
@@ -435,6 +669,7 @@ function rebuildTree() {
   /** 前回のボタンを使い回す。同じファイルの項目は作り直さない。 */
   const items = new Map(state.treeItems);
   dom.tree.textContent = "";
+  state.groupHeads = new Map();
   const fragment = document.createDocumentFragment();
   for (const { group, nodes } of groups) {
     const open = state.groupOpen.get(group.id) !== false;
@@ -445,16 +680,10 @@ function rebuildTree() {
     head.title = group.title || group.id;
     head.setAttribute("aria-expanded", String(open));
     const caret = textEl("span", "caret", open ? "▾" : "▸");
-    const stats = groupStatsFor(group.id);
-    head.append(
-      caret,
-      textEl("span", "gtitle", group.title || group.id),
-      textEl(
-        "span",
-        "st",
-        `${stats.files} files  +${stats.add} −${stats.del}`,
-      ),
-    );
+    const count = el("span", "g-progress");
+    head.append(caret);
+    appendGroupTitle(head, group, "gtitle");
+    head.append(count);
     head.addEventListener("click", () => {
       const nextOpen = groupEl.dataset.open === "false";
       groupEl.dataset.open = nextOpen ? "true" : "false";
@@ -462,26 +691,26 @@ function rebuildTree() {
       head.setAttribute("aria-expanded", String(nextOpen));
       caret.textContent = nextOpen ? "▾" : "▸";
     });
-    groupEl.append(head);
+    const barTrack = el("div", "g-bar");
+    const bar = el("i");
+    barTrack.append(bar);
+    groupEl.append(head, barTrack);
+    // ツリーのグループ見出しには why と watch を出さない（グループ帯に出す）。
     const body = el("div", "group-body");
-    if (group.why) {
-      body.append(textEl("p", "why", group.why));
-    }
-    if (group.watch) {
-      const watch = el("div", "watch");
-      watch.append(
-        textEl("b", "", "見てほしい点"),
-        document.createTextNode(group.watch),
-      );
-      body.append(watch);
-    }
     const list = el("ul", "files");
     appendNodes(list, nodes, group, items);
     body.append(list);
     groupEl.append(body);
     fragment.append(groupEl);
+    state.groupHeads.set(group.id, { root: groupEl, count, bar });
+    updateGroupHead(group.id);
   }
   dom.tree.append(fragment);
+  // 使い回したボタンに前の選択の印が残ると、2 つのファイルが選ばれて見える。印を外してから
+  // 選び直させる。
+  if (state.treeActiveId) {
+    items.get(state.treeActiveId)?.classList.remove("active");
+  }
   state.treeItems = items;
   state.treeActiveId = null;
 }
@@ -543,19 +772,25 @@ function treeItem(entry, label, items) {
   }
   item.textContent = "";
   item.title = entry.file.path;
+  // 見たは左端のチェックで示す。取り消し線は削除と見分けがつかないので使わない。
   item.classList.toggle("seen", entry.file.seen);
+  const letter = statusLetter(entry.file.status);
   item.append(
+    el("span", "chk"),
     svgIcon(FILE_ICON),
     textEl("span", "fname", label),
-    textEl("span", "badge status", statusLabel(entry.file.status)),
-    fileStatsEl(entry.file),
   );
+  const comments = commentsOf(entry).length;
+  if (comments > 0) {
+    item.append(textEl("span", "cbadge", `💬 ${comments}`));
+  }
   if (entry.file.focus) {
     item.append(textEl("span", "badge-focus", "重要"));
   }
   if (entry.file.noise) {
     item.append(textEl("span", "badge-noise", "ノイズ"));
   }
+  item.append(textEl("span", `sl ${letter}`, letter), fileStatsEl(entry.file));
   return item;
 }
 
@@ -574,32 +809,33 @@ function updateTreeActive() {
   state.treeActiveId = nextId;
 }
 
+/** 本文側のグループ帯。why は既定で畳み（開閉はページを開いている間だけ覚える）、watch は常に出す。 */
 function renderGroupHeader() {
   const entry = currentEntry();
   dom.groupHeader.textContent = "";
   if (!entry) {
     return;
   }
-  const open = state.groupHeaderOpen.get(entry.group.id) !== false;
+  const open = state.groupHeaderOpen.get(entry.group.id) === true;
   dom.groupHeader.dataset.open = open ? "true" : "false";
-  const stats = groupStatsFor(entry.group.id);
   const line = el("div", "gh-line");
-  const toggle = button("gh-toggle");
-  toggle.textContent = "▾";
-  toggle.setAttribute("aria-expanded", String(open));
-  toggle.title = open ? "このグループの説明を畳む" : "このグループの説明を開く";
-  toggle.addEventListener("click", () => {
-    const nextOpen = dom.groupHeader.dataset.open === "false";
-    dom.groupHeader.dataset.open = nextOpen ? "true" : "false";
-    state.groupHeaderOpen.set(entry.group.id, nextOpen);
-    toggle.setAttribute("aria-expanded", String(nextOpen));
-    toggle.title = nextOpen ? "このグループの説明を畳む" : "このグループの説明を開く";
-  });
-  line.append(
-    toggle,
-    textEl("span", "gh-title", entry.group.title || entry.group.id),
-    textEl("span", "gh-st", `+${stats.add} −${stats.del} / ${stats.files} files`),
-  );
+  appendGroupTitle(line, entry.group, "gh-title");
+  const progress = groupProgressFor(entry.group.id);
+  line.append(textEl("span", "gh-st", `${progress.seen} / ${progress.total} 見た`));
+  if (entry.group.why) {
+    const toggle = button("gh-toggle");
+    const label = () => (dom.groupHeader.dataset.open === "true" ? "説明を畳む" : "説明を開く");
+    toggle.textContent = label();
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.addEventListener("click", () => {
+      const nextOpen = dom.groupHeader.dataset.open !== "true";
+      dom.groupHeader.dataset.open = nextOpen ? "true" : "false";
+      state.groupHeaderOpen.set(entry.group.id, nextOpen);
+      toggle.setAttribute("aria-expanded", String(nextOpen));
+      toggle.textContent = label();
+    });
+    line.append(toggle);
+  }
   dom.groupHeader.append(line);
   if (entry.group.why) {
     dom.groupHeader.append(textEl("p", "gh-why", entry.group.why));
@@ -625,6 +861,7 @@ function highlightTitle() {
 }
 
 function renderFileHeader() {
+  const focusKey = focusKeyWithin(dom.fileHeader);
   dom.fileHeader.textContent = "";
   const entry = currentEntry();
   if (!entry) {
@@ -636,9 +873,14 @@ function renderFileHeader() {
       textEl("span", "file-old", `← ${entry.file.old_path}`),
     );
   }
-  dom.fileHeader.append(
-    textEl("span", "badge status", statusLabel(entry.file.status)),
-  );
+  const letter = statusLetter(entry.file.status);
+  dom.fileHeader.append(textEl("span", `sl ${letter}`, letter));
+  const comments = commentsOf(entry).length;
+  if (comments > 0) {
+    const badge = textEl("span", "cbadge", `💬 ${comments}`);
+    badge.title = `このファイルのコメント ${comments} 件（ファイル全体へのコメントを含む）`;
+    dom.fileHeader.append(badge);
+  }
   dom.fileHeader.append(fileStatsEl(entry.file));
   if (entry.file.focus) {
     dom.fileHeader.append(textEl("span", "badge focus", "重要"));
@@ -648,12 +890,16 @@ function renderFileHeader() {
   }
   dom.fileHeader.append(el("span", "spacer"));
 
+  // 取得が終わるまでは、前のファイルに操作が届かないよう、ヘッダの操作を無効にする。
+  const busy = state.loading;
   const comment = iconButton("ファイル全体にコメント", COMMENT_ICON);
-  comment.disabled = state.submitted;
+  comment.disabled = state.submitted || busy;
+  comment.dataset.focusKey = "file-comment";
   comment.addEventListener("click", openFileWideEditor);
   dom.fileHeader.append(comment);
 
   const copy = iconButton("パスをコピー", COPY_ICON);
+  copy.dataset.focusKey = "file-copy";
   copy.addEventListener("click", () => void copyPath(entry.file.path, copy));
   dom.fileHeader.append(copy);
 
@@ -662,7 +908,8 @@ function renderFileHeader() {
     fullyExpanded ? "すべて折りたたむ" : "すべての行を展開",
     EXPAND_ICON,
   );
-  expand.disabled = state.submitted || state.binary;
+  expand.disabled = state.submitted || state.binary || busy;
+  expand.dataset.focusKey = "file-expand";
   expand.addEventListener("click", () => {
     if (fullyExpanded) {
       collapseAll();
@@ -673,6 +920,8 @@ function renderFileHeader() {
   dom.fileHeader.append(expand);
 
   const highlight = iconButton(highlightTitle(), CODE_ICON);
+  highlight.disabled = busy;
+  highlight.dataset.focusKey = "file-highlight";
   highlight.classList.toggle("active", state.highlightEnabled);
   highlight.setAttribute("aria-pressed", String(state.highlightEnabled));
   highlight.addEventListener("click", () => {
@@ -689,10 +938,94 @@ function renderFileHeader() {
   });
   dom.fileHeader.append(highlight);
 
-  const seen = iconButton(entry.file.seen ? "見た（取り消す）" : "見た", EYE_ICON);
+  if (originAvailable() && !state.binary && !state.highlightCapable) {
+    const forced = state.originForced.has(entry.file.id);
+    const origin = iconButton(
+      forced ? "このファイルの由来を隠す" : "このファイルで由来を求める",
+      ORIGIN_ICON,
+    );
+    origin.disabled = busy;
+    origin.dataset.focusKey = "file-origin";
+    origin.setAttribute("aria-pressed", String(forced));
+    origin.addEventListener("click", () => {
+      if (forced) {
+        state.originForced.delete(entry.file.id);
+      } else {
+        state.originForced.add(entry.file.id);
+      }
+      recomputeDisplay();
+      renderFileHeader();
+      renderDiff();
+      void loadOrigin(entry);
+    });
+    dom.fileHeader.append(origin);
+  }
+
+  // 見たは文字付きのチェック。キー v でも付け外しできる（R-SEEN）。
+  const seen = button(`seen-toggle${entry.file.seen ? " on" : ""}`);
+  seen.title = entry.file.seen ? "見たを取り消す（v）" : "見たにする（v）";
+  seen.disabled = busy;
+  seen.dataset.focusKey = "file-seen";
   seen.setAttribute("aria-pressed", String(entry.file.seen));
+  seen.append(el("span", "chk"), document.createTextNode("見た"), textEl("kbd", "", "v"));
   seen.addEventListener("click", () => void toggleSeen(entry.file));
   dom.fileHeader.append(seen);
+  restoreFocusKey(dom.fileHeader, focusKey);
+}
+
+/** 最終形（由来を持つ単位）を表示しているか。 */
+function originAvailable() {
+  return Boolean(state.review && state.review.unit === "file");
+}
+
+/** 表示中のファイルで由来の行を出すか。上限を超えるファイルは有効にしたときだけ。 */
+function originShown() {
+  const entry = currentEntry();
+  if (!entry || !originAvailable() || state.binary) {
+    return false;
+  }
+  return state.highlightCapable || state.originForced.has(entry.file.id);
+}
+
+/**
+ * @param {string} fileId
+ * @returns {string}
+ */
+function originKey(fileId) {
+  return `${fileId}|${state.originForced.has(fileId) ? 1 : 0}`;
+}
+
+/** 表示中のファイルの由来。取得中は "pending"、まだなら undefined。 */
+function currentOrigin() {
+  const entry = currentEntry();
+  return entry ? state.origins.get(originKey(entry.file.id)) : undefined;
+}
+
+/**
+ * 由来は差分の表示を待たせず、後から取りに行って付ける（R-ORIGIN）。
+ * @param {Entry} entry
+ */
+async function loadOrigin(entry) {
+  const id = entry.file.id;
+  const key = originKey(id);
+  if (!originShown() || state.origins.has(key)) {
+    return;
+  }
+  state.origins.set(key, "pending");
+  try {
+    const data = await api.getOrigin(id, state.originForced.has(id));
+    /** @type {Map<number, any>} */
+    const blocks = new Map();
+    for (const block of data.blocks || []) {
+      blocks.set(Number(block.row), block);
+    }
+    state.origins.set(key, { ...data, blocks });
+  } catch (error) {
+    state.origins.set(key, { failed: String(error), blocks: new Map() });
+  }
+  if (isShowingFile(id)) {
+    renderDiff();
+  }
 }
 
 /**
@@ -724,6 +1057,11 @@ function renderNotice() {
     }
     return;
   }
+  if (state.loading) {
+    dom.notice.hidden = false;
+    dom.notice.append(textEl("span", "notice-text", "読み込み中…"));
+    return;
+  }
   if (state.binary) {
     dom.notice.hidden = false;
     dom.notice.append(
@@ -753,10 +1091,13 @@ function renderNotice() {
   }
 }
 
+/** ファイル全体へのコメント（と、表示中の行に見つからないコメント）を、ヘッダの下に吹き出しで出す。 */
+/** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ吹き出しで出す。 */
 function renderFloating() {
+  const focusKey = focusKeyWithin(dom.floating);
   dom.floating.textContent = "";
   const floating = state.threads.floating;
-  const wideEditor = state.editor && state.editor.wide ? state.editor : null;
+  const wideEditor = state.editor && state.editor.wide && !state.editor.editId ? state.editor : null;
   if (floating.length === 0 && !wideEditor) {
     dom.floating.hidden = true;
     return;
@@ -766,115 +1107,88 @@ function renderFloating() {
     dom.floating.append(renderEditor(wideEditor));
   }
   for (const comment of floating) {
-    const wrap = el("div", "floating-thread");
-    wrap.append(textEl("div", "floating-where", commentLabel(comment)));
-    wrap.append(renderThread(comment));
-    dom.floating.append(wrap);
+    const row = el("div", "bal-row floating");
+    row.append(renderCommentOrEditor(comment));
+    dom.floating.append(row);
   }
-  applyCommentClamps(dom.floating);
+  restoreFocusKey(dom.floating, focusKey);
 }
 
 /**
- * 折りたたみで実際に隠れるかを、描画後の高さで測る。畳み高さは CSS の
- * max-height が正典なので、文字数からの概算ではなく折りたたみ時の
- * scrollHeight と clientHeight を比べる。文字幅も折返し幅も見なくて済む。
- * @param {HTMLElement} body .t-body.clamp
- * @returns {boolean}
- */
-function commentBodyIsClamped(body) {
-  const clampBody = body.querySelector(".clamp-body");
-  if (!(clampBody instanceof HTMLElement)) {
-    return false;
-  }
-  // 開いていると max-height が外れて隠れていないため、畳んだ状態で測る。
-  const wasOpen = body.dataset.open === "true";
-  if (wasOpen) {
-    body.dataset.open = "false";
-  }
-  const clamped = clampBody.scrollHeight > clampBody.clientHeight;
-  if (wasOpen) {
-    body.dataset.open = "true";
-  }
-  return clamped;
-}
-
-/**
- * 描画済みの本文を実測し、隠れるものへ畳みとトグルを付け、隠れないものから外す。
- * 幅が広がって畳みを外した浮動コメントも、狭くなればここで畳み直す。
- * @param {HTMLElement} root
- */
-function applyCommentClamps(root) {
-  for (const body of root.querySelectorAll(".t-body")) {
-    if (!(body instanceof HTMLElement)) {
-      continue;
-    }
-    // 畳み判定は clamp を付けた見た目で行うため、先に付けてから測る。
-    body.classList.add("clamp");
-    if (commentBodyIsClamped(body)) {
-      if (!body.querySelector(".clamp-toggle")) {
-        const commentId = body.dataset.commentId;
-        if (commentId !== undefined) {
-          body.append(clampToggle(body, commentId));
-        }
-      }
-      continue;
-    }
-    const toggle = body.querySelector(".clamp-toggle");
-    if (toggle) {
-      toggle.remove();
-    }
-    body.classList.remove("clamp");
-  }
-}
-
-/**
- * 畳みトグルを作る。renderThread が最初に付け、幅が戻って再び畳みが
- * 要るようになった浮動コメントには applyCommentClamps が付け直す。
- * @param {HTMLElement} body .t-body
- * @param {string} commentId
- * @returns {HTMLButtonElement}
- */
-function clampToggle(body, commentId) {
-  const toggle = button("clamp-toggle");
-  toggle.textContent = body.dataset.open === "true" ? "折りたたむ" : "続きを読む";
-  toggle.addEventListener("click", () => {
-    const nextOpen = body.dataset.open !== "true";
-    body.dataset.open = nextOpen ? "true" : "false";
-    state.commentClampOpen.set(commentId, nextOpen);
-    toggle.textContent = nextOpen ? "折りたたむ" : "続きを読む";
-    if (dom.content.contains(body)) {
-      renderDiff();
-    }
-  });
-  return toggle;
-}
-
-/**
+ * 編集中ならエディタ、そうでなければコメント（札か吹き出し）。
  * @param {any} comment
  * @returns {HTMLElement}
  */
-function renderThread(comment) {
-  const thread = el("div", "thread");
-  if (comment.outdated) {
-    thread.classList.add("outdated");
+function renderCommentOrEditor(comment) {
+  const editor = state.editor;
+  if (editor && editor.editId === comment.id) {
+    return renderEditor(editor);
   }
-  const head = el("div", "t-head");
-  head.append(textEl("span", "t-role", "あなた"));
-  if (comment.suggestion) {
-    head.append(textEl("span", "badge-focus", "提案"));
-  }
-  if (comment.resolved) {
-    head.append(textEl("span", "badge resolved", "解決済み"));
-  }
-  thread.append(head);
+  return renderComment(comment);
+}
 
-  const body = el("div", "t-body clamp");
-  const open = state.commentClampOpen.get(comment.id) === true;
-  body.dataset.open = open ? "true" : "false";
-  body.dataset.commentId = comment.id;
-  const clampBody = textEl("span", "clamp-body", comment.body);
-  body.append(clampBody, clampToggle(body, comment.id));
-  thread.append(body);
+/**
+ * コメントを、既定では本文の 1 行目を見せる札に畳んで出し、押すと吹き出しで本文をすべて
+ * 見せる。付けた直後のコメントは開いて出し、別のファイルへ移って戻っても開いたままに
+ * する（addComment が開いた状態として覚える）。開閉はページを開いている間だけ覚える。
+ * @param {any} comment
+ * @returns {HTMLElement}
+ */
+function renderComment(comment) {
+  const where = commentLabel(comment);
+  const open = state.commentOpen.get(comment.id) === true;
+  if (!open) {
+    const chip = button(`cchip${comment.outdated ? " outdated" : ""}`);
+    // 札と吹き出しの「畳む」は同じ鍵を持ち、開閉の後もフォーカスが行き来する。
+    chip.dataset.focusKey = `comment:${comment.id}`;
+    chip.title = comment.body;
+    chip.append(
+      document.createTextNode("💬"),
+      textEl("span", "where", where),
+      textEl("span", "tx", firstLine(comment.body)),
+    );
+    if (comment.suggestion) {
+      chip.append(textEl("span", "badge-suggest", "提案"));
+    }
+    chip.addEventListener("click", () => {
+      state.commentOpen.set(comment.id, true);
+      remeasure();
+      renderDiff();
+      renderFloating();
+    });
+    return chip;
+  }
+  const balloon = el("div", `bal${comment.outdated ? " outdated" : ""}`);
+  const head = el("div", "bh");
+  head.append(textEl("span", "where", where));
+  if (comment.suggestion) {
+    head.append(textEl("span", "badge-suggest", "提案"));
+  }
+  if (comment.outdated) {
+    head.append(textEl("span", "t-outdated-mark", "古いコメント"));
+  }
+  const actions = el("span", "acts");
+  if (!state.submitted) {
+    const edit = button("");
+    edit.textContent = "編集";
+    edit.addEventListener("click", () => openCommentEditor(comment));
+    const remove = button("");
+    remove.textContent = "削除";
+    remove.addEventListener("click", () => confirmDeleteComment(comment));
+    actions.append(edit, remove);
+  }
+  const fold = button("");
+  fold.textContent = "畳む";
+  fold.dataset.focusKey = `comment:${comment.id}`;
+  fold.addEventListener("click", () => {
+    state.commentOpen.set(comment.id, false);
+    remeasure();
+    renderDiff();
+    renderFloating();
+  });
+  actions.append(fold);
+  head.append(actions);
+  balloon.append(head, textEl("p", "t-body", comment.body));
 
   if (comment.suggestion) {
     const box = el("div", "t-suggestion");
@@ -885,8 +1199,8 @@ function renderThread(comment) {
         ? "（行の削除）"
         : comment.suggestion.replacement;
     box.append(pre);
-    thread.append(box);
-    thread.append(
+    balloon.append(box);
+    balloon.append(
       textEl(
         "div",
         "t-note",
@@ -894,9 +1208,8 @@ function renderThread(comment) {
       ),
     );
   }
-
   if (comment.outdated) {
-    thread.append(
+    balloon.append(
       textEl(
         "div",
         "t-outdated",
@@ -904,8 +1217,85 @@ function renderThread(comment) {
       ),
     );
   }
+  return balloon;
+}
 
-  return thread;
+/**
+ * コメントの本文と suggestion を編集する。行レンジは変えない（R-COMMENT）。
+ * @param {any} comment
+ */
+function openCommentEditor(comment) {
+  const entry = currentEntry();
+  if (!entry || state.submitted) {
+    return;
+  }
+  const wide = comment.start_line === null || comment.start_line === undefined;
+  state.selection = null;
+  state.editor = {
+    fileId: entry.file.id,
+    side: comment.side,
+    start: wide ? 0 : Number(comment.start_line),
+    end: wide ? 0 : Number(comment.end_line ?? comment.start_line),
+    anchor: wide ? 0 : Number(comment.end_line ?? comment.start_line),
+    wide,
+    body: comment.body,
+    suggestion: comment.suggestion ? comment.suggestion.replacement : "",
+    suggestionOn: Boolean(comment.suggestion),
+    needsFocus: true,
+    editId: comment.id,
+  };
+  remeasure();
+  renderDiff();
+  renderFloating();
+}
+
+/**
+ * 削除は確認を 1 回挟む（R-COMMENT）。
+ * @param {any} comment
+ */
+function confirmDeleteComment(comment) {
+  dom.modalTitle.textContent = "コメントを削除しますか？";
+  setModalText(`${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`);
+  dom.modalOk.textContent = "削除";
+  dom.modalOk.className = "btn secondary";
+  dom.modalCancel.textContent = "戻る";
+  state.modalAction = () => void deleteComment(comment);
+  dom.modal.hidden = false;
+}
+
+/**
+ * 表示とキャッシュのコメントを差し替える。
+ * @param {(comments: any[]) => any[]} change
+ */
+function updateComments(change) {
+  const before = state.allComments;
+  state.allComments = change(state.allComments);
+  for (const [id, comments] of state.commentStore) {
+    state.commentStore.set(id, change(comments));
+  }
+  state.comments = change(state.comments);
+  recomputeThreads();
+  remeasure();
+  refreshCommentBadges(before);
+  renderHeader();
+  renderFileHeader();
+  renderDiff();
+  renderFloating();
+  if (!dom.commentList.hidden) {
+    renderCommentList();
+  }
+}
+
+/**
+ * @param {any} comment
+ */
+async function deleteComment(comment) {
+  try {
+    await api.postComment({ op: "delete", id: comment.id });
+    updateComments((comments) => comments.filter((item) => item.id !== comment.id));
+  } catch (error) {
+    showOverlay("コメントを削除できません", String(error));
+  }
 }
 
 /**
@@ -929,7 +1319,10 @@ function renderEditor(editor) {
   body.value = editor.body;
   body.addEventListener("input", () => {
     editor.body = body.value;
-    saveDraft(key, body.value);
+    // 下書きは新しいコメントだけに残す。編集中の本文はコメント自身にある。
+    if (!editor.editId) {
+      saveDraft(key, body.value);
+    }
   });
   body.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -971,12 +1364,21 @@ function renderEditor(editor) {
   cancel.addEventListener("click", closeEditor);
   const submit = /** @type {HTMLButtonElement} */ (el("button", "btn primary"));
   submit.type = "submit";
-  submit.textContent = "コメント";
+  submit.textContent = editor.editId ? "保存" : "コメント";
   actions.append(cancel, submit);
   form.append(actions);
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (editor.editId) {
+      void editComment({
+        op: "edit",
+        id: editor.editId,
+        body: body.value,
+        suggestion: suggestion && suggestion.checkbox.checked ? suggestion.textarea.value : null,
+      });
+      return;
+    }
     const payload = /** @type {any} */ ({
       op: "add",
       file_id: editor.fileId,
@@ -1012,14 +1414,114 @@ function renderEditor(editor) {
 function closeEditor() {
   state.editor = null;
   state.selection = null;
-  resetHeights();
+  remeasure();
   renderDiff();
   renderFloating();
 }
 
-/** エディタやスレッドの出入りで測り直す前に、行の高さを基準値へ戻す。 */
+/**
+ * エディタやコメント、由来の理由の出入りで、次の描画で表示中の行の高さを測り直させる。
+ * 見えていない行の測った高さは残す。捨てると、上の行が詰まって見ている位置がずれる。
+ * 基準値と違う高さの行は中身が変わったかもしれないので、窓の外の行も、次に描いたときに
+ * 測り直すよう覚えておく。
+ */
+function remeasure() {
+  // 利用者の操作で行の高さが変わったら、送った先を画面の同じ位置に置き直すのをやめる。
+  // 置き直すと、その先より上で開いたエディタや吹き出しの高さだけスクロール位置が送られ、
+  // いま触った行が画面の外へ動く。
+  state.landing = null;
+  state.measureNext = true;
+  state.heights.forEach((height, index) => {
+    if (height !== ROW_HEIGHT) {
+      state.staleRows.add(index);
+    }
+  });
+}
+
+/**
+ * @typedef {{ key: string, row: number, margin: number }} Anchor
+ */
+
+/**
+ * 表示領域の上端に見えている行と、その行の上端が上端から下に何画素あるか（見切れて
+ * いれば負）。表示行を作り直しても、この行を同じ位置に見せるための記録。
+ * @returns {Anchor | null}
+ */
+function captureAnchor() {
+  if (state.display.length === 0) {
+    return null;
+  }
+  const offsets = lineOffsets(state.heights);
+  const scrollTop = dom.viewport.scrollTop;
+  const index = rowAtOffset(offsets, scrollTop);
+  const line = state.display[index];
+  if (!line) {
+    return null;
+  }
+  return { key: displayRowKey(line), row: line.row, margin: (offsets[index] ?? 0) - scrollTop };
+}
+
+/**
+ * 覚えておいた行を元の位置へ戻す。その行が折りたたみに入って消えたときは、ファイルの
+ * 同じ位置から後で最初に残っている行を同じ位置に置く。
+ * @param {Anchor | null} anchor
+ */
+function restoreAnchor(anchor) {
+  if (!anchor || state.display.length === 0) {
+    return;
+  }
+  const index = anchorIndex(state.display, anchor);
+  if (index < 0) {
+    return;
+  }
+  const offsets = lineOffsets(state.heights);
+  // 全体の高さを先に広げる。古い高さのままでは、戻す位置が末尾で切り詰められる。
+  dom.content.style.height = `${offsets[offsets.length - 1] || 0}px`;
+  const top = offsets[index] ?? 0;
+  dom.viewport.scrollTop = Math.max(0, top - anchor.margin);
+  // この後の測り直しで上の行が伸び縮みしても、この行を同じ位置へ置き直す。
+  state.landing = {
+    index,
+    top,
+    scrollTop: dom.viewport.scrollTop,
+    margin: anchor.margin,
+  };
+}
+
+/**
+ * 作り直した行のうち、基準値と違う高さで見えているかもしれない行を、次に描いたときに
+ * 測り直すよう覚えておく。測り直した分は measureHeights がスクロール位置で打ち消す。
+ */
+function markStaleRows() {
+  state.measureNext = true;
+  state.heights.forEach((height, index) => {
+    if (height !== ROW_HEIGHT) {
+      state.staleRows.add(index);
+    }
+  });
+  // 吹き出しの分だけ高い行は、高さを引き継げなかったときも測り直させる。
+  state.threads.byLine.forEach((_threads, index) => {
+    state.staleRows.add(index);
+  });
+  if (state.originOpen.size > 0) {
+    const entry = currentEntry();
+    const fileId = entry ? entry.file.id : "";
+    state.display.forEach((line, index) => {
+      if (line.kind === "origin" && state.originOpen.has(`${fileId}:${line.block}`)) {
+        state.staleRows.add(index);
+      }
+    });
+  }
+}
+
+/** 表示する行が変わったときや折返しを切り替えたとき、行の高さを基準値へ戻す。 */
 function resetHeights() {
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  state.staleRows = new Set();
+  // 位置の帯の印は行の高さから描く。測る行が無くても、古い高さの印を残さない。
+  state.rulerDirty = true;
+  // 送った先の記録は古い行と高さでの位置なので、もう同じ行を指さない。
+  state.landing = null;
 }
 
 function openFileWideEditor() {
@@ -1092,6 +1594,7 @@ function openEditorAt(side, number) {
     suggestionOn: false,
     needsFocus: true,
   };
+  remeasure();
   renderDiff();
   renderFloating();
 }
@@ -1099,6 +1602,7 @@ function openEditorAt(side, number) {
 function renderDiff() {
   const entry = currentEntry();
   const focus = captureEditorFocus();
+  const focusKey = focusKeyWithin(dom.content);
   dom.content.textContent = "";
   if (
     !entry ||
@@ -1106,6 +1610,8 @@ function renderDiff() {
     collapseDefault(entry.file, state.collapsedOverrides)
   ) {
     dom.content.style.height = "0px";
+    renderNav([0]);
+    renderRuler([0]);
     return;
   }
   const offsets = lineOffsets(state.heights);
@@ -1129,14 +1635,20 @@ function renderDiff() {
     fragment.append(block);
   }
   dom.content.append(fragment);
-  applyCommentClamps(dom.content);
   restoreEditorFocus(focus);
+  restoreFocusKey(dom.content, focusKey);
+  renderNav(offsets);
+  renderRuler(offsets);
   const needsMeasure =
+    state.measureNext ||
+    state.staleRows.size > 0 ||
     state.wrap ||
     state.threads.byLine.size > 0 ||
+    state.originOpen.size > 0 ||
     Boolean(state.editor && !state.editor.wide);
+  state.measureNext = false;
   if (needsMeasure) {
-    measureHeights(window.start);
+    measureHeights(window.start, offsets);
   }
 }
 
@@ -1181,12 +1693,23 @@ function restoreEditorFocus(focus) {
 function renderBlock(line, index) {
   const block = /** @type {HTMLDivElement} */ (el("div", "row-block"));
   block.dataset.kemiRow = "1";
-  block.append(renderLine(line));
+  const rendered = renderLine(line);
+  if (state.commented.has(index)) {
+    rendered.classList.add("commented");
+  }
+  block.append(rendered);
+  if (line.kind === "origin") {
+    const reason = renderOriginReason(line);
+    if (reason) {
+      block.append(reason);
+    }
+  }
   const threads = state.threads.byLine.get(index);
   if (threads) {
     for (const comment of threads) {
-      const row = el("div", "thread-row");
-      row.append(renderThread(comment));
+      // 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める。
+      const row = el("div", `bal-row mode-${state.mode} side-${comment.side}`);
+      row.append(renderCommentOrEditor(comment));
       block.append(row);
     }
   }
@@ -1195,6 +1718,7 @@ function renderBlock(line, index) {
   if (
     editorState &&
     !editorState.wide &&
+    !editorState.editId &&
     editorState.fileId === (entry ? entry.file.id : "") &&
     lineHasAnchor(line, editorState.side, editorState.anchor)
   ) {
@@ -1208,15 +1732,24 @@ function renderBlock(line, index) {
  * @returns {HTMLElement}
  */
 function renderLine(line) {
-  const row = el("div", `row kind-${line.kind}`);
+  if (line.kind === "origin") {
+    return renderOriginLine(line);
+  }
+  const tone = state.mode === "split" ? "" : sideTone(line.kind, null);
+  const row = el("div", `row kind-${line.kind}${tone ? ` tone-${tone}` : ""}`);
   if (line.kind === "skip") {
     const skip = line.skip;
     const expand = button("expand-button");
-    expand.textContent = `… ${skip && skip.count ? skip.count : 0} 行を表示`;
+    expand.textContent = `↕ ${skip && skip.count ? skip.count : 0} 行を表示`;
+    expand.disabled = state.loading;
     expand.addEventListener("click", () => {
       void expandSkipAt(line.logicalIndex).then(() => renderFileHeader());
     });
     row.append(expand);
+    const range = state.skipRanges.get(line.logicalIndex);
+    if (range) {
+      row.append(textEl("span", "skip-range", rangeLabel(range)));
+    }
     return row;
   }
   const anchor = lineAnchor(line);
@@ -1230,12 +1763,14 @@ function renderLine(line) {
         line.oldLine,
         line.oldSegments,
         canComment && plusSide === "old",
+        sideTone(line.kind, "old"),
       ),
       sideCell(
         "new",
         line.newLine,
         line.newSegments,
         canComment && plusSide === "new",
+        sideTone(line.kind, "new"),
       ),
     );
     return row;
@@ -1253,6 +1788,118 @@ function renderLine(line) {
   }
   row.append(code);
   return row;
+}
+
+/**
+ * 折りたたみ行に出す、下に続く範囲の旧・新の行番号。
+ * @param {{ old: { start: number, end: number } | null, new: { start: number, end: number } | null }} range
+ * @returns {string}
+ */
+function rangeLabel(range) {
+  /** @param {{ start: number, end: number }} span */
+  const text = (span) => (span.start === span.end ? `${span.start}` : `${span.start}–${span.end}`);
+  const parts = [];
+  if (range.old) {
+    parts.push(`旧 ${text(range.old)}`);
+  }
+  if (range.new) {
+    parts.push(`新 ${text(range.new)}`);
+  }
+  return parts.join(" → ");
+}
+
+/**
+ * 変更ブロックのすぐ上の由来の行（R-ORIGIN）。計算中は行だけ先に出して印を置く。
+ * @param {DisplayLine} line
+ * @returns {HTMLElement}
+ */
+function renderOriginLine(line) {
+  const row = el("div", "row origin-row");
+  row.append(textEl("span", "origin-label", "由来"));
+  const origin = currentOrigin();
+  if (!origin || origin === "pending") {
+    row.append(textEl("span", "origin-pending", "計算中…"));
+    return row;
+  }
+  if (origin.failed) {
+    row.append(textEl("span", "origin-unknown", "求められませんでした"));
+    return row;
+  }
+  const block = origin.blocks.get(Number(line.block));
+  const entries = block ? block.entries : [];
+  const openKey = `${currentEntry()?.file.id}:${line.block}`;
+  for (const entry of entries) {
+    const commit = (origin.commits || {})[entry.sha] || { subject: "", body: "" };
+    const short = String(entry.sha).slice(0, 7);
+    const item = button("origin-entry");
+    item.dataset.focusKey = `origin:${openKey}:${entry.sha}`;
+    item.textContent = entry.merge ? `マージ ${short}` : `${short} ${commit.subject}`;
+    item.title = commit.subject || short;
+    const open = state.originOpen.get(openKey) === entry.sha;
+    item.setAttribute("aria-expanded", String(open));
+    item.addEventListener("click", () => {
+      if (open) {
+        state.originOpen.delete(openKey);
+      } else {
+        state.originOpen.set(openKey, entry.sha);
+      }
+      remeasure();
+      renderDiff();
+    });
+    row.append(item);
+  }
+  if (!block || block.unknown === "all") {
+    row.append(textEl("span", "origin-unknown", "特定できない"));
+  } else if (block.unknown === "some") {
+    row.append(textEl("span", "origin-unknown", "一部特定できない"));
+  }
+  return row;
+}
+
+/**
+ * 由来を押したときに開く、そのコミットの理由（本文）。
+ * @param {DisplayLine} line
+ * @returns {HTMLElement | null}
+ */
+function renderOriginReason(line) {
+  const entry = currentEntry();
+  const origin = currentOrigin();
+  if (!entry || !origin || origin === "pending" || origin.failed) {
+    return null;
+  }
+  const sha = state.originOpen.get(`${entry.file.id}:${line.block}`);
+  if (!sha) {
+    return null;
+  }
+  const commit = (origin.commits || {})[sha] || { subject: "", body: "", merge: false };
+  const panel = el("div", "origin-reason");
+  const head = el("div", "origin-reason-head");
+  head.append(
+    textEl("span", "origin-sha", String(sha).slice(0, 7)),
+    textEl("span", "origin-subject", commit.subject),
+  );
+  panel.append(head);
+  panel.append(
+    textEl("p", "origin-body", commit.body || "（本文はありません）"),
+  );
+  const block = origin.blocks.get(Number(line.block));
+  const target = block ? block.entries.find((/** @type {any} */ item) => item.sha === sha) : null;
+  // マージの由来は理由を開くだけで、移り先を持たない。
+  if (target && !target.merge && target.target) {
+    const jump = button("btn origin-jump");
+    jump.textContent = "このコミットで見る";
+    jump.addEventListener("click", () => {
+      const to = target.target;
+      void switchUnit("commit", {
+        find: (entries) => originJumpTarget(entries, sha, to),
+        side: to.side,
+        line: to.line,
+        missing: () => showToast("移り先のファイルが見つかりません"),
+      });
+    });
+    panel.append(jump);
+  }
+  return panel;
 }
 
 /**
@@ -1277,13 +1924,15 @@ function signFor(kind) {
  * @param {import("./model.js").Line|null} line
  * @param {import("./model.js").Segment[]} segments
  * @param {boolean} withPlus
+ * @param {string} tone
  * @returns {HTMLElement}
  */
-function sideCell(side, line, segments, withPlus) {
-  const cell = el("span", "cell");
+function sideCell(side, line, segments, withPlus, tone) {
+  const cell = el("span", `cell${tone ? ` side-${tone}` : ""}`);
   const code = el("span", "code");
   fillCode(code, line, segments);
-  cell.append(numberCell(side, line, withPlus), code);
+  const sign = tone === "del" ? "−" : tone === "add" ? "+" : "";
+  cell.append(numberCell(side, line, withPlus), textEl("span", "mk", sign), code);
   return cell;
 }
 
@@ -1441,6 +2090,11 @@ function saveDraft(key, value) {
 async function addComment(payload) {
   try {
     const comment = await api.postComment(payload);
+    const before = state.allComments;
+    state.allComments = [...state.allComments, comment];
+    state.commentOpen.set(comment.id, true);
+    refreshCommentBadges(before);
+    renderHeader();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
     // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
     const stored = state.commentStore.get(payload.file_id);
@@ -1472,25 +2126,78 @@ async function addComment(payload) {
 }
 
 /**
+ * @param {any} payload
+ */
+async function editComment(payload) {
+  try {
+    const updated = await api.postComment(payload);
+    state.editor = null;
+    updateComments((comments) =>
+      comments.map((item) => (item.id === updated.id ? updated : item)),
+    );
+  } catch (error) {
+    showOverlay("コメントを編集できません", String(error));
+  }
+}
+
+/**
+ * 送信の前の確認。取り消せないことと verdict に加えて、送るコメントの件数（両方の
+ * グループ単位の合計）と、表示中の単位の見たファイル数を出す（R-SUBMIT）。
  * @param {"approved" | "changes_requested"} verdict
  */
 function openConfirm(verdict) {
+  if (state.submitted) {
+    return;
+  }
   state.pendingVerdict = verdict;
+  state.modalAction = () => void submitReview(verdict);
+  dom.modalCancel.textContent = "戻る";
   const approve = verdict === "approved";
-  dom.modalTitle.textContent = approve
-    ? "承認しますか？"
-    : "変更要求として送信しますか？";
-  dom.modalBody.textContent = approve
-    ? "レビューを終了して、承認の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。"
-    : "レビューを終了して、変更要求の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。";
+  const summary = submitSummary(
+    state.allComments,
+    state.entries.map((entry) => entry.file),
+  );
+  dom.modalTitle.textContent = approve ? "承認して終了しますか？" : "変更要求で終了しますか？";
+  dom.modalBody.textContent = "";
+  const list = el("dl", "sum");
+  const seenLabel = state.unit ? `見たファイル（${UNIT_LABELS[state.unit] || state.unit}）` : "見たファイル";
+  list.append(
+    textEl("dt", "", "コメント"),
+    textEl("dd", "", `${summary.comments} 件（うち suggestion 付き ${summary.suggestions} 件）`),
+    textEl("dt", "", seenLabel),
+    textEl("dd", "", `${summary.seen} / ${summary.total}`),
+  );
+  dom.modalBody.append(list);
+  if (summary.unseen > 0) {
+    dom.modalBody.append(
+      textEl("p", "warn", `まだ見ていないファイルが ${summary.unseen} あります。`),
+    );
+  }
+  dom.modalBody.append(
+    textEl(
+      "p",
+      "",
+      `レビューを終了して、${approve ? "承認" : "変更要求"}の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。`,
+    ),
+  );
   dom.modalOk.textContent = approve ? "承認して終了" : "変更要求で終了";
-  dom.modalOk.className = approve ? "btn primary" : "btn danger";
+  dom.modalOk.className = approve ? "btn primary" : "btn secondary";
   dom.modal.hidden = false;
+}
+
+/**
+ * 確認ダイアログの本文を、改行を保つ段落 1 つにする。
+ * @param {string} text
+ */
+function setModalText(text) {
+  dom.modalBody.textContent = "";
+  dom.modalBody.append(textEl("p", "", text));
 }
 
 function closeModal() {
   dom.modal.hidden = true;
   state.pendingVerdict = null;
+  state.modalAction = null;
 }
 
 /**
@@ -1501,20 +2208,81 @@ async function submitReview(verdict) {
     return;
   }
   try {
-    await api.submit(verdict);
+    const answer = await api.submit(verdict);
     state.submitted = true;
     state.selection = null;
     state.editor = null;
+    renderSubmitButtons();
     renderDiff();
     renderFloating();
     renderFileHeader();
-    showOverlay(
-      verdict === "approved" ? "承認しました" : "変更要求を送りました",
-      "kemi はコメントの JSON を出力して終了しました。",
-    );
+    showCompletion(verdict, answer);
   } catch (error) {
     showOverlay("送信できませんでした", String(error));
   }
+}
+
+/** 送信後は承認と変更要求のボタンを押せなくする（R-SUBMIT）。 */
+function renderSubmitButtons() {
+  dom.submitApproved.disabled = state.submitted;
+  dom.submitChanges.disabled = state.submitted;
+}
+
+/**
+ * 送信後の完了画面。結果の JSON（stdout と同じ）と、写す操作、結果ファイルの保存先を出す。
+ * 承認のときは「閲」の印を押す（R-SUBMIT, R-RESULT）。
+ * @param {"approved" | "changes_requested"} verdict
+ * @param {any} answer submit の応答（result と saved）
+ */
+function showCompletion(verdict, answer) {
+  const result = answer && answer.result ? answer.result : answer;
+  const saved = (answer && answer.saved) || {};
+  const json = JSON.stringify(result);
+  const comments = Array.isArray(result && result.comments) ? result.comments : [];
+  dom.overlay.hidden = false;
+  dom.overlayCard.textContent = "";
+  dom.overlayCard.className = "finish";
+  if (verdict === "approved") {
+    const seal = textEl("span", "seal big", "閲");
+    seal.setAttribute("aria-hidden", "true");
+    dom.overlayCard.append(seal);
+  }
+  const body = el("div", "finish-body");
+  body.append(
+    textEl("h2", "overlay-title", verdict === "approved" ? "承認を送りました" : "変更要求を送りました"),
+    textEl(
+      "p",
+      "overlay-detail",
+      "kemi は結果を標準出力に書いて終了しました。エージェントが反応しないときは、この JSON をコピーして会話に貼れば済みます。",
+    ),
+  );
+  const row = el("div", "finish-row");
+  const copy = button("btn primary");
+  copy.textContent = "JSON をコピー";
+  copy.addEventListener("click", () => {
+    navigator.clipboard
+      .writeText(json)
+      .then(() => {
+        copy.textContent = "コピーしました";
+      })
+      .catch((error) => {
+        copy.textContent = `コピーできません: ${error}`;
+      });
+  });
+  const suggestions = comments.filter((/** @type {any} */ comment) => comment.suggestion).length;
+  row.append(copy, textEl("span", "finish-meta", `コメント ${comments.length} 件 / suggestion ${suggestions} 件`));
+  body.append(row);
+  if (saved.error) {
+    body.append(textEl("p", "finish-save failed", `保存できませんでした: ${saved.error}`));
+  } else if (saved.path) {
+    body.append(textEl("p", "finish-save", `結果ファイル: ${saved.path}（kemi --result で読めます）`));
+  } else if (saved.dir) {
+    body.append(textEl("p", "finish-save", `結果ファイルの保存先: ${saved.dir}`));
+  }
+  const pre = el("pre", "finish-json");
+  pre.textContent = json;
+  body.append(pre);
+  dom.overlayCard.append(body);
 }
 
 /**
@@ -1522,13 +2290,19 @@ async function submitReview(verdict) {
  * @param {string|null} detail
  */
 function showOverlay(title, detail) {
+  if (state.submitted) {
+    // 送信後はサーバが止まっているので、失敗を出しても直せない。完了画面（結果の JSON と
+    // その写し）を失敗の知らせで置き換えない（R-SUBMIT）。
+    return;
+  }
   dom.overlay.hidden = false;
   dom.overlayCard.textContent = "";
+  dom.overlayCard.className = "";
   dom.overlayCard.append(textEl("h2", "overlay-title", title));
   if (detail) {
     dom.overlayCard.append(textEl("p", "overlay-detail", detail));
   }
-  const close = button("overlay-close");
+  const close = button("btn overlay-close");
   close.textContent = "閉じる";
   close.addEventListener("click", () => {
     dom.overlay.hidden = true;
@@ -1538,18 +2312,62 @@ function showOverlay(title, detail) {
 
 /**
  * @param {number} start
+ * @param {number[]} offsets 描いたときの各行の上端
  */
-function measureHeights(start) {
+function measureHeights(start, offsets) {
   const children = Array.from(dom.content.children);
+  const scrollTop = dom.viewport.scrollTop;
+  // 送った直後は、送り先の行より上の行の伸び縮みをすべて打ち消す。初めて測る行
+  // （折り返した行など）が基準値より高いと、送り先が下へずれて見えなくなるため。
+  // 利用者の操作の後は打ち消さない（remeasure が送り先を捨てる）。
+  const landing = activeLanding();
   let changed = false;
+  let shift = 0;
+  let growth = 0;
   children.forEach((child, offset) => {
     const index = start + offset;
+    const stale = state.staleRows.delete(index);
     const height = /** @type {HTMLElement} */ (child).offsetHeight;
     if (height > 0 && state.heights[index] !== height) {
+      const delta = height - state.heights[index];
+      const above = landing
+        ? index < landing.index
+        : stale && offsets[index + 1] <= scrollTop;
+      if (above) {
+        shift += delta;
+      }
+      growth += delta;
       state.heights[index] = height;
       changed = true;
     }
   });
+  if (changed) {
+    state.rulerDirty = true;
+  }
+  if (shift !== 0) {
+    // 見ている位置より上で古い高さのまま残っていた行の伸び縮みを、スクロール位置で
+    // 打ち消す。ずれた配置のまま表示されないよう、同じ描画のうちに描き直す。
+    // 全体の高さを先に広げる。古い高さのままでは、送った位置が末尾で切り詰められる。
+    dom.content.style.height = `${(offsets[offsets.length - 1] || 0) + growth}px`;
+    if (landing) {
+      const top = (offsets[landing.index] ?? landing.top) + shift;
+      dom.viewport.scrollTop = Math.max(0, top - landing.margin);
+      state.landing = {
+        index: landing.index,
+        top,
+        scrollTop: dom.viewport.scrollTop,
+        margin: landing.margin,
+      };
+    } else {
+      dom.viewport.scrollTop = scrollTop + shift;
+    }
+    renderDiff();
+    return;
+  }
+  if (!changed) {
+    // 測り終えて動かなくなった。ここから先、置き直すものはもう無い。
+    state.landing = null;
+  }
   if (changed && !state.rendering) {
     state.rendering = true;
     requestAnimationFrame(() => {
@@ -1564,13 +2382,11 @@ function scheduleRender() {
 }
 
 /**
- * 幅が変わると折返しの高さも変わり、畳み判定が変わる。本文は renderDiff が
- * 測り直すが、浮動コメント欄は描き直さないためここで測り直す。
+ * 幅が変わると折返しの高さも変わる。本文は renderDiff が測り直す。
  */
 function scheduleResize() {
   requestAnimationFrame(() => {
     renderDiff();
-    applyCommentClamps(dom.floating);
   });
 }
 
@@ -1620,8 +2436,8 @@ async function expandSkipAt(index) {
     // 同じ折りたたみが先に展開された。取得前の位置へ挿すと表示行が重複する。
     return false;
   }
-  const rows = state.rows.slice();
-  rows.splice(index, 1, ...replacement);
+  // 50 万行の展開では、行を引数に展開する splice が引数の上限を超えて失敗する。
+  const rows = state.rows.slice(0, index).concat(replacement, state.rows.slice(index + 1));
   state.rows = rows;
   state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
   recomputeDisplay();
@@ -1681,22 +2497,626 @@ function collapseAll() {
   if (!data || !data.collapsedRows || state.rows === data.collapsedRows) {
     return;
   }
-  state.rows = data.collapsedRows;
-  state.cache.set(state.cacheKey, { ...data, rows: data.collapsedRows });
+  // 最初に読んだ畳んだ形には、展開してから付けたコメントの行が無い。かといって畳む形を
+  // サーバから読み直すと、更新バッジを押す前にディスクの新しい内容へ差し替わり（R-LIVE）、
+  // ファイルが消えていればレビューが終わる。いまページにある行から畳み直す。
+  const rows = collapseLoadedRows(state.rows, state.comments, Number(data.context));
+  state.rows = rows;
+  state.cache.set(state.cacheKey, { ...data, rows, collapsedRows: rows });
   recomputeDisplay();
   renderFileHeader();
   renderDiff();
   renderFloating();
 }
 
-function recomputeThreads() {
-  state.threads = placeThreads(state.display, state.comments);
+/** 表示中のファイルで止まれる場所。畳まれたノイズやバイナリでは止まらない。 */
+function reachableStops() {
+  const entry = currentEntry();
+  if (!entry || state.binary || collapseDefault(entry.file, state.collapsedOverrides)) {
+    return [];
+  }
+  return state.stops;
 }
 
-function recomputeDisplay() {
-  state.display = toDisplayLines(state.rows, state.mode);
-  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+/**
+ * 右下の「前の変更 / 次の変更」と「現在 / 全体」（R-NAV）。
+ * @param {number[]} offsets
+ */
+function renderNav(offsets) {
+  const entry = currentEntry();
+  dom.nav.hidden = !entry;
+  if (!entry) {
+    return;
+  }
+  const tops = reachableStops().map((index) => offsets[index] ?? 0);
+  const current = navCurrentIndex(tops, navView(), NAV_MARGIN);
+  dom.navPos.textContent = `${current < 0 ? "–" : current + 1} / ${tops.length}`;
+  dom.navPrev.disabled = state.loading || state.navigating;
+  dom.navNext.disabled = state.loading || state.navigating;
+}
+
+/**
+ * 「現在」と n / p の移り先を決める表示の状態（R-NAV）。末尾まで進めたかどうかは、
+ * 実際に切り詰めるブラウザの値で見る。
+ * @returns {{ scrollTop: number, viewportHeight: number, contentHeight: number }}
+ */
+function navView() {
+  return {
+    scrollTop: dom.viewport.scrollTop,
+    viewportHeight: dom.viewport.clientHeight,
+    contentHeight: dom.viewport.scrollHeight,
+  };
+}
+
+/**
+ * 表示行 `index` を、上端から NAV_MARGIN の位置へ送る。
+ * @param {number} index
+ * @param {number[]} offsets
+ */
+function scrollToRow(index, offsets) {
+  const top = offsets[index] ?? 0;
+  dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
+  // 折り返しのある行は、初めて描いたときに基準値より高くなる。送り先より上でそれが
+  // 起きるとこの行が下へずれるので、送り先を覚えておき、measureHeights が測り終える
+  // まで同じ位置へ置き直す。置く場所を決めるためだけの記録で、「現在」や n / p の
+  // 行き先はこれを見ない（表示の状態から毎回決める。R-NAV）。
+  state.landing = { index, top, scrollTop: dom.viewport.scrollTop, margin: NAV_MARGIN };
+  scheduleRender();
+}
+
+/** 送った直後で、利用者がまだスクロールしていなければ、その送り先。 */
+function activeLanding() {
+  const landing = state.landing;
+  if (landing && Math.abs(dom.viewport.scrollTop - landing.scrollTop) < 2) {
+    return landing;
+  }
+  return null;
+}
+
+/**
+ * @param {string} message
+ */
+function showToast(message) {
+  dom.toast.textContent = message;
+  dom.toast.hidden = false;
+  window.clearTimeout(state.toastTimer);
+  state.toastTimer = window.setTimeout(() => {
+    dom.toast.hidden = true;
+  }, 2_000);
+}
+
+/**
+ * 移ったファイルが見えるよう、ツリーのグループとディレクトリをそこまで開く。
+ * @param {Entry} entry
+ */
+function revealInTree(entry) {
+  let changed = state.groupOpen.get(entry.group.id) === false;
+  state.groupOpen.set(entry.group.id, true);
+  const segments = entry.file.path.split("/");
+  let prefix = "";
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    prefix = prefix ? `${prefix}/${segments[index]}` : segments[index];
+    const key = `${entry.group.id}:${prefix}`;
+    if (state.dirOpen.get(key) === false) {
+      changed = true;
+    }
+    state.dirOpen.set(key, true);
+  }
+  if (changed) {
+    state.treeVersion += 1;
+  }
+}
+
+/**
+ * n / p: ファイルの中の次（前）の止まる場所へ。端では、見えている順で次（前）のファイルの
+ * 最初（最後）の止まる場所へ移る。最後（最初）のファイルでは止まって知らせる（R-NAV）。
+ * @param {1 | -1} direction
+ */
+async function navigate(direction) {
+  const entry = currentEntry();
+  if (!entry || state.loading || state.navigating || state.submitted) {
+    return;
+  }
+  const offsets = lineOffsets(state.heights);
+  const stops = reachableStops();
+  const tops = stops.map((index) => offsets[index] ?? 0);
+  const view = navView();
+  const index =
+    direction > 0
+      ? navNextTarget(tops, view, NAV_MARGIN)
+      : navPrevTarget(tops, view, NAV_MARGIN);
+  if (index !== null) {
+    scrollToRow(stops[index], offsets);
+    return;
+  }
+  const visible = state.visible;
+  const files = visible.map((candidate) => candidate.file);
+  const here = files.findIndex((file) => file.id === entry.file.id);
+  const generation = state.selectGeneration;
+  state.navigating = true;
+  scheduleRender();
+  try {
+    let from = here < 0 ? state.index : here;
+    for (;;) {
+      const next = nextFileIndex(files, from, direction, (file) => {
+        const candidate = visible.find((item) => item.file.id === file.id);
+        return hasStops(file, candidate ? commentsOf(candidate) : [], state.collapsedOverrides);
+      });
+      if (next === null) {
+        showToast(direction > 0 ? "最後の変更です" : "最初の変更です");
+        return;
+      }
+      // 増減数があっても、改行コードだけの変更などは表示で変更ブロックにならない。
+      // 内容を読んで止まる場所が無ければ、移らずにその次を探す（R-NAV）。
+      const data = await loadForNavigation(visible[next], generation);
+      if (generation !== state.selectGeneration || state.visible !== visible) {
+        // 読んでいる間に別のファイルが選ばれたか、並びが変わった。
+        return;
+      }
+      if (data === null || hasLoadedStops(data.rows || [], commentsOf(visible[next]))) {
+        state.navigating = false;
+        revealInTree(visible[next]);
+        state.pendingJump = direction > 0 ? "first" : "last";
+        await selectIndex(next, { scrollTop: true });
+        return;
+      }
+      from = next;
+    }
+  } finally {
+    state.navigating = false;
+    scheduleRender();
+  }
+}
+
+/**
+ * n / p の移り先の候補の行データを読み、キャッシュに入れる。読めなければ null を返し、
+ * 移った先でいつもどおり読み込みの失敗を出す。
+ * @param {Entry} entry
+ * @param {number} generation 読み始めた時の選択の世代
+ * @returns {Promise<any>}
+ */
+async function loadForNavigation(entry, generation) {
+  const key = fileCacheKey(entry);
+  if (state.cache.has(key)) {
+    return state.cache.get(key);
+  }
+  /** @type {any} */
+  let data;
+  try {
+    data = await api.getFile(entry.file.id, null, {
+      dark: state.dark,
+      highlight: state.highlightOverrides.get(entry.file.id),
+    });
+  } catch {
+    return null;
+  }
+  if (generation !== state.selectGeneration) {
+    // 読み直し（テーマや更新）で消えたキャッシュへ、古い行を戻さない。
+    return null;
+  }
+  const rows = data.rows || [];
+  const stored = { ...data, rows, collapsedRows: rows };
+  state.cache.set(key, stored);
+  return stored;
+}
+
+/** ファイルを表示し終えた後の移り先（次のファイルの最初の変更や、由来の該当行）へ移る。 */
+function applyPendingJump() {
+  const jump = state.pendingJump;
+  state.pendingJump = null;
+  if (!jump) {
+    return;
+  }
+  const offsets = lineOffsets(state.heights);
+  const stops = reachableStops();
+  if (jump === "first" || jump === "last") {
+    if (stops.length > 0) {
+      scrollToRow(jump === "first" ? stops[0] : stops[stops.length - 1], offsets);
+    }
+    return;
+  }
+  const index = state.display.findIndex((line) => lineHasAnchor(line, jump.side, jump.line));
+  if (index >= 0) {
+    scrollToRow(index, offsets);
+  }
+}
+
+/**
+ * @param {DisplayLine} line
+ * @param {number} index
+ * @returns {string}
+ */
+function rulerKind(line, index) {
+  if (state.threads.byLine.has(index)) {
+    return "note";
+  }
+  switch (line.kind) {
+    case "delete":
+    case "replace-old":
+      return "del";
+    case "insert":
+    case "replace-new":
+    case "replace":
+      return "add";
+    default:
+      return "";
+  }
+}
+
+/**
+ * スクロールバーの横の位置の帯。印は帯の高さに縮めて描くので、全行を DOM に描かない。
+ * @param {number[]} offsets
+ */
+function renderRuler(offsets) {
+  const height = dom.ruler.clientHeight;
+  const total = offsets[offsets.length - 1] || 0;
+  const canvas = dom.rulerCanvas;
+  const ratio = window.devicePixelRatio || 1;
+  const width = dom.ruler.clientWidth;
+  if (canvas.height !== Math.round(height * ratio) || canvas.width !== Math.round(width * ratio)) {
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    state.rulerDirty = true;
+  }
+  if (state.rulerDirty) {
+    state.rulerDirty = false;
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      const styles = getComputedStyle(document.documentElement);
+      /** @type {Record<string, string>} */
+      const colors = {
+        add: styles.getPropertyValue("--add-ink").trim(),
+        del: styles.getPropertyValue("--del-ink").trim(),
+        note: styles.getPropertyValue("--note-line").trim(),
+      };
+      const stops = reachableStops().length > 0 || state.display.length > 0;
+      const kinds = stops ? state.display.map(rulerKind) : [];
+      for (const mark of rulerMarks(kinds, offsets, height)) {
+        context.fillStyle = colors[mark.kind];
+        if (mark.kind === "note") {
+          context.fillRect(1, mark.top, width - 2, Math.max(3, mark.bottom - mark.top));
+        } else {
+          context.fillRect(3, mark.top, width - 6, mark.bottom - mark.top);
+        }
+      }
+    }
+  }
+  const viewportHeight = dom.viewport.clientHeight;
+  dom.rulerView.hidden = total <= viewportHeight;
+  if (total > 0) {
+    dom.rulerView.style.top = `${(dom.viewport.scrollTop / total) * height}px`;
+    dom.rulerView.style.height = `${Math.max(4, (viewportHeight / total) * height)}px`;
+  }
+}
+
+/**
+ * レビューの応答を表示に取り込む。コメントは両方の単位の分を持つので、取得し直した
+ * 応答（fresh）のときだけ置き換える。
+ * @param {any} review
+ * @param {boolean} fresh
+ */
+function applyReview(review, fresh) {
+  state.review = review;
+  state.unit = review.unit ?? null;
+  if (Array.isArray(review.units)) {
+    state.units = review.units;
+  }
+  if (fresh) {
+    state.allComments = review.comments || [];
+  }
+  if (state.unit) {
+    state.reviews.set(state.unit, review);
+  }
+  state.entries = flatten(review);
+  state.treeItems = new Map();
+  state.treeVersion += 1;
+  rebuildVisible();
+}
+
+/**
+ * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
+ * 最初のコミット）を出す。由来やコメント一覧から移るときは、そのファイルの該当行を出す。
+ * 移り先が無ければ（履歴の書き換えで消えたなど）別のファイルへは移らず、切り替えもせず
+ * `missing` を呼ぶ。
+ * @param {string} unit
+ * @param {{ find: (entries: Entry[]) => number, side: string, line: number | null, missing: () => void } | null} jump
+ */
+async function switchUnit(unit, jump) {
+  if (state.submitted || (unit === state.unit && !jump)) {
+    return;
+  }
+  const status = state.units.find((candidate) => candidate.unit === unit);
+  if (!status) {
+    return;
+  }
+  if (status.state === "failed") {
+    openUnitFailure(status);
+    return;
+  }
+  if (status.state !== "ready") {
+    state.pendingUnit = { unit, jump };
+    renderUnitSwitch();
+    showToast(`${UNIT_LABELS[unit] || unit}を読み込み中です`);
+    // 手元の状態が古いこともあるので読み直す。できていればそのまま切り替わる。
+    void onUnitEvent();
+    return;
+  }
+  state.pendingUnit = null;
+  const path = currentEntry()?.file.path ?? "";
+  let review = unit === state.unit ? state.review : state.reviews.get(unit);
+  const fresh = !review;
+  if (!review) {
+    try {
+      review = await api.getReview(false, unit);
+    } catch (error) {
+      showOverlay("グループ単位を切り替えられません", String(error));
+      return;
+    }
+  }
+  if (jump && jump.find(flatten(review)) < 0) {
+    // 読んだ単位は控えておき、コメント一覧で消えたコミットを見分けられるようにする。
+    if (fresh) {
+      state.reviews.set(unit, review);
+    }
+    renderUnitSwitch();
+    jump.missing();
+    return;
+  }
+  applyReview(review, fresh);
+  let index = jump ? jump.find(state.entries) : -1;
+  if (index < 0) {
+    index = unitSwitchTarget(state.entries, path);
+  }
+  renderHeader();
+  renderFooter();
+  if (index < 0) {
+    state.current = null;
+    renderTree();
+    renderGroupHeader();
+    renderFileHeader();
+    renderNotice();
+    renderDiff();
+    return;
+  }
+  const entry = state.entries[index];
+  if (jump) {
+    state.pendingJump = jump.line === null ? null : { side: jump.side, line: jump.line };
+    revealInTree(entry);
+  }
+  const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
+  if (visibleIndex >= 0) {
+    state.index = visibleIndex;
+  }
+  await selectEntry(entry, { scrollTop: true });
+}
+
+/**
+ * 作れなかった単位の理由と、作り直しの操作。
+ * @param {any} status
+ */
+function openUnitFailure(status) {
+  const unit = String(status.unit);
+  dom.modalTitle.textContent = `${UNIT_LABELS[unit] || unit}の単位を作れなかった`;
+  setModalText(`理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`);
+  dom.modalOk.textContent = "再試行";
+  dom.modalOk.className = "btn primary";
+  dom.modalCancel.textContent = "閉じる";
+  state.modalAction = () => {
+    state.pendingUnit = { unit, jump: null };
+    api
+      .retryUnit(unit)
+      .then((answer) => {
+        state.units = answer.units || state.units;
+        renderUnitSwitch();
+      })
+      .catch((error) => showOverlay("作り直せませんでした", String(error)));
+  };
+  dom.modal.hidden = false;
+}
+
+/** コミットごとの単位の、グループ id と件名（読んであれば）。 */
+function commitGroups() {
+  const review = state.reviews.get("commit");
+  if (!review) {
+    return null;
+  }
+  return new Map(review.groups.map((/** @type {any} */ group) => [group.id, group.title]));
+}
+
+/** 上部の入口から開く、すべてのグループ単位のコメントの一覧（常設のパネルではない）。 */
+function renderCommentList() {
+  dom.commentList.textContent = "";
+  const head = el("div", "cl-head");
+  head.append(textEl("b", "", `コメント ${state.allComments.length} 件`));
+  const close = button("cl-close");
+  close.textContent = "閉じる";
+  close.addEventListener("click", closeCommentList);
+  head.append(close);
+  dom.commentList.append(head);
+  if (state.allComments.length === 0) {
+    dom.commentList.append(textEl("p", "cl-empty", "まだコメントはありません"));
+    return;
+  }
+  const context = { range: state.units.length > 0, commitGroups: commitGroups() };
+  const list = el("ul", "cl-items");
+  for (const comment of state.allComments) {
+    const info = describeComment(comment, context);
+    const item = el("li", "cl-item");
+    const target = button("cl-target");
+    target.disabled = info.vanished;
+    const meta = el("span", "cl-meta");
+    if (info.vanished) {
+      meta.append(textEl("span", "cl-unit vanished", "消えたコミット"));
+    } else if (info.unit) {
+      meta.append(textEl("span", "cl-unit", UNIT_LABELS[info.unit] || info.unit));
+    }
+    meta.append(
+      textEl("span", "cl-path", comment.path),
+      textEl("span", "cl-where", commentLabel(comment)),
+    );
+    if (comment.outdated || info.vanished) {
+      meta.append(textEl("span", "t-outdated-mark", "古いコメント"));
+    }
+    target.append(meta);
+    if (info.subject) {
+      target.append(textEl("span", "cl-subject", info.subject));
+    }
+    target.append(textEl("span", "cl-first", firstLine(comment.body)));
+    if (!info.vanished) {
+      target.addEventListener("click", () => {
+        closeCommentList();
+        void goToComment(comment, info.unit);
+      });
+    }
+    item.append(target);
+    // 消えたコミットのコメントは移り先が無いので、本文をここで見せる。
+    if (info.vanished) {
+      item.append(textEl("p", "cl-body", comment.body));
+    }
+    list.append(item);
+  }
+  dom.commentList.append(list);
+}
+
+function openCommentList() {
+  renderCommentList();
+  dom.commentList.hidden = false;
+  dom.btnComments.setAttribute("aria-expanded", "true");
+  void loadCommitGroups();
+}
+
+/**
+ * コメント一覧で消えたコミットを見分けられるよう、作ってあるコミットごとの単位を
+ * まだ読んでいなければ読む（再取得の後は表示中の単位しか控えていない）。
+ */
+async function loadCommitGroups() {
+  const status = state.units.find((candidate) => candidate.unit === "commit");
+  if (!status || status.state !== "ready" || state.reviews.has("commit")) {
+    return;
+  }
+  const reviews = state.reviews;
+  try {
+    const review = await api.getReview(false, "commit");
+    if (!reviews.has("commit")) {
+      reviews.set("commit", review);
+    }
+  } catch {
+    // 読めなければ消えたかどうかを決めないまま。押したときに移り先を確かめる。
+    return;
+  }
+  if (reviews === state.reviews && !dom.commentList.hidden) {
+    renderCommentList();
+  }
+}
+
+function closeCommentList() {
+  dom.commentList.hidden = true;
+  dom.btnComments.setAttribute("aria-expanded", "false");
+}
+
+/**
+ * コメント一覧から、そのコメントの単位へ切り替えて、その行へ移る。
+ * @param {any} comment
+ * @param {string | null} unit
+ */
+async function goToComment(comment, unit) {
+  const line =
+    comment.start_line === null || comment.start_line === undefined
+      ? null
+      : Number(comment.start_line);
+  state.commentOpen.set(comment.id, true);
+  /** @param {Entry[]} entries */
+  const find = (entries) =>
+    entries.findIndex(
+      (entry) => entry.group.id === comment.group_id && entry.file.path === comment.path,
+    );
+  if (unit && unit !== state.unit) {
+    // 移り先が無ければ、一覧を開き直して（消えたコミットならそう示して）本文を見せる。
+    const missing = () => {
+      openCommentList();
+      showToast("移り先のファイルが見つかりません");
+    };
+    await switchUnit(unit, { find, side: comment.side, line, missing });
+    return;
+  }
+  const index = find(state.entries);
+  if (index < 0) {
+    return;
+  }
+  const entry = state.entries[index];
+  revealInTree(entry);
+  state.pendingJump = line === null ? null : { side: comment.side, line };
+  const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
+  if (visibleIndex >= 0) {
+    state.index = visibleIndex;
+  }
+  await selectEntry(entry, { scrollTop: true });
+}
+
+/** もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。 */
+async function onUnitEvent() {
+  if (state.submitted) {
+    return;
+  }
+  const review = await api.getReview(false);
+  state.units = review.units || [];
+  renderUnitSwitch();
+  const pending = state.pendingUnit;
+  if (!pending) {
+    return;
+  }
+  const status = state.units.find((candidate) => candidate.unit === pending.unit);
+  if (status && status.state === "ready") {
+    void switchUnit(pending.unit, pending.jump);
+  } else if (status && status.state === "failed") {
+    state.pendingUnit = null;
+    renderUnitSwitch();
+    openUnitFailure(status);
+  }
+}
+
+function recomputeThreads() {
+  state.threads = placeThreads(state.display, state.comments);
+  state.commented = commentedLines(state.display, state.comments);
+  state.stops = navStops(state.display, state.comments);
+  state.rulerDirty = true;
+}
+
+/**
+ * 表示行を作り直す。作り直しても、上端に見えていた行は同じ位置に残す。
+ * @param {Anchor | null} [anchor] 上端に見えていた行。省略するといまの表示から取る。
+ */
+function recomputeDisplay(anchor = captureAnchor()) {
+  const entry = currentEntry();
+  const fileId = entry ? entry.file.id : null;
+  // 高さを引き継げるのは、同じファイルを作り直すときだけ。行の見分けはファイルの中の
+  // 位置と種類だけで決まるので、別のファイルへ移ったときに引き継ぐと、そのファイルに
+  // 無いコメントの吹き出しの高さが同じ位置の行に付いてしまう。
+  const sameFile = fileId !== null && fileId === state.displayFileId;
+  const previous = sameFile ? state.display : [];
+  const previousHeights = sameFile ? state.heights : [];
+  state.display = toDisplayLines(withRowIndex(state.rows), state.mode, {
+    origin: originShown(),
+  });
+  state.displayFileId = fileId;
+  resetHeights();
+  // 測った高さは残る行へ移す。捨てると、見えていない上の行が基準値に詰まって
+  // 読んでいた位置が上へずれる。
+  state.heights = carryHeights(previous, previousHeights, state.display, ROW_HEIGHT);
+  state.skipRanges = new Map();
+  state.rows.forEach((row, index) => {
+    if (row.kind === "skip") {
+      const range = rangeAfterSkip(state.rows, index);
+      if (range) {
+        state.skipRanges.set(index, range);
+      }
+    }
+  });
   recomputeThreads();
+  markStaleRows();
+  restoreAnchor(anchor);
 }
 
 /**
@@ -1715,21 +3135,68 @@ async function selectIndex(index, options = { scrollTop: true }) {
 }
 
 /**
+ * ファイルの行データのキャッシュの鍵。着色は表示色とハイライトの指定で変わる。
+ * @param {Entry} entry
+ * @returns {string}
+ */
+function fileCacheKey(entry) {
+  const id = entry.file.id;
+  const override = state.highlightOverrides.get(id);
+  return `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
+}
+
+/**
  * @param {Entry} entry
  * @param {{ scrollTop?: boolean, keepEditor?: boolean }} [options]
  */
 async function selectEntry(entry, options = { scrollTop: true }) {
+  if (state.submitted) {
+    // 送信後はサーバが止まっていて、まだ読んでいないファイルは取れない。完了画面を残す。
+    return;
+  }
+  // テーマや構文ハイライトの切り替えは同じファイルを読み直すだけ。読んでいた位置を残す。
+  const anchor =
+    !options.scrollTop && state.current && state.current.file.id === entry.file.id
+      ? captureAnchor()
+      : null;
   state.current = entry;
+  state.landing = null;
   const id = entry.file.id;
   const override = state.highlightOverrides.get(id);
-  const key = `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
+  const key = fileCacheKey(entry);
   state.cacheKey = key;
   const generation = ++state.selectGeneration;
   if (!state.cache.has(key)) {
-    const data = await api.getFile(id, null, {
-      dark: state.dark,
-      highlight: override,
-    });
+    // ヘッダは取得を待たずに新しいファイルへ切り替え、取得中は操作できなくする。
+    state.loading = true;
+    state.rows = [];
+    state.display = [];
+    resetHeights();
+    state.threads = { byLine: new Map(), floating: [] };
+    renderTree();
+    renderGroupHeader();
+    renderFileHeader();
+    renderNotice();
+    renderFloating();
+    renderDiff();
+    /** @type {any} */
+    let data;
+    try {
+      data = await api.getFile(id, null, {
+        dark: state.dark,
+        highlight: override,
+      });
+    } catch (error) {
+      if (generation === state.selectGeneration) {
+        // 読み込み中のまま止まらないよう戻す。選び直せば取り直す。
+        state.loading = false;
+        renderFileHeader();
+        renderNotice();
+        renderDiff();
+        showOverlay("ファイルを読み込めません", String(error));
+      }
+      return;
+    }
     if (generation !== state.selectGeneration) {
       // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。
       return;
@@ -1737,6 +3204,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     const rows = data.rows || [];
     state.cache.set(key, { ...data, rows, collapsedRows: rows });
   }
+  state.loading = false;
   const data = state.cache.get(key);
   state.rows = data.rows || [];
   state.binary = Boolean(data.binary);
@@ -1752,22 +3220,33 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   if (options.scrollTop) {
     dom.viewport.scrollTop = 0;
   }
-  recomputeDisplay();
+  recomputeDisplay(anchor);
   renderTree();
   renderGroupHeader();
   renderFileHeader();
   renderNotice();
   renderFloating();
   renderDiff();
+  applyPendingJump();
+  void loadOrigin(entry);
 }
 
 /**
  * @param {FileEntry} file
  */
 async function toggleSeen(file) {
+  if (state.submitted || state.loading || !isShowingFile(file.id)) {
+    return;
+  }
   const next = !file.seen;
   file.seen = next;
   state.treeItems.get(file.id)?.classList.toggle("seen", next);
+  const entry = currentEntry();
+  if (entry) {
+    updateGroupHead(entry.group.id);
+    renderGroupHeader();
+  }
+  renderProgress();
   renderFileHeader();
   try {
     await api.postState({ file_id: file.id, seen: next });
@@ -1782,18 +3261,22 @@ function applyTheme() {
   const dark = isDarkTheme(resolved);
   const changed = state.dark !== dark;
   state.dark = dark;
+  state.rulerDirty = true;
   document.documentElement.dataset.theme = resolved;
   const current =
     THEME_LABELS[state.theme] || THEME_LABELS.auto;
   const next = THEME_LABELS[nextTheme(state.theme)] || "";
   dom.btnTheme.title = `テーマ: ${current}（クリックで ${next}）`;
-  if (changed) {
+  if (changed && !state.submitted) {
     state.cache.clear();
     const entry = currentEntry();
     if (entry) {
       // テーマ切替は表示色の再取得だけ。入力中のエディタは閉じない。
       void selectEntry(entry, { scrollTop: false, keepEditor: true });
     }
+  } else if (!changed) {
+    // 明暗が同じでもプリセットが変われば追加・削除の色が変わる。位置の帯を描き直す。
+    scheduleRender();
   }
 }
 
@@ -1804,6 +3287,20 @@ function setMode(mode) {
   state.mode = mode;
   localStorage.setItem("kemi-mode", mode);
   recomputeDisplay();
+  renderHeader();
+  renderDiff();
+}
+
+/**
+ * 折返しを切り替える。行の高さが変わるので測り直すが、上端に見えていた行は動かさない。
+ * @param {boolean} wrap
+ */
+function setWrap(wrap) {
+  const anchor = captureAnchor();
+  state.wrap = wrap;
+  resetHeights();
+  markStaleRows();
+  restoreAnchor(anchor);
   renderHeader();
   renderDiff();
 }
@@ -1830,9 +3327,17 @@ function renderFooter() {
  * @param {KeyboardEvent} event
  */
 function handleKey(event) {
+  if (state.submitted) {
+    // 送信後は完了画面だけを出す。ファイルの移動や見たの切り替えはしない。
+    return;
+  }
   if (event.key === "Escape") {
     if (!dom.modal.hidden) {
       closeModal();
+      return;
+    }
+    if (!dom.commentList.hidden) {
+      closeCommentList();
       return;
     }
     if (state.editor) {
@@ -1848,6 +3353,9 @@ function handleKey(event) {
   ) {
     return;
   }
+  if (event.ctrlKey || event.metaKey || event.altKey || !dom.modal.hidden) {
+    return;
+  }
   const action = keyAction(
     event.key,
     state.mode,
@@ -1859,19 +3367,20 @@ function handleKey(event) {
     void selectIndex(Number(action.index), { scrollTop: true });
   } else if (action.type === "mode") {
     setMode(action.mode === "split" ? "split" : "unified");
+  } else if (action.type === "nav") {
+    void navigate(action.direction === -1 ? -1 : 1);
+  } else if (action.type === "seen") {
+    const entry = currentEntry();
+    if (entry) {
+      void toggleSeen(entry.file);
+    }
   } else if (action.type === "wrap") {
-    state.wrap = Boolean(action.value);
-    state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
-    renderHeader();
-    renderDiff();
+    setWrap(Boolean(action.value));
   }
 }
 
 async function boot() {
-  state.review = await api.getReview(false);
-  state.entries = flatten(state.review);
-  state.visible = state.entries.slice();
-  state.treeVersion += 1;
+  applyReview(await api.getReview(false), true);
   renderHeader();
   renderTree();
   renderFooter();
@@ -1880,10 +3389,13 @@ async function boot() {
   } else {
     renderNotice();
   }
-  api.subscribeEvents(() => {
-    state.updateAvailable = true;
-    renderUpdateBadge();
-  });
+  api.subscribeEvents(
+    () => {
+      state.updateAvailable = true;
+      renderUpdateBadge();
+    },
+    () => void onUnitEvent(),
+  );
 }
 
 document.addEventListener("keydown", handleKey);
@@ -1892,12 +3404,7 @@ document.addEventListener("mouseup", () => {
 });
 dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
-dom.btnWrap.addEventListener("click", () => {
-  state.wrap = !state.wrap;
-  state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
-  renderHeader();
-  renderDiff();
-});
+dom.btnWrap.addEventListener("click", () => setWrap(!state.wrap));
 dom.chipFocus.addEventListener("click", () => {
   // R-FOCUS: このフィルタはツリーだけを絞り、本文の表示は変えない。
   state.focusOnly = !state.focusOnly;
@@ -1923,14 +3430,43 @@ dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
 dom.modalCancel.addEventListener("click", closeModal);
 dom.modalOk.addEventListener("click", () => {
-  const verdict = state.pendingVerdict;
+  const action = state.modalAction;
   closeModal();
-  if (verdict) {
-    void submitReview(verdict);
+  if (action) {
+    action();
   }
 });
+dom.btnComments.addEventListener("click", () => {
+  if (dom.commentList.hidden) {
+    openCommentList();
+  } else {
+    closeCommentList();
+  }
+});
+document.addEventListener("click", (event) => {
+  const target = /** @type {Node} */ (event.target);
+  if (
+    !dom.commentList.hidden &&
+    !dom.commentList.contains(target) &&
+    !dom.btnComments.contains(target)
+  ) {
+    closeCommentList();
+  }
+});
+dom.navPrev.addEventListener("click", () => void navigate(-1));
+dom.navNext.addEventListener("click", () => void navigate(1));
+dom.ruler.addEventListener("click", (event) => {
+  const rect = dom.ruler.getBoundingClientRect();
+  const total = lineOffsets(state.heights).at(-1) || 0;
+  const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
+  dom.viewport.scrollTop = Math.max(0, ratio * total - dom.viewport.clientHeight / 2);
+  scheduleRender();
+});
 dom.viewport.addEventListener("scroll", scheduleRender);
-window.addEventListener("resize", scheduleResize);
+window.addEventListener("resize", () => {
+  state.rulerDirty = true;
+  scheduleResize();
+});
 window
   .matchMedia("(prefers-color-scheme: dark)")
   .addEventListener("change", () => {

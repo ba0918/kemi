@@ -2,13 +2,14 @@
 //!
 //! 内部 API の JSON 形は D7 としてここで決める。
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -16,7 +17,11 @@ use futures_util::StreamExt;
 use kemi_core::domain::comment::{self, CommentError};
 use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
-use kemi_core::domain::review::{Comment, FileEntry, LineRange, ReviewMeta, Side, Suggestion};
+use kemi_core::domain::origin::Unknown;
+use kemi_core::domain::review::{
+    Comment, FileEntry, GroupBy, LineRange, ReviewMeta, Side, Suggestion,
+};
+use kemi_core::source::{FileOrigin, SourceError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -24,7 +29,8 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::highlight::{self, HighlightedLine, Highlighter};
 use crate::session::{comment_json, Session};
-use crate::{stop_with_error, AppState, ServerError, Stop, SubmitState};
+use crate::units::{self, Unavailable};
+use crate::{stop_with_error, AppState, Event, ServerError, Stop, SubmitState};
 
 /// 1 ファイル分の左右のハイライト結果。
 struct Highlighted {
@@ -41,6 +47,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/assets/{*path}", get(asset))
         .route("/s/{token}/api/review", get(review))
         .route("/s/{token}/api/file/{id}", get(file))
+        .route("/s/{token}/api/origin/{id}", get(origin))
+        .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
         .route("/s/{token}/api/state", post(state_api))
         .route("/s/{token}/api/submit", post(submit))
@@ -143,16 +151,23 @@ async fn source_review(state: &AppState) -> Result<ReviewMeta, ApiError> {
         .map_err(|error| runtime_error(state, error))
 }
 
+/// 内容を読む。一覧にある id でも、再取得や裏での単位の作り直しで内容の計画が先に
+/// 差し替わると、内容の側はその id をもう知らないことがある。これは git や I/O の
+/// 失敗ではないので、レビューは終えず None を返す（一覧に無い id と同じ扱い）。
 async fn source_content(
     state: &AppState,
     file_id: &str,
-) -> Result<kemi_core::source::FileContent, ApiError> {
+) -> Result<Option<kemi_core::source::FileContent>, ApiError> {
     let source = state.source.clone();
     let file_id = file_id.to_string();
-    tokio::task::spawn_blocking(move || source.content(&file_id))
+    let result = tokio::task::spawn_blocking(move || source.content(&file_id))
         .await
-        .map_err(|error| runtime_error(state, error))?
-        .map_err(|error| runtime_error(state, error))
+        .map_err(|error| runtime_error(state, error))?;
+    match result {
+        Ok(content) => Ok(Some(content)),
+        Err(SourceError::UnknownFileId(_)) => Ok(None),
+        Err(error) => Err(runtime_error(state, error)),
+    }
 }
 
 /// レビュー中の git・I/O 失敗はサーバを止め、CLI を終了コード 2 にする（R-SUBMIT）。
@@ -193,6 +208,17 @@ fn serve_asset(state: &AppState, path: &str) -> Result<Response, ApiError> {
 struct ReviewQuery {
     #[serde(default)]
     refresh: Option<String>,
+    /// `file` か `commit`。省略時は起動時の単位。
+    #[serde(default)]
+    unit: Option<String>,
+}
+
+fn parse_unit(unit: &str) -> Result<GroupBy, ApiError> {
+    match unit {
+        "file" => Ok(GroupBy::File),
+        "commit" => Ok(GroupBy::Commit),
+        _ => Err(ApiError::bad_request("unit は file か commit です")),
+    }
 }
 
 async fn review(
@@ -200,15 +226,28 @@ async fn review(
     Path(_token): Path<String>,
     Query(query): Query<ReviewQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let review: Arc<ReviewMeta> = if query.refresh.as_deref() == Some("1") {
-        let review = Arc::new(source_review(&state).await?);
-        *state.meta.write().expect("meta lock poisoned") = review.clone();
-        review
-    } else {
-        state.meta.read().expect("meta lock poisoned").clone()
+    let unit = query.unit.as_deref().map(parse_unit).transpose()?;
+    if query.refresh.as_deref() == Some("1") {
+        let _guard = state.refresh.lock().await;
+        let startup = Arc::new(source_review(&state).await?);
+        state.review.write().expect("review lock poisoned").startup = startup;
+        units::refresh_other(&state).await;
+    }
+    let body = {
+        let review = state.review.read().expect("review lock poisoned");
+        let (shown, meta) = review.meta(unit).map_err(|reason| match reason {
+            Unavailable::NoSuchUnit => ApiError::not_found("その単位はありません"),
+            Unavailable::NotReady => ApiError::conflict("その単位はまだ作っていません"),
+        })?;
+        let session = state.session.lock().expect("session poisoned");
+        let mut body = review_json(meta.as_ref(), &session);
+        body["unit"] = json!(shown.map(GroupBy::as_str));
+        body["units"] = review.units_json();
+        body
     };
-    let session = state.session.lock().expect("session poisoned");
-    Ok(Json(review_json(review.as_ref(), &session)))
+    // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
+    units::start_if_waiting(&state);
+    Ok(Json(body))
 }
 
 fn review_json(review: &ReviewMeta, session: &Session) -> Value {
@@ -270,9 +309,7 @@ async fn file(
     Path((_token, id)): Path<(String, String)>,
     Query(query): Query<ExpandQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let review = state.meta.read().expect("meta lock poisoned").clone();
-    let file =
-        find_file(&review, &id).ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))?;
+    let (file, _) = find_file(&state, &id)?;
 
     let dark = query.dark.as_deref() == Some("1");
 
@@ -288,7 +325,9 @@ async fn file(
         })));
     }
 
-    let content = source_content(&state, &id).await?;
+    let content = source_content(&state, &id)
+        .await?
+        .ok_or_else(file_not_found)?;
     let old_text = content
         .old
         .as_deref()
@@ -334,7 +373,19 @@ async fn file(
         })));
     }
 
-    let display = diff::collapse(&rows, diff::DEFAULT_CONTEXT);
+    // 行コメントの付いた行は、変更の行と同じく畳まない。止まる場所と吹き出しは見えている
+    // 行にしか置けないので、畳むと、展開したかどうかで止まる場所の数が変わり、コメント
+    // 一覧からも移れなくなる（R-NAV, R-VIEW）。
+    let (old_commented, new_commented) = commented_lines(&state, &id);
+    let display = diff::collapse(&rows, diff::DEFAULT_CONTEXT, |row| {
+        row.old
+            .as_ref()
+            .is_some_and(|line| old_commented.contains(&line.number))
+            || row
+                .new
+                .as_ref()
+                .is_some_and(|line| new_commented.contains(&line.number))
+    });
     let rows_json = display
         .iter()
         .map(|row| display_row_json(row, &rows, highlighted.as_ref()))
@@ -344,10 +395,114 @@ async fn file(
         "binary": false,
         "old_total": old_lines.len(),
         "new_total": new_lines.len(),
+        "context": diff::DEFAULT_CONTEXT,
         "rows": rows_json,
         "comments": comments_for(&state, &id),
         "highlight": highlight_info,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct OriginQuery {
+    /// "1" で上限を超えるファイルでも由来を求める。
+    #[serde(default)]
+    force: Option<String>,
+}
+
+/// 最終形のファイルの由来（R-ORIGIN）。差分とは別に、表示の後から取りに来る。
+///
+/// 由来の計算の失敗はレビューを終えない（R-SUBMIT の例外）。変更ブロックを 1 つも
+/// 持たない由来を返し、画面は由来の無いブロックを「特定できない」と出す。
+async fn origin(
+    State(state): State<Arc<AppState>>,
+    Path((_token, id)): Path<(String, String)>,
+    Query(query): Query<OriginQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let (file, _) = find_file(&state, &id)?;
+    let force = query.force.as_deref() == Some("1");
+    let source = state.source.clone();
+    let file_id = id.clone();
+    let origin = match tokio::task::spawn_blocking(move || source.origin(&file_id, force)).await {
+        Ok(Ok(origin)) => origin,
+        // 内容の計画が差し替わる途中の食い違い（source_content と同じ）。
+        Ok(Err(SourceError::UnknownFileId(_))) => return Err(file_not_found()),
+        Ok(Err(error)) => Some(unknown_origin(&file.path, error)),
+        Err(error) => Some(unknown_origin(&file.path, error)),
+    };
+    Ok(Json(match origin {
+        Some(origin) => origin_json(&id, &origin),
+        None => json!({ "id": id, "available": false }),
+    }))
+}
+
+/// 計算に失敗したファイルの由来。変更ブロックもコミットも 1 つも持たない。
+fn unknown_origin(path: &str, error: impl std::fmt::Display) -> FileOrigin {
+    eprintln!("kemi: {path} の由来を求められませんでした: {error}");
+    FileOrigin {
+        enabled: true,
+        blocks: Vec::new(),
+        commits: Vec::new(),
+    }
+}
+
+fn origin_json(id: &str, origin: &FileOrigin) -> Value {
+    let commits: serde_json::Map<String, Value> = origin
+        .commits
+        .iter()
+        .map(|commit| {
+            (
+                commit.sha.clone(),
+                json!({ "subject": commit.subject, "body": commit.body, "merge": commit.merge }),
+            )
+        })
+        .collect();
+    json!({
+        "id": id,
+        "available": true,
+        "enabled": origin.enabled,
+        "blocks": origin.blocks.iter().map(|block| json!({
+            "row": block.row,
+            "unknown": match block.unknown {
+                Unknown::None => "none",
+                Unknown::Some => "some",
+                Unknown::All => "all",
+            },
+            "entries": block.entries.iter().map(|entry| json!({
+                "sha": entry.sha,
+                "merge": entry.merge,
+                "target": entry.target.as_ref().map(|target| json!({
+                    "path": target.path,
+                    "side": target.side.as_str(),
+                    "line": target.line,
+                })),
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "commits": commits,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum UnitRequest {
+    /// 作れなかった単位を作り直す。
+    Retry { unit: String },
+}
+
+async fn unit_api(
+    State(state): State<Arc<AppState>>,
+    Path(_token): Path<String>,
+    Json(request): Json<UnitRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let UnitRequest::Retry { unit } = request;
+    if !units::retry(&state, parse_unit(&unit)?) {
+        return Err(ApiError::conflict("作り直せる状態ではありません"));
+    }
+    let units = state
+        .review
+        .read()
+        .expect("review lock poisoned")
+        .units_json();
+    Ok(Json(json!({ "units": units })))
 }
 
 fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
@@ -358,6 +513,27 @@ fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
         .filter(|comment| comment.file_id == file_id)
         .map(comment_json)
         .collect()
+}
+
+/// そのファイルの行コメントが範囲に含む行番号（旧側、新側）。
+fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u32>) {
+    let session = state.session.lock().expect("session poisoned");
+    let (mut old, mut new) = (HashSet::new(), HashSet::new());
+    for comment in session
+        .comments
+        .iter()
+        .filter(|comment| comment.file_id == file_id)
+    {
+        let Some(start) = comment.start_line else {
+            continue;
+        };
+        let end = comment.end_line.unwrap_or(start);
+        match comment.side {
+            Side::Old => old.extend(start..=end),
+            Side::New => new.extend(start..=end),
+        }
+    }
+    (old, new)
 }
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
@@ -469,6 +645,16 @@ enum CommentRequest {
         #[serde(default)]
         suggestion: Option<String>,
     },
+    /// 本文と suggestion を書き換える。suggestion を省くか null にすると外す。
+    Edit {
+        id: String,
+        body: String,
+        #[serde(default)]
+        suggestion: Option<String>,
+    },
+    Delete {
+        id: String,
+    },
     Reply {
         id: String,
         body: String,
@@ -498,13 +684,46 @@ async fn comment_api(
             )
             .await
         }
+        CommentRequest::Edit {
+            id,
+            body,
+            suggestion,
+        } => {
+            let mut session = state.session.lock().expect("session poisoned");
+            let comment = session
+                .comments
+                .iter_mut()
+                .find(|comment| comment.id == id)
+                .ok_or_else(comment_not_found)?;
+            // 行レンジ・side・quote・作成時の内容ハッシュは変えない（R-COMMENT）。
+            let range = comment
+                .start_line
+                .zip(comment.end_line)
+                .map(|(start, end)| LineRange { start, end });
+            comment::validate_comment(comment.side, range, suggestion.as_deref())
+                .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
+            comment.body = body;
+            comment.suggestion = suggestion.map(|replacement| Suggestion { replacement });
+            Ok(Json(comment_json(comment)))
+        }
+        CommentRequest::Delete { id } => {
+            let mut session = state.session.lock().expect("session poisoned");
+            let index = session
+                .comments
+                .iter()
+                .position(|comment| comment.id == id)
+                .ok_or_else(comment_not_found)?;
+            // id は再利用しない。採番は next_comment が進むだけで、削除では戻さない。
+            session.comments.remove(index);
+            Ok(Json(json!({ "id": id, "deleted": true })))
+        }
         CommentRequest::Reply { id, body } => {
             let mut session = state.session.lock().expect("session poisoned");
             let comment = session
                 .comments
                 .iter_mut()
                 .find(|comment| comment.id == id)
-                .ok_or_else(|| ApiError::not_found("コメントが見つかりません"))?;
+                .ok_or_else(comment_not_found)?;
             comment.replies.push(body);
             let value = comment_json(comment);
             drop(session);
@@ -516,7 +735,7 @@ async fn comment_api(
                 .comments
                 .iter_mut()
                 .find(|comment| comment.id == id)
-                .ok_or_else(|| ApiError::not_found("コメントが見つかりません"))?;
+                .ok_or_else(comment_not_found)?;
             comment.resolved = resolved;
             let value = comment_json(comment);
             drop(session);
@@ -544,12 +763,11 @@ async fn add_comment(
             ))
         }
     };
-    let review = state.meta.read().expect("meta lock poisoned").clone();
-    let file = find_file(&review, &file_id)
-        .ok_or_else(|| ApiError::not_found("ファイルが見つかりません"))?;
-    let group_title = group_title(&review, &file.group_id);
+    let (file, group_title) = find_file(state, &file_id)?;
 
-    let content = source_content(state, &file_id).await?;
+    let content = source_content(state, &file_id)
+        .await?
+        .ok_or_else(file_not_found)?;
     let lines = match side {
         Side::Old => side_lines(&content.old),
         Side::New => side_lines(&content.new),
@@ -598,6 +816,10 @@ async fn add_comment(
     Ok(Json(comment_json(&comment)))
 }
 
+fn comment_not_found() -> ApiError {
+    ApiError::not_found("コメントが見つかりません")
+}
+
 fn parse_side(side: &str) -> Result<Side, ApiError> {
     match side {
         "new" => Ok(Side::New),
@@ -635,12 +857,7 @@ async fn state_api(
     Path(_token): Path<String>,
     Json(request): Json<StateRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    {
-        let review = state.meta.read().expect("meta lock poisoned").clone();
-        if find_file(&review, &request.file_id).is_none() {
-            return Err(ApiError::not_found("ファイルが見つかりません"));
-        }
-    }
+    find_file(&state, &request.file_id)?;
     let mut session = state.session.lock().expect("session poisoned");
     if let Some(seen) = request.seen {
         if seen {
@@ -695,8 +912,9 @@ async fn submit(
                 }
                 *stop = Some(Stop::Submitted(document.clone()));
             }
+            let saved = save_result(&state, &document);
             let _ = state.shutdown.send(true);
-            Ok(Json(document))
+            Ok(Json(json!({ "result": document, "saved": saved })))
         }
         Err(error) => {
             *state.submit_state.lock().expect("submit poisoned") = SubmitState::Open;
@@ -705,8 +923,38 @@ async fn submit(
     }
 }
 
+/// 確定した結果を結果ファイルに残す。失敗しても submit の結果と終了コードは変えず、
+/// stderr に警告を出して完了画面に知らせるだけにする（R-RESULT）。
+fn save_result(state: &AppState, document: &Value) -> Value {
+    let Some(sink) = &state.results else {
+        return json!({ "dir": null, "path": null, "error": null });
+    };
+    let text = match serde_json::to_string(document) {
+        Ok(json) => format!("{json}\n"),
+        Err(error) => {
+            return json!({ "dir": sink.location(), "path": null, "error": error.to_string() })
+        }
+    };
+    match sink.save(&text) {
+        Ok(path) => json!({
+            "dir": sink.location(),
+            "path": path.to_string_lossy(),
+            "error": null,
+        }),
+        Err(error) => {
+            eprintln!("kemi: 結果ファイルを保存できませんでした: {error}");
+            json!({ "dir": sink.location(), "path": null, "error": error })
+        }
+    }
+}
+
 async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value, ApiError> {
-    let review = state.meta.read().expect("meta lock poisoned").clone();
+    let review = state
+        .review
+        .read()
+        .expect("review lock poisoned")
+        .startup
+        .clone();
     let snapshot: Vec<(String, String, Side, String)> = {
         let session = state.session.lock().expect("session poisoned");
         session
@@ -724,12 +972,16 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
     };
     let mut outdated = std::collections::HashMap::new();
     for (id, file_id, side, created_hash) in snapshot {
-        // 再取得で一覧から消えたファイルは内容を引けないので古い扱いにする。
-        if find_file(&review, &file_id).is_none() {
+        // 再取得で一覧から消えたファイル（履歴の書き換えで消えたグループのものを含む）は
+        // 内容を引けないので古い扱いにする。
+        if find_file(state, &file_id).is_err() {
             outdated.insert(id, true);
             continue;
         }
-        let content = source_content(state, &file_id).await?;
+        let Some(content) = source_content(state, &file_id).await? else {
+            outdated.insert(id, true);
+            continue;
+        };
         let lines = match side {
             Side::Old => side_lines(&content.old),
             Side::New => side_lines(&content.new),
@@ -761,7 +1013,7 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
 async fn events(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
-) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+) -> Result<Sse<impl futures_util::Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     let receiver = state.events.subscribe();
     let mut shutdown = state.shutdown.subscribe();
     // submit 後の graceful shutdown は接続が閉じるまで待つので、SSE は停止通知で終端する。
@@ -777,25 +1029,31 @@ async fn events(
     };
     let stream = BroadcastStream::new(receiver)
         .take_until(stop)
-        .map(|_| Ok::<_, Infallible>(Event::default().event("update").data("{}")));
+        .filter_map(|event| async move {
+            match event {
+                Ok(Event::Update) => Some(Ok::<_, Infallible>(
+                    SseEvent::default().event("update").data("{}"),
+                )),
+                Ok(Event::Unit) => Some(Ok(SseEvent::default().event("unit").data("{}"))),
+                // 取りこぼした通知は、更新があったものとして知らせる。
+                Err(_) => Some(Ok(SseEvent::default().event("update").data("{}"))),
+            }
+        });
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-fn find_file<'a>(review: &'a ReviewMeta, id: &str) -> Option<&'a FileEntry> {
-    review
-        .groups
-        .iter()
-        .flat_map(|group| group.files.iter())
-        .find(|file| file.id == id)
+/// どちらかのグループ単位にあるファイルと、そのグループの title。
+fn find_file(state: &AppState, id: &str) -> Result<(FileEntry, String), ApiError> {
+    state
+        .review
+        .read()
+        .expect("review lock poisoned")
+        .find_file(id)
+        .ok_or_else(file_not_found)
 }
 
-fn group_title(review: &ReviewMeta, group_id: &str) -> String {
-    review
-        .groups
-        .iter()
-        .find(|group| group.id == group_id)
-        .map(|group| group.title.clone())
-        .unwrap_or_default()
+fn file_not_found() -> ApiError {
+    ApiError::not_found("ファイルが見つかりません")
 }
 
 fn side_lines(bytes: &Option<Vec<u8>>) -> Vec<String> {

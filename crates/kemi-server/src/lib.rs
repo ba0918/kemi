@@ -3,12 +3,12 @@
 mod api;
 mod highlight;
 mod session;
+mod units;
 mod watch;
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, RwLock};
 
-use kemi_core::domain::review::ReviewMeta;
 use kemi_core::source::ReviewSource;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, watch as shutdown_watch};
@@ -56,10 +56,28 @@ pub(crate) enum Stop {
     Failed(String),
 }
 
+/// submit を確定した結果を残す先（R-RESULT）。
+pub trait ResultSink: Send + Sync {
+    /// stdout に出すのと同じ JSON の文字列を残し、書いたファイルを返す。
+    fn save(&self, text: &str) -> Result<std::path::PathBuf, String>;
+    /// 保存先のディレクトリ。完了画面に出す。決められなければ None。
+    fn location(&self) -> Option<String>;
+}
+
 pub struct ServeParams {
     pub source: Arc<dyn ReviewSource>,
     pub assets: Arc<dyn Assets>,
     pub token: String,
+    pub results: Option<Arc<dyn ResultSink>>,
+}
+
+/// SSE でページへ知らせること。
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Event {
+    /// 新側の供給元が変わった（R-LIVE の更新バッジ）。
+    Update,
+    /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。
+    Unit,
 }
 
 /// submit の同時受理を 1 つに絞るための状態。
@@ -72,12 +90,15 @@ pub(crate) struct AppState {
     pub source: Arc<dyn ReviewSource>,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
+    pub results: Option<Arc<dyn ResultSink>>,
     pub token: String,
     pub origin: String,
     pub host: String,
-    pub meta: RwLock<Arc<ReviewMeta>>,
+    pub review: RwLock<units::ReviewState>,
+    /// 再取得を 1 つずつ行う。同じ単位を同時に作り直して計画が入れ替わらないように。
+    pub refresh: tokio::sync::Mutex<()>,
     pub session: Mutex<Session>,
-    pub events: broadcast::Sender<()>,
+    pub events: broadcast::Sender<Event>,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
     pub shutdown: shutdown_watch::Sender<bool>,
     pub stop: Mutex<Option<Stop>>,
@@ -104,6 +125,7 @@ pub async fn serve(
     let host = format!("127.0.0.1:{}", address.port());
 
     let review = params.source.review().map_err(ServerError::Source)?;
+    let units = params.source.units();
     let (events, _) = broadcast::channel(16);
     let (shutdown, _) = shutdown_watch::channel(false);
 
@@ -111,10 +133,12 @@ pub async fn serve(
         source: params.source,
         highlighter: std::sync::OnceLock::new(),
         assets: params.assets,
+        results: params.results,
         token: params.token,
         origin,
         host,
-        meta: RwLock::new(Arc::new(review)),
+        review: RwLock::new(units::ReviewState::new(&units, review)),
+        refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::default()),
         events,
         shutdown,

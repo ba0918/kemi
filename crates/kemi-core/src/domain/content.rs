@@ -19,6 +19,47 @@ pub fn lines(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// `lines` の各行が、git の数え方（LF だけで区切る）で何行目にあたるか（1 始まり）。
+/// 単独の CR は表示では行を分けるが、git blame などは分けない。git が返す行番号を
+/// 表示の行番号へ対応させるのに使う。
+pub fn git_line_numbers(content: &str) -> Vec<u32> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let bytes = content.as_bytes();
+    let mut numbers = vec![1];
+    let mut git_line = 1;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'\n' => {
+                git_line += 1;
+                numbers.push(git_line);
+            }
+            // CRLF の CR は、続く LF と合わせて 1 つの改行にする。
+            b'\r' if bytes.get(index + 1) != Some(&b'\n') => numbers.push(git_line),
+            _ => {}
+        }
+    }
+    // 最終行の改行の後には行を作らない（`lines` と同じ）。
+    if matches!(bytes.last(), Some(b'\n' | b'\r')) {
+        numbers.pop();
+    }
+    numbers
+}
+
+/// 片側がこの行数を超えたら、ハイライトと由来を自動では求めない（R-VIEW, R-ORIGIN）。
+pub const AUTO_MAX_LINES: usize = 10_000;
+/// 片側がこのバイト数を超えたら、ハイライトと由来を自動では求めない。
+pub const AUTO_MAX_BYTES: usize = 1_048_576;
+
+/// 自動で行ごとの計算（ハイライト・由来）をしてよい規模か。片側が行数かバイト数の
+/// 上限を超えたら false。無い側は数えない。
+pub fn within_auto_limit(old: Option<&str>, new: Option<&str>) -> bool {
+    let within =
+        |text: &str| text.len() <= AUTO_MAX_BYTES && text.lines().count() <= AUTO_MAX_LINES;
+    old.is_none_or(within) && new.is_none_or(within)
+}
+
 /// バイナリらしさの判定（D6）。NUL を含むか、UTF-8 として読めなければバイナリ。
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.contains(&0) || std::str::from_utf8(bytes).is_err()

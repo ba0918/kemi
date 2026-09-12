@@ -11,10 +11,7 @@ use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 use kemi_core::domain::diff::Segment;
 
-/// 片側がこの行数を超えたら自動ではハイライトしない。
-pub const HIGHLIGHT_MAX_LINES: usize = 10_000;
-/// 片側がこのバイト数を超えたら自動ではハイライトしない。
-pub const HIGHLIGHT_MAX_BYTES: usize = 1_048_576;
+use kemi_core::domain::content::within_auto_limit;
 
 /// 1 行分のスタイル付き断片。
 pub type HighlightedLine = Vec<(Style, String)>;
@@ -34,10 +31,7 @@ impl Highlighter {
 
     /// 自動でハイライトしてよい規模か。片側が行数かバイト数の上限を超えたら false。
     pub fn capable(old: Option<&str>, new: Option<&str>) -> bool {
-        let within = |text: &str| {
-            text.len() <= HIGHLIGHT_MAX_BYTES && text.lines().count() <= HIGHLIGHT_MAX_LINES
-        };
-        old.is_none_or(within) && new.is_none_or(within)
+        within_auto_limit(old, new)
     }
 
     /// 内容を行ごとのスタイル列に変える。`dark` でテーマを選ぶ。
@@ -179,6 +173,7 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kemi_core::domain::content::{AUTO_MAX_BYTES, AUTO_MAX_LINES};
 
     #[test]
     fn highlight_multiline_string_keeps_style_on_later_lines() {
@@ -224,8 +219,8 @@ mod tests {
 
     #[test]
     fn highlight_cap_limits_by_line_count() {
-        let short = "line\n".repeat(HIGHLIGHT_MAX_LINES);
-        let long = "line\n".repeat(HIGHLIGHT_MAX_LINES + 1);
+        let short = "line\n".repeat(AUTO_MAX_LINES);
+        let long = "line\n".repeat(AUTO_MAX_LINES + 1);
 
         assert!(Highlighter::capable(Some(&short), Some(&short)));
         assert!(!Highlighter::capable(Some(&long), Some(&short)));
@@ -234,8 +229,8 @@ mod tests {
 
     #[test]
     fn highlight_cap_limits_by_size() {
-        let short = "x".repeat(HIGHLIGHT_MAX_BYTES);
-        let long = "x".repeat(HIGHLIGHT_MAX_BYTES + 1);
+        let short = "x".repeat(AUTO_MAX_BYTES);
+        let long = "x".repeat(AUTO_MAX_BYTES + 1);
 
         assert!(Highlighter::capable(Some(&short), None));
         assert!(!Highlighter::capable(Some(&long), None));

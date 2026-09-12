@@ -39,8 +39,28 @@ async function postJson(path, body) {
   return response.json();
 }
 
-export function getReview(refresh = false) {
-  return getJson(`api/review${refresh ? "?refresh=1" : ""}`);
+/**
+ * @param {boolean} [refresh]
+ * @param {string | null} [unit] コミット範囲のグループ単位（`file` / `commit`）。省略時は起動時の単位。
+ */
+export function getReview(refresh = false, unit = null) {
+  const params = new URLSearchParams();
+  if (refresh) {
+    params.set("refresh", "1");
+  }
+  if (unit) {
+    params.set("unit", unit);
+  }
+  const query = params.toString();
+  return getJson(`api/review${query ? `?${query}` : ""}`);
+}
+
+/**
+ * 作れなかったグループ単位を作り直す。
+ * @param {string} unit
+ */
+export function retryUnit(unit) {
+  return postJson("api/unit", { op: "retry", unit });
 }
 
 /**
@@ -65,6 +85,15 @@ export function getFile(id, range, options = {}) {
 }
 
 /**
+ * 最終形のファイルの由来。`force` で上限を超えるファイルでも求める。
+ * @param {string} id
+ * @param {boolean} force
+ */
+export function getOrigin(id, force) {
+  return getJson(`api/origin/${encodeURIComponent(id)}${force ? "?force=1" : ""}`);
+}
+
+/**
  * @param {{file_id: string, seen?: boolean, collapsed?: boolean}} body
  */
 export function postState(body) {
@@ -86,11 +115,15 @@ export function submit(verdict) {
 }
 
 /**
- * @param {() => void} onUpdate
+ * @param {() => void} onUpdate 新側の供給元が変わった（更新バッジ）
+ * @param {() => void} onUnit もう片方のグループ単位の作成の状態が変わった
  * @returns {EventSource}
  */
-export function subscribeEvents(onUpdate) {
+export function subscribeEvents(onUpdate, onUnit) {
   const events = new EventSource("api/events");
   events.addEventListener("update", onUpdate);
+  events.addEventListener("unit", onUnit);
+  // つながる前（や切れていた間）に届かなかった状態の変化を、つながった時点で読み直す。
+  events.addEventListener("open", onUnit);
   return events;
 }

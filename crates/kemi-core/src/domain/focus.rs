@@ -59,30 +59,49 @@ pub fn parse_focus(json: &str) -> Result<FocusLayer, FocusError> {
     serde_json::from_str(json).map_err(|error| FocusError::Parse(error.to_string()))
 }
 
-/// focus レイヤをレビューへ後付けする。存在しない id / path は黙って無視しない。
-pub fn apply_focus(review: &mut ReviewMeta, layer: &FocusLayer) -> Result<(), FocusError> {
-    let group_ids: BTreeSet<&str> = review
-        .groups
-        .iter()
-        .map(|group| group.id.as_str())
-        .collect();
+/// `--focus` の照合で「存在する」とみなすグループ id とパス。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FocusTargets {
+    pub group_ids: BTreeSet<String>,
+    pub paths: BTreeSet<String>,
+}
+
+impl FocusTargets {
+    /// レビューに現れるグループ id とパス。
+    pub fn of(review: &ReviewMeta) -> Self {
+        FocusTargets {
+            group_ids: review.groups.iter().map(|group| group.id.clone()).collect(),
+            paths: review
+                .groups
+                .iter()
+                .flat_map(|group| group.files.iter().map(|file| file.path.clone()))
+                .collect(),
+        }
+    }
+
+    pub fn extend(&mut self, other: FocusTargets) {
+        self.group_ids.extend(other.group_ids);
+        self.paths.extend(other.paths);
+    }
+}
+
+/// focus レイヤが指すグループ id とパスが存在するかを確かめる。黙って無視しない。
+pub fn validate_focus(layer: &FocusLayer, targets: &FocusTargets) -> Result<(), FocusError> {
     for id in layer.groups.keys() {
-        if !group_ids.contains(id.as_str()) {
+        if !targets.group_ids.contains(id) {
             return Err(FocusError::UnknownGroup(id.clone()));
         }
     }
-
-    let paths: BTreeSet<&str> = review
-        .groups
-        .iter()
-        .flat_map(|group| group.files.iter().map(|file| file.path.as_str()))
-        .collect();
     for entry in &layer.files {
-        if !paths.contains(entry.path.as_str()) {
+        if !targets.paths.contains(&entry.path) {
             return Err(FocusError::UnknownPath(entry.path.clone()));
         }
     }
+    Ok(())
+}
 
+/// focus レイヤをレビューへ後付けする。照合は `validate_focus` で先に済ませる。
+pub fn apply_focus(review: &mut ReviewMeta, layer: &FocusLayer) {
     for group in &mut review.groups {
         if let Some(overlay) = layer.groups.get(&group.id) {
             group.watch = overlay.watch.clone();
@@ -94,8 +113,6 @@ pub fn apply_focus(review: &mut ReviewMeta, layer: &FocusLayer) -> Result<(), Fo
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -170,7 +187,7 @@ mod tests {
         let mut review = review();
         let layer = parse_focus(r#"{"groups":{"g1":{"watch":"focus の watch"}}}"#).unwrap();
 
-        apply_focus(&mut review, &layer).unwrap();
+        apply_focus(&mut review, &layer);
         assert_eq!(review.groups[0].watch, "focus の watch");
         assert_eq!(review.groups[1].watch, "");
     }
@@ -181,7 +198,7 @@ mod tests {
         let layer =
             parse_focus(r#"{"files":[{"path":"src/b.rs","focus":true,"note":"ここ"}]}"#).unwrap();
 
-        apply_focus(&mut review, &layer).unwrap();
+        apply_focus(&mut review, &layer);
         let b = &review.groups[0].files[1];
         assert!(b.focus);
         assert_eq!(b.note, "ここ");
@@ -193,7 +210,7 @@ mod tests {
         let mut review = review();
         let layer = parse_focus(r#"{"files":[{"path":"src/a.rs","focus":true}]}"#).unwrap();
 
-        apply_focus(&mut review, &layer).unwrap();
+        apply_focus(&mut review, &layer);
         assert!(review.groups[0].files[0].focus);
         assert!(review.groups[1].files[0].focus);
     }
@@ -203,26 +220,38 @@ mod tests {
         let mut review = review();
         let layer = parse_focus(r#"{"files":[{"path":"src/a.rs"}]}"#).unwrap();
 
-        apply_focus(&mut review, &layer).unwrap();
+        apply_focus(&mut review, &layer);
         assert!(review.groups[0].files[0].focus);
     }
 
     #[test]
-    fn focus_apply_rejects_unknown_group_id() {
-        let mut review = review();
+    fn focus_validate_rejects_unknown_group_id() {
         let layer = parse_focus(r#"{"groups":{"g99":{"watch":"x"}}}"#).unwrap();
 
-        let error = apply_focus(&mut review, &layer).unwrap_err();
+        let error = validate_focus(&layer, &FocusTargets::of(&review())).unwrap_err();
         assert_eq!(error, FocusError::UnknownGroup("g99".to_string()));
     }
 
     #[test]
-    fn focus_apply_rejects_unknown_path() {
-        let mut review = review();
+    fn focus_validate_rejects_unknown_path() {
         let layer = parse_focus(r#"{"files":[{"path":"src/missing.rs"}]}"#).unwrap();
 
-        let error = apply_focus(&mut review, &layer).unwrap_err();
+        let error = validate_focus(&layer, &FocusTargets::of(&review())).unwrap_err();
         assert_eq!(error, FocusError::UnknownPath("src/missing.rs".to_string()));
+    }
+
+    #[test]
+    fn focus_validate_accepts_targets_beyond_the_review() {
+        let layer =
+            parse_focus(r#"{"groups":{"sha1":{"watch":"x"}},"files":[{"path":"src/gone.rs"}]}"#)
+                .unwrap();
+        let mut targets = FocusTargets::of(&review());
+        targets.extend(FocusTargets {
+            group_ids: ["sha1".to_string()].into(),
+            paths: ["src/gone.rs".to_string()].into(),
+        });
+
+        assert_eq!(validate_focus(&layer, &targets), Ok(()));
     }
 
     #[test]
@@ -231,7 +260,7 @@ mod tests {
         review.groups[0].files[0].add = 100_000;
 
         let layer = parse_focus("{}").unwrap();
-        apply_focus(&mut review, &layer).unwrap();
+        apply_focus(&mut review, &layer);
 
         assert!(review
             .groups
