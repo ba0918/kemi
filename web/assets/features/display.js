@@ -335,15 +335,6 @@ export function scheduleRender() {
   requestAnimationFrame(() => renderDiff());
 }
 
-/**
- * 幅が変わると折返しの高さも変わる。本文は renderDiff が測り直す。
- */
-function scheduleResize() {
-  requestAnimationFrame(() => {
-    renderDiff();
-  });
-}
-
 export function recomputeThreads() {
   state.threads = placeThreads(state.display, state.comments);
   state.commented = commentedLines(state.display, state.comments);
@@ -560,8 +551,8 @@ export function scrollToRulerPosition(event) {
   scheduleRender();
 }
 
-/** 窓の幅が変わると折返しの高さも変わる。帯を描き直し、本文は測り直させる。 */
+/** 窓の幅が変わると折返しの高さも変わる。帯を描き直し、本文は renderDiff が測り直す。 */
 export function onResize() {
   state.rulerDirty = true;
-  scheduleResize();
+  scheduleRender();
 }
