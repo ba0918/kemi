@@ -21,13 +21,21 @@
  * @typedef {{
  *   addComment: (payload: any) => void,
  *   closeCommentList: () => void,
+ *   collapseAll: () => void,
  *   closeEditor: () => void,
  *   confirmDeleteComment: (comment: any) => void,
+ *   copyPath: (path: string, element: HTMLButtonElement) => void,
+ *   expandAll: () => void,
  *   editComment: (payload: any) => void,
  *   goToComment: (comment: any, unit: string | null) => void,
  *   openCommentEditor: (comment: any) => void,
+ *   openFileWideEditor: () => void,
  *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => void,
  *   setCommentOpen: (id: string, open: boolean) => void,
+ *   showCollapsed: (entry: import("./state.js").Entry) => void,
+ *   toggleHighlight: (entry: import("./state.js").Entry) => void,
+ *   toggleOrigin: (entry: import("./state.js").Entry) => void,
+ *   toggleSeen: (file: import("./model.js").FileEntry) => void,
  *   switchUnit: (unit: string, jump: UnitJump | null) => void,
  * }} Actions
  */
