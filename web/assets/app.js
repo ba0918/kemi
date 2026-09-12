@@ -908,6 +908,8 @@ function renderFileHeader() {
   );
   expand.disabled = state.submitted || state.binary || busy;
   expand.dataset.focusKey = "file-expand";
+  expand.classList.toggle("active", fullyExpanded);
+  expand.setAttribute("aria-pressed", String(fullyExpanded));
   expand.addEventListener("click", () => {
     if (fullyExpanded) {
       collapseAll();
