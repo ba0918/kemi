@@ -23,7 +23,6 @@ export function closeCommentList() {
   dom.btnComments.setAttribute("aria-expanded", "false");
 }
 
-/** 上部の入口。開いていれば閉じ、閉じていれば開く。 */
 export function toggleCommentList() {
   if (dom.commentList.hidden) {
     openCommentList();

@@ -547,7 +547,6 @@ export function setWrap(wrap) {
 }
 
 /**
- * 位置の帯の押した所へ表示を送る。
  * @param {MouseEvent} event
  */
 export function scrollToRulerPosition(event) {

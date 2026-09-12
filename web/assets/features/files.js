@@ -122,7 +122,6 @@ export async function refresh() {
   } else {
     await selectIndex(state.index, { scrollTop: false });
   }
-  // 読み直しの前に見ていた位置へ戻す。
   dom.viewport.scrollTop = scrollTop;
   scheduleRender();
 }
@@ -359,13 +358,12 @@ export function toggleFocusOnly() {
   rebuildAndRenderTree();
 }
 
-/** 増減数の多い順に並べ替える。 */
 export function toggleSortBySize() {
   state.sortBySize = !state.sortBySize;
   rebuildAndRenderTree();
 }
 
-/** ツリーに出す並びを作り直し、上部バーとツリーを描き直す。表示中のファイルは変えない。 */
+/** 表示中のファイルは変えない。 */
 function rebuildAndRenderTree() {
   const current = currentEntry();
   rebuildVisible(current ? current.file.id : undefined);

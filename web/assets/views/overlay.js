@@ -139,7 +139,6 @@ export function showToast(message) {
   }, 2_000);
 }
 
-/** 確認ダイアログの OK。閉じてから、覚えておいた処理を実行する。 */
 export function runModalAction() {
   const action = state.modalAction;
   closeModal();

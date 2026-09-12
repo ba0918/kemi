@@ -33,14 +33,12 @@ export function applyTheme() {
   }
 }
 
-/** テーマのボタン。決めた順にテーマを 1 つ進める。 */
 export function stepTheme() {
   state.theme = nextTheme(state.theme);
   saveTheme(state.theme);
   applyTheme();
 }
 
-/** OS の明暗が変わった。自動のときだけ、いまのテーマを引き直す。 */
 export function onSystemThemeChange() {
   if (state.theme === "auto") {
     applyTheme();
