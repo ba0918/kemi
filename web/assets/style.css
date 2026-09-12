@@ -194,6 +194,7 @@ button:disabled {
 }
 
 .brand {
+  flex-shrink: 0;
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -223,10 +224,22 @@ button:disabled {
 
 .meta {
   display: flex;
+  min-width: 0;
+  overflow: hidden;
   gap: 10px;
   color: var(--ink-3);
   font-size: 12.5px;
   white-space: nowrap;
+}
+
+.meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta > span.stat {
+  flex-shrink: 0;
 }
 
 .meta b {
@@ -237,6 +250,7 @@ button:disabled {
 
 .tools {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 6px;
 }
@@ -382,6 +396,7 @@ button:disabled {
 
 .progress {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   font-size: 12.5px;

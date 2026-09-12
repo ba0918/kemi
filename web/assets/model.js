@@ -58,7 +58,7 @@ const CHANGE_KINDS = new Set(["replace", "replace-old", "replace-new", "delete",
  * @param {string} kind
  * @returns {boolean}
  */
-export function isChangeKind(kind) {
+function isChangeKind(kind) {
   return CHANGE_KINDS.has(kind);
 }
 
@@ -1272,10 +1272,10 @@ export function reviewStats(review) {
 /**
  * ヘッダに出す meta の項目。manifest の meta を先に、集計値は最後に置く。
  * @param {any} review
- * @returns {{ label: string, value: string }[]}
+ * @returns {{ label: string, value: string, stat?: boolean }[]}
  */
 export function metaItems(review) {
-  /** @type {{ label: string, value: string }[]} */
+  /** @type {{ label: string, value: string, stat?: boolean }[]} */
   const items = [];
   const meta = review && review.meta;
   if (typeof meta === "string") {
@@ -1294,16 +1294,16 @@ export function metaItems(review) {
     }
   }
   const stats = reviewStats(review);
-  items.push({ label: "ファイル", value: String(stats.files) });
+  items.push({ label: "ファイル", value: String(stats.files), stat: true });
   if (stats.groups > 0) {
-    items.push({ label: "グループ", value: String(stats.groups) });
+    items.push({ label: "グループ", value: String(stats.groups), stat: true });
   }
-  items.push({ label: "変更", value: `+${stats.add} −${stats.del}` });
+  items.push({ label: "変更", value: `+${stats.add} −${stats.del}`, stat: true });
   return items;
 }
 
 /** テーマの巡回順。 */
-export const THEMES = [
+const THEMES = [
   "auto",
   "light",
   "dark",

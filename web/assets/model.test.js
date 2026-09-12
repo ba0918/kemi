@@ -520,9 +520,9 @@ test("metaItems_shows_manifest_meta_and_computed_stats", () => {
   assert.deepEqual(metaItems(review), [
     { label: "author", value: "ba0918" },
     { label: "target", value: "main..kemi-v1" },
-    { label: "ファイル", value: "1" },
-    { label: "グループ", value: "1" },
-    { label: "変更", value: "+1 −2" },
+    { label: "ファイル", value: "1", stat: true },
+    { label: "グループ", value: "1", stat: true },
+    { label: "変更", value: "+1 −2", stat: true },
   ]);
 });
 
@@ -530,8 +530,8 @@ test("metaItems_ignores_empty_meta", () => {
   const review = { meta: null, groups: [] };
 
   assert.deepEqual(metaItems(review), [
-    { label: "ファイル", value: "0" },
-    { label: "変更", value: "+0 −0" },
+    { label: "ファイル", value: "0", stat: true },
+    { label: "変更", value: "+0 −0", stat: true },
   ]);
 });
 
