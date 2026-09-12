@@ -182,7 +182,6 @@ const dom = {
  *   dragging: { fileId: string, side: string } | null,
  *   submitted: boolean,
  *   updateAvailable: boolean,
- *   pendingVerdict: "approved" | "changes_requested" | null,
  *   treeItems: Map<string, HTMLButtonElement>,
  *   treeActiveId: string | null,
  *   treeVersion: number,
@@ -246,7 +245,6 @@ const state = {
   dragging: null,
   submitted: false,
   updateAvailable: false,
-  pendingVerdict: null,
   treeItems: new Map(),
   treeActiveId: null,
   treeVersion: 0,
@@ -2149,7 +2147,6 @@ function openConfirm(verdict) {
   if (state.submitted) {
     return;
   }
-  state.pendingVerdict = verdict;
   state.modalAction = () => void submitReview(verdict);
   dom.modalCancel.textContent = "戻る";
   const approve = verdict === "approved";
@@ -2196,7 +2193,6 @@ function setModalText(text) {
 
 function closeModal() {
   dom.modal.hidden = true;
-  state.pendingVerdict = null;
   state.modalAction = null;
 }
 
