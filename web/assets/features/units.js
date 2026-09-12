@@ -11,15 +11,13 @@ import { renderFooter, renderHeader, renderUnitSwitch } from "../views/header.js
 import { openModal, showOverlay, showToast } from "../views/overlay.js";
 import { renderTree } from "../views/tree.js";
 
-/** @typedef {import("../state.js").Entry} Entry */
-
 /**
  * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
  * 最初のコミット）を出す。由来やコメント一覧から移るときは、そのファイルの該当行を出す。
  * 移り先が無ければ（履歴の書き換えで消えたなど）別のファイルへは移らず、切り替えもせず
  * `missing` を呼ぶ。
  * @param {string} unit
- * @param {{ find: (entries: Entry[]) => number, side: string, line: number | null, missing: () => void } | null} jump
+ * @param {import("../actions.js").UnitJump | null} jump
  */
 export async function switchUnit(unit, jump) {
   if (state.submitted || (unit === state.unit && !jump)) {
