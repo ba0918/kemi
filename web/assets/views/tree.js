@@ -102,6 +102,30 @@ export function renderTree() {
   updateTreeActive();
 }
 
+/**
+ * 畳める見出しの、いまの開閉と、押したときの切り替え。開閉はページを開いている間だけ
+ * `remembered` に覚え、ツリーは作り直さずに見た目だけを変える。
+ * @param {HTMLElement} container `data-open` を持つ入れ物
+ * @param {HTMLButtonElement} head 押す見出し
+ * @param {Map<string, boolean>} remembered 開閉の記憶
+ * @param {string} key
+ * @returns {HTMLElement} 矢印。見出しのどこに置くかは呼ぶ側が決める
+ */
+function foldToggle(container, head, remembered, key) {
+  const open = remembered.get(key) !== false;
+  container.dataset.open = open ? "true" : "false";
+  head.setAttribute("aria-expanded", String(open));
+  const caret = textEl("span", "caret", open ? "▾" : "▸");
+  head.addEventListener("click", () => {
+    const nextOpen = container.dataset.open === "false";
+    container.dataset.open = nextOpen ? "true" : "false";
+    remembered.set(key, nextOpen);
+    head.setAttribute("aria-expanded", String(nextOpen));
+    caret.textContent = nextOpen ? "▾" : "▸";
+  });
+  return caret;
+}
+
 function rebuildTree() {
   const groups = buildTree(state.visible);
   /** 前回のボタンを使い回す。同じファイルの項目は作り直さない。 */
@@ -110,25 +134,15 @@ function rebuildTree() {
   state.groupHeads = new Map();
   const fragment = document.createDocumentFragment();
   for (const { group, nodes } of groups) {
-    const open = state.groupOpen.get(group.id) !== false;
     const groupEl = el("div", "group");
     groupEl.dataset.group = group.id;
-    groupEl.dataset.open = open ? "true" : "false";
     const head = button("group-head");
     head.title = group.title || group.id;
-    head.setAttribute("aria-expanded", String(open));
-    const caret = textEl("span", "caret", open ? "▾" : "▸");
+    const caret = foldToggle(groupEl, head, state.groupOpen, group.id);
     const count = el("span", "g-progress");
     head.append(caret);
     appendGroupTitle(head, group, "gtitle");
     head.append(count);
-    head.addEventListener("click", () => {
-      const nextOpen = groupEl.dataset.open === "false";
-      groupEl.dataset.open = nextOpen ? "true" : "false";
-      state.groupOpen.set(group.id, nextOpen);
-      head.setAttribute("aria-expanded", String(nextOpen));
-      caret.textContent = nextOpen ? "▾" : "▸";
-    });
     const barTrack = el("div", "g-bar");
     const bar = el("i");
     barTrack.append(bar);
@@ -164,19 +178,9 @@ function appendNodes(parent, nodes, group, items) {
     if (node.type === "dir") {
       const li = el("li", "dir");
       const key = `${group.id}:${node.path}`;
-      const open = state.dirOpen.get(key) !== false;
-      li.dataset.open = open ? "true" : "false";
       const head = button("dir-head");
-      head.setAttribute("aria-expanded", String(open));
-      const caret = textEl("span", "caret", open ? "▾" : "▸");
+      const caret = foldToggle(li, head, state.dirOpen, key);
       head.append(caret, svgIcon(DIR_ICON), document.createTextNode(node.name));
-      head.addEventListener("click", () => {
-        const nextOpen = li.dataset.open === "false";
-        li.dataset.open = nextOpen ? "true" : "false";
-        state.dirOpen.set(key, nextOpen);
-        head.setAttribute("aria-expanded", String(nextOpen));
-        caret.textContent = nextOpen ? "▾" : "▸";
-      });
       const ul = el("ul");
       appendNodes(ul, node.children, group, items);
       li.append(head, ul);
