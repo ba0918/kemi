@@ -23,8 +23,28 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `crates/kemi-core/src/source/` | git / manifest の読み取りアダプタ |
 | `crates/kemi-server/` | HTTP と SSE（axum） |
 | `crates/kemi-webview/` | 資産の埋め込み |
-| `web/` | ESM と CSS のソース。`tsc --checkJs` は型検査のみ |
+| `web/` | ESM と CSS のソース。`tsc --checkJs` は型検査のみ（層は下の節） |
 | `scripts/` | フィクスチャ生成と起動時間の計測 |
+
+### `web/assets/` の層
+
+ページの JS は 4 層で、依存は上から下の一方向だけ。
+
+| 層 | 中身 |
+|---|---|
+| `app.js` | 結線と起動だけ。すべてを import してよい唯一のモジュール |
+| `features/` | 状態を変え、`api.js` を呼び、描き直す |
+| `views/` | `state.js` と `dom.js` を読んで要素を作る。`api.js` を呼ばず、`features/` を import しない |
+| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物） |
+
+- 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
+  呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
+- `features/` の中の順番は
+  `display → navigation → files → theme → comments → units → comment-list → submit` で、
+  自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
+- `state.js` は `storage.js` と `model.js` を import してよい。ほかの leaf 同士は import しない。
+- `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
+  読み込んだだけで走る文（`addEventListener` や起動の呼び出し）は置かない。
 
 ## Commands
 
