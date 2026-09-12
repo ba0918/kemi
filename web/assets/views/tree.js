@@ -204,7 +204,7 @@ function treeItem(entry, label, items) {
       const index = state.visible.findIndex(
         (candidate) => candidate.file.id === item?.dataset.fileId,
       );
-      actions.selectIndex(index, { scrollTop: true });
+      void actions.selectIndex(index, { scrollTop: true });
     });
     items.set(entry.file.id, item);
   }

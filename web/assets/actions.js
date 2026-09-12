@@ -33,7 +33,7 @@
  *   openCommentEditor: (comment: any) => void,
  *   openEditorAt: (side: string, number: number) => void,
  *   openFileWideEditor: () => void,
- *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => void,
+ *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => Promise<void>,
  *   setCommentOpen: (id: string, open: boolean) => void,
  *   showCollapsed: (entry: import("./state.js").Entry) => void,
  *   startSelection: (side: "old" | "new", number: number) => void,
