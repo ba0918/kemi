@@ -45,6 +45,10 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `state.js` は `storage.js` と `model.js` を import してよい。ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
   読み込んだだけで走る文（`addEventListener` や起動の呼び出し）は置かない。
+- `web/index.html` は全モジュールを `modulepreload` で先に取りに行かせる（ビルド無しの
+  ESM は依存を 1 段ずつ発見するため。実測で読み込み完了が約 2 割短くなった）。
+  モジュールを足したり改名したりしたら、その一覧も直す。ズレても壊れず、ブラウザの
+  コンソールに警告が出るだけなので、機械的な検査は無い。
 
 ## Commands
 
