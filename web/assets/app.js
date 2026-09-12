@@ -10,14 +10,15 @@ import {
   commentLabel,
   commentedLines,
   commitTypeBox,
-  currentStopIndex,
   describeComment,
   firstLine,
   hasLoadedStops,
   hasStops,
+  navCurrentIndex,
+  navNextTarget,
+  navPrevTarget,
   navStops,
   nextFileIndex,
-  nextStop,
   originJumpTarget,
   rulerMarks,
   seenProgress,
@@ -203,7 +204,7 @@ const dom = {
  *   toastTimer: number,
  *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
  *   modalAction: (() => void) | null,
- *   lastNav: { index: number, top: number, scrollTop: number, pinned: boolean } | null,
+ *   landing: { index: number, top: number, scrollTop: number } | null,
  * }} */
 const state = {
   review: null,
@@ -266,7 +267,7 @@ const state = {
   toastTimer: 0,
   groupHeads: new Map(),
   modalAction: null,
-  lastNav: null,
+  landing: null,
 };
 
 function currentEntry() {
@@ -1419,14 +1420,10 @@ function closeEditor() {
  * 測り直すよう覚えておく。
  */
 function remeasure() {
-  // 利用者の操作で行の高さが変わったら、n / p で移った先を画面の同じ位置に留めるのをやめる。
-  // 留めたままだと、移った先より上で開いたエディタや吹き出しの高さだけスクロール位置が
-  // 送られ、いま触った行が画面の外へ動く。
-  // Why not 移った先の記録ごと捨てない: 末尾近くで上端まで送れなかった止まる場所では、
-  // 記録が今の位置なので、捨てると数が一つ前に戻り、次の n が同じ場所へ空回りする。
-  if (state.lastNav) {
-    state.lastNav = { ...state.lastNav, pinned: false };
-  }
+  // 利用者の操作で行の高さが変わったら、送った先を画面の同じ位置に置き直すのをやめる。
+  // 置き直すと、その先より上で開いたエディタや吹き出しの高さだけスクロール位置が送られ、
+  // いま触った行が画面の外へ動く。
+  state.landing = null;
   state.measureNext = true;
   state.heights.forEach((height, index) => {
     if (height !== ROW_HEIGHT) {
@@ -1441,8 +1438,8 @@ function resetHeights() {
   state.staleRows = new Set();
   // 位置の帯の印は行の高さから描く。測る行が無くても、古い高さの印を残さない。
   state.rulerDirty = true;
-  // 移った先の記録は古い行と高さでの位置なので、もう同じ行を指さない。
-  state.lastNav = null;
+  // 送った先の記録は古い行と高さでの位置なので、もう同じ行を指さない。
+  state.landing = null;
 }
 
 function openFileWideEditor() {
@@ -2238,30 +2235,24 @@ function showOverlay(title, detail) {
 function measureHeights(start, offsets) {
   const children = Array.from(dom.content.children);
   const scrollTop = dom.viewport.scrollTop;
-  // 移動の直後は、移った先の行より上の行の伸び縮みをすべて打ち消す。初めて測る行
-  // （折り返した行など）が基準値より高いと、移った先が下へずれて見えなくなるため。
-  // 利用者の操作の後は打ち消さないが、移った先の上端は上の行の伸び縮みの分だけ動かし、
-  // 今の位置として使い続ける。
-  const nav = activeNav();
-  const pinned = nav && nav.pinned ? nav : null;
+  // 送った直後は、送り先の行より上の行の伸び縮みをすべて打ち消す。初めて測る行
+  // （折り返した行など）が基準値より高いと、送り先が下へずれて見えなくなるため。
+  // 利用者の操作の後は打ち消さない（remeasure が送り先を捨てる）。
+  const landing = activeLanding();
   let changed = false;
   let shift = 0;
   let growth = 0;
-  let growthAboveNav = 0;
   children.forEach((child, offset) => {
     const index = start + offset;
     const stale = state.staleRows.delete(index);
     const height = /** @type {HTMLElement} */ (child).offsetHeight;
     if (height > 0 && state.heights[index] !== height) {
       const delta = height - state.heights[index];
-      const above = pinned
-        ? index < pinned.index
+      const above = landing
+        ? index < landing.index
         : stale && offsets[index + 1] <= scrollTop;
       if (above) {
         shift += delta;
-      }
-      if (nav && index < nav.index) {
-        growthAboveNav += delta;
       }
       growth += delta;
       state.heights[index] = height;
@@ -2276,19 +2267,19 @@ function measureHeights(start, offsets) {
     // 打ち消す。ずれた配置のまま表示されないよう、同じ描画のうちに描き直す。
     // 全体の高さを先に広げる。古い高さのままでは、送った位置が末尾で切り詰められる。
     dom.content.style.height = `${(offsets[offsets.length - 1] || 0) + growth}px`;
-    if (pinned) {
-      const top = (offsets[pinned.index] ?? pinned.top) + shift;
+    if (landing) {
+      const top = (offsets[landing.index] ?? landing.top) + shift;
       dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
-      state.lastNav = { ...pinned, top, scrollTop: dom.viewport.scrollTop };
+      state.landing = { index: landing.index, top, scrollTop: dom.viewport.scrollTop };
     } else {
       dom.viewport.scrollTop = scrollTop + shift;
-      followNav(nav, offsets, growthAboveNav);
     }
     renderDiff();
     return;
   }
-  if (growthAboveNav !== 0) {
-    followNav(nav, offsets, growthAboveNav);
+  if (!changed) {
+    // 測り終えて動かなくなった。ここから先、置き直すものはもう無い。
+    state.landing = null;
   }
   if (changed && !state.rendering) {
     state.rendering = true;
@@ -2297,24 +2288,6 @@ function measureHeights(start, offsets) {
       renderDiff();
     });
   }
-}
-
-/**
- * 画面に留めるのをやめた移った先の上端を、上の行の伸び縮みの分だけ動かす。スクロール
- * 位置は測った後のものを覚え直し、利用者がスクロールするまで今の位置として使う。
- * @param {{ index: number, top: number, scrollTop: number, pinned: boolean } | null} nav
- * @param {number[]} offsets 描いたときの各行の上端
- * @param {number} growthAbove 移った先より上の行の伸び縮みの合計
- */
-function followNav(nav, offsets, growthAbove) {
-  if (!nav) {
-    return;
-  }
-  state.lastNav = {
-    ...nav,
-    top: (offsets[nav.index] ?? nav.top) + growthAbove,
-    scrollTop: dom.viewport.scrollTop,
-  };
 }
 
 function scheduleRender() {
@@ -2469,10 +2442,23 @@ function renderNav(offsets) {
     return;
   }
   const tops = reachableStops().map((index) => offsets[index] ?? 0);
-  const current = currentStopIndex(tops, navPosition());
+  const current = navCurrentIndex(tops, navView(), NAV_MARGIN);
   dom.navPos.textContent = `${current < 0 ? "–" : current + 1} / ${tops.length}`;
   dom.navPrev.disabled = state.loading || state.navigating;
   dom.navNext.disabled = state.loading || state.navigating;
+}
+
+/**
+ * 「現在」と n / p の移り先を決める表示の状態（R-NAV）。末尾まで進めたかどうかは、
+ * 実際に切り詰めるブラウザの値で見る。
+ * @returns {{ scrollTop: number, viewportHeight: number, contentHeight: number }}
+ */
+function navView() {
+  return {
+    scrollTop: dom.viewport.scrollTop,
+    viewportHeight: dom.viewport.clientHeight,
+    contentHeight: dom.viewport.scrollHeight,
+  };
 }
 
 /**
@@ -2483,28 +2469,21 @@ function renderNav(offsets) {
 function scrollToRow(index, offsets) {
   const top = offsets[index] ?? 0;
   dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
-  // 末尾近くでは止まる場所を上端まで送れない。移った先を覚えておき、利用者が
-  // スクロールするまではそこを今の位置として扱う（同じ場所で n が空回りしないように）。
-  // 移った先の行より上の行を初めて測って高さが変わったら、measureHeights がこの行を
-  // 同じ位置に保つ。利用者の操作で行の高さが変わった後は、同じ位置には保たず、今の位置
-  // としてだけ使う（remeasure）。
-  state.lastNav = { index, top, scrollTop: dom.viewport.scrollTop, pinned: true };
+  // 折り返しのある行は、初めて描いたときに基準値より高くなる。送り先より上でそれが
+  // 起きるとこの行が下へずれるので、送り先を覚えておき、measureHeights が測り終える
+  // まで同じ位置へ置き直す。置く場所を決めるためだけの記録で、「現在」や n / p の
+  // 行き先はこれを見ない（表示の状態から毎回決める。R-NAV）。
+  state.landing = { index, top, scrollTop: dom.viewport.scrollTop };
   scheduleRender();
 }
 
-/** 移動の後、利用者がまだスクロールしていなければ、その移動の記録。 */
-function activeNav() {
-  const last = state.lastNav;
-  if (last && Math.abs(dom.viewport.scrollTop - last.scrollTop) < 2) {
-    return last;
+/** 送った直後で、利用者がまだスクロールしていなければ、その送り先。 */
+function activeLanding() {
+  const landing = state.landing;
+  if (landing && Math.abs(dom.viewport.scrollTop - landing.scrollTop) < 2) {
+    return landing;
   }
   return null;
-}
-
-/** 変更間の移動で使う今の位置。 */
-function navPosition() {
-  const nav = activeNav();
-  return nav ? nav.top : dom.viewport.scrollTop + NAV_MARGIN;
 }
 
 /**
@@ -2554,7 +2533,11 @@ async function navigate(direction) {
   const offsets = lineOffsets(state.heights);
   const stops = reachableStops();
   const tops = stops.map((index) => offsets[index] ?? 0);
-  const index = nextStop(tops, navPosition(), direction);
+  const view = navView();
+  const index =
+    direction > 0
+      ? navNextTarget(tops, view, NAV_MARGIN)
+      : navPrevTarget(tops, view, NAV_MARGIN);
   if (index !== null) {
     scrollToRow(stops[index], offsets);
     return;
@@ -3067,7 +3050,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     return;
   }
   state.current = entry;
-  state.lastNav = null;
+  state.landing = null;
   const id = entry.file.id;
   const override = state.highlightOverrides.get(id);
   const key = fileCacheKey(entry);

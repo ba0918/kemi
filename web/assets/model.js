@@ -674,19 +674,68 @@ export function navStops(display, comments) {
 }
 
 /**
- * 今の位置から見た次（`direction` 1）か前（-1）の止まる場所。無ければ null（端で止まる）。
+ * 「現在」と n / p の移り先を決める表示の状態（R-NAV）。
+ * @typedef {{ scrollTop: number, viewportHeight: number, contentHeight: number }} NavView
+ */
+
+/**
+ * 表示がこれ以上下へ進めないか。全体が表示領域に収まるファイルもここに入る。
+ * @param {NavView} view
+ * @returns {boolean}
+ */
+function atMaxScroll(view) {
+  return view.scrollTop >= view.contentHeight - view.viewportHeight - 1;
+}
+
+/**
+ * いま見ている止まる場所（R-NAV）。移動の記録は使わず、そのときの表示の状態から決める。
+ * まだ最初の止まる場所に届いていなければ -1。
+ *
+ * 末尾まで進めないときは、見えている止まる場所をすべて通過済みとみなす。基準線より下でも、
+ * 読み手にはもう見えていて、そこへ送ることもできないため。
  * @param {number[]} tops 止まる場所の上端（昇順）
- * @param {number} position 今の位置
- * @param {1 | -1} direction
+ * @param {NavView} view
+ * @param {number} margin 表示領域の上端から引く基準線までの距離
+ * @returns {number}
+ */
+export function navCurrentIndex(tops, view, margin) {
+  if (atMaxScroll(view)) {
+    const bottom = view.scrollTop + view.viewportHeight;
+    let current = -1;
+    tops.forEach((top, index) => {
+      if (top < bottom + 1) {
+        current = index;
+      }
+    });
+    return current;
+  }
+  return currentStopIndex(tops, view.scrollTop + margin);
+}
+
+/**
+ * n の移り先の止まる場所。現在が最後なら null（次のファイルへ）。
+ * @param {number[]} tops
+ * @param {NavView} view
+ * @param {number} margin
  * @returns {number | null}
  */
-export function nextStop(tops, position, direction) {
-  if (direction > 0) {
-    const index = tops.findIndex((top) => top > position + 1);
-    return index < 0 ? null : index;
-  }
-  for (let index = tops.length - 1; index >= 0; index -= 1) {
-    if (tops[index] < position - 1) {
+export function navNextTarget(tops, view, margin) {
+  const next = navCurrentIndex(tops, view, margin) + 1;
+  return next < tops.length ? next : null;
+}
+
+/**
+ * p の移り先の止まる場所。現在より前で、送ると実際に表示が上へ戻る最後のもの。
+ * どれも戻らなければ null（前のファイルへ）。
+ * @param {number[]} tops
+ * @param {NavView} view
+ * @param {number} margin
+ * @returns {number | null}
+ */
+export function navPrevTarget(tops, view, margin) {
+  const current = navCurrentIndex(tops, view, margin);
+  for (let index = Math.min(current, tops.length) - 1; index >= 0; index -= 1) {
+    if (Math.max(0, tops[index] - margin) < view.scrollTop - 1) {
       return index;
     }
   }

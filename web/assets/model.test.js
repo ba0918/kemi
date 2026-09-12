@@ -25,7 +25,9 @@ import {
   windowFor,
   withRowIndex,
   navStops,
-  nextStop,
+  navCurrentIndex,
+  navNextTarget,
+  navPrevTarget,
   nextFileIndex,
   hasStops,
   commitTypeBox,
@@ -668,14 +670,54 @@ test("nav_stops_ignore_file_wide_comments", () => {
   assert.deepEqual(navStops(display, comments), [1]);
 });
 
-test("nav_next_and_previous_stop_follow_the_view_and_stop_at_the_ends", () => {
+test("mid_file_the_current_stop_is_the_last_one_above_the_baseline_and_n_p_step_one", () => {
   const tops = [100, 400, 900];
+  // 基準線は 52 + 48 = 100。止まる場所 0 をちょうど越えたところ。
+  const view = { scrollTop: 52, viewportHeight: 800, contentHeight: 4000 };
 
-  assert.equal(nextStop(tops, 0, 1), 0);
-  assert.equal(nextStop(tops, 100, 1), 1);
-  assert.equal(nextStop(tops, 900, 1), null);
-  assert.equal(nextStop(tops, 900, -1), 1);
-  assert.equal(nextStop(tops, 100, -1), null);
+  assert.equal(navCurrentIndex(tops, view, 48), 0);
+  assert.equal(navNextTarget(tops, view, 48), 1);
+  assert.equal(navPrevTarget(tops, view, 48), null);
+  assert.equal(navPrevTarget(tops, { ...view, scrollTop: 852 }, 48), 1);
+});
+
+test("at_maximum_scroll_every_visible_stop_counts_as_reached_and_n_leaves_the_file", () => {
+  const tops = [100, 400, 900, 1200, 1500];
+  // 末尾までスクロールしきった状態。止まる場所 2..4 は基準線より下だが見えている。
+  const view = { scrollTop: 800, viewportHeight: 800, contentHeight: 1600 };
+
+  assert.equal(navCurrentIndex(tops, view, 48), 4);
+  assert.equal(navNextTarget(tops, view, 48), null);
+  // 2..4 へ送っても末尾で切り詰められて動かない。実際に上へ戻れる 1 が前。
+  assert.equal(navPrevTarget(tops, view, 48), 1);
+});
+
+test("a_file_too_short_to_scroll_starts_at_the_last_stop_and_n_p_leave_the_file", () => {
+  const tops = [0, 120, 240];
+  const view = { scrollTop: 0, viewportHeight: 800, contentHeight: 400 };
+
+  assert.equal(navCurrentIndex(tops, view, 48), 2);
+  assert.equal(navNextTarget(tops, view, 48), null);
+  assert.equal(navPrevTarget(tops, view, 48), null);
+});
+
+test("a_stop_exactly_on_the_baseline_is_current_and_p_moves_to_the_one_before_it", () => {
+  const tops = [100, 400, 900];
+  // 基準線は 352 + 48 = 400。止まる場所 1 の上端とちょうど同じ。
+  const view = { scrollTop: 352, viewportHeight: 800, contentHeight: 4000 };
+
+  assert.equal(navCurrentIndex(tops, view, 48), 1);
+  assert.equal(navPrevTarget(tops, view, 48), 0);
+  assert.equal(navNextTarget(tops, view, 48), 2);
+});
+
+test("after_a_shrink_clamps_the_view_the_current_stop_is_still_the_last_one", () => {
+  const tops = [100, 400, 900, 1300];
+  // 開いていた吹き出しを畳んで全体が縮み、スクロール位置が末尾へ切り詰められた後。
+  const clamped = { scrollTop: 567, viewportHeight: 800, contentHeight: 1367 };
+
+  assert.equal(navCurrentIndex(tops, clamped, 48), 3);
+  assert.equal(navNextTarget(tops, clamped, 48), null);
 });
 
 test("next_file_follows_the_visible_order_across_groups_and_stops_at_the_ends", () => {
