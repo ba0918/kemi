@@ -15,6 +15,7 @@ export const dom = {
   subtitle: must("#review-subtitle"),
   unitSwitch: must("#unit-switch"),
   meta: must("#review-meta"),
+  notes: must("#review-notes"),
   progress: must("#progress"),
   progressBar: must("#progress-bar"),
   progressText: must("#progress-text"),

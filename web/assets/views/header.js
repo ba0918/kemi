@@ -14,6 +14,7 @@ export function renderHeader() {
   dom.subtitle.textContent = subtitle || "";
   dom.subtitle.hidden = !subtitle;
   dom.meta.textContent = "";
+  dom.notes.textContent = "";
   if (review) {
     for (const item of metaItems(review)) {
       const span = el("span", item.stat ? "stat" : undefined);
@@ -22,9 +23,10 @@ export function renderHeader() {
         span.append(textEl("b", "", item.label));
       }
       span.append(document.createTextNode(item.value));
-      dom.meta.append(span);
+      (item.stat ? dom.meta : dom.notes).append(span);
     }
   }
+  dom.notes.hidden = dom.notes.childElementCount === 0;
   renderUnitSwitch();
   renderProgress();
   dom.commentCount.textContent = String(state.allComments.length);

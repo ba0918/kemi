@@ -185,12 +185,33 @@ button:disabled {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 6px 18px;
   padding: 12px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   position: relative;
   z-index: 20;
+}
+
+/* 折り返しは、縮める前に行を分ける。常に許すとコミット範囲のように 1 行目が
+   元から詰まっている回で操作が 2 行目へ落ちるので、2 行目が要る回だけ許す。 */
+.topbar:has(> .review-notes:not([hidden])) {
+  flex-wrap: wrap;
+}
+
+/* 題を余りから受け取る形にしないと、題は自然な幅のまま行の分かれ目を決めてしまい、
+   狭い窓で操作が 2 行目へ落ちる。余りのうち題が取らない分は、操作を右端へ押す。 */
+.topbar:has(> .review-notes:not([hidden])) .title-block {
+  flex: 1 1 0;
+  max-width: max-content;
+}
+
+.topbar:has(> .review-notes:not([hidden])) .spacer {
+  flex-grow: 0;
+}
+
+.topbar:has(> .review-notes:not([hidden])) .tools {
+  margin-left: auto;
 }
 
 .brand {
@@ -243,6 +264,28 @@ button:disabled {
 }
 
 .meta b {
+  color: var(--ink-2);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.review-notes {
+  flex: 1 0 100%;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.review-notes > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-notes b {
   color: var(--ink-2);
   font-weight: 600;
   margin-right: 4px;
