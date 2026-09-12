@@ -8,9 +8,36 @@ import { state } from "../state.js";
  * 確認ダイアログの本文を、改行を保つ段落 1 つにする。
  * @param {string} text
  */
-export function setModalText(text) {
+function setModalText(text) {
   dom.modalBody.textContent = "";
   dom.modalBody.append(textEl("p", "", text));
+}
+
+/**
+ * 確認ダイアログを出す。題・本文・OK の文言と見た目・戻るの文言・OK で行う処理は、
+ * 呼ぶ側がすべて決める（既定は置かない）。
+ * @param {{
+ *   title: string,
+ *   body: string | HTMLElement[],
+ *   okLabel: string,
+ *   okClass: string,
+ *   cancelLabel: string,
+ *   action: () => void,
+ * }} options 本文は、改行を保つ段落 1 つなら文字列で、組んだ要素ならその並びで渡す
+ */
+export function openModal(options) {
+  dom.modalTitle.textContent = options.title;
+  if (typeof options.body === "string") {
+    setModalText(options.body);
+  } else {
+    dom.modalBody.textContent = "";
+    dom.modalBody.append(...options.body);
+  }
+  dom.modalOk.textContent = options.okLabel;
+  dom.modalOk.className = options.okClass;
+  dom.modalCancel.textContent = options.cancelLabel;
+  state.modalAction = options.action;
+  dom.modal.hidden = false;
 }
 
 export function closeModal() {

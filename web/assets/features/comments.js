@@ -15,7 +15,7 @@ import {
 import { renderCommentList } from "../views/comment-list.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderHeader } from "../views/header.js";
-import { setModalText, showOverlay } from "../views/overlay.js";
+import { openModal, showOverlay } from "../views/overlay.js";
 import { refreshCommentBadges } from "../views/tree.js";
 
 /**
@@ -276,13 +276,14 @@ export async function editComment(payload) {
  * @param {any} comment
  */
 export function confirmDeleteComment(comment) {
-  dom.modalTitle.textContent = "コメントを削除しますか？";
-  setModalText(`${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`);
-  dom.modalOk.textContent = "削除";
-  dom.modalOk.className = "btn secondary";
-  dom.modalCancel.textContent = "戻る";
-  state.modalAction = () => void deleteComment(comment);
-  dom.modal.hidden = false;
+  openModal({
+    title: "コメントを削除しますか？",
+    body: `${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`,
+    okLabel: "削除",
+    okClass: "btn secondary",
+    cancelLabel: "戻る",
+    action: () => void deleteComment(comment),
+  });
 }
 
 /**

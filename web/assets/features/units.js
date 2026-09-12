@@ -2,14 +2,13 @@
 // グループ単位（最終形 / コミットごと）の切り替えと、作れなかった単位の作り直し。
 
 import * as api from "../api.js";
-import { dom } from "../dom.js";
 import { currentEntry, flatten, state, unitLabel } from "../state.js";
 import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { applyReview, jumpToEntry } from "./files.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import { renderFooter, renderHeader, renderUnitSwitch } from "../views/header.js";
-import { setModalText, showOverlay, showToast } from "../views/overlay.js";
+import { openModal, showOverlay, showToast } from "../views/overlay.js";
 import { renderTree } from "../views/tree.js";
 
 /** @typedef {import("../state.js").Entry} Entry */
@@ -89,22 +88,23 @@ export async function switchUnit(unit, jump) {
  */
 function openUnitFailure(status) {
   const unit = String(status.unit);
-  dom.modalTitle.textContent = `${unitLabel(unit)}の単位を作れなかった`;
-  setModalText(`理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`);
-  dom.modalOk.textContent = "再試行";
-  dom.modalOk.className = "btn primary";
-  dom.modalCancel.textContent = "閉じる";
-  state.modalAction = () => {
-    state.pendingUnit = { unit, jump: null };
-    api
-      .retryUnit(unit)
-      .then((answer) => {
-        state.units = answer.units || state.units;
-        renderUnitSwitch();
-      })
-      .catch((error) => showOverlay("作り直せませんでした", String(error)));
-  };
-  dom.modal.hidden = false;
+  openModal({
+    title: `${unitLabel(unit)}の単位を作れなかった`,
+    body: `理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`,
+    okLabel: "再試行",
+    okClass: "btn primary",
+    cancelLabel: "閉じる",
+    action: () => {
+      state.pendingUnit = { unit, jump: null };
+      api
+        .retryUnit(unit)
+        .then((answer) => {
+          state.units = answer.units || state.units;
+          renderUnitSwitch();
+        })
+        .catch((error) => showOverlay("作り直せませんでした", String(error)));
+    },
+  });
 }
 
 /** もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。 */

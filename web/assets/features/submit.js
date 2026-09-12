@@ -2,13 +2,13 @@
 // 送信の確認と、送信そのもの。
 
 import * as api from "../api.js";
-import { dom, el, textEl } from "../dom.js";
+import { el, textEl } from "../dom.js";
 import { state, unitLabel } from "../state.js";
 import { submitSummary } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderSubmitButtons } from "../views/header.js";
-import { showCompletion, showOverlay } from "../views/overlay.js";
+import { openModal, showCompletion, showOverlay } from "../views/overlay.js";
 
 /**
  * 送信の前の確認。取り消せないことと verdict に加えて、送るコメントの件数（両方の
@@ -19,15 +19,11 @@ export function openConfirm(verdict) {
   if (state.submitted) {
     return;
   }
-  state.modalAction = () => void submitReview(verdict);
-  dom.modalCancel.textContent = "戻る";
   const approve = verdict === "approved";
   const summary = submitSummary(
     state.allComments,
     state.entries.map((entry) => entry.file),
   );
-  dom.modalTitle.textContent = approve ? "承認して終了しますか？" : "変更要求で終了しますか？";
-  dom.modalBody.textContent = "";
   const list = el("dl", "sum");
   const seenLabel = state.unit ? `見たファイル（${unitLabel(state.unit)}）` : "見たファイル";
   list.append(
@@ -36,22 +32,26 @@ export function openConfirm(verdict) {
     textEl("dt", "", seenLabel),
     textEl("dd", "", `${summary.seen} / ${summary.total}`),
   );
-  dom.modalBody.append(list);
+  /** @type {HTMLElement[]} */
+  const body = [list];
   if (summary.unseen > 0) {
-    dom.modalBody.append(
-      textEl("p", "warn", `まだ見ていないファイルが ${summary.unseen} あります。`),
-    );
+    body.push(textEl("p", "warn", `まだ見ていないファイルが ${summary.unseen} あります。`));
   }
-  dom.modalBody.append(
+  body.push(
     textEl(
       "p",
       "",
       `レビューを終了して、${approve ? "承認" : "変更要求"}の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。`,
     ),
   );
-  dom.modalOk.textContent = approve ? "承認して終了" : "変更要求で終了";
-  dom.modalOk.className = approve ? "btn primary" : "btn secondary";
-  dom.modal.hidden = false;
+  openModal({
+    title: approve ? "承認して終了しますか？" : "変更要求で終了しますか？",
+    body,
+    okLabel: approve ? "承認して終了" : "変更要求で終了",
+    okClass: approve ? "btn primary" : "btn secondary",
+    cancelLabel: "戻る",
+    action: () => void submitReview(verdict),
+  });
 }
 
 /**
