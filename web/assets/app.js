@@ -182,7 +182,6 @@ const dom = {
  *   dragging: { fileId: string, side: string } | null,
  *   submitted: boolean,
  *   updateAvailable: boolean,
- *   pendingVerdict: "approved" | "changes_requested" | null,
  *   treeItems: Map<string, HTMLButtonElement>,
  *   treeActiveId: string | null,
  *   treeVersion: number,
@@ -246,7 +245,6 @@ const state = {
   dragging: null,
   submitted: false,
   updateAvailable: false,
-  pendingVerdict: null,
   treeItems: new Map(),
   treeActiveId: null,
   treeVersion: 0,
@@ -910,6 +908,8 @@ function renderFileHeader() {
   );
   expand.disabled = state.submitted || state.binary || busy;
   expand.dataset.focusKey = "file-expand";
+  expand.classList.toggle("active", fullyExpanded);
+  expand.setAttribute("aria-pressed", String(fullyExpanded));
   expand.addEventListener("click", () => {
     if (fullyExpanded) {
       collapseAll();
@@ -1822,7 +1822,7 @@ function renderOriginLine(line) {
     return row;
   }
   if (origin.failed) {
-    row.append(textEl("span", "origin-unknown", "求められませんでした"));
+    row.append(textEl("span", "origin-unknown", "特定できない"));
     return row;
   }
   const block = origin.blocks.get(Number(line.block));
@@ -2149,7 +2149,6 @@ function openConfirm(verdict) {
   if (state.submitted) {
     return;
   }
-  state.pendingVerdict = verdict;
   state.modalAction = () => void submitReview(verdict);
   dom.modalCancel.textContent = "戻る";
   const approve = verdict === "approved";
@@ -2196,7 +2195,6 @@ function setModalText(text) {
 
 function closeModal() {
   dom.modal.hidden = true;
-  state.pendingVerdict = null;
   state.modalAction = null;
 }
 
@@ -2771,8 +2769,7 @@ function renderRuler(offsets) {
         del: styles.getPropertyValue("--del-ink").trim(),
         note: styles.getPropertyValue("--note-line").trim(),
       };
-      const stops = reachableStops().length > 0 || state.display.length > 0;
-      const kinds = stops ? state.display.map(rulerKind) : [];
+      const kinds = state.display.map(rulerKind);
       for (const mark of rulerMarks(kinds, offsets, height)) {
         context.fillStyle = colors[mark.kind];
         if (mark.kind === "note") {
@@ -3171,6 +3168,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     state.loading = true;
     state.rows = [];
     state.display = [];
+    state.displayFileId = null;
     resetHeights();
     state.threads = { byLine: new Map(), floating: [] };
     renderTree();
