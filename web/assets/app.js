@@ -162,6 +162,7 @@ const dom = {
  *   commentStore: Map<string, any[]>,
  *   rows: LogicalRow[],
  *   display: DisplayLine[],
+ *   displayFileId: string | null,
  *   heights: number[],
  *   staleRows: Set<number>,
  *   threads: { byLine: Map<number, any[]>, floating: any[] },
@@ -225,6 +226,7 @@ const state = {
   commentStore: new Map(),
   rows: [],
   display: [],
+  displayFileId: null,
   heights: [],
   staleRows: new Set(),
   threads: { byLine: new Map(), floating: [] },
@@ -3087,11 +3089,18 @@ function recomputeThreads() {
  * @param {Anchor | null} [anchor] 上端に見えていた行。省略するといまの表示から取る。
  */
 function recomputeDisplay(anchor = captureAnchor()) {
-  const previous = state.display;
-  const previousHeights = state.heights;
+  const entry = currentEntry();
+  const fileId = entry ? entry.file.id : null;
+  // 高さを引き継げるのは、同じファイルを作り直すときだけ。行の見分けはファイルの中の
+  // 位置と種類だけで決まるので、別のファイルへ移ったときに引き継ぐと、そのファイルに
+  // 無いコメントの吹き出しの高さが同じ位置の行に付いてしまう。
+  const sameFile = fileId !== null && fileId === state.displayFileId;
+  const previous = sameFile ? state.display : [];
+  const previousHeights = sameFile ? state.heights : [];
   state.display = toDisplayLines(withRowIndex(state.rows), state.mode, {
     origin: originShown(),
   });
+  state.displayFileId = fileId;
   resetHeights();
   // 測った高さは残る行へ移す。捨てると、見えていない上の行が基準値に詰まって
   // 読んでいた位置が上へずれる。
