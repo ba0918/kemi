@@ -334,15 +334,17 @@ export function toggleOrigin(entry) {
 /** 重要が付いたファイルだけを出す（R-FOCUS: ツリーだけを絞り、本文の表示は変えない）。 */
 export function toggleFocusOnly() {
   state.focusOnly = !state.focusOnly;
-  const current = currentEntry();
-  rebuildVisible(current ? current.file.id : undefined);
-  renderHeader();
-  renderTree();
+  rebuildAndRenderTree();
 }
 
 /** 増減数の多い順に並べ替える。 */
 export function toggleSortBySize() {
   state.sortBySize = !state.sortBySize;
+  rebuildAndRenderTree();
+}
+
+/** ツリーに出す並びを作り直し、上部バーとツリーを描き直す。表示中のファイルは変えない。 */
+function rebuildAndRenderTree() {
   const current = currentEntry();
   rebuildVisible(current ? current.file.id : undefined);
   renderHeader();
