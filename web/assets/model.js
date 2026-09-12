@@ -566,18 +566,6 @@ export function suggestionAllowed(side) {
 }
 
 /**
- * id が一致するコメントだけを差し替えた新しい配列を返す。
- * @param {any[]} comments
- * @param {any} updated
- * @returns {any[]}
- */
-export function replaceComment(comments, updated) {
-  return comments.map((comment) =>
-    comment.id === updated.id ? updated : comment,
-  );
-}
-
-/**
  * 下書きをファイルとコメント位置ごとに分ける localStorage のキー。
  * @param {string} fileId
  * @param {{ side: string, start: number, end: number } | null} selection
@@ -605,23 +593,6 @@ export function nextHighlightOverride(enabled, capable) {
     return null;
   }
   return "on";
-}
-
-/**
- * @param {string} status
- * @returns {string}
- */
-export function statusLabel(status) {
-  switch (status) {
-    case "add":
-      return "追加";
-    case "delete":
-      return "削除";
-    case "rename":
-      return "改名";
-    default:
-      return "変更";
-  }
 }
 
 /**
@@ -874,7 +845,7 @@ export function nextFileIndex(files, index, direction, navigable) {
  * @param {number} position
  * @returns {number}
  */
-export function currentStopIndex(tops, position) {
+function currentStopIndex(tops, position) {
   let current = -1;
   tops.forEach((top, index) => {
     if (top <= position + 1) {
@@ -1254,7 +1225,7 @@ export function placeThreads(displayLines, comments) {
  * @param {any} review
  * @returns {{ files: number, groups: number, add: number, del: number }}
  */
-export function reviewStats(review) {
+function reviewStats(review) {
   let files = 0;
   let add = 0;
   let del = 0;

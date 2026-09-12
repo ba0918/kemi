@@ -16,10 +16,7 @@ import {
   nextHighlightOverride,
   nextTheme,
   placeThreads,
-  replaceComment,
   resolveTheme,
-  reviewStats,
-  statusLabel,
   suggestionAllowed,
   toDisplayLines,
   windowFor,
@@ -38,7 +35,6 @@ import {
   unitSwitchTarget,
   originJumpTarget,
   seenProgress,
-  currentStopIndex,
   rulerMarks,
   firstLine,
   commentedLines,
@@ -331,13 +327,6 @@ test("collapseDefault_uses_server_state_and_local_override", () => {
   assert.equal(collapseDefault(file("a.rs", 1, 1), {}), false);
 });
 
-test("statusLabel_translates_status", () => {
-  assert.equal(statusLabel("add"), "追加");
-  assert.equal(statusLabel("delete"), "削除");
-  assert.equal(statusLabel("rename"), "改名");
-  assert.equal(statusLabel("modify"), "変更");
-});
-
 test("formatBytes_uses_binary_units", () => {
   assert.equal(formatBytes(0), "0 B");
   assert.equal(formatBytes(512), "512 B");
@@ -374,14 +363,6 @@ test("draftKey_separates_file_and_range", () => {
     draftKey("f1", { side: "new", start: 3, end: 5 }),
     draftKey("f2", { side: "new", start: 3, end: 5 }),
   );
-});
-
-test("replaceComment_swaps_only_the_matching_id", () => {
-  const first = { id: "c1", body: "a" };
-  const second = { id: "c2", body: "b" };
-  const updated = { id: "c1", body: "a", replies: ["r"] };
-
-  assert.deepEqual(replaceComment([first, second], updated), [updated, second]);
 });
 
 /**
@@ -498,17 +479,6 @@ test("placeThreads_preserves_creation_order", () => {
     (placed.byLine.get(0) || []).map((comment) => comment.id),
     ["c1", "c2"],
   );
-});
-
-test("reviewStats_sums_files_and_changes", () => {
-  const review = {
-    groups: [
-      { id: "g1", files: [file("a.rs", 1, 2), file("b.rs", 3, 4)] },
-      { id: "g2", files: [file("c.rs", 5, 6)] },
-    ],
-  };
-
-  assert.deepEqual(reviewStats(review), { files: 3, groups: 2, add: 9, del: 12 });
 });
 
 test("metaItems_shows_manifest_meta_and_computed_stats", () => {
@@ -887,15 +857,6 @@ test("seen_progress_counts_seen_files_and_marks_done", () => {
   });
   assert.deepEqual(seenProgress([file("a", 1, 0, { seen: true })]), { seen: 1, total: 1, done: true });
   assert.deepEqual(seenProgress([]), { seen: 0, total: 0, done: false });
-});
-
-test("current_stop_is_the_last_one_at_or_above_the_position", () => {
-  const tops = [100, 400, 900];
-
-  assert.equal(currentStopIndex(tops, 50), -1);
-  assert.equal(currentStopIndex(tops, 100), 0);
-  assert.equal(currentStopIndex(tops, 898), 1);
-  assert.equal(currentStopIndex(tops, 5000), 2);
 });
 
 test("ruler_marks_place_changes_and_comments_by_position_and_merge_per_pixel", () => {
