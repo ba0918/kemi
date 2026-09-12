@@ -442,11 +442,7 @@ export async function expandAll() {
     return;
   }
   if (collapseDefault(entry.file, state.collapsedOverrides)) {
-    state.collapsedOverrides[entry.file.id] = false;
-    void api
-      .postState({ file_id: entry.file.id, collapsed: false })
-      .catch(() => undefined);
-    renderNotice();
+    markCollapsedShown(entry);
   }
   const generation = state.selectGeneration;
   const cacheKey = state.cacheKey;
@@ -493,12 +489,21 @@ export function collapseAll() {
  * @param {Entry} entry
  */
 export function showCollapsed(entry) {
+  markCollapsedShown(entry);
+  renderDiff();
+}
+
+/**
+ * 畳んでいた内容を以降は開いた形で出すと決め、サーバにも覚えさせる。行の描き直しは
+ * 呼ぶ側が行う（全行の展開では、展開し終えてから 1 回だけ描き直す）。
+ * @param {Entry} entry
+ */
+function markCollapsedShown(entry) {
   state.collapsedOverrides[entry.file.id] = false;
   void api
     .postState({ file_id: entry.file.id, collapsed: false })
     .catch(() => undefined);
   renderNotice();
-  renderDiff();
 }
 
 /**
