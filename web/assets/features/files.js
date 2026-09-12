@@ -110,20 +110,21 @@ export async function refresh() {
   renderHeader();
   renderTree();
   renderFooter();
-  if (keep) {
-    await selectEntry(keep, { scrollTop: false });
-    dom.viewport.scrollTop = scrollTop;
-    scheduleRender();
-  } else if (state.visible.length > 0) {
-    await selectIndex(state.index, { scrollTop: false });
-    dom.viewport.scrollTop = scrollTop;
-    scheduleRender();
-  } else {
+  if (!keep && state.visible.length === 0) {
     state.current = null;
     renderGroupHeader();
     renderFileHeader();
     renderNotice();
+    return;
   }
+  if (keep) {
+    await selectEntry(keep, { scrollTop: false });
+  } else {
+    await selectIndex(state.index, { scrollTop: false });
+  }
+  // 読み直しの前に見ていた位置へ戻す。
+  dom.viewport.scrollTop = scrollTop;
+  scheduleRender();
 }
 
 /**
