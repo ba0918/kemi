@@ -266,6 +266,12 @@ export function renderFloating() {
   restoreFocusKey(dom.floating, focusKey);
 }
 
+export function remeasureAndRender() {
+  remeasure();
+  renderDiff();
+  renderFloating();
+}
+
 /**
  * @param {number} start
  * @param {number[]} offsets 描いたときの各行の上端

@@ -9,6 +9,7 @@ import { commentLabel, draftKey, firstLine } from "../model.js";
 import {
   recomputeThreads,
   remeasure,
+  remeasureAndRender,
   renderDiff,
   renderFloating,
 } from "./display.js";
@@ -138,9 +139,7 @@ export function openEditorAt(side, number) {
     suggestionOn: false,
     needsFocus: true,
   };
-  remeasure();
-  renderDiff();
-  renderFloating();
+  remeasureAndRender();
 }
 
 /**
@@ -167,17 +166,13 @@ export function openCommentEditor(comment) {
     needsFocus: true,
     editId: comment.id,
   };
-  remeasure();
-  renderDiff();
-  renderFloating();
+  remeasureAndRender();
 }
 
 export function closeEditor() {
   state.editor = null;
   state.selection = null;
-  remeasure();
-  renderDiff();
-  renderFloating();
+  remeasureAndRender();
 }
 
 /**
@@ -187,9 +182,7 @@ export function closeEditor() {
  */
 export function setCommentOpen(id, open) {
   state.commentOpen.set(id, open);
-  remeasure();
-  renderDiff();
-  renderFloating();
+  remeasureAndRender();
 }
 
 /**
