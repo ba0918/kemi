@@ -12,7 +12,7 @@ import { showToast } from "../views/overlay.js";
 
 /** @typedef {import("../state.js").Entry} Entry */
 
-export function openCommentList() {
+function openCommentList() {
   renderCommentList();
   dom.commentList.hidden = false;
   dom.btnComments.setAttribute("aria-expanded", "true");

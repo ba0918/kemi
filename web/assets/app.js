@@ -15,9 +15,7 @@ import {
   showCollapsed,
   toggleOriginReason,
 } from "./features/display.js";
-import {
-  navigate,
-} from "./features/navigation.js";
+import { navigate } from "./features/navigation.js";
 import {
   applyReview,
   copyPath,
@@ -51,37 +49,13 @@ import {
   toggleCommentList,
 } from "./features/comment-list.js";
 import { openConfirm } from "./features/submit.js";
-import {
-  renderNotice,
-} from "./views/file-header.js";
-import {
-  renderTree,
-} from "./views/tree.js";
-import {
-  renderFooter,
-  renderHeader,
-  renderUpdateBadge,
-} from "./views/header.js";
-import {
-  closeModal,
-  runModalAction,
-} from "./views/overlay.js";
-import {
-  dom,
-} from "./dom.js";
-import {
-  currentEntry,
-  state,
-} from "./state.js";
-import {
-  keyAction,
-} from "./model.js";
-
-/** @typedef {import("./model.js").FileEntry} FileEntry */
-/** @typedef {import("./model.js").LogicalRow} LogicalRow */
-/** @typedef {import("./model.js").DisplayLine} DisplayLine */
-/** @typedef {import("./state.js").Entry} Entry */
-/** @typedef {import("./state.js").Editor} Editor */
+import { renderNotice } from "./views/file-header.js";
+import { renderTree } from "./views/tree.js";
+import { renderFooter, renderHeader, renderUpdateBadge } from "./views/header.js";
+import { closeModal, runModalAction } from "./views/overlay.js";
+import { dom } from "./dom.js";
+import { currentEntry, state } from "./state.js";
+import { keyAction } from "./model.js";
 
 /**
  * @param {KeyboardEvent} event

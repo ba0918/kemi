@@ -58,7 +58,7 @@ const CHANGE_KINDS = new Set(["replace", "replace-old", "replace-new", "delete",
  * @param {string} kind
  * @returns {boolean}
  */
-export function isChangeKind(kind) {
+function isChangeKind(kind) {
   return CHANGE_KINDS.has(kind);
 }
 
@@ -1303,7 +1303,7 @@ export function metaItems(review) {
 }
 
 /** テーマの巡回順。 */
-export const THEMES = [
+const THEMES = [
   "auto",
   "light",
   "dark",
