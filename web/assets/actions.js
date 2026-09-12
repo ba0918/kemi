@@ -20,9 +20,11 @@
 /**
  * @typedef {{
  *   addComment: (payload: any) => void,
+ *   closeCommentList: () => void,
  *   closeEditor: () => void,
  *   confirmDeleteComment: (comment: any) => void,
  *   editComment: (payload: any) => void,
+ *   goToComment: (comment: any, unit: string | null) => void,
  *   openCommentEditor: (comment: any) => void,
  *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => void,
  *   setCommentOpen: (id: string, open: boolean) => void,
