@@ -36,6 +36,9 @@ import { renderNav, renderRuler } from "../views/nav.js";
 
 /** @typedef {import("../model.js").LogicalRow} LogicalRow */
 /** @typedef {import("../state.js").Entry} Entry */
+
+/** 測り直しの後の描き直しを、1 フレームに 1 回だけにする。 */
+let rendering = false;
 /** @typedef {import("../model.js").DisplayLine} DisplayLine */
 
 /**
@@ -319,10 +322,10 @@ function measureHeights(start, offsets) {
     // 測り終えて動かなくなった。ここから先、置き直すものはもう無い。
     state.landing = null;
   }
-  if (changed && !state.rendering) {
-    state.rendering = true;
+  if (changed && !rendering) {
+    rendering = true;
     requestAnimationFrame(() => {
-      state.rendering = false;
+      rendering = false;
       renderDiff();
     });
   }
