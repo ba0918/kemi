@@ -1146,10 +1146,11 @@ async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() 
         ),
     )
     .unwrap();
-    let kemi = Kemi::start(
-        kemi_command(&dir.path, &state.path)
-            .env("GIT_CONFIG_GLOBAL", &global)
-            .args(["--from", &base, "--no-open", "--port", "0"]),
+    let kemi = start_with_global(
+        &dir.path,
+        &state,
+        &global,
+        &["--from", &base, "--no-open", "--port", "0"],
     );
 
     let response = fetch_origin(&kemi, "a.txt").await;
@@ -1222,10 +1223,11 @@ async fn origin_is_found_in_a_partial_clone_whose_remote_needs_the_global_config
         missing.lines().any(|line| line.starts_with('?')),
         "the clone must lack some blobs"
     );
-    let mut kemi = Kemi::start(
-        kemi_command(&clone.path, &state.path)
-            .env("GIT_CONFIG_GLOBAL", &global)
-            .args(["--from", &base, "--no-open", "--port", "0"]),
+    let mut kemi = start_with_global(
+        &clone.path,
+        &state,
+        &global,
+        &["--from", &base, "--no-open", "--port", "0"],
     );
     let review = reqwest::get(format!("{}api/review", kemi.url))
         .await
