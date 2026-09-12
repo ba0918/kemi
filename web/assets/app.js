@@ -3,6 +3,15 @@
 
 import * as api from "./api.js";
 import {
+  clearDraft,
+  loadDraft,
+  loadMode,
+  loadTheme,
+  saveDraft,
+  saveMode,
+  saveTheme,
+} from "./storage.js";
+import {
   buildTree,
   collapseDefault,
   collapseLoadedRows,
@@ -216,11 +225,11 @@ const state = {
   visible: [],
   current: null,
   index: 0,
-  mode: localStorage.getItem("kemi-mode") === "split" ? "split" : "unified",
+  mode: loadMode(),
   wrap: false,
   focusOnly: false,
   sortBySize: false,
-  theme: localStorage.getItem("kemi-theme") || "auto",
+  theme: loadTheme(),
   cache: new Map(),
   commentStore: new Map(),
   rows: [],
@@ -2064,27 +2073,6 @@ function selectionText() {
 }
 
 /**
- * @param {string} key
- * @returns {string}
- */
-function loadDraft(key) {
-  return localStorage.getItem(key) || "";
-}
-
-/**
- * 下書きは入力のたびに残す（CONTEXT.md の下書き）。
- * @param {string} key
- * @param {string} value
- */
-function saveDraft(key, value) {
-  if (value === "") {
-    localStorage.removeItem(key);
-  } else {
-    localStorage.setItem(key, value);
-  }
-}
-
-/**
  * @param {any} payload
  */
 async function addComment(payload) {
@@ -2119,7 +2107,7 @@ async function addComment(payload) {
             start: payload.start_line,
             end: payload.end_line,
           };
-    localStorage.removeItem(draftKey(payload.file_id, selection));
+    clearDraft(draftKey(payload.file_id, selection));
   } catch (error) {
     showOverlay("コメントを追加できません", String(error));
   }
@@ -3283,7 +3271,7 @@ function applyTheme() {
  */
 function setMode(mode) {
   state.mode = mode;
-  localStorage.setItem("kemi-mode", mode);
+  saveMode(mode);
   recomputeDisplay();
   renderHeader();
   renderDiff();
@@ -3420,7 +3408,7 @@ dom.chipSort.addEventListener("click", () => {
 });
 dom.btnTheme.addEventListener("click", () => {
   state.theme = nextTheme(state.theme);
-  localStorage.setItem("kemi-theme", state.theme);
+  saveTheme(state.theme);
   applyTheme();
 });
 dom.updateBadge.addEventListener("click", () => void refresh());
