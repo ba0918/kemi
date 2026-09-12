@@ -2767,8 +2767,7 @@ function renderRuler(offsets) {
         del: styles.getPropertyValue("--del-ink").trim(),
         note: styles.getPropertyValue("--note-line").trim(),
       };
-      const stops = reachableStops().length > 0 || state.display.length > 0;
-      const kinds = stops ? state.display.map(rulerKind) : [];
+      const kinds = state.display.map(rulerKind);
       for (const mark of rulerMarks(kinds, offsets, height)) {
         context.fillStyle = colors[mark.kind];
         if (mark.kind === "note") {
