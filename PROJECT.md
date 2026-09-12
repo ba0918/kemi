@@ -24,6 +24,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `crates/kemi-server/` | HTTP と SSE（axum） |
 | `crates/kemi-webview/` | 資産の埋め込み |
 | `web/` | ESM と CSS のソース。`tsc --checkJs` は型検査のみ（層は下の節） |
+| `skills/kemi/SKILL.md` | エージェント向けの kemi の使い方。仕様から派生した配布物で、契約の正典ではない |
 | `scripts/` | フィクスチャ生成と起動時間の計測 |
 
 ### `web/assets/` の層
@@ -58,6 +59,9 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Build | `cargo build --release` |
 | Test | `cargo test` / `node --test web` |
 | Lint | `cargo clippy -- -D warnings` / `cargo fmt --check` / `npx tsc -p web --noEmit` |
+| スキルの形式 | `agentskills validate ./skills/kemi` |
+| スキルの frontmatter（非 ASCII） | `awk 'NR>1 && /^---$/{exit} NR>1' skills/kemi/SKILL.md \| grep -nP '[^\x00-\x7F]'` が一致しない |
+| スキルの frontmatter（項目数） | `awk 'NR>1 && /^---$/{exit} NR>1' skills/kemi/SKILL.md \| grep -cE '^[a-z]+:'` が `3` |
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
@@ -68,7 +72,11 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `docs/spec/kemi.md` が契約の正典。振る舞いを変えるときは該当節 ID（例 `R-SUBMIT`）を
   引用し、実装より先に仕様を直す。
 - 用語は `CONTEXT.md` の読みに従う（例: コメントを「注釈」と呼ばない）。
-- コードとコミットは日本語、UI 文言と docs も日本語、README は英語。
+- コードとコミットは日本語、UI 文言と docs も日本語、README と `skills/` は英語。
+- CLI と JSON の契約を変えるコミットで、`skills/kemi/SKILL.md` と README も同時に直す。
+  一致を確かめる機械検査は無いので、レビューで見る。
+- 利用者に届けたいスキルの直しは、文面だけの変更でもリリース（`v<semver>` のタグ）で出す。
+  `gh skill` が配るのはタグの内容で、ブランチへのコミットだけでは利用者に届かない。
 - フロントにビルド工程を入れない。型は JSDoc で書き、生成物をコミットしない。
 - 新しい依存は `R-DEPS` のライセンス範囲に限り、C 依存（oniguruma 等）を持ち込まない
   （musl 静的リンクのため）。
