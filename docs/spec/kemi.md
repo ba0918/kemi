@@ -20,8 +20,8 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 
 - リポジトリ名とバイナリ名は `kemi`（「閲する」から）。
 - ライセンスは MIT OR Apache-2.0。
-- README は英語、UI と docs（この仕様を含む）は日本語。ただし UI の次のものは英語の
-  ままでよい: 状態の `A` / `D` / `R` / `M`、コミットの種類（`R-VIEW` の形式に合う
+- README と `skills/` の配布物は英語（翻訳版は作らない）、UI と docs（この仕様を含む）は
+  日本語。ただし UI の次のものは英語のままでよい: 状態の `A` / `D` / `R` / `M`、コミットの種類（`R-VIEW` の形式に合う
   もの）、`unified` / `split`、テーマのプリセット名（`light` / `dark` / `solarized light` /
   `solarized dark`）、`JSON`、キー名（`Cmd` / `Ctrl` / `Enter` / `Esc`、`n` / `p` / `v` など
   キーボードの刻印やキー操作として示すもの）、sha、パス・コード・コマンド名、`CONTEXT.md` に英語の
@@ -35,6 +35,43 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
   `mise use -g github:ba0918/kemi` でインストールできる。
 - バージョンの正典はリポジトリ内の 1 箇所（ルート `Cargo.toml` の `version`）。
   タグは `v<semver>`。
+- エージェント向けの使い方の文書を `skills/kemi/SKILL.md` に置き、リポジトリごと配る。
+  形式は Agent Skills（agentskills.io の仕様。`SKILL.md` の先頭に `---` で囲んだ設定欄
+  = frontmatter を持つ）。以下、この文書を「スキル」と呼ぶ。スキルは README と同じく
+  この仕様から派生した配布物で、契約の正典ではない。正典はこの仕様で、スキルの文が
+  契約を上書きしない。
+  - 含むもの（括弧は書き写す元の節）: 起動と終了の待ち方 — バックグラウンドで起動し、
+    終了の通知を受けて stdout の JSON を読む。前面で走らせない、途中で止めない、会話の
+    中の「承認」を verdict と見なさない（`R-SUBMIT`）。終了コードの表と、`130` や強制終了
+    のときは結果が無いこと（`R-SUBMIT`）。入力モードの選び方と、`--group-by` の既定
+    `file` とコミットごとを見せたいときの指定、`--no-open` / `--port` / `--focus`
+    （`R-INPUT`）。manifest の書き方 — グループの `why` / `watch`、差分の `old` / `new` と
+    `old_path` / `new_path`、`approval` の identity をエージェント自身が計算すること
+    （`R-INPUT-1`）。結果 JSON の読み方 — 契約版 `kemi`、verdict、コメント、suggestion は
+    エージェントが適用する、outdated の扱い、承認のときは identity を確かめてから進む
+    （`R-SUBMIT`、`R-COMMENT`、`R-LIVE`）。`--result` での取り直し（`R-RESULT`）。
+    `--digest` の使い所（`R-DIGEST`）。起動後に人へ伝えること — URL、グループの数、
+    最も見てほしい判断、自分の仮定（`R-VIEW`）。
+  - 含まないもの: kemi の内部構造、ビルド、開発の手順。
+  - 自己完結する。他の `SKILL.md` や共有ファイルに依存せず、変更の提示の規範（例:
+    差分を意図ごとにまとめる規則）は「あればそれに従う」と言及するだけ。本文（末尾の
+    注を除く部分）は道具に依存しない言葉で書き、特定のエージェント向けの具体は末尾の注
+    に分ける。
+  - frontmatter は `name: kemi`、`description`（何をするか、いつ使うか）、`license` の
+    3 つだけを持ち、ほかの項目は付けない。値は ASCII だけで書く（配布の道具の中に
+    frontmatter を ASCII に限るものがある）。
+  - 配布は、配布の定義ファイルを要らない経路（以下、コピー経路。symlink で置く道具を
+    含む）だけ。保証するのは `gh skill install ba0918/kemi kemi`（GitHub CLI の組み込み。
+    2 つ目の引数がスキル名）。`skills/kemi/` を手でコピーしても使える。README に載せる
+    経路はこの `gh skill install` の 1 つだけ。`npx skills` と APM はこの形のリポジトリを
+    読める仕組みだが未実測で、README には載せない。Claude Code / Codex の plugin の
+    定義ファイル（`.claude-plugin/`）は置かない（`P12`、`R17`）。
+  - スキルは frontmatter に版を持たない。届く内容は経路で決まる: `gh skill` はタグ付き
+    リリースがあればその最新、無ければ既定ブランチの HEAD を配る。利用者に届けたい
+    スキルの直しは、文面だけの変更でもリリース（`v<semver>` のタグ）で出す。ほかの経路
+    の更新は、利用者が入れ直したときに届く。
+  - CLI と JSON の契約を変えるコミットで、スキルと README も同時に直す。両者の一致を
+    機械では検査しない（レビューで見る）。
 
 **成功条件**
 
@@ -42,11 +79,21 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
   `kemi-<target>.tar.xz` と対応する `.sha256` が存在する。
 - きれいな環境で `mise use -g github:ba0918/kemi` の後、`kemi --version` が
   タグと一致するバージョンを出す。
-- README が英語で、UI 文言と docs が日本語である。
+- README と `skills/` 配下のすべてのファイルが英語で、UI 文言と docs が日本語である。
+- `skills/kemi/SKILL.md` の frontmatter が、`name` は親ディレクトリ名 `kemi` と一致、
+  `description` は空でなく 1024 文字以内、項目は上の 3 つだけ、値は ASCII だけ、を
+  満たす。`name` と `description` は Agent Skills の公式バリデータ
+  `agentskills validate ./skills/kemi`（skills-ref。版の固定は `D3`）で、項目の数と
+  ASCII は frontmatter を読む短い検査で確かめる。
+- 最初のリリース以降、きれいな環境で `gh skill install ba0918/kemi kemi` の後、
+  エージェントがスキルの手順だけで kemi を起動し、submit（承認または変更要求）まで
+  到達して stdout の JSON を受け取れる（人による確認。エージェントはどれでもよい）。
 
 **反例**
 
 - Windows 用アセットが無いこと自体は反例ではない（`P7`）。
+- スキルが、この仕様に無いフラグや JSON のキーを案内している。
+- スキルの本文（末尾の注を除く部分）に、特定のエージェントの道具の名前が出ている。
 - インストールされた `kemi` が動的ライブラリ不足で起動しない（musl 静的の失敗）。
 - UI の文章やボタンの文言に、上の一覧に無い英語の未翻訳文言が混ざる。
 
@@ -975,7 +1022,11 @@ crates/kemi-webview/  # HTML/CSS/JS 資産の埋め込み
 web/
   package.json        # TypeScript（型チェックのみ）を固定
   tsconfig.json
-  *.js                # ビルド不要の ESM + CSS
+  index.html
+  assets/             # ビルド不要の ESM + CSS。app.js / features/ / views/ / leaf の
+                      # 4 層（層の分け方は D11）
+skills/
+  kemi/SKILL.md       # エージェント向けの使い方（配布物。R-DIST）
 scripts/
   gen-fixture.sh      # 検証用の合成リポジトリ生成
   measure-startup.sh  # 起動時間の計測
@@ -1045,10 +1096,12 @@ scripts/
 | 依存ライセンス | `cargo deny check licenses` |
 | フロントの型 | `npx tsc -p web --noEmit` |
 | フロントの純ロジック | `node --test web` |
+| スキルの形式 | `agentskills validate ./skills/kemi`（skills-ref の公式バリデータ）と frontmatter の非 ASCII の検査。CI でも走らせる |
+| スキルと契約の一致 | 人による確認（契約を変えるコミットのレビュー。`R-DIST`） |
 | 規模の目標 | `scripts/gen-fixture.sh` と `scripts/measure-startup.sh` / `scripts/measure-range.sh` |
 | マージや由来の検証 | `cargo test` の中で作る一時的な git リポジトリ（既存の git テストと同じ作り方） |
 | 表示と操作 | 人による確認。DOM 行数はブラウザ自動化（agent-browser 等）で `data-kemi-row` を数える |
-| 配布 | リリースワークフローの成果物と、別環境での mise インストール |
+| 配布 | リリースワークフローの成果物と、別環境での mise インストールと `gh skill install` |
 
 - `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` は、決定的な
   内容で git リポジトリを生成する（同じ引数なら同じ結果）。
@@ -1093,6 +1146,8 @@ scripts/
   合計の件数上限を契約に含めること。
 - P10 静的 HTML の書き出し（`--out`）。
 - P11 折りたたみ行の囲みの文脈（関数名など）。行数と行範囲だけを出す。
+- P12 スキルの plugin の定義ファイル（`.claude-plugin/plugin.json`、`marketplace.json`）。
+  コピー経路だけで配る（`R17`）。
 
 ## 委譲
 
@@ -1114,6 +1169,12 @@ scripts/
 - D9 結果ファイルの名前の形式と、リポジトリの識別を置き場所と名前のどちらでどう持つか。
   どの方法でも `R-RESULT` の選び方（送信時刻で決める最新、リポジトリの識別の基準）と
   中身は同じ。
+- D10 スキル（`skills/kemi/SKILL.md`）と README の Agent skill の節の、言い回しと見出しの
+  構成。`R-DIST` の「含むもの」を欠かさず、契約と食い違わない限り、どの書き方でも
+  振る舞いは同じ。手順だけで submit まで到達できることは `R-DIST` の成功条件が縛る。
+- D11 フロントの層の分け方（`web/assets/` の 4 層と依存の向き）。規則の置き場は
+  `PROJECT.md`。どの分け方でも画面の振る舞いは変わらず、`R-WS` の成功条件（`tsc` と
+  `node --test`）で検査する。
 
 ## 却下
 
@@ -1123,7 +1184,7 @@ scripts/
 - R4 ブラウザ内編集（理由: レビューが目的。編集はエージェントが行う）。
 - R5 Windows 対応（理由: 今は不要。後から検討）。
 - R6 suggestion のブラウザ適用（理由: 自分では直さない方針）。
-- R7 ツールを変えず、skill に `--group-by file` か manifest を使わせるだけにする
+- R7 ツールを変えず、旧 `diff-review-viewer` スキルに `--group-by file` か manifest を使わせるだけにする
   （理由: 最終形とコミットごとの両取りに届かない）。
 - R8 両取りを起動時の `--group-by` の選択だけで済ませる（理由: 見せ方を変えるたびに
   起動し直しになる）。
@@ -1142,6 +1203,9 @@ scripts/
   後者は同時に動かしたセッションの結果を上書きする）。
 - R16 結果の読み出しをサブコマンド `kemi result` にする（理由: 位置引数の manifest
   パスと区別できない）。
+- R17 スキルを plugin 経路（Claude Code / Codex の marketplace の定義ファイル）でも配る
+  （理由: 単体のスキルに対して、エージェントごとの定義ファイルと版の写しが要り、手間に
+  見合わない。コピー経路は定義ファイル無しで動く）。
 
 ## 未決
 
@@ -1150,5 +1214,7 @@ scripts/
 ## 納品後の環境更新（リポジトリ外）
 
 - `~/.local/bin/diff-review`（Python）を kemi に置き換える。
-- `diff-review-viewer` スキルを更新する: `kemi` の呼び方、stdout JSON 契約、
-  `--out` 廃止、suggestion はエージェントが適用すること。
+- `~/.claude/skills/diff-review-viewer` を消し、`gh skill install ba0918/kemi kemi` で
+  `kemi` スキルを入れる（最初のリリースまでは `skills/kemi/` を手でコピー）。
+  利用者の共通の指示（`~/.claude/CLAUDE.md`）の「diff-review の提示手段は
+  `diff-review-viewer` スキルが担う」を「`kemi` スキルが担う」に直す。
