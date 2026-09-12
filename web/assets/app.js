@@ -35,6 +35,7 @@ import {
   toggleSeen,
   toggleSortBySize,
 } from "./features/files.js";
+import { applyTheme, onSystemThemeChange, stepTheme } from "./features/theme.js";
 import { renderCommentList } from "./views/comment-list.js";
 import {
   renderFileHeader,
@@ -66,7 +67,6 @@ import {
   textEl,
 } from "./dom.js";
 import {
-  THEME_LABELS,
   UNIT_LABELS,
   currentEntry,
   flatten,
@@ -77,7 +77,6 @@ import {
 import {
   clearDraft,
   loadDraft,
-  saveTheme,
 } from "./storage.js";
 import {
   commentLabel,
@@ -85,10 +84,7 @@ import {
   submitSummary,
   unitSwitchTarget,
   draftKey,
-  isDarkTheme,
   keyAction,
-  nextTheme,
-  resolveTheme,
 } from "./model.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
@@ -635,31 +631,6 @@ async function onUnitEvent() {
   }
 }
 
-function applyTheme() {
-  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const resolved = resolveTheme(state.theme, prefersDark);
-  const dark = isDarkTheme(resolved);
-  const changed = state.dark !== dark;
-  state.dark = dark;
-  state.rulerDirty = true;
-  document.documentElement.dataset.theme = resolved;
-  const current =
-    THEME_LABELS[state.theme] || THEME_LABELS.auto;
-  const next = THEME_LABELS[nextTheme(state.theme)] || "";
-  dom.btnTheme.title = `テーマ: ${current}（クリックで ${next}）`;
-  if (changed && !state.submitted) {
-    state.cache.clear();
-    const entry = currentEntry();
-    if (entry) {
-      // テーマ切替は表示色の再取得だけ。入力中のエディタは閉じない。
-      void selectEntry(entry, { scrollTop: false, keepEditor: true });
-    }
-  } else if (!changed) {
-    // 明暗が同じでもプリセットが変われば追加・削除の色が変わる。位置の帯を描き直す。
-    scheduleRender();
-  }
-}
-
 /**
  * @param {KeyboardEvent} event
  */
@@ -744,11 +715,7 @@ dom.btnSplit.addEventListener("click", () => setMode("split"));
 dom.btnWrap.addEventListener("click", () => setWrap(!state.wrap));
 dom.chipFocus.addEventListener("click", toggleFocusOnly);
 dom.chipSort.addEventListener("click", toggleSortBySize);
-dom.btnTheme.addEventListener("click", () => {
-  state.theme = nextTheme(state.theme);
-  saveTheme(state.theme);
-  applyTheme();
-});
+dom.btnTheme.addEventListener("click", stepTheme);
 dom.updateBadge.addEventListener("click", () => void refresh());
 dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
@@ -778,11 +745,7 @@ dom.viewport.addEventListener("scroll", scheduleRender);
 window.addEventListener("resize", onResize);
 window
   .matchMedia("(prefers-color-scheme: dark)")
-  .addEventListener("change", () => {
-    if (state.theme === "auto") {
-      applyTheme();
-    }
-  });
+  .addEventListener("change", onSystemThemeChange);
 
 bindActions({
   addComment,
