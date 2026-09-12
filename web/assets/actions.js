@@ -19,7 +19,13 @@
 
 /**
  * @typedef {{
+ *   addComment: (payload: any) => void,
+ *   closeEditor: () => void,
+ *   confirmDeleteComment: (comment: any) => void,
+ *   editComment: (payload: any) => void,
+ *   openCommentEditor: (comment: any) => void,
  *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => void,
+ *   setCommentOpen: (id: string, open: boolean) => void,
  *   switchUnit: (unit: string, jump: UnitJump | null) => void,
  * }} Actions
  */
