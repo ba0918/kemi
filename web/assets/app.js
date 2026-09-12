@@ -3,10 +3,31 @@
 
 import * as api from "./api.js";
 import {
+  NAV_MARGIN,
+  OVERSCAN,
+  ROW_HEIGHT,
+  THEME_LABELS,
+  UNIT_LABELS,
+  allLinesExpanded,
+  commentsOf,
+  commitGroups,
+  currentEntry,
+  currentOrigin,
+  fileCacheKey,
+  flatten,
+  groupProgressFor,
+  isShowingFile,
+  originAvailable,
+  originKey,
+  originShown,
+  reachableStops,
+  selectionContains,
+  selectionText,
+  state,
+} from "./state.js";
+import {
   clearDraft,
   loadDraft,
-  loadMode,
-  loadTheme,
   saveDraft,
   saveMode,
   saveTheme,
@@ -64,14 +85,8 @@ import {
 /** @typedef {import("./model.js").FileEntry} FileEntry */
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
 /** @typedef {import("./model.js").DisplayLine} DisplayLine */
-
-const ROW_HEIGHT = 24;
-const OVERSCAN = 12;
-/** 変更間の移動で、止まる場所を画面の上端からこの分だけ下に置く（前の文脈を見せる）。 */
-const NAV_MARGIN = 48;
-
-/** @type {Record<string, string>} */
-const UNIT_LABELS = { file: "最終形", commit: "コミットごと" };
+/** @typedef {import("./state.js").Entry} Entry */
+/** @typedef {import("./state.js").Editor} Editor */
 
 const FILE_ICON =
   '<svg class="fi" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>';
@@ -87,15 +102,6 @@ const CODE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4 2 8l2.5 4M11.5 4 14 8l-2.5 4M9.5 2.5l-3 11"/></svg>';
 const ORIGIN_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="4" r="1.8"/><circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="8" r="1.8"/><path d="M4 5.8v4.4M5.6 4.8 10.4 7.2"/></svg>';
-
-/** @type {Record<string, string>} */
-const THEME_LABELS = {
-  auto: "自動",
-  light: "light",
-  dark: "dark",
-  "solarized-light": "solarized light",
-  "solarized-dark": "solarized dark",
-};
 
 /**
  * @param {string} selector
@@ -149,156 +155,6 @@ const dom = {
   overlay: must("#overlay"),
   overlayCard: must("#overlay-card"),
 };
-
-/**
- * @typedef {{ file: FileEntry, group: any }} Entry
- * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection
- * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number, wide: boolean, body: string, suggestion: string, suggestionOn: boolean, needsFocus: boolean, editId?: string }} Editor
- */
-
-/** @type {{
- *   review: any,
- *   entries: Entry[],
- *   visible: Entry[],
- *   current: Entry|null,
- *   index: number,
- *   mode: "unified" | "split",
- *   wrap: boolean,
- *   focusOnly: boolean,
- *   sortBySize: boolean,
- *   theme: string,
- *   cache: Map<string, any>,
- *   commentStore: Map<string, any[]>,
- *   rows: LogicalRow[],
- *   display: DisplayLine[],
- *   displayFileId: string | null,
- *   heights: number[],
- *   staleRows: Set<number>,
- *   threads: { byLine: Map<number, any[]>, floating: any[] },
- *   binary: boolean,
- *   collapsedOverrides: Record<string, boolean>,
- *   rendering: boolean,
- *   measureNext: boolean,
- *   highlightOverrides: Map<string, "on" | "off">,
- *   highlightCapable: boolean,
- *   highlightEnabled: boolean,
- *   dark: boolean,
- *   cacheKey: string,
- *   selectGeneration: number,
- *   comments: any[],
- *   selection: Selection | null,
- *   editor: Editor | null,
- *   dragging: { fileId: string, side: string } | null,
- *   submitted: boolean,
- *   updateAvailable: boolean,
- *   treeItems: Map<string, HTMLButtonElement>,
- *   treeActiveId: string | null,
- *   treeVersion: number,
- *   treeRenderedVersion: number,
- *   groupOpen: Map<string, boolean>,
- *   dirOpen: Map<string, boolean>,
- *   groupHeaderOpen: Map<string, boolean>,
- *   commentOpen: Map<string, boolean>,
- *   commented: Set<number>,
- *   loading: boolean,
- *   navigating: boolean,
- *   origins: Map<string, any>,
- *   originForced: Set<string>,
- *   originOpen: Map<string, string>,
- *   skipRanges: Map<number, any>,
- *   units: any[],
- *   unit: string | null,
- *   reviews: Map<string, any>,
- *   pendingUnit: { unit: string, jump: any } | null,
- *   allComments: any[],
- *   stops: number[],
- *   rulerDirty: boolean,
- *   pendingJump: { side: string, line: number } | "first" | "last" | null,
- *   toastTimer: number,
- *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
- *   modalAction: (() => void) | null,
- *   landing: { index: number, top: number, scrollTop: number, margin: number } | null,
- * }} */
-const state = {
-  review: null,
-  entries: [],
-  visible: [],
-  current: null,
-  index: 0,
-  mode: loadMode(),
-  wrap: false,
-  focusOnly: false,
-  sortBySize: false,
-  theme: loadTheme(),
-  cache: new Map(),
-  commentStore: new Map(),
-  rows: [],
-  display: [],
-  displayFileId: null,
-  heights: [],
-  staleRows: new Set(),
-  threads: { byLine: new Map(), floating: [] },
-  binary: false,
-  collapsedOverrides: {},
-  rendering: false,
-  measureNext: false,
-  highlightOverrides: new Map(),
-  highlightCapable: false,
-  highlightEnabled: false,
-  dark: false,
-  cacheKey: "",
-  selectGeneration: 0,
-  comments: [],
-  selection: null,
-  editor: null,
-  dragging: null,
-  submitted: false,
-  updateAvailable: false,
-  treeItems: new Map(),
-  treeActiveId: null,
-  treeVersion: 0,
-  treeRenderedVersion: -1,
-  groupOpen: new Map(),
-  dirOpen: new Map(),
-  groupHeaderOpen: new Map(),
-  commentOpen: new Map(),
-  commented: new Set(),
-  loading: false,
-  navigating: false,
-  origins: new Map(),
-  originForced: new Set(),
-  originOpen: new Map(),
-  skipRanges: new Map(),
-  units: [],
-  unit: null,
-  reviews: new Map(),
-  pendingUnit: null,
-  allComments: [],
-  stops: [],
-  rulerDirty: true,
-  pendingJump: null,
-  toastTimer: 0,
-  groupHeads: new Map(),
-  modalAction: null,
-  landing: null,
-};
-
-function currentEntry() {
-  return state.current;
-}
-
-/**
- * 表示中のファイルが指定のファイルと一致するか。
- *
- * 応答待ちの間に別ファイルへ切り替えて戻っても表示を更新できるよう、
- * 一致は選択の世代ではなくファイル id で判定する。
- * @param {string} fileId
- * @returns {boolean}
- */
-function isShowingFile(fileId) {
-  const entry = currentEntry();
-  return entry !== null && entry.file.id === fileId;
-}
 
 /**
  * @param {string} tag
@@ -388,21 +244,6 @@ function appendSegments(parent, segments, fallback) {
       parent.append(document.createTextNode(segment.text));
     }
   }
-}
-
-/**
- * @param {any} review
- * @returns {Entry[]}
- */
-function flatten(review) {
-  /** @type {Entry[]} */
-  const entries = [];
-  for (const group of review.groups) {
-    for (const file of group.files) {
-      entries.push({ file, group });
-    }
-  }
-  return entries;
 }
 
 /**
@@ -601,16 +442,6 @@ function appendGroupTitle(parent, group, className) {
 }
 
 /**
- * @param {string} groupId
- * @returns {{ seen: number, total: number, done: boolean }}
- */
-function groupProgressFor(groupId) {
-  return seenProgress(
-    state.entries.filter((entry) => entry.group.id === groupId).map((entry) => entry.file),
-  );
-}
-
-/**
  * ツリーのグループ見出しの進捗。全部見たら数の代わりに「閲」の印を出す。
  * @param {string} groupId
  */
@@ -630,18 +461,6 @@ function updateGroupHead(groupId) {
     head.count.append(textEl("span", "g-count", `${progress.seen} / ${progress.total}`));
   }
   head.bar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
-}
-
-/**
- * ファイルのコメント（ファイル全体のコメントを含む）。コメントの JSON は submit の契約の
- * 形でファイル id を持たないので、サーバが id を振るのと同じ（グループ, パス）で対応付ける。
- * @param {Entry} entry
- * @returns {any[]}
- */
-function commentsOf(entry) {
-  return state.allComments.filter(
-    (comment) => comment.group_id === entry.group.id && comment.path === entry.file.path,
-  );
 }
 
 /**
@@ -980,34 +799,6 @@ function renderFileHeader() {
   seen.addEventListener("click", () => void toggleSeen(entry.file));
   dom.fileHeader.append(seen);
   restoreFocusKey(dom.fileHeader, focusKey);
-}
-
-/** 最終形（由来を持つ単位）を表示しているか。 */
-function originAvailable() {
-  return Boolean(state.review && state.review.unit === "file");
-}
-
-/** 表示中のファイルで由来の行を出すか。上限を超えるファイルは有効にしたときだけ。 */
-function originShown() {
-  const entry = currentEntry();
-  if (!entry || !originAvailable() || state.binary) {
-    return false;
-  }
-  return state.highlightCapable || state.originForced.has(entry.file.id);
-}
-
-/**
- * @param {string} fileId
- * @returns {string}
- */
-function originKey(fileId) {
-  return `${fileId}|${state.originForced.has(fileId) ? 1 : 0}`;
-}
-
-/** 表示中のファイルの由来。取得中は "pending"、まだなら undefined。 */
-function currentOrigin() {
-  const entry = currentEntry();
-  return entry ? state.origins.get(originKey(entry.file.id)) : undefined;
 }
 
 /**
@@ -1996,21 +1787,6 @@ function numberCell(side, line, withPlus) {
 /**
  * @param {"old" | "new"} side
  * @param {number} number
- * @returns {boolean}
- */
-function selectionContains(side, number) {
-  const selection = state.selection;
-  return Boolean(
-    selection &&
-      selection.side === side &&
-      number >= selection.start &&
-      number <= selection.end,
-  );
-}
-
-/**
- * @param {"old" | "new"} side
- * @param {number} number
  */
 function startSelection(side, number) {
   if (state.submitted) {
@@ -2051,25 +1827,6 @@ function extendSelection(side, number) {
     end: Math.max(anchor, number),
   };
   renderDiff();
-}
-
-function selectionText() {
-  const selection = state.selection;
-  if (!selection) {
-    return "";
-  }
-  const texts = [];
-  for (const row of state.rows) {
-    const line = selection.side === "new" ? row.new : row.old;
-    if (
-      line &&
-      Number(line.number) >= selection.start &&
-      Number(line.number) <= selection.end
-    ) {
-      texts.push(line.text);
-    }
-  }
-  return texts.join("\n");
 }
 
 /**
@@ -2467,17 +2224,6 @@ async function expandAll() {
   renderFloating();
 }
 
-function allLinesExpanded() {
-  const data = state.cache.get(state.cacheKey);
-  if (!data || !data.collapsedRows) {
-    return false;
-  }
-  return (
-    state.rows !== data.collapsedRows &&
-    !state.rows.some((row) => row.kind === "skip")
-  );
-}
-
 function collapseAll() {
   const data = state.cache.get(state.cacheKey);
   if (!data || !data.collapsedRows || state.rows === data.collapsedRows) {
@@ -2493,15 +2239,6 @@ function collapseAll() {
   renderFileHeader();
   renderDiff();
   renderFloating();
-}
-
-/** 表示中のファイルで止まれる場所。畳まれたノイズやバイナリでは止まらない。 */
-function reachableStops() {
-  const entry = currentEntry();
-  if (!entry || state.binary || collapseDefault(entry.file, state.collapsedOverrides)) {
-    return [];
-  }
-  return state.stops;
 }
 
 /**
@@ -2901,15 +2638,6 @@ function openUnitFailure(status) {
   dom.modal.hidden = false;
 }
 
-/** コミットごとの単位の、グループ id と件名（読んであれば）。 */
-function commitGroups() {
-  const review = state.reviews.get("commit");
-  if (!review) {
-    return null;
-  }
-  return new Map(review.groups.map((/** @type {any} */ group) => [group.id, group.title]));
-}
-
 /** 上部の入口から開く、すべてのグループ単位のコメントの一覧（常設のパネルではない）。 */
 function renderCommentList() {
   dom.commentList.textContent = "";
@@ -3117,17 +2845,6 @@ async function selectIndex(index, options = { scrollTop: true }) {
   }
   state.index = Math.max(0, Math.min(state.visible.length - 1, index));
   await selectEntry(state.visible[state.index], options);
-}
-
-/**
- * ファイルの行データのキャッシュの鍵。着色は表示色とハイライトの指定で変わる。
- * @param {Entry} entry
- * @returns {string}
- */
-function fileCacheKey(entry) {
-  const id = entry.file.id;
-  const override = state.highlightOverrides.get(id);
-  return `${id}|${state.dark ? 1 : 0}|${override ?? "auto"}`;
 }
 
 /**
