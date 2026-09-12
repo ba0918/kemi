@@ -42,6 +42,18 @@ let rendering = false;
 /** @typedef {import("../model.js").DisplayLine} DisplayLine */
 
 /**
+ * 基準値と違う高さの行は、中身が変わったかもしれない。窓の外の行も含めて、次に
+ * 描いたときに測り直すよう覚えておく。
+ */
+function markRowsOffDefaultHeight() {
+  state.heights.forEach((height, index) => {
+    if (height !== ROW_HEIGHT) {
+      state.staleRows.add(index);
+    }
+  });
+}
+
+/**
  * エディタやコメント、由来の理由の出入りで、次の描画で表示中の行の高さを測り直させる。
  * 見えていない行の測った高さは残す。捨てると、上の行が詰まって見ている位置がずれる。
  * 基準値と違う高さの行は中身が変わったかもしれないので、窓の外の行も、次に描いたときに
@@ -53,11 +65,7 @@ export function remeasure() {
   // いま触った行が画面の外へ動く。
   state.landing = null;
   state.measureNext = true;
-  state.heights.forEach((height, index) => {
-    if (height !== ROW_HEIGHT) {
-      state.staleRows.add(index);
-    }
-  });
+  markRowsOffDefaultHeight();
 }
 
 /**
@@ -66,11 +74,7 @@ export function remeasure() {
  */
 function markStaleRows() {
   state.measureNext = true;
-  state.heights.forEach((height, index) => {
-    if (height !== ROW_HEIGHT) {
-      state.staleRows.add(index);
-    }
-  });
+  markRowsOffDefaultHeight();
   // 吹き出しの分だけ高い行は、高さを引き継げなかったときも測り直させる。
   state.threads.byLine.forEach((_threads, index) => {
     state.staleRows.add(index);
