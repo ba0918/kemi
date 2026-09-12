@@ -28,7 +28,7 @@ kemi --from main                     # the branch as one diff, one entry per pat
 kemi --from main --group-by commit   # start with one group per commit in main..HEAD
 kemi --worktree                      # HEAD versus the working tree
 kemi --staged                        # HEAD versus the index
-kemi --digest                        # print the review map and exit
+kemi --from <base> --digest          # print the review map and exit
 kemi --result                        # print the last submitted result here and exit
 ```
 
@@ -174,7 +174,7 @@ The JSON printed at the end:
       "end_line": 14,
       "quote": ["the line text when the comment was written"],
       "body": "the comment",
-      "replies": ["a reply"],
+      "replies": [],
       "resolved": false,
       "outdated": false,
       "suggestion": { "replacement": "the replacement text" }
