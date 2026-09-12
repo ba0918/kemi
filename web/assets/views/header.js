@@ -16,7 +16,7 @@ export function renderHeader() {
   dom.meta.textContent = "";
   if (review) {
     for (const item of metaItems(review)) {
-      const span = el("span");
+      const span = el("span", item.stat ? "stat" : undefined);
       span.title = item.label ? `${item.label}: ${item.value}` : item.value;
       if (item.label) {
         span.append(textEl("b", "", item.label));

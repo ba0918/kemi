@@ -238,6 +238,10 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.meta > span.stat {
+  flex-shrink: 0;
+}
+
 .meta b {
   color: var(--ink-2);
   font-weight: 600;
