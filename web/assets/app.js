@@ -3171,6 +3171,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     state.loading = true;
     state.rows = [];
     state.display = [];
+    state.displayFileId = null;
     resetHeights();
     state.threads = { byLine: new Map(), floating: [] };
     renderTree();
