@@ -19,6 +19,7 @@
 
 /**
  * @typedef {{
+ *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => void,
  *   switchUnit: (unit: string, jump: UnitJump | null) => void,
  * }} Actions
  */
