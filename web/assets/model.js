@@ -25,7 +25,7 @@
  * @typedef {{
  *   kind: string, oldLine: Line|null, newLine: Line|null,
  *   oldSegments: Segment[], newSegments: Segment[],
- *   logicalIndex: number, skip: LogicalRow|null,
+ *   logicalIndex: number, row: number, skip: LogicalRow|null,
  *   block?: number,
  * }} DisplayLine
  */
@@ -92,7 +92,13 @@ export function toDisplayLines(rows, mode, options = {}) {
     added = [];
   };
   rows.forEach((row, logicalIndex) => {
-    const base = { oldSegments: [], newSegments: [], skip: null, logicalIndex };
+    const base = {
+      oldSegments: [],
+      newSegments: [],
+      skip: null,
+      logicalIndex,
+      row: row.row ?? logicalIndex,
+    };
     const changed = row.kind === "replace" || row.kind === "delete" || row.kind === "insert";
     if (!changed) {
       flush();
@@ -336,6 +342,72 @@ export function lineOffsets(heights) {
     offsets.push(total);
   }
   return offsets;
+}
+
+/**
+ * 位置 `position` に差しかかっている表示行。位置が末尾より先なら最後の行。
+ * @param {number[]} offsets 表示行の上端（最後に全体の高さ）
+ * @param {number} position
+ * @returns {number}
+ */
+export function rowAtOffset(offsets, position) {
+  const total = offsets.length - 1;
+  if (total <= 0) {
+    return 0;
+  }
+  return firstIndexAtOrBefore(offsets, Math.max(0, position), total - 1);
+}
+
+/**
+ * 表示行の見分け。ファイル全体での行の位置と表示行の種類で決めるので、折りたたみの
+ * 展開や由来の出し入れで並びが変わっても、同じ中身の行は同じ見分けになる。
+ * @param {DisplayLine} line
+ * @returns {string}
+ */
+export function displayRowKey(line) {
+  return `${line.row}:${line.kind}`;
+}
+
+/**
+ * 表示行を作り直したとき、測った高さを残る行へ移す。捨てると、見えていない上の行が
+ * 既定の高さに詰まって、読んでいた位置がずれる。
+ * @param {DisplayLine[]} previous 作り直す前の表示行
+ * @param {number[]} heights その表示行の高さ
+ * @param {DisplayLine[]} next 作り直した表示行
+ * @param {number} defaultHeight まだ測っていない行の高さ
+ * @returns {number[]}
+ */
+export function carryHeights(previous, heights, next, defaultHeight) {
+  /** @type {Map<string, number>} */
+  const measured = new Map();
+  previous.forEach((line, index) => {
+    const height = heights[index];
+    if (height !== undefined && height !== defaultHeight) {
+      measured.set(displayRowKey(line), height);
+    }
+  });
+  return next.map((line) => measured.get(displayRowKey(line)) ?? defaultHeight);
+}
+
+/**
+ * 作り直した表示行の中で、覚えておいた行の位置。その行が消えていれば、ファイルの
+ * 同じ位置から後で最初に残っている行を返す。どちらも無ければ -1。
+ * @param {DisplayLine[]} display
+ * @param {{ key: string, row: number }} anchor
+ * @returns {number}
+ */
+export function anchorIndex(display, anchor) {
+  let nearest = -1;
+  for (let index = 0; index < display.length; index += 1) {
+    const line = display[index];
+    if (displayRowKey(line) === anchor.key) {
+      return index;
+    }
+    if (nearest < 0 && line.row >= anchor.row) {
+      nearest = index;
+    }
+  }
+  return nearest;
 }
 
 /**

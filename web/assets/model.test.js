@@ -48,6 +48,10 @@ import {
   treeOrder,
   hasLoadedStops,
   collapseLoadedRows,
+  carryHeights,
+  anchorIndex,
+  rowAtOffset,
+  displayRowKey,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1158,4 +1162,68 @@ test("collapsing_loaded_rows_keeps_old_side_commented_lines_visible", () => {
     .filter((row) => row.kind !== "skip" && row.old)
     .map((row) => Number(row.old?.number));
   assert.ok(shownOld.includes(35) && shownOld.includes(36), `old lines 35-36 are hidden: ${shownOld}`);
+});
+
+/**
+ * @param {number} from
+ * @param {number} to
+ * @returns {LogicalRow}
+ */
+function skipRange(from, to) {
+  return { kind: "skip", count: to - from, from, to, old_start: from + 1, new_start: from + 1 };
+}
+
+test("a_measured_row_keeps_its_height_when_a_fold_above_it_is_expanded", () => {
+  const collapsed = [equal(1, "a"), skipRange(1, 5), equal(6, "f")];
+  const before = toDisplayLines(withRowIndex(collapsed), "unified");
+  // 吹き出しを開いた行。既定より高いまま、展開の後も同じ行に付いていてほしい。
+  const heights = [24, 24, 143];
+  const expanded = [equal(1, "a"), equal(2, "b"), equal(3, "c"), equal(4, "d"), equal(5, "e"), equal(6, "f")];
+
+  const after = carryHeights(before, heights, toDisplayLines(withRowIndex(expanded), "unified"), 24);
+
+  assert.deepEqual(after, [24, 24, 24, 24, 24, 143]);
+});
+
+test("a_measured_row_that_the_rebuild_removed_leaves_no_height_behind", () => {
+  const rows = [equal(1, "a"), replaceAt(2, "o", "n"), equal(3, "c")];
+  const withOrigin = toDisplayLines(withRowIndex(rows), "unified", { origin: true });
+  // 由来の行（開いた理由の分だけ高い）と、その下の書き換えの行。
+  const heights = [24, 90, 30, 30, 24];
+
+  const after = carryHeights(withOrigin, heights, toDisplayLines(withRowIndex(rows), "unified"), 24);
+
+  assert.deepEqual(after, [24, 30, 30, 24]);
+});
+
+test("the_row_at_the_top_stays_the_anchor_when_the_fold_it_was_in_is_expanded", () => {
+  const collapsed = [equal(1, "a"), skipRange(1, 5), equal(6, "f")];
+  const before = toDisplayLines(withRowIndex(collapsed), "unified");
+  const anchor = { key: displayRowKey(before[1]), row: before[1].row };
+  const expanded = [equal(1, "a"), equal(2, "b"), equal(3, "c"), equal(4, "d"), equal(5, "e"), equal(6, "f")];
+
+  const index = anchorIndex(toDisplayLines(withRowIndex(expanded), "unified"), anchor);
+
+  assert.equal(index, 1);
+});
+
+test("the_row_at_the_top_is_found_again_after_origin_lines_are_added_above_it", () => {
+  const rows = [replaceAt(1, "o", "n"), equal(2, "b"), replaceAt(3, "o3", "n3"), equal(4, "d")];
+  const before = toDisplayLines(withRowIndex(rows), "unified");
+  const top = before.findIndex((line) => line.newLine?.text === "d");
+  const anchor = { key: displayRowKey(before[top]), row: before[top].row };
+
+  const index = anchorIndex(toDisplayLines(withRowIndex(rows), "unified", { origin: true }), anchor);
+
+  assert.equal(toDisplayLines(withRowIndex(rows), "unified", { origin: true })[index].newLine?.text, "d");
+});
+
+test("the_row_showing_at_the_top_of_the_viewport_is_the_one_the_position_falls_in", () => {
+  const offsets = lineOffsets([24, 143, 24]);
+
+  assert.equal(rowAtOffset(offsets, 0), 0);
+  assert.equal(rowAtOffset(offsets, 24), 1);
+  assert.equal(rowAtOffset(offsets, 100), 1);
+  assert.equal(rowAtOffset(offsets, 167), 2);
+  assert.equal(rowAtOffset(offsets, 5_000), 2);
 });

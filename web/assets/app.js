@@ -46,6 +46,10 @@ import {
   treeOrder,
   windowFor,
   withRowIndex,
+  rowAtOffset,
+  displayRowKey,
+  carryHeights,
+  anchorIndex,
 } from "./model.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
@@ -204,7 +208,7 @@ const dom = {
  *   toastTimer: number,
  *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
  *   modalAction: (() => void) | null,
- *   landing: { index: number, top: number, scrollTop: number } | null,
+ *   landing: { index: number, top: number, scrollTop: number, margin: number } | null,
  * }} */
 const state = {
   review: null,
@@ -1432,6 +1436,82 @@ function remeasure() {
   });
 }
 
+/**
+ * @typedef {{ key: string, row: number, margin: number }} Anchor
+ */
+
+/**
+ * 表示領域の上端に見えている行と、その行の上端が上端から下に何画素あるか（見切れて
+ * いれば負）。表示行を作り直しても、この行を同じ位置に見せるための記録。
+ * @returns {Anchor | null}
+ */
+function captureAnchor() {
+  if (state.display.length === 0) {
+    return null;
+  }
+  const offsets = lineOffsets(state.heights);
+  const scrollTop = dom.viewport.scrollTop;
+  const index = rowAtOffset(offsets, scrollTop);
+  const line = state.display[index];
+  if (!line) {
+    return null;
+  }
+  return { key: displayRowKey(line), row: line.row, margin: (offsets[index] ?? 0) - scrollTop };
+}
+
+/**
+ * 覚えておいた行を元の位置へ戻す。その行が折りたたみに入って消えたときは、ファイルの
+ * 同じ位置から後で最初に残っている行を同じ位置に置く。
+ * @param {Anchor | null} anchor
+ */
+function restoreAnchor(anchor) {
+  if (!anchor || state.display.length === 0) {
+    return;
+  }
+  const index = anchorIndex(state.display, anchor);
+  if (index < 0) {
+    return;
+  }
+  const offsets = lineOffsets(state.heights);
+  // 全体の高さを先に広げる。古い高さのままでは、戻す位置が末尾で切り詰められる。
+  dom.content.style.height = `${offsets[offsets.length - 1] || 0}px`;
+  const top = offsets[index] ?? 0;
+  dom.viewport.scrollTop = Math.max(0, top - anchor.margin);
+  // この後の測り直しで上の行が伸び縮みしても、この行を同じ位置へ置き直す。
+  state.landing = {
+    index,
+    top,
+    scrollTop: dom.viewport.scrollTop,
+    margin: anchor.margin,
+  };
+}
+
+/**
+ * 作り直した行のうち、基準値と違う高さで見えているかもしれない行を、次に描いたときに
+ * 測り直すよう覚えておく。測り直した分は measureHeights がスクロール位置で打ち消す。
+ */
+function markStaleRows() {
+  state.measureNext = true;
+  state.heights.forEach((height, index) => {
+    if (height !== ROW_HEIGHT) {
+      state.staleRows.add(index);
+    }
+  });
+  // 吹き出しの分だけ高い行は、高さを引き継げなかったときも測り直させる。
+  state.threads.byLine.forEach((_threads, index) => {
+    state.staleRows.add(index);
+  });
+  if (state.originOpen.size > 0) {
+    const entry = currentEntry();
+    const fileId = entry ? entry.file.id : "";
+    state.display.forEach((line, index) => {
+      if (line.kind === "origin" && state.originOpen.has(`${fileId}:${line.block}`)) {
+        state.staleRows.add(index);
+      }
+    });
+  }
+}
+
 /** 表示する行が変わったときや折返しを切り替えたとき、行の高さを基準値へ戻す。 */
 function resetHeights() {
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
@@ -2269,8 +2349,13 @@ function measureHeights(start, offsets) {
     dom.content.style.height = `${(offsets[offsets.length - 1] || 0) + growth}px`;
     if (landing) {
       const top = (offsets[landing.index] ?? landing.top) + shift;
-      dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
-      state.landing = { index: landing.index, top, scrollTop: dom.viewport.scrollTop };
+      dom.viewport.scrollTop = Math.max(0, top - landing.margin);
+      state.landing = {
+        index: landing.index,
+        top,
+        scrollTop: dom.viewport.scrollTop,
+        margin: landing.margin,
+      };
     } else {
       dom.viewport.scrollTop = scrollTop + shift;
     }
@@ -2473,7 +2558,7 @@ function scrollToRow(index, offsets) {
   // 起きるとこの行が下へずれるので、送り先を覚えておき、measureHeights が測り終える
   // まで同じ位置へ置き直す。置く場所を決めるためだけの記録で、「現在」や n / p の
   // 行き先はこれを見ない（表示の状態から毎回決める。R-NAV）。
-  state.landing = { index, top, scrollTop: dom.viewport.scrollTop };
+  state.landing = { index, top, scrollTop: dom.viewport.scrollTop, margin: NAV_MARGIN };
   scheduleRender();
 }
 
@@ -2997,11 +3082,20 @@ function recomputeThreads() {
   state.rulerDirty = true;
 }
 
-function recomputeDisplay() {
+/**
+ * 表示行を作り直す。作り直しても、上端に見えていた行は同じ位置に残す。
+ * @param {Anchor | null} [anchor] 上端に見えていた行。省略するといまの表示から取る。
+ */
+function recomputeDisplay(anchor = captureAnchor()) {
+  const previous = state.display;
+  const previousHeights = state.heights;
   state.display = toDisplayLines(withRowIndex(state.rows), state.mode, {
     origin: originShown(),
   });
   resetHeights();
+  // 測った高さは残る行へ移す。捨てると、見えていない上の行が基準値に詰まって
+  // 読んでいた位置が上へずれる。
+  state.heights = carryHeights(previous, previousHeights, state.display, ROW_HEIGHT);
   state.skipRanges = new Map();
   state.rows.forEach((row, index) => {
     if (row.kind === "skip") {
@@ -3012,6 +3106,8 @@ function recomputeDisplay() {
     }
   });
   recomputeThreads();
+  markStaleRows();
+  restoreAnchor(anchor);
 }
 
 /**
@@ -3049,6 +3145,11 @@ async function selectEntry(entry, options = { scrollTop: true }) {
     // 送信後はサーバが止まっていて、まだ読んでいないファイルは取れない。完了画面を残す。
     return;
   }
+  // テーマや構文ハイライトの切り替えは同じファイルを読み直すだけ。読んでいた位置を残す。
+  const anchor =
+    !options.scrollTop && state.current && state.current.file.id === entry.file.id
+      ? captureAnchor()
+      : null;
   state.current = entry;
   state.landing = null;
   const id = entry.file.id;
@@ -3110,7 +3211,7 @@ async function selectEntry(entry, options = { scrollTop: true }) {
   if (options.scrollTop) {
     dom.viewport.scrollTop = 0;
   }
-  recomputeDisplay();
+  recomputeDisplay(anchor);
   renderTree();
   renderGroupHeader();
   renderFileHeader();
@@ -3177,6 +3278,20 @@ function setMode(mode) {
   state.mode = mode;
   localStorage.setItem("kemi-mode", mode);
   recomputeDisplay();
+  renderHeader();
+  renderDiff();
+}
+
+/**
+ * 折返しを切り替える。行の高さが変わるので測り直すが、上端に見えていた行は動かさない。
+ * @param {boolean} wrap
+ */
+function setWrap(wrap) {
+  const anchor = captureAnchor();
+  state.wrap = wrap;
+  resetHeights();
+  markStaleRows();
+  restoreAnchor(anchor);
   renderHeader();
   renderDiff();
 }
@@ -3251,10 +3366,7 @@ function handleKey(event) {
       void toggleSeen(entry.file);
     }
   } else if (action.type === "wrap") {
-    state.wrap = Boolean(action.value);
-    resetHeights();
-    renderHeader();
-    renderDiff();
+    setWrap(Boolean(action.value));
   }
 }
 
@@ -3283,12 +3395,7 @@ document.addEventListener("mouseup", () => {
 });
 dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
-dom.btnWrap.addEventListener("click", () => {
-  state.wrap = !state.wrap;
-  resetHeights();
-  renderHeader();
-  renderDiff();
-});
+dom.btnWrap.addEventListener("click", () => setWrap(!state.wrap));
 dom.chipFocus.addEventListener("click", () => {
   // R-FOCUS: このフィルタはツリーだけを絞り、本文の表示は変えない。
   state.focusOnly = !state.focusOnly;
