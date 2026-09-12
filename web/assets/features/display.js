@@ -245,7 +245,6 @@ export function renderDiff() {
   }
 }
 
-/** ファイル全体へのコメント（と、表示中の行に見つからないコメント）を、ヘッダの下に吹き出しで出す。 */
 /** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ吹き出しで出す。 */
 export function renderFloating() {
   const focusKey = focusKeyWithin(dom.floating);
