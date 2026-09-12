@@ -1351,12 +1351,9 @@ async fn origin_git_failure_keeps_review_and_comments_submittable() {
     let origin = server
         .get_json(&format!("api/origin/{}", final_a.as_str().unwrap()))
         .await;
-    assert!(
-        origin["blocks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|block| block["entries"].as_array().unwrap().is_empty()),
+    assert_eq!(
+        origin["commits"],
+        json!({}),
         "no commit may be named: {origin}"
     );
     let response = server

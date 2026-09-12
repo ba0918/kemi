@@ -411,8 +411,8 @@ struct OriginQuery {
 
 /// 最終形のファイルの由来（R-ORIGIN）。差分とは別に、表示の後から取りに来る。
 ///
-/// 由来の計算の失敗はレビューを終えない（R-SUBMIT の例外）。そのファイルの変更
-/// ブロックはどれもコミットを持たない由来として返し、画面は「特定できない」と出す。
+/// 由来の計算の失敗はレビューを終えない（R-SUBMIT の例外）。変更ブロックを 1 つも
+/// 持たない由来を返し、画面は由来の無いブロックを「特定できない」と出す。
 async fn origin(
     State(state): State<Arc<AppState>>,
     Path((_token, id)): Path<(String, String)>,
@@ -435,7 +435,7 @@ async fn origin(
     }))
 }
 
-/// 計算に失敗したファイルの由来。どの変更ブロックもコミットを持たない。
+/// 計算に失敗したファイルの由来。変更ブロックもコミットも 1 つも持たない。
 fn unknown_origin(path: &str, error: impl std::fmt::Display) -> FileOrigin {
     eprintln!("kemi: {path} の由来を求められませんでした: {error}");
     FileOrigin {
