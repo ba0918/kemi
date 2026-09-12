@@ -8,7 +8,19 @@
 // 後者でも束を組む場所は結局 1 か所に要る。結線を 1 か所（app.js）に集めるほうを採った。
 
 /**
- * @typedef {{}} Actions
+ * グループ単位を切り替えたうえで、指定の行へ移る指定。
+ * @typedef {{
+ *   find: (entries: import("./state.js").Entry[]) => number,
+ *   side: string,
+ *   line: number | null,
+ *   missing: () => void,
+ * }} UnitJump
+ */
+
+/**
+ * @typedef {{
+ *   switchUnit: (unit: string, jump: UnitJump | null) => void,
+ * }} Actions
  */
 
 /**
