@@ -16,7 +16,16 @@ export const OVERSCAN = 12;
 export const NAV_MARGIN = 48;
 
 /** @type {Record<string, string>} */
-export const UNIT_LABELS = { file: "最終形", commit: "コミットごと" };
+const UNIT_LABELS = { file: "最終形", commit: "コミットごと" };
+
+/**
+ * グループ単位の画面での呼び名。知らない単位は、サーバが返した名前のまま出す。
+ * @param {string} unit
+ * @returns {string}
+ */
+export function unitLabel(unit) {
+  return UNIT_LABELS[unit] || unit;
+}
 
 /** @type {Record<string, string>} */
 export const THEME_LABELS = {

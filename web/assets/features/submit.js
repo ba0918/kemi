@@ -3,7 +3,7 @@
 
 import * as api from "../api.js";
 import { dom, el, textEl } from "../dom.js";
-import { UNIT_LABELS, state } from "../state.js";
+import { state, unitLabel } from "../state.js";
 import { submitSummary } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
@@ -29,7 +29,7 @@ export function openConfirm(verdict) {
   dom.modalTitle.textContent = approve ? "承認して終了しますか？" : "変更要求で終了しますか？";
   dom.modalBody.textContent = "";
   const list = el("dl", "sum");
-  const seenLabel = state.unit ? `見たファイル（${UNIT_LABELS[state.unit] || state.unit}）` : "見たファイル";
+  const seenLabel = state.unit ? `見たファイル（${unitLabel(state.unit)}）` : "見たファイル";
   list.append(
     textEl("dt", "", "コメント"),
     textEl("dd", "", `${summary.comments} 件（うち suggestion 付き ${summary.suggestions} 件）`),

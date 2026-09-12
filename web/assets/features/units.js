@@ -3,7 +3,7 @@
 
 import * as api from "../api.js";
 import { dom } from "../dom.js";
-import { UNIT_LABELS, currentEntry, flatten, state } from "../state.js";
+import { currentEntry, flatten, state, unitLabel } from "../state.js";
 import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { revealInTree } from "./navigation.js";
@@ -38,7 +38,7 @@ export async function switchUnit(unit, jump) {
   if (status.state !== "ready") {
     state.pendingUnit = { unit, jump };
     renderUnitSwitch();
-    showToast(`${UNIT_LABELS[unit] || unit}を読み込み中です`);
+    showToast(`${unitLabel(unit)}を読み込み中です`);
     // 手元の状態が古いこともあるので読み直す。できていればそのまま切り替わる。
     void onUnitEvent();
     return;
@@ -98,7 +98,7 @@ export async function switchUnit(unit, jump) {
  */
 function openUnitFailure(status) {
   const unit = String(status.unit);
-  dom.modalTitle.textContent = `${UNIT_LABELS[unit] || unit}の単位を作れなかった`;
+  dom.modalTitle.textContent = `${unitLabel(unit)}の単位を作れなかった`;
   setModalText(`理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`);
   dom.modalOk.textContent = "再試行";
   dom.modalOk.className = "btn primary";

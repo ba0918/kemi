@@ -3,7 +3,7 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, textEl } from "../dom.js";
-import { UNIT_LABELS, commitGroups, state } from "../state.js";
+import { commitGroups, state, unitLabel } from "../state.js";
 import { commentLabel, describeComment, firstLine } from "../model.js";
 
 /** 上部の入口から開く、すべてのグループ単位のコメントの一覧（常設のパネルではない）。 */
@@ -31,7 +31,7 @@ export function renderCommentList() {
     if (info.vanished) {
       meta.append(textEl("span", "cl-unit vanished", "消えたコミット"));
     } else if (info.unit) {
-      meta.append(textEl("span", "cl-unit", UNIT_LABELS[info.unit] || info.unit));
+      meta.append(textEl("span", "cl-unit", unitLabel(info.unit)));
     }
     meta.append(
       textEl("span", "cl-path", comment.path),

@@ -4,7 +4,7 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
-import { UNIT_LABELS, state } from "../state.js";
+import { state, unitLabel } from "../state.js";
 import { metaItems, seenProgress, unitSwitchOrder } from "../model.js";
 
 export function renderHeader() {
@@ -44,7 +44,7 @@ export function renderUnitSwitch() {
     const unit = String(status.unit);
     const item = button("unit-button");
     const pending = state.pendingUnit && state.pendingUnit.unit === unit;
-    let label = UNIT_LABELS[unit] || unit;
+    let label = unitLabel(unit);
     if (status.state === "failed") {
       label = `${label}（作れなかった）`;
       item.classList.add("failed");
