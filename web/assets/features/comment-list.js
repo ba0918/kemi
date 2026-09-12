@@ -4,8 +4,7 @@
 import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { state } from "../state.js";
-import { revealInTree } from "./navigation.js";
-import { selectEntry } from "./files.js";
+import { jumpToEntry } from "./files.js";
 import { switchUnit } from "./units.js";
 import { renderCommentList } from "../views/comment-list.js";
 import { showToast } from "../views/overlay.js";
@@ -102,11 +101,5 @@ export async function goToComment(comment, unit) {
     return;
   }
   const entry = state.entries[index];
-  revealInTree(entry);
-  state.pendingJump = line === null ? null : { side: comment.side, line };
-  const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
-  if (visibleIndex >= 0) {
-    state.index = visibleIndex;
-  }
-  await selectEntry(entry, { scrollTop: true });
+  await jumpToEntry(entry, { side: comment.side, line });
 }

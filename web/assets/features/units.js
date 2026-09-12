@@ -6,8 +6,7 @@ import { dom } from "../dom.js";
 import { currentEntry, flatten, state, unitLabel } from "../state.js";
 import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
-import { revealInTree } from "./navigation.js";
-import { applyReview, selectEntry } from "./files.js";
+import { applyReview, jumpToEntry } from "./files.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import { renderFooter, renderHeader, renderUnitSwitch } from "../views/header.js";
 import { setModalText, showOverlay, showToast } from "../views/overlay.js";
@@ -81,15 +80,7 @@ export async function switchUnit(unit, jump) {
     return;
   }
   const entry = state.entries[index];
-  if (jump) {
-    state.pendingJump = jump.line === null ? null : { side: jump.side, line: jump.line };
-    revealInTree(entry);
-  }
-  const visibleIndex = state.visible.findIndex((candidate) => candidate.file.id === entry.file.id);
-  if (visibleIndex >= 0) {
-    state.index = visibleIndex;
-  }
-  await selectEntry(entry, { scrollTop: true });
+  await jumpToEntry(entry, jump ? { side: jump.side, line: jump.line } : undefined);
 }
 
 /**

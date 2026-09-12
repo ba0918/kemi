@@ -25,7 +25,7 @@ import {
   resetHeights,
   scheduleRender,
 } from "./display.js";
-import { applyPendingJump } from "./navigation.js";
+import { applyPendingJump, revealInTree } from "./navigation.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import {
   renderFooter,
@@ -227,6 +227,27 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   renderDiff();
   applyPendingJump();
   void loadOrigin(entry);
+}
+
+/**
+ * 移り先のファイルを表示する。移り先の行の指定があれば、ツリーをそこまで開き、
+ * 表示し終えた後にその行へ送る。
+ * @param {Entry} entry
+ * @param {{ side: string, line: number | null }} [target] 無ければ、送らずに表示だけする
+ */
+export async function jumpToEntry(entry, target) {
+  if (target) {
+    revealInTree(entry);
+    state.pendingJump =
+      target.line === null ? null : { side: target.side, line: target.line };
+  }
+  const visibleIndex = state.visible.findIndex(
+    (candidate) => candidate.file.id === entry.file.id,
+  );
+  if (visibleIndex >= 0) {
+    state.index = visibleIndex;
+  }
+  await selectEntry(entry, { scrollTop: true });
 }
 
 /**
