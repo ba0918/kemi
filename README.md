@@ -79,6 +79,7 @@ Keys in the page (ignored while typing in a text field):
 | `n` / `p` | next / previous change or comment, moving on to the next / previous file |
 | `v` | mark the current file as seen, or unmark it |
 | `j` / `k` | next / previous file |
+| `g` / `G` | first / last file |
 | `u` / `s` | one column (unified) / two columns (split) |
 | `w` | toggle line wrapping |
 
