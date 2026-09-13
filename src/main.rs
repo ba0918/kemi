@@ -139,11 +139,21 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// 結果の置き場所を決める環境変数が無いときの理由（R-RESULT）。OS ごとに使う変数が違う。
+fn results_unset_reason() -> &'static str {
+    if cfg!(windows) {
+        "LOCALAPPDATA is not set"
+    } else {
+        "HOME is not set"
+    }
+}
+
 /// 結果ファイルの置き場所（R-RESULT）。
 fn results_dir() -> Option<PathBuf> {
     result::results_dir(
         std::env::var_os("XDG_STATE_HOME").as_deref(),
         std::env::var_os("HOME").as_deref(),
+        std::env::var_os("LOCALAPPDATA").as_deref(),
     )
 }
 
@@ -158,7 +168,10 @@ fn workspace_root(path: &Path) -> PathBuf {
 /// 終わる。該当が無ければ何も出さず終了コード 2。
 fn print_result(cli: &Cli) -> ! {
     let Some(dir) = results_dir() else {
-        fail("cannot determine where to store results (HOME is not set)");
+        fail(&format!(
+            "cannot determine where to store results ({})",
+            results_unset_reason()
+        ));
     };
     let key = (!cli.any).then(|| {
         let place = cli.workspace.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -191,7 +204,10 @@ struct ResultStore {
 impl ResultSink for ResultStore {
     fn save(&self, text: &str) -> Result<PathBuf, String> {
         let dir = self.dir.as_ref().ok_or_else(|| {
-            "cannot determine where to store results (HOME is not set)".to_string()
+            format!(
+                "cannot determine where to store results ({})",
+                results_unset_reason()
+            )
         })?;
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -386,7 +402,10 @@ async fn main() {
     };
     match results.location() {
         Some(dir) => eprintln!("kemi: results are saved to: {dir}"),
-        None => eprintln!("kemi: cannot determine where to save results (HOME is not set)"),
+        None => eprintln!(
+            "kemi: cannot determine where to save results ({})",
+            results_unset_reason()
+        ),
     }
     if !cli.no_open {
         open_browser(&url);

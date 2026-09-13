@@ -9,14 +9,31 @@ use std::path::{Path, PathBuf};
 /// 全リポジトリ合計で残す件数。
 pub const KEEP: usize = 20;
 
-/// 結果ファイルの置き場所。`XDG_STATE_HOME` が絶対パスならその下、未設定か相対パスなら
-/// `~/.local/state` の下。HOME も無ければ決められない。
-pub fn results_dir(xdg_state_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
-    let state = match xdg_state_home.map(Path::new) {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        _ => Path::new(home?).join(".local").join("state"),
-    };
-    Some(state.join("kemi").join("results"))
+/// 結果ファイルの置き場所。`XDG_STATE_HOME` が絶対パスなら全 OS でその下。それ以外は
+/// Windows では `LOCALAPPDATA`（絶対パス）の下、unix では `~/.local/state` の下。
+/// 使う環境変数が相対パスか未設定なら決められない。
+pub fn results_dir(
+    xdg_state_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+    local_app_data: Option<&OsStr>,
+) -> Option<PathBuf> {
+    match xdg_state_home.map(Path::new) {
+        Some(path) if path.is_absolute() => Some(path.join("kemi").join("results")),
+        #[cfg(windows)]
+        _ => {
+            let _ = home;
+            let app_data = Path::new(local_app_data?);
+            app_data
+                .is_absolute()
+                .then(|| app_data.join("kemi").join("results"))
+        }
+        #[cfg(not(windows))]
+        _ => {
+            let _ = local_app_data;
+            let state = Path::new(home?).join(".local").join("state");
+            Some(state.join("kemi").join("results"))
+        }
+    }
 }
 
 /// リポジトリ（git の外なら起動したディレクトリ）の識別。パスのバイト列の FNV-1a。
@@ -293,20 +310,76 @@ mod tests {
     #[test]
     fn result_dir_uses_xdg_state_home_only_when_absolute() {
         let home = Some(OsStr::new("/home/user"));
+        let app_data = Some(OsStr::new("C:\\Users\\user\\AppData\\Local"));
 
         assert_eq!(
-            results_dir(Some(OsStr::new("/state")), home),
+            results_dir(Some(OsStr::new("/state")), home, app_data),
             Some(PathBuf::from("/state/kemi/results"))
         );
         assert_eq!(
-            results_dir(Some(OsStr::new("relative")), home),
+            results_dir(Some(OsStr::new("relative")), home, app_data),
             Some(PathBuf::from("/home/user/.local/state/kemi/results"))
         );
         assert_eq!(
-            results_dir(None, home),
+            results_dir(None, home, app_data),
             Some(PathBuf::from("/home/user/.local/state/kemi/results"))
         );
-        assert_eq!(results_dir(None, None), None);
+        assert_eq!(results_dir(None, None, None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn result_dir_uses_local_app_data_on_windows() {
+        let app_data = Some(OsStr::new(r"C:\Users\user\AppData\Local"));
+
+        assert_eq!(
+            results_dir(None, None, app_data),
+            Some(PathBuf::from(r"C:\Users\user\AppData\Local\kemi\results"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn result_dir_prefers_absolute_xdg_over_local_app_data_on_windows() {
+        assert_eq!(
+            results_dir(
+                Some(OsStr::new(r"D:\state")),
+                None,
+                Some(OsStr::new(r"C:\Users\user\AppData\Local"))
+            ),
+            Some(PathBuf::from(r"D:\state\kemi\results"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn result_dir_without_local_app_data_is_none_on_windows() {
+        assert_eq!(results_dir(None, None, None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn result_dir_with_relative_local_app_data_is_none_on_windows() {
+        assert_eq!(
+            results_dir(None, None, Some(OsStr::new(r"AppData\Local"))),
+            None
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn result_dir_ignores_local_app_data_on_unix() {
+        let home = Some(OsStr::new("/home/user"));
+        let app_data = Some(OsStr::new(r"C:\Users\user\AppData\Local"));
+
+        assert_eq!(
+            results_dir(None, home, app_data),
+            Some(PathBuf::from("/home/user/.local/state/kemi/results"))
+        );
+        assert_eq!(
+            results_dir(None, home, None),
+            Some(PathBuf::from("/home/user/.local/state/kemi/results"))
+        );
     }
 
     #[test]
