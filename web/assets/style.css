@@ -1900,3 +1900,24 @@ ul.files ul {
   font-size: 12px;
   line-height: 1.5;
 }
+
+#horizontal-scroll {
+  flex: 0 0 16px;
+  height: 16px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  margin-right: 12px;
+}
+#horizontal-scroll[hidden] { display: none; }
+#horizontal-scroll-width { height: 1px; }
+#horizontal-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.row.split .code { overflow: clip; }
+.row.split .code-text {
+  display: block;
+  width: max-content;
+  transform: translateX(var(--code-offset, 0px));
+}
+#diff-content[data-wrap="on"] .code-text {
+  width: auto;
+  transform: none;
+}

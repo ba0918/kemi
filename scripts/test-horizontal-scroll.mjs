@@ -1,0 +1,233 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { readFile, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const run = promisify(execFile);
+const session = `kemi-hscroll-${process.pid}`;
+const browser = async (...args) => {
+  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 4 * 1024 * 1024 });
+  const result = JSON.parse(stdout);
+  assert.equal(result.success, true, JSON.stringify(result));
+  return result.data;
+};
+const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
+const file = (id) => ({ id, path: `${id}.js`, old_path: null, status: 'modified', add: 2, del: 2, binary: false, old_size: 100, new_size: 100, focus: false, note: '', noise: false, seen: false, collapsed: false });
+const rows = Array.from({ length: 500 }, (_, i) => ({ kind: i === 2 ? 'insert' : i===0 || i===300 ? 'replace' : 'equal', old: i === 2 ? null : { number: i + 1, text: i === 0 ? 'old '.repeat(150) + 'OLD_END' : 'short old' }, new: { number: i + 1, text: i === 0 ? 'new '.repeat(250) + 'NEW_END' : i === 300 ? 'longer '.repeat(400) + 'LATER_END' : 'short new' } }));
+const comment = { id:'sample-comment', group_id:'sample', path:'long.js', side:'new', start_line:1, end_line:1, body:'Compare this line\nAdditional detail', outdated:false, suggestion:null };
+let refreshed = false;
+let eventStream;
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/api/events') { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': ready\n\n'); eventStream=res; return; }
+  if (url.pathname.startsWith('/api/')) {
+    res.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/api/review') res.end(JSON.stringify({ title: 'Horizontal comparison', subtitle: '', unit:'file', groups: [{ id: 'sample', title: 'Sample', files: [file('long'), file('short'), file('large')] }], comments: [comment] }));
+    else if (url.pathname.startsWith('/api/file/')) {
+      let selected = rows;
+      if(url.pathname.endsWith('/short') || refreshed) selected = [{ kind: 'replace', old:{number:1,text:'old'},new:{number:1,text:'new'} }];
+      else if(url.pathname.endsWith('/large')) selected = Array.from({length:500_000},(_,i)=>({kind:i===0||i===300_000?'replace':'equal', old:{number:i+1,text:i===0?'large '.repeat(300):'old row'},new:{number:i+1,text:i===300_000?'later '.repeat(600):i===0?'large '.repeat(300):'new row'}}));
+      if(url.searchParams.has('from')) selected=selected.slice(Number(url.searchParams.get('from')),Number(url.searchParams.get('to')));
+      else if(selected===rows) selected=[...rows.slice(0,400),{kind:'skip',from:400,to:500,count:100,old_start:401,new_start:401}];
+      res.end(JSON.stringify({ rows:selected, comments:url.pathname.endsWith('/long')?[comment]:[], binary:false,context:3,next:null,highlight:{capable:true,enabled:url.searchParams.get('highlight')==='on'} }));
+    }
+    else if(url.pathname.startsWith('/api/origin/')) res.end(JSON.stringify({blocks:[0,2,300].map(row=>({row,unknown:'none',entries:[{sha:'abc123456',merge:false}]})),commits:{abc123456:{subject:'Compare values',body:'Keep aligned while reading.'}}}));
+    else res.end('{}');
+    return;
+  }
+  try {
+    const path = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+    if (!/^(index\.html|assets\/[a-z0-9./-]+)$/.test(path) || path.includes('..')) { res.writeHead(404); res.end(); return; }
+    res.setHeader('Content-Type', path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'text/javascript' : 'text/html');
+    res.end(await readFile(new URL(`../web/${path}`, import.meta.url)));
+  } catch { res.writeHead(404); res.end(); }
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+let inputSocket;
+try {
+  await browser('--hide-scrollbars', 'false', 'open', `http://127.0.0.1:${server.address().port}`);
+  await browser('wait', '--fn', `document.querySelector('#diff-content').textContent.includes('NEW_END')`);
+  await browser('click', '#btn-split');
+  assert.equal(await evaluate(`Boolean(document.querySelector('#horizontal-scroll')?.getBoundingClientRect().height)`), true, '長い差分の下端に横スクロールバーが出る');
+  const snapshot = () => evaluate(`(() => {
+    const bar = document.querySelector('#horizontal-scroll');
+    const rect = e => { const r = e.getBoundingClientRect(); return { x:r.x, y:r.y, width:r.width, height:r.height, bottom:r.bottom }; };
+    return { left:bar.scrollLeft, range:bar.scrollWidth-bar.clientWidth, hidden:bar.hidden,
+      top:document.querySelector('#diff-viewport').scrollTop, bar:rect(bar),
+      cells:[...document.querySelectorAll('.split .cell')].slice(0,8).map(e => ({cell:rect(e), number:rect(e.querySelector('.no-cell')), code:rect(e.querySelector('.code')), text:rect(e.querySelector('.code-text'))})),
+      count:document.querySelectorAll('[data-kemi-row]').length };
+  })()`);
+  const initial = await snapshot();
+  await browser('focus', '#horizontal-scroll');
+  await browser('press', 'ArrowRight');
+  const right = await snapshot();
+  assert.ok(right.left > 0, 'バーをキーボードで動かせる');
+  assert.equal(right.top, initial.top);
+  for (let i=0;i<right.cells.length;i++) {
+    assert.equal(right.cells[i].number.x, initial.cells[i].number.x);
+    assert.equal(right.cells[i].cell.x, initial.cells[i].cell.x);
+    assert.equal(right.cells[i].cell.height, initial.cells[i].cell.height);
+    assert.ok(Math.abs(initial.cells[i].text.x-right.cells[i].text.x-right.left)<1, '短い行と空の側も同量動く');
+  }
+  const { cdpUrl } = await browser('get', 'cdp-url');
+  const socket = new WebSocket(cdpUrl);
+  inputSocket = socket;
+  await new Promise((resolve,reject) => { socket.onopen=resolve; socket.onerror=reject; });
+  let sequence = 0;
+  const cdp = (method, params = {}, sessionId) => new Promise((resolve,reject) => {
+    const id = ++sequence;
+    const receive = event => { const response=JSON.parse(event.data); if(response.id!==id)return; socket.removeEventListener('message',receive); response.error ? reject(new Error(JSON.stringify(response.error))) : resolve(response.result); };
+    socket.addEventListener('message',receive);
+    socket.send(JSON.stringify({id,method,params,sessionId}));
+  });
+  const targets = await cdp('Target.getTargets');
+  const target = targets.targetInfos.find(t=>t.type==='page' && t.url.startsWith('http://127.0.0.1:'));
+  const attached = await cdp('Target.attachToTarget',{targetId:target.targetId,flatten:true});
+  const input = params => cdp('Input.dispatchMouseEvent',params,attached.sessionId);
+  await input({type:'mouseWheel',x:right.cells[0].code.x+50,y:right.cells[0].code.y+12,deltaX:180,deltaY:0});
+  await browser('wait', '--fn', `document.querySelector('#horizontal-scroll').scrollLeft > ${right.left}`);
+  const wheel = await snapshot();
+  assert.equal(wheel.top, right.top);
+  const point = {x:initial.bar.x+initial.bar.width*0.6,y:initial.bar.y+initial.bar.height/2,button:'left',clickCount:1};
+  await input({type:'mousePressed',...point}); await input({type:'mouseReleased',...point});
+  await browser('wait', '--fn', `document.querySelector('#horizontal-scroll').scrollLeft > ${wheel.left}`);
+  await evaluate(`new Promise(resolve => { let previous=-1, stable=0; const check=()=>{ const left=document.querySelector("#horizontal-scroll").scrollLeft; stable=left===previous?stable+1:0;previous=left; if(stable>=5)resolve(left);else requestAnimationFrame(check); };check(); })`);
+  const selectionPoint = {x:right.cells[0].code.x+40,y:right.cells[0].code.y+12,button:'left',clickCount:1};
+  await input({type:'mousePressed',...selectionPoint});
+  await input({type:'mouseMoved',...selectionPoint,x:selectionPoint.x+80,buttons:1});
+  await input({type:'mouseReleased',...selectionPoint,x:selectionPoint.x+80});
+  assert.ok(await evaluate(`getSelection().toString().length>0`),'移動したコードをマウスで選択できる');
+  await evaluate('getSelection().removeAllRanges()');
+  socket.close();
+  const mouse = await snapshot();
+  console.log('PASS バーのマウス・キーボードとコード上の横wheel、固定領域・全行の同期');
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop=2400`);
+  await browser('wait', '--fn', `document.querySelector('.num').textContent !== '1'`);
+  const short = await snapshot();
+  assert.equal(short.range, mouse.range);
+  assert.equal(short.left, mouse.left);
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop=7200`);
+  await browser('wait', '--fn', `document.querySelector('#diff-content').textContent.includes('LATER_END')`);
+  const longer = await snapshot();
+  assert.ok(longer.range > short.range);
+  assert.equal(longer.left, short.left);
+  await browser('click', '#btn-wrap');
+  assert.equal((await snapshot()).hidden, true);
+  await browser('click', '#btn-wrap');
+  assert.equal((await snapshot()).left, longer.left);
+  await browser('click', '#btn-unified');
+  assert.equal((await snapshot()).hidden, true);
+  await browser('click', '#btn-split');
+  assert.equal((await snapshot()).left, longer.left);
+  console.log('PASS 縦移動で最大幅を保持・拡大、Wrapと表示モードの往復で横位置を復元');
+  await browser('click', '[data-file-id="short"]');
+  await browser('wait', '--fn', `document.querySelector('#diff-content').textContent.includes('old')`);
+  assert.equal((await snapshot()).hidden, true);
+  await browser('click', '[data-file-id="long"]');
+  await browser('wait', '--fn', `document.querySelector('#diff-content').textContent.includes('NEW_END')`);
+  assert.equal((await snapshot()).left, 0);
+  assert.equal((await snapshot()).range, initial.range);
+  console.log('PASS 別エントリへの往復で横位置と最大幅をリセット');
+  await browser('focus','#horizontal-scroll'); await browser('press','ArrowRight');
+  const originBefore=await snapshot();
+  await browser('click','.origin-entry');
+  const reasonX=await evaluate(`document.querySelector('.origin-reason').getBoundingClientRect().x`);
+  await browser('focus','#horizontal-scroll'); await browser('press','ArrowRight');
+  assert.equal(await evaluate(`document.querySelector('.origin-reason').getBoundingClientRect().x`),reasonX);
+  assert.equal((await snapshot()).top,originBefore.top);
+  await browser('click','.origin-entry');
+  const commentBefore=await snapshot();
+  await browser('click','.cchip');
+  const commentAfter=await snapshot();
+  assert.equal(commentAfter.left,commentBefore.left);
+  for(const cell of commentAfter.cells) assert.ok(Math.abs(cell.code.x-cell.text.x-commentAfter.left)<1,'再生成された行も同じ横位置');
+  await browser('click','.bal .acts button:first-child');
+  await browser('fill','textarea[data-editor-field="body"]','Draft survives horizontal movement');
+  const editorBefore=await evaluate(`document.querySelector('.editor').getBoundingClientRect().x`);
+  await browser('focus','#horizontal-scroll'); await browser('press','ArrowRight');
+  assert.equal(await evaluate(`document.querySelector('.editor').getBoundingClientRect().x`),editorBefore);
+  assert.equal(await evaluate(`document.querySelector('textarea').value`),'Draft survives horizontal movement');
+  await browser('click','.editor button[type="button"]');
+  await browser('click','[data-focus-key="file-expand"]');
+  await browser('wait','--fn',`!document.querySelector('.expand-button')`);
+  const foldBefore=await snapshot();
+  await browser('click','[data-focus-key="file-expand"]');
+  assert.equal((await snapshot()).left,foldBefore.left);
+  assert.ok(await evaluate(`Boolean(document.querySelector('.expand-button'))`),'折りたたみが実際に閉じる');
+  assert.ok((await snapshot()).range>=foldBefore.range);
+  await browser('click','[data-focus-key="file-expand"]');
+  assert.ok((await snapshot()).range>=foldBefore.range);
+  console.log('PASS コメントと入力欄の再描画・折りたたみ開閉で横位置を保持');
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop=7200`);
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('LATER_END')`);
+  await browser('focus','#horizontal-scroll'); await browser('press','End');
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop=0`);
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('NEW_END')`);
+  const beforeTheme=await snapshot();
+  await browser('click','#btn-theme');
+  await browser('wait','--fn',`!document.querySelector('[data-focus-key="file-highlight"]').disabled`);
+  const afterTheme=await snapshot();
+  assert.ok(afterTheme.range<beforeTheme.range,'テーマ変更で未表示の最大幅を捨てる');
+  assert.equal(afterTheme.left,afterTheme.range,'復元できない横位置は末端へ');
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop=7200`);
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('LATER_END')`);
+  await browser('focus','#horizontal-scroll'); await browser('press','End');
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop=0`);
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('NEW_END')`);
+  const beforeHighlight=await snapshot();
+  assert.ok(beforeHighlight.range>afterTheme.range);
+  await browser('click','#btn-wrap');
+  await browser('click','[data-focus-key="file-highlight"]');
+  await browser('wait','--fn',`!document.querySelector('[data-focus-key="file-highlight"]').disabled`);
+  await browser('set','viewport','1600','900');
+  await browser('click','#btn-wrap');
+  const resized=await snapshot();
+  assert.ok(resized.range<afterTheme.range);
+  assert.ok(resized.range<beforeHighlight.range);
+  assert.equal(resized.left,resized.range);
+  await browser('click','#btn-unified');
+  await browser('click','#btn-theme');
+  await browser('set','viewport','1280','720');
+  await browser('click','#btn-split');
+  assert.ok((await snapshot()).left>0);
+  const shotDir=await mkdtemp(join(tmpdir(),'kemi-hscroll-'));
+  await browser('screenshot',join(shotDir,'comparison.png'));
+  console.log('画面確認用:',join(shotDir,'comparison.png'));
+  console.log('PASS テーマ・ハイライトと非表示中のリサイズで再計測と末端補正');
+  const loadStart=performance.now();
+  await browser('click','[data-file-id="large"]');
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('large large')`);
+  const loadMs=performance.now()-loadStart;
+  const largeStart=await snapshot();
+  assert.ok(largeStart.count<100,'50万行でも表示付近だけをDOM化');
+  const moveStart=performance.now();
+  await browser('scroll','down','7200000','--selector','#diff-viewport');
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('later later')`);
+  await browser('focus','#horizontal-scroll'); await browser('press','ArrowRight');
+  const largeEnd=await snapshot();
+  assert.ok(largeEnd.count<100);
+  assert.ok(largeEnd.left>0);
+  assert.ok(largeEnd.range>largeStart.range);
+  console.log(JSON.stringify({test:'50万行の疎な変更',viewport:await evaluate('({width:innerWidth,height:innerHeight})'),loadMs,verticalAndHorizontalMs:performance.now()-moveStart,renderedRows:largeEnd.count}));
+  await browser('click','[data-file-id="long"]');
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('NEW_END')`);
+  await browser('focus','#horizontal-scroll'); await browser('press','End');
+  refreshed=true;
+  eventStream.write('event: update\ndata: {}\n\n');
+  await browser('wait','#update-badge');
+  await browser('click','#update-badge');
+  await browser('wait','--fn',`!document.querySelector('#diff-content').textContent.includes('NEW_END') && document.querySelector('#diff-content').textContent.includes('new')`);
+  assert.equal((await snapshot()).hidden,true);
+  await browser('click','#btn-unified'); await browser('click','#btn-split');
+  assert.equal((await snapshot()).left,0);
+  console.log('PASS 内容更新で幅を測り直して左端へ補正');
+
+} finally {
+  inputSocket?.close();
+  await browser('close');
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+}

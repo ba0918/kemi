@@ -1,6 +1,7 @@
 // @ts-check
 // kemi のページ。仮想スクロールで表示中の行だけを DOM に載せる。
 
+import { onHorizontalScroll, onCodeWheel, onHorizontalKey } from "./features/horizontal-scroll.js";
 import * as api from "./api.js";
 import { bindActions } from "./actions.js";
 import {
@@ -151,6 +152,9 @@ dom.navPrev.addEventListener("click", () => void navigate(-1));
 dom.navNext.addEventListener("click", () => void navigate(1));
 dom.ruler.addEventListener("click", scrollToRulerPosition);
 dom.viewport.addEventListener("scroll", scheduleRender);
+dom.viewport.addEventListener("wheel", onCodeWheel, { passive: false });
+dom.horizontal.addEventListener("scroll", onHorizontalScroll);
+dom.horizontal.addEventListener("keydown", onHorizontalKey);
 window.addEventListener("resize", onResize);
 window
   .matchMedia("(prefers-color-scheme: dark)")

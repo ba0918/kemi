@@ -36,6 +36,8 @@ export const dom = {
   notice: must("#notice"),
   viewport: must("#diff-viewport"),
   content: must("#diff-content"),
+  horizontal: must("#horizontal-scroll"),
+  horizontalWidth: must("#horizontal-scroll-width"),
   btnUnified: /** @type {HTMLButtonElement} */ (must("#btn-unified")),
   btnSplit: /** @type {HTMLButtonElement} */ (must("#btn-split")),
   btnWrap: /** @type {HTMLButtonElement} */ (must("#btn-wrap")),

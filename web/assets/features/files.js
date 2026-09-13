@@ -1,6 +1,7 @@
 // @ts-check
 // レビューの取り込みと、ファイルの選択・見た・由来・ツリーの絞り込み。
 
+import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
 import * as api from "../api.js";
 import { dom } from "../dom.js";
 import {
@@ -93,6 +94,7 @@ export async function refresh() {
   const scrollTop = dom.viewport.scrollTop;
   // 取得中の展開応答が、新しいレビューで消えたキャッシュへ古い行を戻さないようにする。
   state.selectGeneration += 1;
+  invalidateHorizontalWidth();
   state.cache.clear();
   state.commentStore.clear();
   state.origins.clear();
@@ -322,6 +324,7 @@ export async function copyPath(path, element) {
  * @param {Entry} entry
  */
 export function toggleHighlight(entry) {
+  invalidateHorizontalWidth();
   const next = nextHighlightOverride(
     state.highlightEnabled,
     state.highlightCapable,

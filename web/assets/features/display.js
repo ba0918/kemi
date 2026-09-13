@@ -2,6 +2,7 @@
 // 差分の表示そのもの: 仮想スクロールの窓、行の高さの測り直し、上端の行の記録、
 // 折りたたみの展開と畳み直し、表示モードと折返し。
 
+import { syncHorizontal } from "./horizontal-scroll.js";
 import * as api from "../api.js";
 import { dom, el, focusKeyWithin, restoreFocusKey } from "../dom.js";
 import {
@@ -202,6 +203,7 @@ export function renderDiff() {
     collapseDefault(entry.file, state.collapsedOverrides)
   ) {
     dom.content.style.height = "0px";
+    syncHorizontal();
     renderNav([0]);
     renderRuler([0]);
     return;
@@ -227,6 +229,7 @@ export function renderDiff() {
     fragment.append(block);
   }
   dom.content.append(fragment);
+  syncHorizontal();
   restoreEditorFocus(focus);
   restoreFocusKey(dom.content, focusKey);
   renderNav(offsets);

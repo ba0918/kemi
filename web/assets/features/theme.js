@@ -1,6 +1,7 @@
 // @ts-check
 // テーマの適用と切り替え。
 
+import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
 import { dom } from "../dom.js";
 import { THEME_LABELS, currentEntry, state } from "../state.js";
 import { saveTheme } from "../storage.js";
@@ -9,6 +10,7 @@ import { scheduleRender } from "./display.js";
 import { selectEntry } from "./files.js";
 
 export function applyTheme() {
+  invalidateHorizontalWidth();
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   const resolved = resolveTheme(state.theme, prefersDark);
   const dark = isDarkTheme(resolved);

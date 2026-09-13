@@ -248,7 +248,9 @@ function signFor(kind) {
 function sideCell(side, line, segments, withPlus, tone) {
   const cell = el("span", `cell${tone ? ` side-${tone}` : ""}`);
   const code = el("span", "code");
-  fillCode(code, line, segments);
+  const text = el("span", "code-text");
+  fillCode(text, line, segments);
+  code.append(text);
   const sign = tone === "del" ? "−" : tone === "add" ? "+" : "";
   cell.append(numberCell(side, line, withPlus), textEl("span", "mk", sign), code);
   return cell;
