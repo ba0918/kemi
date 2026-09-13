@@ -111,3 +111,7 @@ submit で stdout に出した JSON と同じ内容を、利用者の状態デ�
 ## identity
 manifest の `approval` が与える「承認対象を識別する値」（例 `sha256:...`）。
 kemi は画面に出さず、検証もしない。結果の JSON にそのまま返す。
+
+## unix
+このリポジトリの文書（仕様、README、コードのコメント）で「Linux と macOS」を
+指す語。Windows の対義。POSIX 全体やそれ以外の OS を指す一般の意味では使わない。

@@ -86,12 +86,13 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - 性能: 10,000 ファイルの一覧が 1 秒未満 / 行データは表示時に計算 / 50 万行でも
   スクロール可 / 10,000 行 or 1 MB 超はハイライト off / digest は 30,000 ファイルで
   100 KB 未満。
-- 配布: Linux x86_64・aarch64（musl 静的）と macOS x86_64・arm64。Windows は対象外。
+- 配布: Linux x86_64・aarch64（musl 静的）、macOS x86_64・arm64、Windows
+  x86_64・arm64（msvc）。
 - セキュリティ: 127.0.0.1 のみ、URL トークン、Origin / Host 検証。kemi は git の状態を
   書き換えない（suggestion の適用はエージェントが行う）。静的 HTML は書き出さない。
 - セッションはメモリのみで、プロセス終了で消える。submit の結果は stdout の JSON で
-  返し、同じ JSON を結果ファイル（`$XDG_STATE_HOME/kemi/results/`）にも残す
-  （`R-RESULT`）。
+  返し、同じ JSON を結果ファイル（unix は `$XDG_STATE_HOME/kemi/results/`、Windows は
+  `%LOCALAPPDATA%\kemi\results\`。`R-RESULT`）にも残す
 
 ## Glossary
 

@@ -3,7 +3,9 @@
 mod result;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::sync::Arc;
 
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
@@ -139,11 +141,21 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// 結果の置き場所を決める環境変数が無いときの理由（R-RESULT）。OS ごとに使う変数が違う。
+fn results_unset_reason() -> &'static str {
+    if cfg!(windows) {
+        "LOCALAPPDATA is not set or not absolute"
+    } else {
+        "HOME is not set"
+    }
+}
+
 /// 結果ファイルの置き場所（R-RESULT）。
 fn results_dir() -> Option<PathBuf> {
     result::results_dir(
         std::env::var_os("XDG_STATE_HOME").as_deref(),
         std::env::var_os("HOME").as_deref(),
+        std::env::var_os("LOCALAPPDATA").as_deref(),
     )
 }
 
@@ -158,7 +170,10 @@ fn workspace_root(path: &Path) -> PathBuf {
 /// 終わる。該当が無ければ何も出さず終了コード 2。
 fn print_result(cli: &Cli) -> ! {
     let Some(dir) = results_dir() else {
-        fail("cannot determine where to store results (HOME is not set)");
+        fail(&format!(
+            "cannot determine where to store results ({})",
+            results_unset_reason()
+        ));
     };
     let key = (!cli.any).then(|| {
         let place = cli.workspace.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -191,7 +206,10 @@ struct ResultStore {
 impl ResultSink for ResultStore {
     fn save(&self, text: &str) -> Result<PathBuf, String> {
         let dir = self.dir.as_ref().ok_or_else(|| {
-            "cannot determine where to store results (HOME is not set)".to_string()
+            format!(
+                "cannot determine where to store results ({})",
+                results_unset_reason()
+            )
         })?;
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -262,32 +280,42 @@ impl Assets for WebAssets {
     }
 }
 
+/// セッションの URL トークン（R-SERVE）。16 バイトの乱数を 32 桁の 16 進で返す
+/// （出力の形は後方互換のため変えない）。失敗は終了コード 2 の一般エラーにする。
 fn random_token() -> String {
-    if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let mut bytes = [0u8; 16];
-        if file.read_exact(&mut bytes).is_ok() {
-            return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-        }
-    }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos:x}{:x}", std::process::id())
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .unwrap_or_else(|error| fail(&format!("cannot generate a random session token: {error}")));
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// ブラウザで URL を開く（R-INPUT の `--no-open` を付けなければ既定で開く）。
 fn open_browser(url: &str) {
-    let command = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    let _ = Command::new(command)
-        .arg(url)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW（0x0800_0000）で、start のコンソールの窓を出さない。
+        let _ = Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(url)
+            .creation_flags(0x0800_0000)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let command = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let _ = Command::new(command)
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
 }
 
 fn fail(message: &str) -> ! {
@@ -386,7 +414,10 @@ async fn main() {
     };
     match results.location() {
         Some(dir) => eprintln!("kemi: results are saved to: {dir}"),
-        None => eprintln!("kemi: cannot determine where to save results (HOME is not set)"),
+        None => eprintln!(
+            "kemi: cannot determine where to save results ({})",
+            results_unset_reason()
+        ),
     }
     if !cli.no_open {
         open_browser(&url);

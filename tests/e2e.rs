@@ -1007,6 +1007,7 @@ async fn result_outside_git_is_identified_by_the_directory() {
     assert_eq!(sub.status.code(), Some(2));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn result_relative_xdg_state_home_falls_back_to_home() {
     let dir = TempDir::new();
@@ -1181,6 +1182,23 @@ async fn result_location_is_printed_on_its_own_stderr_line() {
 
 // ---- 利用者の git の設定 ----
 
+/// git の設定ファイルに書くパス。Windows の一時ディレクトリは `\` を含むので、git config が
+/// エスケープとして解釈しないよう `/` に置き換える。
+fn git_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// git の設定ファイルに書く file URL。Windows はドライブ文字の前に `/` が要る
+/// （`file:///C:/...`）。unix は従来通り `file:///tmp/...` になる。
+fn file_url(path: &Path) -> String {
+    let path = git_path(path);
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
+}
+
 #[tokio::test]
 async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() {
     let dir = TempDir::new();
@@ -1193,7 +1211,7 @@ async fn origin_is_found_even_if_the_global_blame_ignore_revs_file_is_missing() 
         &global,
         format!(
             "[blame]\n\tignoreRevsFile = {}\n",
-            state.path.join("missing-ignore-revs").display()
+            git_path(&state.path.join("missing-ignore-revs"))
         ),
     )
     .unwrap();
@@ -1235,15 +1253,15 @@ async fn origin_is_found_in_a_partial_clone_whose_remote_needs_the_global_config
     let clone = TempDir::new();
     let state = TempDir::new();
     // 取り寄せ先の URL は、全体の設定の url.<base>.insteadOf を通したときだけ upstream に届く。
-    let unreachable = format!("file://{}", state.path.join("nowhere").display());
+    let unreachable = file_url(&state.path.join("nowhere"));
     let global = state.path.join("gitconfig");
     std::fs::write(
         &global,
         format!(
             "[user]\n\tname = kemi\n\temail = kemi@example.com\n\
              [core]\n\thooksPath = /dev/null\n\
-             [url \"file://{}\"]\n\tinsteadOf = {unreachable}\n",
-            upstream.path.display()
+             [url \"{}\"]\n\tinsteadOf = {unreachable}\n",
+            file_url(&upstream.path)
         ),
     )
     .unwrap();
