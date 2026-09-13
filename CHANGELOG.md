@@ -7,6 +7,16 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 （なし）
 
+## [0.1.5] - 2026-09-14
+
+### 変更
+
+- Windows（`x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`）を配布ターゲットに
+  追加した。GitHub Releases の `kemi-<target>.zip` を解いて `kemi.exe` を PATH に置くと
+  使える。結果ファイルは `%LOCALAPPDATA%\kemi\results\` に置き、`--no-open` を付けなければ
+  ブラウザを自動で開く。Linux と macOS の使い方と、`--version` を除く CLI・JSON の契約は
+  変わらない。
+
 ## [0.1.4] - 2026-09-14
 
 ### 修正
@@ -67,7 +77,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/ba0918/kemi/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ba0918/kemi/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ba0918/kemi/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ba0918/kemi/compare/v0.1.1...v0.1.2
