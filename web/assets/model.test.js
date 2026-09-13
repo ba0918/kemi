@@ -5,6 +5,7 @@ import {
   buildTree,
   collapseDefault,
   commentLabel,
+  countLabel,
   draftKey,
   filterAndSortFiles,
   formatBytes,
@@ -332,6 +333,12 @@ test("formatBytes_uses_binary_units", () => {
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(2048), "2.0 KiB");
   assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MiB");
+});
+
+test("countLabel_uses_singular_only_for_one", () => {
+  assert.equal(countLabel(0, "apple"), "0 apples");
+  assert.equal(countLabel(1, "apple"), "1 apple");
+  assert.equal(countLabel(2, "apple"), "2 apples");
 });
 
 test("commentLabel_marks_file_wide_and_ranges", () => {

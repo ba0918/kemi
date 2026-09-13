@@ -3,6 +3,7 @@
 
 import { dom, button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
+import { countLabel } from "../model.js";
 
 /**
  * 確認ダイアログの本文を、改行を保つ段落 1 つにする。
@@ -112,7 +113,7 @@ export function showCompletion(verdict, answer) {
       });
   });
   const suggestions = comments.filter((/** @type {any} */ comment) => comment.suggestion).length;
-  row.append(copy, textEl("span", "finish-meta", `${comments.length} comments / ${suggestions} suggestions`));
+  row.append(copy, textEl("span", "finish-meta", `${countLabel(comments.length, "comment")} / ${countLabel(suggestions, "suggestion")}`));
   body.append(row);
   if (saved.error) {
     body.append(textEl("p", "finish-save failed", `could not save: ${saved.error}`));

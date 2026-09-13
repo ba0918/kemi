@@ -225,7 +225,7 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
     if omitted_groups > 0 {
         groups.push(DigestGroup {
             id: "…".to_string(),
-            title: format!("… and {omitted_groups} more groups"),
+            title: format!("… and {}", count_label(omitted_groups, "more group")),
             why: String::new(),
             watch: String::new(),
             files: omitted_group_files,
@@ -317,6 +317,12 @@ fn root_directory(path: &str) -> String {
     }
 }
 
+/// 数と名詞を並べ、1 のときだけ単数形にする。名詞は s を足すだけで複数形になるものに限る。
+fn count_label(count: usize, noun: &str) -> String {
+    let suffix = if count == 1 { "" } else { "s" };
+    format!("{count} {noun}{suffix}")
+}
+
 fn truncate(value: &str, limit: usize) -> String {
     if value.chars().count() <= limit {
         return value.to_string();
@@ -364,6 +370,13 @@ mod tests {
             }],
             approval: Vec::new(),
         }
+    }
+
+    #[test]
+    fn count_label_uses_singular_only_for_one() {
+        assert_eq!(count_label(0, "apple"), "0 apples");
+        assert_eq!(count_label(1, "apple"), "1 apple");
+        assert_eq!(count_label(2, "apple"), "2 apples");
     }
 
     #[test]

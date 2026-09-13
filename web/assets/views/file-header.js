@@ -25,7 +25,7 @@ import {
   originAvailable,
   state,
 } from "../state.js";
-import { collapseDefault, formatBytes, statusLetter } from "../model.js";
+import { collapseDefault, countLabel, formatBytes, statusLetter } from "../model.js";
 import { appendGroupTitle, fileStatsEl } from "./tree.js";
 
 /** 本文側のグループ帯。why は既定で畳み（開閉はページを開いている間だけ覚える）、watch は常に出す。 */
@@ -97,7 +97,7 @@ export function renderFileHeader() {
   const comments = commentsOf(entry).length;
   if (comments > 0) {
     const badge = textEl("span", "cbadge", `💬 ${comments}`);
-    badge.title = `${comments} comment(s) on this file (including file-wide comments)`;
+    badge.title = `${countLabel(comments, "comment")} on this file (including file-wide comments)`;
     dom.fileHeader.append(badge);
   }
   dom.fileHeader.append(fileStatsEl(entry.file));

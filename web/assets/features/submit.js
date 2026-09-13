@@ -4,7 +4,7 @@
 import * as api from "../api.js";
 import { el, textEl } from "../dom.js";
 import { state, unitLabel } from "../state.js";
-import { submitSummary } from "../model.js";
+import { countLabel, submitSummary } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderSubmitButtons } from "../views/header.js";
@@ -28,14 +28,14 @@ export function openConfirm(verdict) {
   const seenLabel = state.unit ? `Seen files (${unitLabel(state.unit)})` : "Seen files";
   list.append(
     textEl("dt", "", "Comments"),
-    textEl("dd", "", `${summary.comments} comments (${summary.suggestions} with a suggestion)`),
+    textEl("dd", "", `${countLabel(summary.comments, "comment")} (${summary.suggestions} with a suggestion)`),
     textEl("dt", "", seenLabel),
     textEl("dd", "", `${summary.seen} / ${summary.total}`),
   );
   /** @type {HTMLElement[]} */
   const body = [list];
   if (summary.unseen > 0) {
-    body.push(textEl("p", "warn", `${summary.unseen} file(s) not seen yet.`));
+    body.push(textEl("p", "warn", `${countLabel(summary.unseen, "file")} not seen yet.`));
   }
   body.push(
     textEl(

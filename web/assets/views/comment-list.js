@@ -4,13 +4,13 @@
 import { actions } from "../actions.js";
 import { button, dom, el, textEl } from "../dom.js";
 import { commitGroups, state, unitLabel } from "../state.js";
-import { commentLabel, describeComment, firstLine } from "../model.js";
+import { commentLabel, countLabel, describeComment, firstLine } from "../model.js";
 
 /** 上部の入口から開く、すべてのグループ単位のコメントの一覧（常設のパネルではない）。 */
 export function renderCommentList() {
   dom.commentList.textContent = "";
   const head = el("div", "cl-head");
-  head.append(textEl("b", "", `${state.allComments.length} comments`));
+  head.append(textEl("b", "", countLabel(state.allComments.length, "comment")));
   const close = button("cl-close");
   close.textContent = "Close";
   close.addEventListener("click", () => actions.closeCommentList());

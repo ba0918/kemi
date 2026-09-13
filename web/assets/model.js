@@ -1069,6 +1069,16 @@ export function submitSummary(comments, files) {
 }
 
 /**
+ * 数と名詞を並べ、1 のときだけ単数形にする。名詞は s を足すだけで複数形になるものに限る。
+ * @param {number} count
+ * @param {string} noun
+ * @returns {string}
+ */
+export function countLabel(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
  * @param {number} bytes
  * @returns {string}
  */

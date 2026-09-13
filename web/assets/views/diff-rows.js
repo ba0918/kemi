@@ -4,7 +4,7 @@
 import { actions } from "../actions.js";
 import { appendSegments, button, el, textEl } from "../dom.js";
 import { currentEntry, currentOrigin, selectionContains, state } from "../state.js";
-import { lineAnchor, lineHasAnchor, originJumpTarget, sideTone } from "../model.js";
+import { countLabel, lineAnchor, lineHasAnchor, originJumpTarget, sideTone } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 import { renderFileHeader } from "./file-header.js";
 import { showToast } from "./overlay.js";
@@ -66,7 +66,7 @@ function renderLine(line) {
   if (line.kind === "skip") {
     const skip = line.skip;
     const expand = button("expand-button");
-    expand.textContent = `↕ Show ${skip && skip.count ? skip.count : 0} lines`;
+    expand.textContent = `↕ Show ${countLabel(skip && skip.count ? skip.count : 0, "line")}`;
     expand.disabled = state.loading;
     expand.addEventListener("click", () => {
       void actions.expandSkipAt(line.logicalIndex).then(() => renderFileHeader());
