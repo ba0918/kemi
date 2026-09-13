@@ -5,6 +5,10 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+（なし）
+
+## [0.1.4] - 2026-09-14
+
 ### 修正
 
 - ページ上部の meta を開くボタンと、開いた箱の読み上げ用の名前（`aria-label`）に日本語が
@@ -63,7 +67,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/ba0918/kemi/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ba0918/kemi/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ba0918/kemi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ba0918/kemi/releases/tag/v0.1.1
