@@ -1195,3 +1195,25 @@ test("the_row_showing_at_the_top_of_the_viewport_is_the_one_the_position_falls_i
   assert.equal(rowAtOffset(offsets, 167), 2);
   assert.equal(rowAtOffset(offsets, 5_000), 2);
 });
+
+test("同じエントリでは横位置を保ち、別エントリへの往復では左端に戻る", async () => {
+  const { horizontalEntry } = await import("./model.js");
+  const initial = { entry: "a", width: 1400, left: 300 };
+  assert.deepEqual(horizontalEntry(initial, "a"), initial);
+  assert.deepEqual(horizontalEntry(horizontalEntry(initial, "b"), "a"), { entry: "a", width: 0, left: 0 });
+});
+
+test("短い行へ移動しても最大幅は縮まず、長い行で広がっても横位置は動かない", async () => {
+  const { measureHorizontal } = await import("./model.js");
+  const initial = { entry: "a", width: 1400, left: 300 };
+  assert.deepEqual(measureHorizontal(initial, 100, 500), initial);
+  assert.deepEqual(measureHorizontal(initial, 1800, 500), { ...initial, width: 1800 });
+});
+
+test("リサイズと幅の測り直しでは移動不能な横位置だけ末端に補正する", async () => {
+  const { measureHorizontal } = await import("./model.js");
+  const initial = { entry: "a", width: 1400, left: 800 };
+  assert.deepEqual(measureHorizontal(initial, 100, 900), { ...initial, left: 500 });
+  assert.deepEqual(measureHorizontal(initial, 1000, 500, true), { ...initial, width: 1000, left: 500 });
+  assert.deepEqual(measureHorizontal(initial, 100, 500, true), { ...initial, width: 100, left: 0 });
+});

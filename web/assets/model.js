@@ -1350,3 +1350,25 @@ export function lineAnchor(line) {
   }
   return null;
 }
+
+/** @typedef {{ entry: string | null, width: number, left: number }} HorizontalState */
+/**
+ * @param {HorizontalState} previous
+ * @param {string | null} entry
+ * @returns {HorizontalState}
+ */
+export function horizontalEntry(previous, entry) {
+  return previous.entry === entry ? previous : { entry, width: 0, left: 0 };
+}
+
+/**
+ * @param {HorizontalState} previous
+ * @param {number} measured
+ * @param {number} viewport
+ * @param {boolean} [reset]
+ * @returns {HorizontalState}
+ */
+export function measureHorizontal(previous, measured, viewport, reset = false) {
+  const width = reset ? measured : Math.max(previous.width, measured);
+  return { ...previous, width, left: Math.max(0, Math.min(previous.left, width - viewport)) };
+}
