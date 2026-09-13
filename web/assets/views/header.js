@@ -30,7 +30,7 @@ export function renderHeader() {
   renderUnitSwitch();
   renderProgress();
   dom.commentCount.textContent = String(state.allComments.length);
-  dom.btnComments.setAttribute("aria-label", `コメントの一覧（${state.allComments.length} 件）`);
+  dom.btnComments.setAttribute("aria-label", `Comment list (${state.allComments.length})`);
   dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
@@ -53,7 +53,7 @@ export function renderUnitSwitch() {
       item.classList.add("failed");
       item.title = `could not create: ${status.error || ""} (click to see the reason and retry)`;
     } else if (status.state === "building" && pending) {
-      label = `${label}（読み込み中…）`;
+      label = `${label} (loading…)`;
     }
     item.textContent = label;
     item.dataset.focusKey = `unit:${unit}`;
@@ -69,7 +69,7 @@ export function renderProgress() {
   const progress = seenProgress(state.entries.map((entry) => entry.file));
   dom.progress.hidden = !state.review || progress.total === 0;
   dom.progressBar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
-  dom.progressText.textContent = `見た ${progress.seen} / ${progress.total}`;
+  dom.progressText.textContent = `Seen ${progress.seen} / ${progress.total}`;
 }
 
 export function renderUpdateBadge() {

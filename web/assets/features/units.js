@@ -34,7 +34,7 @@ export async function switchUnit(unit, jump) {
   if (status.state !== "ready") {
     state.pendingUnit = { unit, jump };
     renderUnitSwitch();
-    showToast(`${unitLabel(unit)}を読み込み中です`);
+    showToast(`Loading ${unitLabel(unit)}…`);
     // 手元の状態が古いこともあるので読み直す。できていればそのまま切り替わる。
     void onUnitEvent();
     return;
@@ -88,9 +88,9 @@ function openUnitFailure(status) {
   openModal({
     title: `could not create the ${unitLabel(unit)} unit`,
     body: `Reason: ${status.error || "unknown"}\nThe review can continue.`,
-    okLabel: "再試行",
+    okLabel: "Retry",
     okClass: "btn primary",
-    cancelLabel: "閉じる",
+    cancelLabel: "Close",
     action: () => {
       state.pendingUnit = { unit, jump: null };
       api

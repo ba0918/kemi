@@ -19,7 +19,7 @@ export function applyTheme() {
   const current =
     THEME_LABELS[state.theme] || THEME_LABELS.auto;
   const next = THEME_LABELS[nextTheme(state.theme)] || "";
-  dom.btnTheme.title = `テーマ: ${current}（クリックで ${next}）`;
+  dom.btnTheme.title = `Theme: ${current} (click for ${next})`;
   if (changed && !state.submitted) {
     state.cache.clear();
     const entry = currentEntry();

@@ -335,9 +335,9 @@ test("formatBytes_uses_binary_units", () => {
 });
 
 test("commentLabel_marks_file_wide_and_ranges", () => {
-  assert.equal(commentLabel({ side: "new", start_line: null, end_line: null }), "ファイル全体");
-  assert.equal(commentLabel({ side: "new", start_line: 3, end_line: 3 }), "新側 3");
-  assert.equal(commentLabel({ side: "old", start_line: 4, end_line: 6 }), "旧側 4–6");
+  assert.equal(commentLabel({ side: "new", start_line: null, end_line: null }), "Whole file");
+  assert.equal(commentLabel({ side: "new", start_line: 3, end_line: 3 }), "New side 3");
+  assert.equal(commentLabel({ side: "old", start_line: 4, end_line: 6 }), "Old side 4–6");
 });
 
 test("suggestionAllowed_only_on_new_side", () => {
@@ -490,9 +490,9 @@ test("metaItems_shows_manifest_meta_and_computed_stats", () => {
   assert.deepEqual(metaItems(review), [
     { label: "author", value: "ba0918" },
     { label: "target", value: "main..kemi-v1" },
-    { label: "ファイル", value: "1", stat: true },
-    { label: "グループ", value: "1", stat: true },
-    { label: "変更", value: "+1 −2", stat: true },
+    { label: "Files", value: "1", stat: true },
+    { label: "Groups", value: "1", stat: true },
+    { label: "Changes", value: "+1 −2", stat: true },
   ]);
 });
 
@@ -500,8 +500,8 @@ test("metaItems_ignores_empty_meta", () => {
   const review = { meta: null, groups: [] };
 
   assert.deepEqual(metaItems(review), [
-    { label: "ファイル", value: "0", stat: true },
-    { label: "変更", value: "+0 −0", stat: true },
+    { label: "Files", value: "0", stat: true },
+    { label: "Changes", value: "+0 −0", stat: true },
   ]);
 });
 

@@ -10,14 +10,14 @@ import { commentLabel, describeComment, firstLine } from "../model.js";
 export function renderCommentList() {
   dom.commentList.textContent = "";
   const head = el("div", "cl-head");
-  head.append(textEl("b", "", `コメント ${state.allComments.length} 件`));
+  head.append(textEl("b", "", `${state.allComments.length} comments`));
   const close = button("cl-close");
-  close.textContent = "閉じる";
+  close.textContent = "Close";
   close.addEventListener("click", () => actions.closeCommentList());
   head.append(close);
   dom.commentList.append(head);
   if (state.allComments.length === 0) {
-    dom.commentList.append(textEl("p", "cl-empty", "まだコメントはありません"));
+    dom.commentList.append(textEl("p", "cl-empty", "No comments yet"));
     return;
   }
   const context = { range: state.units.length > 0, commitGroups: commitGroups() };
@@ -29,7 +29,7 @@ export function renderCommentList() {
     target.disabled = info.vanished;
     const meta = el("span", "cl-meta");
     if (info.vanished) {
-      meta.append(textEl("span", "cl-unit vanished", "消えたコミット"));
+      meta.append(textEl("span", "cl-unit vanished", "Vanished commit"));
     } else if (info.unit) {
       meta.append(textEl("span", "cl-unit", unitLabel(info.unit)));
     }
@@ -38,7 +38,7 @@ export function renderCommentList() {
       textEl("span", "cl-where", commentLabel(comment)),
     );
     if (comment.outdated || info.vanished) {
-      meta.append(textEl("span", "t-outdated-mark", "古いコメント"));
+      meta.append(textEl("span", "t-outdated-mark", "Outdated comment"));
     }
     target.append(meta);
     if (info.subject) {

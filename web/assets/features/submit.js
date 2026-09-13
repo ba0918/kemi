@@ -25,31 +25,31 @@ export function openConfirm(verdict) {
     state.entries.map((entry) => entry.file),
   );
   const list = el("dl", "sum");
-  const seenLabel = state.unit ? `見たファイル（${unitLabel(state.unit)}）` : "見たファイル";
+  const seenLabel = state.unit ? `Seen files (${unitLabel(state.unit)})` : "Seen files";
   list.append(
-    textEl("dt", "", "コメント"),
-    textEl("dd", "", `${summary.comments} 件（うち suggestion 付き ${summary.suggestions} 件）`),
+    textEl("dt", "", "Comments"),
+    textEl("dd", "", `${summary.comments} comments (${summary.suggestions} with a suggestion)`),
     textEl("dt", "", seenLabel),
     textEl("dd", "", `${summary.seen} / ${summary.total}`),
   );
   /** @type {HTMLElement[]} */
   const body = [list];
   if (summary.unseen > 0) {
-    body.push(textEl("p", "warn", `まだ見ていないファイルが ${summary.unseen} あります。`));
+    body.push(textEl("p", "warn", `${summary.unseen} file(s) not seen yet.`));
   }
   body.push(
     textEl(
       "p",
       "",
-      `レビューを終了して、${approve ? "承認" : "変更要求"}の verdict とコメントを実行ターミナルへ JSON で返します。この操作は取り消せません。`,
+      `This ends the review and returns the ${approve ? "approve" : "request changes"} verdict and the comments to the terminal as JSON. This cannot be undone.`,
     ),
   );
   openModal({
-    title: approve ? "承認して終了しますか？" : "変更要求で終了しますか？",
+    title: approve ? "Approve and finish?" : "Request changes and finish?",
     body,
-    okLabel: approve ? "承認して終了" : "変更要求で終了",
+    okLabel: approve ? "Approve and finish" : "Request changes and finish",
     okClass: approve ? "btn primary" : "btn secondary",
-    cancelLabel: "戻る",
+    cancelLabel: "Back",
     action: () => void submitReview(verdict),
   });
 }

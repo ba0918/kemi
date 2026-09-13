@@ -306,10 +306,10 @@ export async function copyPath(path, element) {
   try {
     await navigator.clipboard.writeText(path);
     element.classList.add("copied");
-    element.title = "コピーしました";
+    element.title = "Copied";
     window.setTimeout(() => {
       element.classList.remove("copied");
-      element.title = "パスをコピー";
+      element.title = "Copy path";
     }, 1_500);
   } catch (error) {
     showOverlay("could not copy", String(error));

@@ -63,7 +63,7 @@ export function showOverlay(title, detail) {
     dom.overlayCard.append(textEl("p", "overlay-detail", detail));
   }
   const close = button("btn overlay-close");
-  close.textContent = "閉じる";
+  close.textContent = "Close";
   close.addEventListener("click", () => {
     dom.overlay.hidden = true;
   });
@@ -91,35 +91,35 @@ export function showCompletion(verdict, answer) {
   }
   const body = el("div", "finish-body");
   body.append(
-    textEl("h2", "overlay-title", verdict === "approved" ? "承認を送りました" : "変更要求を送りました"),
+    textEl("h2", "overlay-title", verdict === "approved" ? "Approval sent" : "Change request sent"),
     textEl(
       "p",
       "overlay-detail",
-      "kemi は結果を標準出力に書いて終了しました。エージェントが反応しないときは、この JSON をコピーして会話に貼れば済みます。",
+      "kemi wrote the result to standard output and exited. If the agent does not respond, copy this JSON into the conversation.",
     ),
   );
   const row = el("div", "finish-row");
   const copy = button("btn primary");
-  copy.textContent = "JSON をコピー";
+  copy.textContent = "Copy JSON";
   copy.addEventListener("click", () => {
     navigator.clipboard
       .writeText(json)
       .then(() => {
-        copy.textContent = "コピーしました";
+        copy.textContent = "Copied";
       })
       .catch((error) => {
         copy.textContent = `could not copy: ${error}`;
       });
   });
   const suggestions = comments.filter((/** @type {any} */ comment) => comment.suggestion).length;
-  row.append(copy, textEl("span", "finish-meta", `コメント ${comments.length} 件 / suggestion ${suggestions} 件`));
+  row.append(copy, textEl("span", "finish-meta", `${comments.length} comments / ${suggestions} suggestions`));
   body.append(row);
   if (saved.error) {
     body.append(textEl("p", "finish-save failed", `could not save: ${saved.error}`));
   } else if (saved.path) {
-    body.append(textEl("p", "finish-save", `結果ファイル: ${saved.path}（kemi --result で読めます）`));
+    body.append(textEl("p", "finish-save", `Result file: ${saved.path} (read it with kemi --result)`));
   } else if (saved.dir) {
-    body.append(textEl("p", "finish-save", `結果ファイルの保存先: ${saved.dir}`));
+    body.append(textEl("p", "finish-save", `Result file directory: ${saved.dir}`));
   }
   const pre = el("pre", "finish-json");
   pre.textContent = json;

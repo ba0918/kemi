@@ -66,7 +66,7 @@ function renderLine(line) {
   if (line.kind === "skip") {
     const skip = line.skip;
     const expand = button("expand-button");
-    expand.textContent = `↕ ${skip && skip.count ? skip.count : 0} 行を表示`;
+    expand.textContent = `↕ Show ${skip && skip.count ? skip.count : 0} lines`;
     expand.disabled = state.loading;
     expand.addEventListener("click", () => {
       void actions.expandSkipAt(line.logicalIndex).then(() => renderFileHeader());
@@ -126,10 +126,10 @@ function rangeLabel(range) {
   const text = (span) => (span.start === span.end ? `${span.start}` : `${span.start}–${span.end}`);
   const parts = [];
   if (range.old) {
-    parts.push(`旧 ${text(range.old)}`);
+    parts.push(`old ${text(range.old)}`);
   }
   if (range.new) {
-    parts.push(`新 ${text(range.new)}`);
+    parts.push(`new ${text(range.new)}`);
   }
   return parts.join(" → ");
 }
@@ -141,14 +141,14 @@ function rangeLabel(range) {
  */
 function renderOriginLine(line) {
   const row = el("div", "row origin-row");
-  row.append(textEl("span", "origin-label", "由来"));
+  row.append(textEl("span", "origin-label", "Origin"));
   const origin = currentOrigin();
   if (!origin || origin === "pending") {
-    row.append(textEl("span", "origin-pending", "計算中…"));
+    row.append(textEl("span", "origin-pending", "Computing…"));
     return row;
   }
   if (origin.failed) {
-    row.append(textEl("span", "origin-unknown", "特定できない"));
+    row.append(textEl("span", "origin-unknown", "Cannot determine"));
     return row;
   }
   const block = origin.blocks.get(Number(line.block));
@@ -159,7 +159,7 @@ function renderOriginLine(line) {
     const short = String(entry.sha).slice(0, 7);
     const item = button("origin-entry");
     item.dataset.focusKey = `origin:${openKey}:${entry.sha}`;
-    item.textContent = entry.merge ? `マージ ${short}` : `${short} ${commit.subject}`;
+    item.textContent = entry.merge ? `Merge ${short}` : `${short} ${commit.subject}`;
     item.title = commit.subject || short;
     const open = state.originOpen.get(openKey) === entry.sha;
     item.setAttribute("aria-expanded", String(open));
@@ -167,9 +167,9 @@ function renderOriginLine(line) {
     row.append(item);
   }
   if (!block || block.unknown === "all") {
-    row.append(textEl("span", "origin-unknown", "特定できない"));
+    row.append(textEl("span", "origin-unknown", "Cannot determine"));
   } else if (block.unknown === "some") {
-    row.append(textEl("span", "origin-unknown", "一部特定できない"));
+    row.append(textEl("span", "origin-unknown", "Some cannot be determined"));
   }
   return row;
 }
@@ -198,14 +198,14 @@ function renderOriginReason(line) {
   );
   panel.append(head);
   panel.append(
-    textEl("p", "origin-body", commit.body || "（本文はありません）"),
+    textEl("p", "origin-body", commit.body || "(no body)"),
   );
   const block = origin.blocks.get(Number(line.block));
   const target = block ? block.entries.find((/** @type {any} */ item) => item.sha === sha) : null;
   // マージの由来は理由を開くだけで、移り先を持たない。
   if (target && !target.merge && target.target) {
     const jump = button("btn origin-jump");
-    jump.textContent = "このコミットで見る";
+    jump.textContent = "View in this commit";
     jump.addEventListener("click", () => {
       const to = target.target;
       actions.switchUnit("commit", {
@@ -291,8 +291,8 @@ function numberCell(side, line, withPlus) {
   if (line && withPlus) {
     const plus = button("line-add-btn");
     plus.textContent = "+";
-    plus.title = "この行にコメント";
-    plus.setAttribute("aria-label", "この行にコメント");
+    plus.title = "Comment on this line";
+    plus.setAttribute("aria-label", "Comment on this line");
     plus.addEventListener("click", (event) => {
       event.stopPropagation();
       actions.openEditorAt(side, Number(line.number));

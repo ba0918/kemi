@@ -67,7 +67,7 @@ export function updateGroupHead(groupId) {
   head.count.textContent = "";
   if (progress.done) {
     const seal = textEl("span", "seal", "閲");
-    seal.title = "すべて見た";
+    seal.title = "All seen";
     head.count.append(seal);
   } else {
     head.count.append(textEl("span", "g-count", `${progress.seen} / ${progress.total}`));
@@ -227,10 +227,10 @@ function treeItem(entry, label, items) {
     item.append(textEl("span", "cbadge", `💬 ${comments}`));
   }
   if (entry.file.focus) {
-    item.append(textEl("span", "badge-focus", "重要"));
+    item.append(textEl("span", "badge-focus", "Important"));
   }
   if (entry.file.noise) {
-    item.append(textEl("span", "badge-noise", "ノイズ"));
+    item.append(textEl("span", "badge-noise", "Noise"));
   }
   item.append(textEl("span", `sl ${letter}`, letter), fileStatsEl(entry.file));
   return item;

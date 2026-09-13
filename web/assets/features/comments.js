@@ -270,11 +270,11 @@ export async function editComment(payload) {
  */
 export function confirmDeleteComment(comment) {
   openModal({
-    title: "コメントを削除しますか？",
-    body: `${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`,
-    okLabel: "削除",
+    title: "Delete this comment?",
+    body: `${commentLabel(comment)}: ${firstLine(comment.body)}\nDeleted comments are not included in the submitted JSON.`,
+    okLabel: "Delete",
     okClass: "btn secondary",
-    cancelLabel: "戻る",
+    cancelLabel: "Back",
     action: () => void deleteComment(comment),
   });
 }

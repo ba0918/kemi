@@ -101,7 +101,7 @@ export async function navigate(direction) {
         return hasStops(file, candidate ? commentsOf(candidate) : [], state.collapsedOverrides);
       });
       if (next === null) {
-        showToast(direction > 0 ? "最後の変更です" : "最初の変更です");
+        showToast(direction > 0 ? "This is the last change" : "This is the first change");
         return;
       }
       // 増減数があっても、改行コードだけの変更などは表示で変更ブロックにならない。
