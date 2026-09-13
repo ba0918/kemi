@@ -7,7 +7,7 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 （なし）
 
-## [0.1.0] - 2026-09-13
+## [0.1.1] - 2026-09-13
 
 最初のリリース。
 
@@ -35,5 +35,5 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/ba0918/kemi/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ba0918/kemi/releases/tag/v0.1.1

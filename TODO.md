@@ -45,6 +45,6 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
 
 ## リリース
 
-- v0.1.0 を最初のリリースとして配布する（`ba0918-release`）。変更の記録は `CHANGELOG.md`
+- 最初のリリースは v0.1.1。変更の記録は `CHANGELOG.md`
 - `mise use -g github:ba0918/kemi` の実アセット確認は、リリースの後にきれいな環境で行う
 - Windows 対応は将来の検討
