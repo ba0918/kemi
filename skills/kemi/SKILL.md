@@ -49,7 +49,9 @@ Never:
 - stop or restart it while the person may still be reading;
 - treat what the person writes in the conversation as the page's verdict. If they say they
   approve while kemi is still up, that is their decision and not a submit: no JSON will come,
-  so stop kemi yourself and record the decision as one made in the conversation.
+  so stop kemi yourself and record the decision as one made in the conversation. Stop only the
+  process you started, by the identifier you were given when you started it, and never by name:
+  stopping by name ends other reviews still running and loses the comments they never sent.
 
 ## Choosing the input
 
