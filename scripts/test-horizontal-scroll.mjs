@@ -20,9 +20,12 @@ const rows = Array.from({ length: 500 }, (_, i) => ({ kind: i === 2 ? 'insert' :
 const comment = { id:'sample-comment', group_id:'sample', path:'long.js', side:'new', start_line:1, end_line:1, body:'Compare this line\nAdditional detail', outdated:false, suggestion:null };
 let refreshed = false;
 let eventStream;
+let releaseReview;
+let pendingReview;
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname === '/api/events') { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': ready\n\n'); eventStream=res; return; }
+  if (url.pathname === '/api/review' && url.searchParams.has('refresh') && pendingReview) await pendingReview;
   if (url.pathname.startsWith('/api/')) {
     res.setHeader('Content-Type', 'application/json');
     if (url.pathname === '/api/review') res.end(JSON.stringify({ title: 'Horizontal comparison', subtitle: '', unit:'file', groups: [{ id: 'sample', title: 'Sample', files: [file('long'), file('short'), file('large')] }], comments: [comment] }));
@@ -216,9 +219,13 @@ try {
   await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('NEW_END')`);
   await browser('focus','#horizontal-scroll'); await browser('press','End');
   refreshed=true;
+  pendingReview=new Promise(resolve=>{releaseReview=resolve;});
   eventStream.write('event: update\ndata: {}\n\n');
   await browser('wait','#update-badge');
   await browser('click','#update-badge');
+  await browser('scroll','down','48','--selector','#diff-viewport');
+  await browser('wait','--fn',`document.querySelector('#diff-viewport').scrollTop > 0`);
+  releaseReview();
   await browser('wait','--fn',`!document.querySelector('#diff-content').textContent.includes('NEW_END') && document.querySelector('#diff-content').textContent.includes('new')`);
   assert.equal((await snapshot()).hidden,true);
   await browser('click','#btn-unified'); await browser('click','#btn-split');

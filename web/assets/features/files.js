@@ -94,13 +94,14 @@ export async function refresh() {
   const scrollTop = dom.viewport.scrollTop;
   // 取得中の展開応答が、新しいレビューで消えたキャッシュへ古い行を戻さないようにする。
   state.selectGeneration += 1;
-  invalidateHorizontalWidth();
   state.cache.clear();
   state.commentStore.clear();
   state.origins.clear();
   // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
   state.reviews = new Map();
   applyReview(await api.getReview(true, state.unit), true);
+  // 取得待ちのスクロールで、古い内容の幅計測に消費されないよう到着後に破棄する。
+  invalidateHorizontalWidth();
   const current = currentEntry();
   const keepId = current ? current.file.id : undefined;
   const keep =
