@@ -28,8 +28,8 @@ results are kept.
    can read it back too — a file of its own, or whatever your environment records a background
    process's output in — since the URL arrives there.
 2. Take the URL out of the `kemi: <url>` line on stderr and hand it to the person.
-3. Stop and wait for the exit. Do not sit in a loop asking whether it is done, and do not begin
-   work that assumes a verdict.
+3. End your turn and wait for the exit. Do not sit in a loop asking whether it is done, and do
+   not begin work that assumes a verdict.
 4. When it exits, read the exit code and the file you redirected stdout to.
 
 | Exit code | Meaning | stdout |
@@ -197,8 +197,8 @@ stderr, tell them:
 - `verdict` is `approved` or `changes_requested`, and agrees with the exit code.
 - On `approved` the person accepts the bytes named in `approval`. Before acting on the approval,
   compute each `identity` again and compare. If a file changed after the review began, say so
-  and stop, rather than proceeding on an approval of bytes that no longer exist. Comments may
-  still be present on an approval; read them and address or report them.
+  instead of proceeding on an approval of bytes that no longer exist. Comments may still be
+  present on an approval; read them and address or report them.
 - On `changes_requested`, address every comment, then offer a new review of the result.
 - Line numbers are 1-based and inclusive. `side` is `new` or `old`, and `old` means the old
   file's own numbering. A comment on a whole file has `start_line` and `end_line` `null`,
