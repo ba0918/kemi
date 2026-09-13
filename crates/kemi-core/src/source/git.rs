@@ -150,12 +150,12 @@ impl GitSource {
         let group_id = "worktree".to_string();
         Ok((
             ReviewMeta {
-                title: "作業ツリーの変更".to_string(),
+                title: "Working tree changes".to_string(),
                 subtitle: String::new(),
                 meta: serde_json::Value::Null,
                 groups: vec![Group {
                     id: group_id.clone(),
-                    title: "作業ツリーの変更".to_string(),
+                    title: "Working tree changes".to_string(),
                     why: String::new(),
                     watch: String::new(),
                     files: files.0,
@@ -190,12 +190,12 @@ impl GitSource {
         let group_id = "staged".to_string();
         Ok((
             ReviewMeta {
-                title: "ステージ済みの変更".to_string(),
+                title: "Staged changes".to_string(),
                 subtitle: String::new(),
                 meta: serde_json::Value::Null,
                 groups: vec![Group {
                     id: group_id.clone(),
-                    title: "ステージ済みの変更".to_string(),
+                    title: "Staged changes".to_string(),
                     why: String::new(),
                     watch: String::new(),
                     files: files.0,
@@ -1154,7 +1154,7 @@ mod tests {
         assert_eq!(entry.status, Status::Modify);
         assert_eq!(entry.group_id, "worktree");
         assert_eq!((entry.add, entry.del), (1, 1));
-        assert_eq!(review.title, "作業ツリーの変更");
+        assert_eq!(review.title, "Working tree changes");
         let content = source.content(&entry.id).unwrap();
         assert_eq!(content.old.unwrap(), b"one\ntwo\n");
         assert_eq!(content.new.unwrap(), b"one\nTWO\n");

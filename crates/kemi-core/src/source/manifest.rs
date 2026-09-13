@@ -104,7 +104,7 @@ pub(crate) fn build_review(
         title: manifest
             .title
             .clone()
-            .unwrap_or_else(|| "変更のレビュー".to_string()),
+            .unwrap_or_else(|| "Review of changes".to_string()),
         subtitle: manifest.subtitle.clone().unwrap_or_default(),
         meta: manifest.meta.clone(),
         groups,
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn manifest_default_title_is_change_review() {
         let source = ManifestSource::from_json(r#"{"groups":[]}"#, Path::new(".")).unwrap();
-        assert_eq!(source.review().unwrap().title, "変更のレビュー");
+        assert_eq!(source.review().unwrap().title, "Review of changes");
     }
 
     #[test]
