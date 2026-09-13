@@ -1073,7 +1073,7 @@ scripts/
   `cargo tree -e features` で C 依存が無いことを確認する
 - HTTP / SSE: `axum`
 - 資産埋め込み: `rust-embed`
-- ファイル監視: `notify` + `notify-debouncer-full`
+- ファイル監視: `notify`（debounce は固定の時刻で試せるよう自前で持つ）
 - JSON: `serde` / `serde_json`
 
 許可する依存ライセンスは MIT / Apache-2.0 / BSD-3-Clause / ISC / Unicode-3.0 と

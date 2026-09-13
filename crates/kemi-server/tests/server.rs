@@ -913,31 +913,6 @@ async fn live_worktree_read_does_not_send_update() {
 }
 
 #[tokio::test]
-async fn live_debounce_coalesces_rapid_writes() {
-    let repo = TempRepo::new();
-    repo.write("a.txt", "one\n");
-    repo.commit("base");
-    repo.write("a.txt", "initial change\n");
-    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = LiveServer::start(source).await;
-
-    let mut sse = SseStream::connect(server.port).await;
-    for index in 0..5 {
-        repo.write("a.txt", &format!("write {index}\n"));
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let count = sse.count_updates(Duration::from_millis(1400)).await;
-    // 5 回の書き込みが debounce でまとまる。tick 境界の関係で 1〜2 通に
-    // なることはあるが、書き込みごとに通知はしない（バッジは冪等に出す）。
-    assert!(
-        (1..=2).contains(&count),
-        "rapid writes should coalesce, got {count} updates"
-    );
-
-    server.stop();
-}
-
-#[tokio::test]
 async fn highlight_cap_can_be_overridden_for_one_file() {
     let server = TestServer::start().await;
 
