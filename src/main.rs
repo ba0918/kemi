@@ -278,19 +278,13 @@ impl Assets for WebAssets {
     }
 }
 
+/// セッションの URL トークン（R-SERVE）。16 バイトの乱数を 32 桁の 16 進で返す
+/// （出力の形は後方互換のため変えない）。失敗は終了コード 2 の一般エラーにする。
 fn random_token() -> String {
-    if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let mut bytes = [0u8; 16];
-        if file.read_exact(&mut bytes).is_ok() {
-            return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-        }
-    }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos:x}{:x}", std::process::id())
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .unwrap_or_else(|error| fail(&format!("cannot generate a random session token: {error}")));
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn open_browser(url: &str) {
