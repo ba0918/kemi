@@ -72,6 +72,6 @@ async function submitReview(verdict) {
     renderFileHeader();
     showCompletion(verdict, answer);
   } catch (error) {
-    showOverlay("送信できませんでした", String(error));
+    showOverlay("could not submit", String(error));
   }
 }

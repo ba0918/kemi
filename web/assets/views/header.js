@@ -49,9 +49,9 @@ export function renderUnitSwitch() {
     const pending = state.pendingUnit && state.pendingUnit.unit === unit;
     let label = unitLabel(unit);
     if (status.state === "failed") {
-      label = `${label}（作れなかった）`;
+      label = `${label} (failed)`;
       item.classList.add("failed");
-      item.title = `作れなかった: ${status.error || ""}（押すと理由と再試行）`;
+      item.title = `could not create: ${status.error || ""}（押すと理由と再試行）`;
     } else if (status.state === "building" && pending) {
       label = `${label}（読み込み中…）`;
     }

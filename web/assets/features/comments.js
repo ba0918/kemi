@@ -245,7 +245,7 @@ export async function addComment(payload) {
           };
     clearDraft(draftKey(payload.file_id, selection));
   } catch (error) {
-    showOverlay("コメントを追加できません", String(error));
+    showOverlay("could not add the comment", String(error));
   }
 }
 
@@ -260,7 +260,7 @@ export async function editComment(payload) {
       comments.map((item) => (item.id === updated.id ? updated : item)),
     );
   } catch (error) {
-    showOverlay("コメントを編集できません", String(error));
+    showOverlay("could not edit the comment", String(error));
   }
 }
 
@@ -287,6 +287,6 @@ async function deleteComment(comment) {
     await api.postComment({ op: "delete", id: comment.id });
     updateComments((comments) => comments.filter((item) => item.id !== comment.id));
   } catch (error) {
-    showOverlay("コメントを削除できません", String(error));
+    showOverlay("could not delete the comment", String(error));
   }
 }

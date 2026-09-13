@@ -188,7 +188,7 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
         renderFileHeader();
         renderNotice();
         renderDiff();
-        showOverlay("ファイルを読み込めません", String(error));
+        showOverlay("could not read the file", String(error));
       }
       return;
     }
@@ -312,7 +312,7 @@ export async function copyPath(path, element) {
       element.title = "パスをコピー";
     }, 1_500);
   } catch (error) {
-    showOverlay("コピーできません", String(error));
+    showOverlay("could not copy", String(error));
   }
 }
 

@@ -108,14 +108,14 @@ export function showCompletion(verdict, answer) {
         copy.textContent = "コピーしました";
       })
       .catch((error) => {
-        copy.textContent = `コピーできません: ${error}`;
+        copy.textContent = `could not copy: ${error}`;
       });
   });
   const suggestions = comments.filter((/** @type {any} */ comment) => comment.suggestion).length;
   row.append(copy, textEl("span", "finish-meta", `コメント ${comments.length} 件 / suggestion ${suggestions} 件`));
   body.append(row);
   if (saved.error) {
-    body.append(textEl("p", "finish-save failed", `保存できませんでした: ${saved.error}`));
+    body.append(textEl("p", "finish-save failed", `could not save: ${saved.error}`));
   } else if (saved.path) {
     body.append(textEl("p", "finish-save", `結果ファイル: ${saved.path}（kemi --result で読めます）`));
   } else if (saved.dir) {
