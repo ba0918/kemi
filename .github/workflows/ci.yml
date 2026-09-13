@@ -29,6 +29,14 @@ jobs:
             exit 1
           fi
 
+  rust-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test --workspace
+
   web:
     runs-on: ubuntu-latest
     steps:
