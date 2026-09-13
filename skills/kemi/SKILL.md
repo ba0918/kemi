@@ -236,7 +236,8 @@ are kept across all repositories, and nothing at all is written for an interrupt
 run, so read a result soon after the review rather than assuming it will still be there.
 
 `--result` goes together only with `--any` or `--workspace`. Anything else beside it, including
-an input mode, is a usage error (exit `2`).
+an input mode, is a usage error (exit `2`). `--any` and `--workspace` are alternatives to each
+other: giving both is a usage error, and so is either of them without `--result`.
 
 ## Notes for specific agents
 
