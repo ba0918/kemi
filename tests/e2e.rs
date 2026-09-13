@@ -258,6 +258,20 @@ fn cli_out_rejected_with_reason() {
 }
 
 #[test]
+fn cli_missing_manifest_error_has_no_japanese() {
+    let dir = TempDir::new();
+    let output = run(&dir.path, &["no-such-manifest.json"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !contains_japanese(&stderr),
+        "the manifest error must be in English: {stderr}"
+    );
+}
+
+#[test]
 fn cli_runtime_error_exits_2_without_json() {
     let dir = TempDir::new();
     let output = run(&dir.path, &["--worktree"]);

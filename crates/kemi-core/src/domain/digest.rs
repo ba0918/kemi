@@ -225,7 +225,7 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
     if omitted_groups > 0 {
         groups.push(DigestGroup {
             id: "…".to_string(),
-            title: format!("…ほか {omitted_groups} グループ"),
+            title: format!("… and {omitted_groups} more groups"),
             why: String::new(),
             watch: String::new(),
             files: omitted_group_files,

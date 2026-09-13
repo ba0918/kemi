@@ -622,7 +622,7 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
     for handle in handles {
         let mut shard = handle
             .join()
-            .map_err(|_| SourceError::Git("numstat の並列実行に失敗しました".to_string()))??;
+            .map_err(|_| SourceError::Git("parallel numstat failed".to_string()))??;
         entries.append(&mut shard);
     }
     entries.sort_by(|left, right| left.new_path.cmp(&right.new_path));
@@ -765,7 +765,7 @@ fn commit_diff_entries(
     for handle in handles {
         let output = handle
             .join()
-            .map_err(|_| SourceError::Git("diff-tree の並列実行に失敗しました".to_string()))??;
+            .map_err(|_| SourceError::Git("parallel diff-tree failed".to_string()))??;
         for (sha, name_status, numstat) in parse_diff_tree(&output) {
             entries.insert(sha, combine_entries(name_status, numstat));
         }
@@ -847,7 +847,7 @@ fn git_with_input(repo: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, S
     let _ = writer.join();
     if !output.status.success() {
         return Err(SourceError::Git(format!(
-            "git {} が失敗しました: {}",
+            "git {} failed: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
         )));
@@ -1021,7 +1021,7 @@ fn read_attributes(repo: &Path) -> String {
 fn resolve_ref(repo: &Path, revision: &str) -> Result<String, SourceError> {
     let spec = format!("{revision}^{{commit}}");
     Ok(git_text(repo, &["rev-parse", "--verify", "--quiet", &spec])
-        .map_err(|_| SourceError::Git(format!("ref が見つかりません: {revision}")))?
+        .map_err(|_| SourceError::Git(format!("ref not found: {revision}")))?
         .trim()
         .to_string())
 }
@@ -1038,9 +1038,7 @@ fn verify_ref(repo: &Path, revision: &str) -> Result<(), SourceError> {
             source,
         })?;
     if !output.status.success() {
-        return Err(SourceError::Git(format!(
-            "ref が見つかりません: {revision}"
-        )));
+        return Err(SourceError::Git(format!("ref not found: {revision}")));
     }
     Ok(())
 }
@@ -1094,7 +1092,7 @@ pub(crate) fn git_raw_os(repo: &Path, args: &[&OsStr]) -> Result<Vec<u8>, Source
         })?;
     if !output.status.success() {
         return Err(SourceError::Git(format!(
-            "git {} が失敗しました: {}",
+            "git {} failed: {}",
             display_args(args),
             String::from_utf8_lossy(&output.stderr).trim()
         )));
@@ -1120,12 +1118,8 @@ pub(crate) fn git_log(repo: &Path, args: &[&str]) -> Result<String, SourceError>
 
 pub(crate) fn git_text(repo: &Path, args: &[&str]) -> Result<String, SourceError> {
     let bytes = git_raw(repo, args)?;
-    String::from_utf8(bytes).map_err(|_| {
-        SourceError::Git(format!(
-            "git {} の出力が UTF-8 ではありません",
-            args.join(" ")
-        ))
-    })
+    String::from_utf8(bytes)
+        .map_err(|_| SourceError::Git(format!("output of git {} is not UTF-8", args.join(" "))))
 }
 
 #[cfg(test)]
