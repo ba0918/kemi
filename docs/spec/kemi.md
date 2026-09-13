@@ -21,12 +21,14 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 - リポジトリ名とバイナリ名は `kemi`（「閲する」から）。
 - ライセンスは MIT OR Apache-2.0。
 - README と `skills/` の配布物は英語（翻訳版は作らない）、UI と docs（この仕様を含む）は
-  日本語。ただし UI の次のものは英語のままでよい: 状態の `A` / `D` / `R` / `M`、コミットの種類（`R-VIEW` の形式に合う
+  日本語。CLI の出力（ヘルプ、エラーメッセージ、stderr の運用メッセージとライブ表示）は
+  英語にする。UI の次のものは英語のままでよい: 状態の `A` / `D` / `R` / `M`、コミットの種類（`R-VIEW` の形式に合う
   もの）、`unified` / `split`、テーマのプリセット名（`light` / `dark` / `solarized light` /
   `solarized dark`）、`JSON`、キー名（`Cmd` / `Ctrl` / `Enter` / `Esc`、`n` / `p` / `v` など
   キーボードの刻印やキー操作として示すもの）、sha、パス・コード・コマンド名、`CONTEXT.md` に英語の
   見出しで載っている語（suggestion、digest など、その見出しの一覧に限る）。文章と
-  ボタンの文言は日本語にする。
+  ボタンの文言は日本語にする。レビューの既定の `title`（`R-INPUT`）は Web の見出しにも
+  表示されるため、日本語のままにする。
 - 対応ターゲットは次の 4 つ:
   - `x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`（静的リンク）
   - `x86_64-apple-darwin` / `aarch64-apple-darwin`
@@ -79,7 +81,10 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
   `kemi-<target>.tar.xz` と対応する `.sha256` が存在する。
 - きれいな環境で `mise use -g github:ba0918/kemi` の後、`kemi --version` が
   タグと一致するバージョンを出す。
-- README と `skills/` 配下のすべてのファイルが英語で、UI 文言と docs が日本語である。
+- README と `skills/` 配下のすべてのファイルが英語で、UI 文言と docs が日本語、CLI の出力が
+  英語である。
+- e2e テストが、CLI のヘルプと、使い方の誤りで出力されるエラーメッセージに、日本語の
+  文字が含まれないことを検証する。
 - `skills/kemi/SKILL.md` の frontmatter が、`name` は親ディレクトリ名 `kemi` と一致、
   `description` は空でなく 1024 文字以内、項目は上の 3 つだけ、値は ASCII だけ、を
   満たす。`name` と `description` は Agent Skills の公式バリデータ
@@ -96,6 +101,8 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 - スキルの本文（末尾の注を除く部分）に、特定のエージェントの道具の名前が出ている。
 - インストールされた `kemi` が動的ライブラリ不足で起動しない（musl 静的の失敗）。
 - UI の文章やボタンの文言に、上の一覧に無い英語の未翻訳文言が混ざる。
+- CLI の出力（ヘルプ、エラーメッセージ、stderr の運用メッセージとライブ表示）に日本語の
+  文言が残る。
 
 ---
 
