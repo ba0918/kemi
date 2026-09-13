@@ -57,7 +57,7 @@ jobs:
             echo "frontmatter must be ASCII only" >&2
             exit 1
           fi
-          keys=$(printf '%s\n' "$fm" | grep -cE '^[a-z]+:') || true
+          keys=$(printf '%s\n' "$fm" | grep -cE '^[a-z][a-z0-9_-]*:') || true
           if [ "$keys" != 3 ]; then
             echo "frontmatter must have exactly 3 keys, found $keys" >&2
             exit 1
