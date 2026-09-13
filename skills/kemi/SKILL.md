@@ -8,7 +8,7 @@ license: MIT OR Apache-2.0
 
 `kemi` is a local review tool. It serves a review page on `127.0.0.1`; the person reads the
 change there, may attach comments and suggestions to lines, and ends the review with the
-approve button (承認) or the request-changes button (変更要求). kemi then prints one JSON
+**Approve** or **Request changes** button. kemi then prints one JSON
 document to stdout and exits. It never edits files of its own: applying a suggestion is your
 job, not the tool's.
 
@@ -164,7 +164,7 @@ reasons live only in your head. The groups and their reasons are your work, not 
 The page organises the reading; your message says where to look first. Once the URL is on
 stderr, tell them:
 
-- the URL, and that the review ends when they press 承認 (approve) or 変更要求 (request changes);
+- the URL, and that the review ends when they press **Approve** or **Request changes**;
 - how many groups there are and what each one is, in a line or two;
 - the single decision you most want checked;
 - which assumptions in the change are yours rather than theirs.

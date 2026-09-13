@@ -82,8 +82,8 @@ When the server starts, kemi prints one line to stderr:
 kemi: http://127.0.0.1:<port>/s/<token>/
 ```
 
-Open that URL, read the change, and press **承認** (approve) or **変更要求**
-(request changes). kemi prints the JSON below to stdout and exits with 0
+Open that URL, read the change, and press **Approve** or **Request changes**.
+kemi prints the JSON below to stdout and exits with 0
 (approved), 1 (changes requested), 2 (usage, startup, or runtime error), or
 130 (interrupted before submit).
 
