@@ -1,131 +1,106 @@
-# CLI の出力を英語にする
+# UI の文言と既定 title を英語にする
 
 ## Goal
 
-kemi の CLI 出力（ヘルプ、エラーメッセージ、stderr の運用メッセージとライブ表示）と、Web UI のエラー表示が英語になり、Web UI の通常文言とレビューの既定 title は日本語のまま残る。
+kemi の UI の文言（文章、ボタン、説明文、状態表示）とレビューの既定 title が英語になる。CLI の出力と Web UI のエラー表示は既に英語化済み。開発ドキュメント（仕様・CONTEXT.md・PROJECT.md・コードコメント）は日本語のまま残る。
 
 ## Specification
 
-`docs/spec/kemi.md` — 実装で参照する節は R-DIST、R-INPUT-6、R-COMMENT、R-RESULT。該当ステップに引用する。
+`docs/spec/kemi.md` — 実装で参照する節は R-DIST、R-INPUT。該当ステップに引用する。
 
 ## Approach and why
 
-- 変更範囲は CLI 出力とエラーメッセージの文字列。翻訳の具体文言は仕様で固定しない（ブレインストームで実装委譲が決定済み）。
-- エラーメッセージは kemi が作るすべてのエラー（入力の読み取り、manifest の検証、git の失敗、focus の検証、API のエラー）を含み、Web UI のエラー表示も英語になる（仕様 R-DIST で承認済み）。そのため `crates/kemi-core/` のエラー型と `crates/kemi-server/` の API エラーも変更対象。
-- e2e の CLI 出力検証を「日本語の文字が含まれないこと」の検査に書き換える。英文字列を固定しないため、文言の言い換えでテストが壊れない（仕様の成功条件が定めた方式）。
-- テスト（e2e）を先に書き換えて RED を確認し、実装で GREEN にする TDD の順序で進める。
+- 既に実装済み（このブランチの先行コミット）: CLI の出力、エラー（kemi-core / ApiError / ServerError）、Web UI のエラー表示・失敗通知の英語化。
+- 残りは Web UI の通常文言（ボタン・ラベル・説明文・状態表示・モード・見出し・進行中表示・空状態）と、`crates/kemi-core/` の既定 title（"Working tree changes" / "Staged changes" / "Review of changes"）。
+- Web UI の通常文言の翻訳は仕様で固定しない（ブレインストームで実装委譲が決定済み）。既定 title は仕様 R-INPUT が値を固定しているので、その値に合わせる。
+- e2e は CLI の出力に日本語の文字が含まれないことを、kemi-core の単体テストは既定 title の値を検証する。
 
 ## Scope of change
 
 変更してよいファイル:
 
-- `src/main.rs`（CLI のヘルプ・エラーメッセージ・運用メッセージ）
-- `crates/kemi-core/src/source/`（`SourceError` の Display: mod.rs、manifest.rs、git.rs）
-- `crates/kemi-core/src/domain/focus.rs`（`FocusError` の Display）
-- `crates/kemi-core/src/domain/digest.rs`（省略グループのタイトル「…ほか N グループ」）
-- `crates/kemi-server/src/api.rs`（stderr のライブ表示と `ApiError` のメッセージ）
-- `crates/kemi-server/src/lib.rs`（`ServerError::Stopped` の既定文言）
-- `tests/e2e.rs`（CLI 出力の検証）
-- `web/assets/`（フロント独自のエラー表示: showOverlay の題・エラー用 notice・完了画面の保存失敗文言）
+- `web/index.html`（ページ本体のボタン・ナビ・tooltip・aria-label・`lang`）
+- `web/assets/`（フロントのすべての文言: ボタン・ラベル・説明文・状態表示・モード・見出し・進行中表示・空状態）
+- `web/*.test.js`（フロントの検証文字列）
+- `crates/kemi-core/src/source/`（既定 title: mod.rs、manifest.rs、git.rs）
+- `tests/e2e.rs`（既定 title の検証が無いことを確認済み。変更は不要だが、必要なら追随してよい）
+- `README.md` / `skills/kemi/SKILL.md`（ボタン文言の英語化に伴う「承認 / 変更要求」への参照の更新のみ）
 
-変更しないもの（対象外）:
+変更しないもの:
 
-- `web/` の通常文言（ボタン・ラベル・説明文）は日本語のまま（エラー表示は英語にする。上の「変更してよいファイル」に含む）
-- 既定 title（「作業ツリーの変更」「ステージ済みの変更」「変更のレビュー」）— Web の見出しにも表示されるため日本語のまま
-- JSON の I/F — フィールド名と verdict の値は既に英語。コミットメッセージ・コメント・manifest の本文（入力データ）は変えない
-- `README.md` / `skills/kemi/SKILL.md` — 英語。日本語の CLI メッセージへの言及は確認済みで無い
+- `docs/`（仕様・CONTEXT.md・PROJECT.md・計画）— 日本語のまま
+- コードコメント（`//` / `///`）— 日本語のまま
+- JSON の I/F（フィールド名、verdict の値）
+- 入力データ（コミットメッセージ・コメント・manifest の本文）— 変えない
 
 ## Step order and prerequisites
 
-Step 1 → 2 → 3 → 4 → 5。各ステップの前提はそのステップに書く。
+Step 1 → 2 → 3。各ステップの前提はそのステップに書く。
 
 ## Verification map
 
-- Step 1・5: R-DIST の成功条件「e2e テストが、CLI のヘルプと、使い方の誤りで出力されるエラーメッセージに、日本語の文字が含まれないことを検証する」
-- Step 2・3・4: R-DIST の要件「CLI の出力（ヘルプ、エラーメッセージ、stderr の運用メッセージとライブ表示）は英語にする」「エラーメッセージには kemi が作るすべてのエラーを含み、Web UI のエラー表示も英語になる」と反例「CLI の出力に日本語の文言が残る」
-- Step 2: R-INPUT-6（ヘルプと使い方の誤りの終了コード 2、`kemi: <url>` の行を stderr に出す契約）
-- Step 4: R-COMMENT（人間向けのライブ表示を stderr に出す。文言は契約としない）、R-RESULT（保存先を stderr に出す、保存失敗は警告のみ）
+- Step 1: R-DIST の言語ポリシー（UI の文言は英語）と反例（UI の文言に日本語の文言が残る）
+- Step 2: R-INPUT の既定 title（"Working tree changes" など）と成功条件
+- Step 3: R-DIST の成功条件（全テストが通り、README / スキルが整合）
 
 ## Left to the implementer
 
-- 英語の具体文言（ヘルプ、エラーメッセージ、ライブ表示、digest の省略タイトルの翻訳）— 仕様は文言を固定しない
-- e2e の検証の具体的な書き方（どの起動操作で何を検査し、日本語の文字をどう判定するか）
-- コミットの分割（1 関心: CLI 出力とエラーメッセージの英語化）
+- 英語の具体文言（Web UI の通常文言の翻訳）— 仕様は文言を固定しない
+- テストの検証文字列の更新方法
+- コミットの分割（1 関心: UI の文言と既定 title の英語化）
 
 ## Stop conditions
 
-- 既定 title や Web UI の通常文言を英語にしなければ仕様に合わないと判断する場合
-- JSON のキーやフィールド名、manifest / コミットメッセージの中身を変えなければならないと判断する場合
-- e2e の「日本語が含まれない」検証が、現状の出力で安定して RED にならない場合
+- docs（仕様・CONTEXT.md・コードコメント）を英語にしなければ仕様に合わないと判断する場合
+- JSON の I/F や入力データ（コミットメッセージ・コメント・manifest の本文）を変えなければならないと判断する場合
+- Web UI の文言の英語化が、フロントのテスト（`node --test web`）で安定して GREEN にならない場合
 
 ## Test command
 
 プロジェクトの規約（PROJECT.md）が定める次のコマンドを使う:
 
-- テスト: `cargo test`
-- lint: `cargo clippy -- -D warnings`
+- テスト: `cargo test`、`node --test web`
+- lint: `cargo clippy -- -D warnings`、`npx tsc -p web --noEmit`
 - 整形: `cargo fmt --check`
 
 ## Out of scope
 
-- Web UI の通常文言（`web/`）
-- 既定 title（`crates/kemi-core/` のソース側）
+- `docs/` の英語化（日本語のまま）
 - JSON の I/F
+- 入力データの変更
 - README / skills の文言変更
 
 ---
 
-## Step 1 — e2e の CLI 出力検証を「日本語が含まれない」に書き換える
+## Step 1 — Web UI の通常文言を英語にする
 
-Purpose: CLI 出力とエラーの検証を、英語の特定文言ではなく日本語不在の検査にする。
-Specification: `docs/spec/kemi.md`#R-DIST（成功条件）。
+Purpose: Web UI のボタン・ラベル・説明文・状態表示・モード・見出し・進行中表示・空状態を英語にする。
+Specification: `docs/spec/kemi.md`#R-DIST（言語ポリシー・反例）。
+Prerequisites: なし（CLI とエラー表示の英語化は実装済み）。
+May change: `web/index.html`、`web/assets/`（features/、views/、model.js、state.js、app.js）、`web/*.test.js`。
+Done when: エラー表示を除く Web UI のすべての文言（ボタン・ラベル・説明文・状態表示・モード・見出し・進行中表示・空状態・テーマ表示）が英語になっている。`web/index.html` のボタン・ナビ・tooltip・aria-label と `lang` 属性も英語になっている。`rg` で `web/`（index.html を含む）の UI 文言（文字列リテラルと HTML の属性値）に日本語の文字が含まれないことを確認できる。仕様 R-SEEN が固定する「閲」の印は対象外（そのツールチップ「すべて見た」は英語にする）。コードコメントとテストの入力データ（コミット subject など）は日本語のままでよい。
+Shown by: test — `node --test web`（フロントのテスト）が GREEN。静的検査: `rg -n '[ぁ-んァ-ヶ一-龠]' web/index.html web/assets/` が、コードコメントと入力データ・「閲」の印以外で一致しないこと。
+Left to the implementer: 英語の具体文言。model.js の見出し（「新側」「旧側」「ファイル全体」など）と state.js のモード（「最終形」「コミットごと」）の訳し方。
+Stop and hand back if: コードコメントや入力データを英語にしなければ日本語が消えないと気付く（コメントと入力データは対象外）。
+
+## Step 2 — 既定 title を英語にする
+
+Purpose: `crates/kemi-core/` の既定 title を仕様 R-INPUT が固定する英語にする。
+Specification: `docs/spec/kemi.md`#R-INPUT（既定 title: "Working tree changes" / "Staged changes" / "Review of changes"）。
 Prerequisites: なし。
-May change: `tests/e2e.rs`。
-Done when: 次の経路の検証が「出力に日本語の文字が含まれないこと」を検査する形になっている — (a) 入力モード無しで起動したときのヘルプ、(b) 使い方の誤りのエラー（`--out` など）、(c) 存在しない manifest を渡したときのエラー（kemi-core の経路）、(d) コメント追加時のライブ表示。
-Shown by: test — `cargo test --test e2e` で該当テストが RED（現状の日本語出力では日本語不在の検査が失敗する）。
-Left to the implementer: 日本語の文字の判定方法（ひらがな・カタカナ・漢字の Unicode 範囲の検査など）、検証する起動操作と検証の書き方。
-Stop and hand back if: 日本語不在の検証が現状の出力でも通ってしまう（ヘルプやエラーに日本語が残っていない）。
+May change: `crates/kemi-core/src/source/`（mod.rs、manifest.rs、git.rs）。
+Done when: worktree の既定 title が "Working tree changes"、staged が "Staged changes"、manifest の既定が "Review of changes" になっている。既定 title を検証する kemi-core の単体テスト（git.rs の "作業ツリーの変更"、manifest.rs の "変更のレビュー"）が新しい値に合わせて更新され、通る。
+Shown by: test — `cargo test`（kemi-core の単体テスト）が GREEN。
+Left to the implementer: テストの検証文字列（"作業ツリーの変更" → "Working tree changes" など）の更新。
+Stop and hand back if: 仕様 R-INPUT が固定する title の値と、実装すべき英語が一致しないと判断する場合。
 
-## Step 2 — src/main.rs の CLI 出力を英語にする
+## Step 3 — 全体検証と配布物の整合確認
 
-Purpose: CLI のヘルプ、エラーメッセージ、運用メッセージを英語にする。
-Specification: `docs/spec/kemi.md`#R-DIST（言語ポリシー・反例）、#R-INPUT-6（ヘルプと使い方の誤りの終了コード 2、`kemi: <url>` の行）。
-Prerequisites: Step 1。
-May change: `src/main.rs`。
-Done when: `USAGE` 定数、`parse_args` と `validate_result_flags` のエラーメッセージ、`fail()` に渡すメッセージ、stderr の運用メッセージ（結果ファイルの保存先など）が英語になっている。`kemi: <url>` の行と `kemi:` プレフィックスは維持する。JSON のキーは変えない。
-Shown by: test — `cargo test --test e2e` で Step 1 の (a) ヘルプと (b) 使い方の誤りの検証が GREEN になる。(c) と (d) は後続ステップまで RED のまま。
-Left to the implementer: 英語の具体文言。USAGE の構成（現行の「使い方 / 共通のフラグ / --result と一緒に使うフラグ」の区切りを英語で保つかどうか）。
-Stop and hand back if: kemi-core や kemi-server の変更なしにヘルプやエラーが英語にならないと気付く。
-
-## Step 3 — kemi-core のエラー文言と digest の省略タイトルを英語にする
-
-Purpose: `SourceError` / `FocusError` の Display と digest の省略タイトルを英語にする。
-Specification: `docs/spec/kemi.md`#R-DIST（エラーメッセージは kemi が作るすべてのエラーを含み英語）。
-Prerequisites: Step 1。
-May change: `crates/kemi-core/src/source/mod.rs`、`crates/kemi-core/src/source/manifest.rs`、`crates/kemi-core/src/source/git.rs`、`crates/kemi-core/src/domain/focus.rs`、`crates/kemi-core/src/domain/digest.rs`。
-Done when: `SourceError` と `FocusError` の Display が英語になり、digest の省略タイトル（「…ほか N グループ」）が英語になっている。既定 title（「作業ツリーの変更」など）と、テスト内のデータ文字列は変えない。
-Shown by: test — `cargo test --test e2e` で Step 1 の (c) 存在しない manifest の検証が GREEN になる。`cargo test`（kemi-core の単体テスト）も通る。
-Left to the implementer: 英語の具体文言。
-Stop and hand back if: 既定 title や Web UI の通常文言と共通の文字列を変えなければならないと気付く。
-
-## Step 4 — kemi-server のライブ表示と API エラー、フロントのエラー表示を英語にする
-
-Purpose: stderr のライブ表示と `ApiError` のメッセージ、`ServerError::Stopped` の既定文言、フロント独自のエラー表示を英語にする。
-Specification: `docs/spec/kemi.md`#R-DIST（エラーメッセージとライブ表示は英語、Web UI のエラー表示も英語）、#R-COMMENT（ライブ表示）、#R-RESULT（保存先・保存失敗の警告）。
-Prerequisites: Step 1。
-May change: `crates/kemi-server/src/api.rs`、`crates/kemi-server/src/lib.rs`、`web/assets/`（フロント独自のエラー表示）。
-Done when: `eprintln!` のライブ表示（由来の失敗・コメント追加・結果保存の失敗）と、コメント追加表示内の「ファイル全体」、`ApiError` のメッセージ（not_found / bad_request / forbidden / internal 経由）、`ServerError::Stopped` の既定文言、フロント独自のエラー表示（showOverlay の題・エラー用 notice・完了画面の保存失敗文言）が英語になっている。Web UI の通常文言（ボタン・ラベル・説明文）は変えない。
-Shown by: test — `cargo test --test e2e` で Step 1 の (d) ライブ表示の検証が GREEN になる。`cargo test` も通る。
-Left to the implementer: 英語の具体文言。
-Stop and hand back if: Web UI の通常文言（ボタン・ラベル・説明文）を変えなければ英語にならないと気付く。
-
-## Step 5 — 全体検証と配布物の整合確認
-
-Purpose: 全テストと lint が通り、README / スキルが変更後の契約と整合していることを確認する。
+Purpose: 全テストと lint が通り、README / スキルがボタン文言の英語化と整合していることを確認する。
 Specification: `docs/spec/kemi.md`#R-DIST（成功条件）。
-Prerequisites: Step 2・Step 3・Step 4。
-May change: `README.md` / `skills/kemi/SKILL.md`（整合に矛盾が見つかった場合のみ）。
-Done when: `cargo test` がすべて通り、`cargo clippy -- -D warnings` と `cargo fmt --check` が成功する。README と `skills/kemi/SKILL.md` に、日本語の CLI メッセージや英語化された文言への不整合が無い。
-Shown by: check — `cargo test`、`cargo clippy -- -D warnings`、`cargo fmt --check` の順に実行し、すべて成功することを確認。README / スキルの整合は git diff のレビューで確認する（機械検査は無い）。
+Prerequisites: Step 1・Step 2。
+May change: `README.md` / `skills/kemi/SKILL.md`（「承認 / 変更要求」への参照を新しい英語のボタン文言に合わせる。そのほかの整合に矛盾が見つかった場合も含む）。
+Done when: `cargo test`、`node --test web`、`cargo clippy -- -D warnings`、`cargo fmt --check`、`npx tsc -p web --noEmit` がすべて成功する。README と `skills/kemi/SKILL.md` の「承認 / 変更要求」への参照が新しい英語のボタン文言と整合している。
+Shown by: check — 上のコマンドを順に実行し、すべて成功することを確認。README / スキルの整合は git diff のレビューで確認する（機械検査は無い）。
 Left to the implementer: なし。
-Stop and hand back if: 英語化と無関係のテスト失敗が起きる、または README / スキルに直すべき不整合が見つかる（変更対象の判断が要る）。
+Stop and hand back if: 英語化と無関係のテスト失敗が起きる、または README / スキルに、ボタン文言の参照以外の直すべき不整合が見つかる（変更対象の判断が要る）。
