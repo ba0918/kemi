@@ -175,6 +175,20 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
     run_with_state(dir, args, &state.path)
 }
 
+/// CLI の出力が英語であることの検証（R-DIST の成功条件）。ひらがな・カタカナ・
+/// 漢字（CJK 統合漢字と拡張 A）のいずれかを検出したら日本語とする。
+fn contains_japanese(text: &str) -> bool {
+    text.chars().any(|character| {
+        matches!(
+            character as u32,
+            0x3040..=0x309f
+                | 0x30a0..=0x30ff
+                | 0x3400..=0x4dbf
+                | 0x4e00..=0x9fff
+        )
+    })
+}
+
 fn run_with_state(dir: &Path, args: &[&str], state: &Path) -> std::process::Output {
     kemi_command(dir, state).args(args).output().unwrap()
 }
@@ -212,7 +226,11 @@ fn cli_no_mode_exits_2_with_usage() {
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("使い方"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !contains_japanese(&stderr),
+        "usage must be in English: {stderr}"
+    );
 }
 
 #[test]
@@ -233,7 +251,10 @@ fn cli_out_rejected_with_reason() {
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("静的書き出し"), "{stderr}");
+    assert!(
+        !contains_japanese(&stderr),
+        "the --out rejection must be in English: {stderr}"
+    );
 }
 
 #[test]

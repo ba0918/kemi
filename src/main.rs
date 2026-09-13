@@ -13,26 +13,26 @@ use kemi_server::{serve, session_url, Asset, Assets, ResultSink, ServeOutcome, S
 use tokio::net::TcpListener;
 
 const USAGE: &str = "\
-kemi: 使い方:
-  kemi <manifest.json | ->                 manifest を読む
-  kemi --from <ref> [--to <ref>]          コミット範囲（--to の既定は HEAD）
-  kemi --worktree                          未コミットの変更
-  kemi --staged                            ステージ済みの変更
-  kemi --result [--any | --workspace <path>]  最後に送った結果の JSON を出す
+kemi: usage:
+  kemi <manifest.json | ->                 read a manifest
+  kemi --from <ref> [--to <ref>]          diff a commit range (--to defaults to HEAD)
+  kemi --worktree                          review uncommitted changes
+  kemi --staged                            review staged changes
+  kemi --result [--any | --workspace <path>]  print the JSON of the latest submitted result
 
-共通のフラグ:
-  --focus <path>     focus レイヤの JSON（--base 相対）
-  --base <dir>       manifest と --focus の相対パスの基準（既定 .）
-  --group-by <mode>  起動時のグループ単位 file（最終形）| commit（コミットごと）。既定 file
-  --port <n>         待ち受けポート（既定 0 = 空きを選ぶ）
-  --no-open          ブラウザを自動で開かない
-  --serve            互換のための受理のみ（既定で常にサーブする）
-  --digest           ページを出さず digest を stdout に出す
-  --digest-top <n>   digest のトップファイル数（既定 100）
+common flags:
+  --focus <path>     focus layer JSON (relative to --base)
+  --base <dir>       base for manifest and --focus relative paths (default .)
+  --group-by <mode>  group unit at startup: file (final form) | commit (per commit). default file
+  --port <n>         listen port (default 0 = pick a free one)
+  --no-open          do not open the browser automatically
+  --serve            accepted for compatibility (serving is always on)
+  --digest           print a digest to stdout and exit
+  --digest-top <n>   number of top files in the digest (default 100)
 
---result と一緒に使うフラグ:
-  --any              場所に関係なく最新の結果を出す
-  --workspace <path> 起動したディレクトリの代わりに、この場所の結果を出す";
+flags used with --result:
+  --any              print the latest result regardless of location
+  --workspace <path> print the result for this place instead of the launch directory";
 
 #[derive(Default)]
 struct Cli {
@@ -72,7 +72,7 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
             *index += 1;
             args.get(*index)
                 .cloned()
-                .ok_or_else(|| format!("{arg} には値が必要です"))
+                .ok_or_else(|| format!("{arg} requires a value"))
         };
         if arg.starts_with("--") {
             cli.flags.push(arg.to_string());
@@ -90,14 +90,14 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
             "--port" => {
                 cli.port = value(&mut index)?
                     .parse()
-                    .map_err(|_| "--port には数値が必要です".to_string())?
+                    .map_err(|_| "--port requires a number".to_string())?
             }
             "--no-open" => cli.no_open = true,
             "--digest" => cli.digest = true,
             "--digest-top" => {
                 cli.digest_top = value(&mut index)?
                     .parse()
-                    .map_err(|_| "--digest-top には数値が必要です".to_string())?
+                    .map_err(|_| "--digest-top requires a number".to_string())?
             }
             "--serve" => cli.serve = true,
             "--out" => cli.out = Some(value(&mut index)?),
@@ -105,10 +105,10 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
             "--any" => cli.any = true,
             "--workspace" => cli.workspace = Some(PathBuf::from(value(&mut index)?)),
             "-" => cli.manifest = Some("-".to_string()),
-            other if other.starts_with('-') => return Err(format!("不明なフラグです: {other}")),
+            other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
             path => {
                 if cli.manifest.is_some() {
-                    return Err("manifest は 1 つだけ指定できます".to_string());
+                    return Err("only one manifest can be given".to_string());
                 }
                 cli.manifest = Some(path.to_string());
             }
@@ -122,7 +122,7 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
 fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     if !cli.result {
         if cli.any || cli.workspace.is_some() {
-            return Err("--any と --workspace は --result と一緒に使います".to_string());
+            return Err("--any and --workspace require --result".to_string());
         }
         return Ok(());
     }
@@ -131,10 +131,10 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
         .iter()
         .any(|flag| !matches!(flag.as_str(), "--result" | "--any" | "--workspace"));
     if others || cli.manifest.is_some() {
-        return Err("--result と一緒に使えるのは --any と --workspace だけです".to_string());
+        return Err("--result accepts only --any and --workspace".to_string());
     }
     if cli.any && cli.workspace.is_some() {
-        return Err("--any と --workspace は同時に指定できません".to_string());
+        return Err("--any and --workspace cannot be used together".to_string());
     }
     Ok(())
 }
@@ -158,14 +158,14 @@ fn workspace_root(path: &Path) -> PathBuf {
 /// 終わる。該当が無ければ何も出さず終了コード 2。
 fn print_result(cli: &Cli) -> ! {
     let Some(dir) = results_dir() else {
-        fail("結果ファイルの置き場所を決められません（HOME が未設定です）");
+        fail("cannot determine where to store results (HOME is not set)");
     };
     let key = (!cli.any).then(|| {
         let place = cli.workspace.clone().unwrap_or_else(|| PathBuf::from("."));
         result::workspace_key(&workspace_root(&place))
     });
     let Some(text) = result::load_latest(&dir, key.as_deref()) else {
-        fail("この場所の結果はありません");
+        fail("no result for this location");
     };
     // 壊れたファイルを stdout に出してから終了コード 2 にしないよう、先に読み解く。
     let verdict = serde_json::from_str::<serde_json::Value>(&text)
@@ -174,7 +174,7 @@ fn print_result(cli: &Cli) -> ! {
     let code = match verdict.as_deref() {
         Some("approved") => 0,
         Some("changes_requested") => 1,
-        _ => fail("最新の結果ファイルを読み解けません"),
+        _ => fail("cannot read the latest result file"),
     };
     print!("{text}");
     use std::io::Write;
@@ -191,7 +191,7 @@ struct ResultStore {
 impl ResultSink for ResultStore {
     fn save(&self, text: &str) -> Result<PathBuf, String> {
         let dir = self.dir.as_ref().ok_or_else(|| {
-            "結果ファイルの置き場所を決められません（HOME が未設定です）".to_string()
+            "cannot determine where to store results (HOME is not set)".to_string()
         })?;
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -212,7 +212,7 @@ fn group_by(cli: &Cli) -> Result<GroupBy, String> {
     match cli.group_by.as_deref() {
         None | Some("file") => Ok(GroupBy::File),
         Some("commit") => Ok(GroupBy::Commit),
-        Some(other) => Err(format!("--group-by は commit か file です: {other}")),
+        Some(other) => Err(format!("--group-by must be commit or file: {other}")),
     }
 }
 
@@ -319,7 +319,7 @@ async fn main() {
 
     if let Some(out) = &cli.out {
         fail(&format!(
-            "--out は廃止しました。静的書き出しは行いません（{out} は書き出されません）"
+            "--out is removed; static files are no longer written ({out} will not be written)"
         ));
     }
 
@@ -333,17 +333,17 @@ async fn main() {
     .filter(|present| **present)
     .count();
     if modes > 1 {
-        fail("入力モードは 1 つだけ指定してください");
+        fail("specify exactly one input mode");
     }
     if modes == 0 {
         eprintln!("{USAGE}");
         std::process::exit(2);
     }
     if cli.to.is_some() && cli.from.is_none() {
-        fail("--to には --from が必要です");
+        fail("--to requires --from");
     }
     if cli.group_by.is_some() && cli.from.is_none() {
-        fail("--group-by には --from が必要です");
+        fail("--group-by requires --from");
     }
 
     let source = match build_source(&cli).and_then(|source| with_focus(source, &cli)) {
@@ -361,7 +361,7 @@ async fn main() {
                         println!("{json}");
                         return;
                     }
-                    Err(error) => fail(&format!("digest の JSON を作れません: {error}")),
+                    Err(error) => fail(&format!("cannot build the digest JSON: {error}")),
                 }
             }
             Err(error) => fail(&error.to_string()),
@@ -372,10 +372,7 @@ async fn main() {
 
     let listener = match TcpListener::bind(("127.0.0.1", cli.port)).await {
         Ok(listener) => listener,
-        Err(error) => fail(&format!(
-            "127.0.0.1:{} を待ち受けできません: {error}",
-            cli.port
-        )),
+        Err(error) => fail(&format!("cannot listen on 127.0.0.1:{}: {error}", cli.port)),
     };
     let token = random_token();
     let url = match session_url(&listener, &token) {
@@ -388,8 +385,8 @@ async fn main() {
         key: result::workspace_key(&workspace_root(Path::new("."))),
     };
     match results.location() {
-        Some(dir) => eprintln!("kemi: 結果ファイルの保存先: {dir}"),
-        None => eprintln!("kemi: 結果ファイルの保存先を決められません（HOME が未設定です）"),
+        Some(dir) => eprintln!("kemi: results are saved to: {dir}"),
+        None => eprintln!("kemi: cannot determine where to save results (HOME is not set)"),
     }
     if !cli.no_open {
         open_browser(&url);
@@ -412,7 +409,7 @@ async fn main() {
         Ok(ServeOutcome::Submitted(document)) => {
             match serde_json::to_string(&document) {
                 Ok(json) => println!("{json}"),
-                Err(error) => fail(&format!("submit の JSON を作れません: {error}")),
+                Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
             }
             let code = match document.get("verdict").and_then(|value| value.as_str()) {
                 Some("approved") => 0,
