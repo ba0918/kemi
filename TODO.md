@@ -45,4 +45,3 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
 ## リリース
 
 - 最初のリリースは v0.1.1。変更の記録は `CHANGELOG.md`
-- Windows 対応は将来の検討

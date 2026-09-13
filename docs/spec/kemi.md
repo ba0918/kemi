@@ -25,12 +25,17 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
   メッセージ、stderr の運用メッセージとライブ表示）は英語にする。エラーメッセージには
   kemi が作るすべてのエラー（入力の読み取り、manifest の検証、git の失敗、focus の
   検証、API のエラー）を含む。レビューの既定の `title`（`R-INPUT`）も英語にする。
-- 対応ターゲットは次の 4 つ:
+- 対応ターゲットは次の 6 つ:
   - `x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`（静的リンク）
   - `x86_64-apple-darwin` / `aarch64-apple-darwin`
-- GitHub Releases に cargo-dist 形式のアセット
-  `<name>-<target>.tar.xz` と checksum（`.sha256`）を添付し、
-  `mise use -g github:ba0918/kemi` でインストールできる。
+  - `x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`
+- `aarch64-pc-windows-msvc` は CI の Windows ランナー上でのクロスコンパイルでビルドを
+  検証し、ビルドできない場合は `x86_64-pc-windows-msvc` のみに落とす。
+- GitHub Releases に cargo-dist 形式のアセットを添付する。unix は
+  `<name>-<target>.tar.xz`、Windows は `<name>-<target>.zip` で、それぞれ
+  checksum（`.sha256`）を付ける。`mise use -g github:ba0918/kemi` でインストール
+  できる（動作確認は unix のみ。Windows での mise 経由は保証しない）。Windows の
+  導入手順は zip を解いて `kemi.exe` を PATH へ置く。
 - バージョンの正典はリポジトリ内の 1 箇所（ルート `Cargo.toml` の `version`）。
   タグは `v<semver>`。
 - エージェント向けの使い方の文書を `skills/kemi/SKILL.md` に置き、リポジトリごと配る。
@@ -73,10 +78,13 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 
 **成功条件**
 
-- リリースタグのアセット一覧に、上の 4 ターゲットの
-  `kemi-<target>.tar.xz` と対応する `.sha256` が存在する。
+- リリースタグのアセット一覧に、上の 6 ターゲットの成果物がある。unix は
+  `kemi-<target>.tar.xz`、Windows は `kemi-<target>.zip` で、それぞれ対応する
+  `.sha256` を付ける。
 - きれいな環境で `mise use -g github:ba0918/kemi` の後、`kemi --version` が
-  タグと一致するバージョンを出す。
+  タグと一致するバージョンを出す（unix）。
+- Windows の zip を解いた `kemi.exe` を PATH に置いた環境で、`kemi --version`
+  がタグと一致するバージョンを出す。
 - README と `skills/` 配下のすべてのファイルが英語で、docs が日本語、UI の文言と CLI の出力が
   英語である。
 - e2e テストが、CLI のヘルプと、使い方の誤りで出力されるエラーメッセージに、日本語の
@@ -92,7 +100,6 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 
 **反例**
 
-- Windows 用アセットが無いこと自体は反例ではない（`P7`）。
 - スキルが、この仕様に無いフラグや JSON のキーを案内している。
 - スキルの本文（末尾の注を除く部分）に、特定のエージェントの道具の名前が出ている。
 - インストールされた `kemi` が動的ライブラリ不足で起動しない（musl 静的の失敗）。
@@ -880,10 +887,14 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 - submit を確定したとき、stdout に出す JSON と同じ内容を結果ファイルに書く。verdict は
   問わない。中断（終了コード 130）とエラー（終了コード 2）では書かない。
 - 置き場所は `$XDG_STATE_HOME/kemi/results/`。`XDG_STATE_HOME` が未設定か相対パスなら
-  `~/.local/state/kemi/results/`。1 回の submit で 1 ファイルを作り、名前に送信時刻を
+  unix では `~/.local/state/kemi/results/`、Windows では `%LOCALAPPDATA%\kemi\results\`。
+  Windows で `LOCALAPPDATA` も未設定なら決められず、unix で HOME が無い場合と同じ扱い
+  （起動時に決められないエラー）にする。1 回の submit で 1 ファイルを作り、名前に送信時刻を
   含める。同じ時刻に送信したセッションがあっても名前は衝突しない。「最新」と「古い」は
-  送信時刻（ミリ秒）で決める。ファイルは所有者だけが読み書きでき（`0600`）、ディレクトリは所有者だけが
-  使える（`0700`）。
+  送信時刻（ミリ秒）で決める。ファイルとディレクトリの権限は unix のみ定める:
+  ファイルは所有者だけが読み書きでき（`0600`）、ディレクトリは所有者だけが使える
+  （`0700`）。Windows では `%LOCALAPPDATA%` の既定の ACL に任せ、特別な ACL 設定は
+  行わない。
 - 結果ファイルは、どのリポジトリのレビューだったかを識別できるように置く。識別の基準は、
   kemi を起動したディレクトリを含む git リポジトリのトップのディレクトリ。git の外なら
   起動したディレクトリそのもの。識別の情報はファイルの中身（JSON）に足さず、置き場所
@@ -902,8 +913,10 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 **成功条件**
 
 - `XDG_STATE_HOME` を一時ディレクトリにして submit すると、stdout と同じ JSON の
-  ファイルが `0600` でできる。続けて同じディレクトリで `kemi --result` を実行すると、
+  ファイルが unix では `0600` でできる。続けて同じディレクトリで `kemi --result` を実行すると、
   同じ JSON が出て、終了コードが元の verdict と一致する。
+- Windows で `XDG_STATE_HOME` を未設定のまま `LOCALAPPDATA` を一時ディレクトリにして
+  submit すると、その下の `kemi\results\` に同じ JSON のファイルができる。
 - 21 回 submit すると、結果ファイルは 20 件で、最初の 1 件が消えている。
 - リポジトリ A で submit した後、リポジトリ B で `kemi --result` を実行すると終了コード
   2 で何も出ず、`--any` を付けると A の結果が出る。
@@ -915,7 +928,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 - 別のリポジトリの結果を、今のリポジトリの結果として返す。
 - 保存の失敗でレビューが終了コード 2 になり、stdout に JSON が出ない。
 - 結果ファイルが消されずに増え続ける。
-- 他の利用者が結果ファイルを読める権限で作られる。
+- 他の利用者が結果ファイルを読める権限で作られる（unix の権限条件。Windows では
+  `%LOCALAPPDATA%` の既定 ACL に任せるため、この反例は適用しない）。
 
 ---
 
@@ -1075,6 +1089,7 @@ scripts/
 - 資産埋め込み: `rust-embed`
 - ファイル監視: `notify`（debounce は固定の時刻で試せるよう自前で持つ）
 - JSON: `serde` / `serde_json`
+- 乱数（URL トークン）: `getrandom`（C 依存を持ち込まない）
 
 許可する依存ライセンスは MIT / Apache-2.0 / BSD-3-Clause / ISC / Unicode-3.0 と
 その互換（0BSD 等）に限る。
@@ -1095,7 +1110,7 @@ scripts/
 
 | 条件 | 出所 |
 |---|---|
-| Rust のユニット・統合テスト | `cargo test` |
+| Rust のユニット・統合テスト | `cargo test`（CI は ubuntu と windows。macOS は ubuntu で代表する） |
 | 警告ゼロ | `cargo clippy -- -D warnings` / `cargo fmt --check` |
 | 依存ライセンス | `cargo deny check licenses` |
 | フロントの型 | `npx tsc -p web --noEmit` |
@@ -1105,7 +1120,7 @@ scripts/
 | 規模の目標 | `scripts/gen-fixture.sh` と `scripts/measure-startup.sh` / `scripts/measure-range.sh` |
 | マージや由来の検証 | `cargo test` の中で作る一時的な git リポジトリ（既存の git テストと同じ作り方） |
 | 表示と操作 | 人による確認。DOM 行数はブラウザ自動化（agent-browser 等）で `data-kemi-row` を数える |
-| 配布 | リリースワークフローの成果物と、別環境での mise インストールと `gh skill install` |
+| 配布 | リリースワークフローの成果物と、別環境での mise インストールと `gh skill install`。Windows は zip の `kemi.exe` が `--version` を出すことを Windows マシンを持つ人が確認する |
 
 - `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` は、決定的な
   内容で git リポジトリを生成する（同じ引数なら同じ結果）。
@@ -1144,7 +1159,6 @@ scripts/
 - P4 テーマのカスタム編集 UI（プリセットのみ）。
 - P5 複数ユーザーと認証。
 - P6 crates.io への配布（まず自分で使い、必要になったら別途）。
-- P7 Windows 対応（まず Linux と macOS）。
 - P8 suggestion のブラウザからの適用。適用はエージェントが行う。
 - P9 LLM がコメントや返信を kemi に書き込む機能。作る場合は、ファイルあたり・
   合計の件数上限を契約に含めること。
@@ -1186,7 +1200,6 @@ scripts/
 - R2 静的 HTML 書き出し（理由: 大規模初期表示とコメント機能の両方で不利）。
 - R3 テーマカスタム編集 UI（理由: プリセットで足りる）。
 - R4 ブラウザ内編集（理由: レビューが目的。編集はエージェントが行う）。
-- R5 Windows 対応（理由: 今は不要。後から検討）。
 - R6 suggestion のブラウザ適用（理由: 自分では直さない方針）。
 - R7 ツールを変えず、旧 `diff-review-viewer` スキルに `--group-by file` か manifest を使わせるだけにする
   （理由: 最終形とコミットごとの両取りに届かない）。

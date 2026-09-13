@@ -17,7 +17,14 @@ mise use -g github:ba0918/kemi
 ```
 
 Supported targets: `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`
-(static), `x86_64-apple-darwin`, `aarch64-apple-darwin`.
+(static), `x86_64-apple-darwin`, `aarch64-apple-darwin`,
+`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`.
+
+### Windows
+
+Download the `kemi-<target>.zip` for your machine from the latest GitHub
+Release, extract `kemi.exe`, and put it somewhere on your `PATH`. `git` (e.g.
+Git for Windows) must be on the `PATH` as well.
 
 ## Agent skill
 
@@ -110,9 +117,11 @@ kemi --result --workspace ../app # latest result for another place
 ```
 
 - Location: `$XDG_STATE_HOME/kemi/results/`, or
-  `~/.local/state/kemi/results/` when `XDG_STATE_HOME` is unset or relative.
+  `~/.local/state/kemi/results/` when `XDG_STATE_HOME` is unset or relative
+  (unix). On Windows it is `%LOCALAPPDATA%\kemi\results\`.
   kemi prints the location to stderr when the server starts.
-- One file per submit, readable by you only (`0600`, directory `0700`). The 20
+- One file per submit, readable by you only (`0600`, directory `0700`; unix
+  only — on Windows the default ACL of `%LOCALAPPDATA%` applies). The 20
   newest results are kept across all repositories; older ones are removed.
 - A result belongs to the top of the git repository kemi was started in (or
   to that directory outside git). The JSON itself is unchanged.
