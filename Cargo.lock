@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "kemi"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "kemi-core",
  "kemi-server",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "kemi-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "kemi-server"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "axum",
  "futures-util",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "kemi-webview"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "rust-embed",
 ]

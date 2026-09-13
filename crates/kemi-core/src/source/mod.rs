@@ -32,12 +32,12 @@ impl std::fmt::Display for SourceError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SourceError::Io { path, source } => {
-                write!(formatter, "{} を読めません: {source}", path.display())
+                write!(formatter, "cannot read {}: {source}", path.display())
             }
             SourceError::Manifest(message)
             | SourceError::Focus(message)
             | SourceError::Git(message) => formatter.write_str(message),
-            SourceError::UnknownFileId(id) => write!(formatter, "不明なファイル id: {id}"),
+            SourceError::UnknownFileId(id) => write!(formatter, "unknown file id: {id}"),
         }
     }
 }

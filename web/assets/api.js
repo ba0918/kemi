@@ -56,7 +56,7 @@ export function getReview(refresh = false, unit = null) {
 }
 
 /**
- * 作れなかったグループ単位を作り直す。
+ * 作成に失敗したグループ単位を作り直す。
  * @param {string} unit
  */
 export function retryUnit(unit) {

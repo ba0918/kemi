@@ -544,9 +544,9 @@ export function collapseDefault(file, collapsedMap) {
  */
 export function commentLabel(comment) {
   if (comment.start_line === null || comment.start_line === undefined) {
-    return "ファイル全体";
+    return "Whole file";
   }
-  const side = comment.side === "new" ? "新側" : "旧側";
+  const side = comment.side === "new" ? "New side" : "Old side";
   const single =
     comment.end_line === null ||
     comment.end_line === undefined ||
@@ -1265,11 +1265,11 @@ export function metaItems(review) {
     }
   }
   const stats = reviewStats(review);
-  items.push({ label: "ファイル", value: String(stats.files), stat: true });
+  items.push({ label: "Files", value: String(stats.files), stat: true });
   if (stats.groups > 0) {
-    items.push({ label: "グループ", value: String(stats.groups), stat: true });
+    items.push({ label: "Groups", value: String(stats.groups), stat: true });
   }
-  items.push({ label: "変更", value: `+${stats.add} −${stats.del}`, stat: true });
+  items.push({ label: "Changes", value: `+${stats.add} −${stats.del}`, stat: true });
   return items;
 }
 

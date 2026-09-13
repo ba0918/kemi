@@ -43,7 +43,7 @@ function renderComment(comment) {
       textEl("span", "tx", firstLine(comment.body)),
     );
     if (comment.suggestion) {
-      chip.append(textEl("span", "badge-suggest", "提案"));
+      chip.append(textEl("span", "badge-suggest", "Suggestion"));
     }
     chip.addEventListener("click", () => actions.setCommentOpen(comment.id, true));
     return chip;
@@ -52,23 +52,23 @@ function renderComment(comment) {
   const head = el("div", "bh");
   head.append(textEl("span", "where", where));
   if (comment.suggestion) {
-    head.append(textEl("span", "badge-suggest", "提案"));
+    head.append(textEl("span", "badge-suggest", "Suggestion"));
   }
   if (comment.outdated) {
-    head.append(textEl("span", "t-outdated-mark", "古いコメント"));
+    head.append(textEl("span", "t-outdated-mark", "Outdated comment"));
   }
   const acts = el("span", "acts");
   if (!state.submitted) {
     const edit = button("");
-    edit.textContent = "編集";
+    edit.textContent = "Edit";
     edit.addEventListener("click", () => actions.openCommentEditor(comment));
     const remove = button("");
-    remove.textContent = "削除";
+    remove.textContent = "Delete";
     remove.addEventListener("click", () => actions.confirmDeleteComment(comment));
     acts.append(edit, remove);
   }
   const fold = button("");
-  fold.textContent = "畳む";
+  fold.textContent = "Fold";
   fold.dataset.focusKey = `comment:${comment.id}`;
   fold.addEventListener("click", () => actions.setCommentOpen(comment.id, false));
   acts.append(fold);
@@ -77,11 +77,11 @@ function renderComment(comment) {
 
   if (comment.suggestion) {
     const box = el("div", "t-suggestion");
-    box.append(textEl("div", "sug-head", "提案された変更"));
+    box.append(textEl("div", "sug-head", "Suggested change"));
     const pre = el("pre");
     pre.textContent =
       comment.suggestion.replacement === ""
-        ? "（行の削除）"
+        ? "(line deletion)"
         : comment.suggestion.replacement;
     box.append(pre);
     balloon.append(box);
@@ -89,7 +89,7 @@ function renderComment(comment) {
       textEl(
         "div",
         "t-note",
-        "この提案はコメントと一緒に JSON でエージェントへ渡る（適用はエージェント）。",
+        "This suggestion is sent to the agent as JSON together with the comment (the agent applies it).",
       ),
     );
   }
@@ -98,7 +98,7 @@ function renderComment(comment) {
       textEl(
         "div",
         "t-outdated",
-        "古いコメント — この後にファイルが変更されています（行番号は作成時のまま）",
+        "Outdated comment — the file changed after this comment (line numbers are as of creation)",
       ),
     );
   }
@@ -113,8 +113,8 @@ export function renderEditor(editor) {
   const form = /** @type {HTMLFormElement} */ (el("form", "editor"));
   const body = document.createElement("textarea");
   body.placeholder = editor.wide
-    ? "ファイル全体へのコメント"
-    : "この行へのコメント（Cmd/Ctrl+Enter で記録）";
+    ? "Comment on the whole file"
+    : "Comment on this line (Cmd/Ctrl+Enter to save)";
   body.rows = 3;
   body.dataset.editorField = "body";
   const key = draftKey(
@@ -150,7 +150,7 @@ export function renderEditor(editor) {
       editor.suggestionOn = checkbox.checked;
     });
     const textarea = document.createElement("textarea");
-    textarea.placeholder = "置換後の全文（空なら行の削除）";
+    textarea.placeholder = "Full replacement text (empty deletes the line)";
     textarea.value = editor.suggestion;
     textarea.dataset.editorField = "suggestion";
     textarea.addEventListener("input", () => {
@@ -158,7 +158,7 @@ export function renderEditor(editor) {
     });
     row.append(
       checkbox,
-      document.createTextNode("suggestion として置換後の全文を書く"),
+      document.createTextNode("Write the full replacement text as a suggestion"),
       textarea,
     );
     form.append(row);
@@ -167,11 +167,11 @@ export function renderEditor(editor) {
 
   const buttons = el("div", "row");
   const cancel = button("btn");
-  cancel.textContent = "やめる";
+  cancel.textContent = "Cancel";
   cancel.addEventListener("click", () => actions.closeEditor());
   const submit = /** @type {HTMLButtonElement} */ (el("button", "btn primary"));
   submit.type = "submit";
-  submit.textContent = editor.editId ? "保存" : "コメント";
+  submit.textContent = editor.editId ? "Save" : "Comment";
   buttons.append(cancel, submit);
   form.append(buttons);
 

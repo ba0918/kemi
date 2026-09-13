@@ -40,10 +40,10 @@ export function renderGroupHeader() {
   const line = el("div", "gh-line");
   appendGroupTitle(line, entry.group, "gh-title");
   const progress = groupProgressFor(entry.group.id);
-  line.append(textEl("span", "gh-st", `${progress.seen} / ${progress.total} 見た`));
+  line.append(textEl("span", "gh-st", `Seen ${progress.seen} / ${progress.total}`));
   if (entry.group.why) {
     const toggle = button("gh-toggle");
-    const label = () => (dom.groupHeader.dataset.open === "true" ? "説明を畳む" : "説明を開く");
+    const label = () => (dom.groupHeader.dataset.open === "true" ? "Collapse explanation" : "Expand explanation");
     toggle.textContent = label();
     toggle.setAttribute("aria-expanded", String(open));
     toggle.addEventListener("click", () => {
@@ -62,7 +62,7 @@ export function renderGroupHeader() {
   if (entry.group.watch) {
     const watch = el("div", "gh-watch");
     watch.append(
-      textEl("b", "", "見てほしい点"),
+      textEl("b", "", "Watch"),
       document.createTextNode(entry.group.watch),
     );
     dom.groupHeader.append(watch);
@@ -71,12 +71,12 @@ export function renderGroupHeader() {
 
 function highlightTitle() {
   if (state.highlightEnabled) {
-    return "ハイライトを切る";
+    return "Turn off highlighting";
   }
   if (state.highlightCapable) {
-    return "ハイライトを有効にする";
+    return "Turn on highlighting";
   }
-  return "このファイルでハイライトを有効にする";
+  return "Turn on highlighting for this file";
 }
 
 export function renderFileHeader() {
@@ -97,12 +97,12 @@ export function renderFileHeader() {
   const comments = commentsOf(entry).length;
   if (comments > 0) {
     const badge = textEl("span", "cbadge", `💬 ${comments}`);
-    badge.title = `このファイルのコメント ${comments} 件（ファイル全体へのコメントを含む）`;
+    badge.title = `${comments} comment(s) on this file (including file-wide comments)`;
     dom.fileHeader.append(badge);
   }
   dom.fileHeader.append(fileStatsEl(entry.file));
   if (entry.file.focus) {
-    dom.fileHeader.append(textEl("span", "badge focus", "重要"));
+    dom.fileHeader.append(textEl("span", "badge focus", "Important"));
   }
   if (entry.file.note) {
     dom.fileHeader.append(textEl("span", "note", entry.file.note));
@@ -111,20 +111,20 @@ export function renderFileHeader() {
 
   // 取得が終わるまでは、前のファイルに操作が届かないよう、ヘッダの操作を無効にする。
   const busy = state.loading;
-  const comment = iconButton("ファイル全体にコメント", COMMENT_ICON);
+  const comment = iconButton("Comment on the whole file", COMMENT_ICON);
   comment.disabled = state.submitted || busy;
   comment.dataset.focusKey = "file-comment";
   comment.addEventListener("click", () => actions.openFileWideEditor());
   dom.fileHeader.append(comment);
 
-  const copy = iconButton("パスをコピー", COPY_ICON);
+  const copy = iconButton("Copy path", COPY_ICON);
   copy.dataset.focusKey = "file-copy";
   copy.addEventListener("click", () => actions.copyPath(entry.file.path, copy));
   dom.fileHeader.append(copy);
 
   const fullyExpanded = allLinesExpanded();
   const expand = iconButton(
-    fullyExpanded ? "すべて折りたたむ" : "すべての行を展開",
+    fullyExpanded ? "Collapse all" : "Expand all lines",
     EXPAND_ICON,
   );
   expand.disabled = state.submitted || state.binary || busy;
@@ -151,7 +151,7 @@ export function renderFileHeader() {
   if (originAvailable() && !state.binary && !state.highlightCapable) {
     const forced = state.originForced.has(entry.file.id);
     const origin = iconButton(
-      forced ? "このファイルの由来を隠す" : "このファイルで由来を求める",
+      forced ? "Hide origin for this file" : "Find origin for this file",
       ORIGIN_ICON,
     );
     origin.disabled = busy;
@@ -163,11 +163,11 @@ export function renderFileHeader() {
 
   // 見たは文字付きのチェック。キー v でも付け外しできる（R-SEEN）。
   const seen = button(`seen-toggle${entry.file.seen ? " on" : ""}`);
-  seen.title = entry.file.seen ? "見たを取り消す（v）" : "見たにする（v）";
+  seen.title = entry.file.seen ? "Mark as not seen (v)" : "Mark as seen (v)";
   seen.disabled = busy;
   seen.dataset.focusKey = "file-seen";
   seen.setAttribute("aria-pressed", String(entry.file.seen));
-  seen.append(el("span", "chk"), document.createTextNode("見た"), textEl("kbd", "", "v"));
+  seen.append(el("span", "chk"), document.createTextNode("Seen"), textEl("kbd", "", "v"));
   seen.addEventListener("click", () => actions.toggleSeen(entry.file));
   dom.fileHeader.append(seen);
   restoreFocusKey(dom.fileHeader, focusKey);
@@ -180,13 +180,13 @@ export function renderNotice() {
   if (!entry) {
     if (state.review) {
       dom.notice.hidden = false;
-      dom.notice.textContent = "表示するファイルがありません";
+      dom.notice.textContent = "No files to show";
     }
     return;
   }
   if (state.loading) {
     dom.notice.hidden = false;
-    dom.notice.append(textEl("span", "notice-text", "読み込み中…"));
+    dom.notice.append(textEl("span", "notice-text", "Loading…"));
     return;
   }
   if (state.binary) {
@@ -195,17 +195,17 @@ export function renderNotice() {
       textEl(
         "span",
         "notice-text",
-        `バイナリ: ${formatBytes(entry.file.old_size)} → ${formatBytes(entry.file.new_size)}`,
+        `Binary: ${formatBytes(entry.file.old_size)} → ${formatBytes(entry.file.new_size)}`,
       ),
     );
     return;
   }
   if (collapseDefault(entry.file, state.collapsedOverrides)) {
     dom.notice.hidden = false;
-    const label = entry.file.noise ? "ノイズ" : "折りたたみ";
-    dom.notice.append(textEl("span", "notice-text", `${label}: 内容を畳んでいます`));
+    const label = entry.file.noise ? "Noise" : "Fold";
+    dom.notice.append(textEl("span", "notice-text", `${label}: content folded`));
     const open = button("btn");
-    open.textContent = "表示する";
+    open.textContent = "Show";
     open.addEventListener("click", () => actions.showCollapsed(entry));
     dom.notice.append(open);
   }

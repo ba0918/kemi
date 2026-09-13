@@ -104,7 +104,7 @@ pub(crate) fn build_review(
         title: manifest
             .title
             .clone()
-            .unwrap_or_else(|| "変更のレビュー".to_string()),
+            .unwrap_or_else(|| "Review of changes".to_string()),
         subtitle: manifest.subtitle.clone().unwrap_or_default(),
         meta: manifest.meta.clone(),
         groups,
@@ -134,7 +134,7 @@ fn build_diff(
         resolve_side(diff.new.as_deref(), diff.new_path.as_deref(), base, "new")?;
     if !old_present && !new_present {
         return Err(SourceError::Manifest(format!(
-            "{}: old / old_path と new / new_path の両方がありません",
+            "{}: neither old / old_path nor new / new_path is given",
             diff.path
         )));
     }
@@ -187,15 +187,13 @@ fn resolve_side(
 ) -> Result<(SideRef, bool), SourceError> {
     match (inline, path) {
         (Some(_), Some(_)) => Err(SourceError::Manifest(format!(
-            "{side} と {side}_path は同時に指定できません"
+            "{side} and {side}_path cannot be given together"
         ))),
         (Some(text), None) => Ok((SideRef::Inline(text.as_bytes().to_vec()), true)),
         (None, Some(relative)) => {
             let full = base.join(relative);
             if !full.is_file() {
-                return Err(SourceError::Manifest(format!(
-                    "{relative} が見つかりません"
-                )));
+                return Err(SourceError::Manifest(format!("{relative} not found")));
             }
             Ok((SideRef::Disk(full), true))
         }
@@ -216,7 +214,7 @@ fn infer_status(
         Some("rename") => Ok(Status::Rename),
         Some("modify") => Ok(Status::Modify),
         Some(other) => Err(SourceError::Manifest(format!(
-            "{path}: 不明な status: {other}"
+            "{path}: unknown status: {other}"
         ))),
         None => {
             if renamed_from.is_some() {
@@ -253,7 +251,7 @@ impl ManifestSource {
 
     pub fn from_json(json: &str, base: &Path) -> Result<Self, SourceError> {
         let manifest: Manifest = serde_json::from_str(json)
-            .map_err(|error| SourceError::Manifest(format!("manifest を読めません: {error}")))?;
+            .map_err(|error| SourceError::Manifest(format!("cannot read manifest: {error}")))?;
         Ok(ManifestSource {
             manifest,
             base: base.to_path_buf(),
@@ -369,7 +367,7 @@ mod tests {
     #[test]
     fn manifest_default_title_is_change_review() {
         let source = ManifestSource::from_json(r#"{"groups":[]}"#, Path::new(".")).unwrap();
-        assert_eq!(source.review().unwrap().title, "変更のレビュー");
+        assert_eq!(source.review().unwrap().title, "Review of changes");
     }
 
     #[test]

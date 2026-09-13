@@ -245,7 +245,7 @@ export async function addComment(payload) {
           };
     clearDraft(draftKey(payload.file_id, selection));
   } catch (error) {
-    showOverlay("コメントを追加できません", String(error));
+    showOverlay("could not add the comment", String(error));
   }
 }
 
@@ -260,7 +260,7 @@ export async function editComment(payload) {
       comments.map((item) => (item.id === updated.id ? updated : item)),
     );
   } catch (error) {
-    showOverlay("コメントを編集できません", String(error));
+    showOverlay("could not edit the comment", String(error));
   }
 }
 
@@ -270,11 +270,11 @@ export async function editComment(payload) {
  */
 export function confirmDeleteComment(comment) {
   openModal({
-    title: "コメントを削除しますか？",
-    body: `${commentLabel(comment)}: ${firstLine(comment.body)}\n削除したコメントは送信する JSON に含まれません。`,
-    okLabel: "削除",
+    title: "Delete this comment?",
+    body: `${commentLabel(comment)}: ${firstLine(comment.body)}\nDeleted comments are not included in the submitted JSON.`,
+    okLabel: "Delete",
     okClass: "btn secondary",
-    cancelLabel: "戻る",
+    cancelLabel: "Back",
     action: () => void deleteComment(comment),
   });
 }
@@ -287,6 +287,6 @@ async function deleteComment(comment) {
     await api.postComment({ op: "delete", id: comment.id });
     updateComments((comments) => comments.filter((item) => item.id !== comment.id));
   } catch (error) {
-    showOverlay("コメントを削除できません", String(error));
+    showOverlay("could not delete the comment", String(error));
   }
 }

@@ -16,12 +16,12 @@ pub enum FocusError {
 impl std::fmt::Display for FocusError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FocusError::Parse(message) => write!(formatter, "focus を読めません: {message}"),
+            FocusError::Parse(message) => write!(formatter, "cannot read focus: {message}"),
             FocusError::UnknownGroup(id) => {
-                write!(formatter, "focus のグループ id が見つかりません: {id}")
+                write!(formatter, "focus group id not found: {id}")
             }
             FocusError::UnknownPath(path) => {
-                write!(formatter, "focus のパスが見つかりません: {path}")
+                write!(formatter, "focus path not found: {path}")
             }
         }
     }

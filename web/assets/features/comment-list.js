@@ -90,7 +90,7 @@ export async function goToComment(comment, unit) {
     // 移り先が無ければ、一覧を開き直して（消えたコミットならそう示して）本文を見せる。
     const missing = () => {
       openCommentList();
-      showToast("移り先のファイルが見つかりません");
+      showToast("could not find the target file");
     };
     await switchUnit(unit, { find, side: comment.side, line, missing });
     return;

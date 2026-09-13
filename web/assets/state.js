@@ -16,7 +16,7 @@ export const OVERSCAN = 12;
 export const NAV_MARGIN = 48;
 
 /** @type {Record<string, string>} */
-const UNIT_LABELS = { file: "最終形", commit: "コミットごと" };
+const UNIT_LABELS = { file: "Final state", commit: "Per commit" };
 
 /**
  * グループ単位の画面での呼び名。知らない単位は、サーバが返した名前のまま出す。
@@ -29,7 +29,7 @@ export function unitLabel(unit) {
 
 /** @type {Record<string, string>} */
 export const THEME_LABELS = {
-  auto: "自動",
+  auto: "Auto",
   light: "light",
   dark: "dark",
   "solarized-light": "solarized light",

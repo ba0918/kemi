@@ -72,7 +72,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `docs/spec/kemi.md` が契約の正典。振る舞いを変えるときは該当節 ID（例 `R-SUBMIT`）を
   引用し、実装より先に仕様を直す。
 - 用語は `CONTEXT.md` の読みに従う（例: コメントを「注釈」と呼ばない）。
-- コードとコミットは日本語、UI 文言と docs も日本語、README と `skills/` は英語。
+- コードとコミットは日本語、UI の文言と CLI の出力は英語、docs は日本語、README と `skills/` は英語。
 - CLI と JSON の契約を変えるコミットで、`skills/kemi/SKILL.md` と README も同時に直す。
   一致を確かめる機械検査は無いので、レビューで見る。
 - 利用者に届けたいスキルの直しは、文面だけの変更でもリリース（`v<semver>` のタグ）で出す。

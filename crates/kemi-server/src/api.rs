@@ -64,7 +64,7 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
         .strip_prefix("/s/")
         .and_then(|rest| rest.split('/').next());
     if token != Some(state.token.as_str()) {
-        return ApiError::not_found("ページが見つかりません").into_response();
+        return ApiError::not_found("page not found").into_response();
     }
     if request.method() == Method::POST {
         if let Err(error) = validate_post(&state, request.headers()) {
@@ -132,13 +132,13 @@ fn validate_post(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> 
         .get(header::HOST)
         .and_then(|value| value.to_str().ok());
     if host != Some(state.host.as_str()) {
-        return Err(ApiError::forbidden("Host が一致しません"));
+        return Err(ApiError::forbidden("Host does not match"));
     }
     let origin = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok());
     if origin != Some(state.origin.as_str()) {
-        return Err(ApiError::forbidden("Origin が一致しません"));
+        return Err(ApiError::forbidden("Origin does not match"));
     }
     Ok(())
 }
@@ -195,7 +195,7 @@ fn serve_asset(state: &AppState, path: &str) -> Result<Response, ApiError> {
     let asset = state
         .assets
         .get(path)
-        .ok_or_else(|| ApiError::not_found(format!("{path} が見つかりません")))?;
+        .ok_or_else(|| ApiError::not_found(format!("{path} not found")))?;
     let mut response = axum::body::Bytes::from(asset.bytes.into_owned()).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -217,7 +217,7 @@ fn parse_unit(unit: &str) -> Result<GroupBy, ApiError> {
     match unit {
         "file" => Ok(GroupBy::File),
         "commit" => Ok(GroupBy::Commit),
-        _ => Err(ApiError::bad_request("unit は file か commit です")),
+        _ => Err(ApiError::bad_request("unit must be file or commit")),
     }
 }
 
@@ -236,8 +236,8 @@ async fn review(
     let body = {
         let review = state.review.read().expect("review lock poisoned");
         let (shown, meta) = review.meta(unit).map_err(|reason| match reason {
-            Unavailable::NoSuchUnit => ApiError::not_found("その単位はありません"),
-            Unavailable::NotReady => ApiError::conflict("その単位はまだ作っていません"),
+            Unavailable::NoSuchUnit => ApiError::not_found("no such unit"),
+            Unavailable::NotReady => ApiError::conflict("that unit is not ready yet"),
         })?;
         let session = state.session.lock().expect("session poisoned");
         let mut body = review_json(meta.as_ref(), &session);
@@ -437,7 +437,7 @@ async fn origin(
 
 /// 計算に失敗したファイルの由来。変更ブロックもコミットも 1 つも持たない。
 fn unknown_origin(path: &str, error: impl std::fmt::Display) -> FileOrigin {
-    eprintln!("kemi: {path} の由来を求められませんでした: {error}");
+    eprintln!("kemi: cannot compute the origin of {path}: {error}");
     FileOrigin {
         enabled: true,
         blocks: Vec::new(),
@@ -495,7 +495,7 @@ async fn unit_api(
 ) -> Result<Json<Value>, ApiError> {
     let UnitRequest::Retry { unit } = request;
     if !units::retry(&state, parse_unit(&unit)?) {
-        return Err(ApiError::conflict("作り直せる状態ではありません"));
+        return Err(ApiError::conflict("cannot be retried now"));
     }
     let units = state
         .review
@@ -759,7 +759,7 @@ async fn add_comment(
         (Some(start), Some(end)) => Some(LineRange { start, end }),
         _ => {
             return Err(ApiError::bad_request(
-                "start_line と end_line は両方指定してください",
+                "start_line and end_line must both be given",
             ))
         }
     };
@@ -805,10 +805,10 @@ async fn add_comment(
 
     let location = match (comment.start_line, comment.end_line) {
         (Some(start), Some(end)) => format!("{start}-{end}"),
-        _ => "ファイル全体".to_string(),
+        _ => "file-wide".to_string(),
     };
     eprintln!(
-        "kemi: コメント {} {} {}",
+        "kemi: comment {} {} {}",
         comment.path,
         comment.side.as_str(),
         location
@@ -817,29 +817,29 @@ async fn add_comment(
 }
 
 fn comment_not_found() -> ApiError {
-    ApiError::not_found("コメントが見つかりません")
+    ApiError::not_found("comment not found")
 }
 
 fn parse_side(side: &str) -> Result<Side, ApiError> {
     match side {
         "new" => Ok(Side::New),
         "old" => Ok(Side::Old),
-        _ => Err(ApiError::bad_request("side は new か old です")),
+        _ => Err(ApiError::bad_request("side must be new or old")),
     }
 }
 
 fn comment_error_message(error: CommentError) -> String {
     match error {
-        CommentError::LineNumberOutOfRange => "行番号は 1 始まりです".to_string(),
-        CommentError::ReversedRange => "行レンジが逆転しています".to_string(),
+        CommentError::LineNumberOutOfRange => "line numbers start at 1".to_string(),
+        CommentError::ReversedRange => "line range is reversed".to_string(),
         CommentError::FileWideMustBeNewSide => {
-            "ファイル全体のコメントは新側にだけ付けられます".to_string()
+            "file-wide comments can only be on the new side".to_string()
         }
         CommentError::SuggestionRequiresNewSide => {
-            "suggestion は新側の行コメントにだけ付けられます".to_string()
+            "suggestions can only be on new-side line comments".to_string()
         }
-        CommentError::SuggestionRequiresRange => "suggestion には行レンジが必要です".to_string(),
-        CommentError::QuoteOutOfBounds => "行レンジがファイルの範囲を超えています".to_string(),
+        CommentError::SuggestionRequiresRange => "suggestion requires a line range".to_string(),
+        CommentError::QuoteOutOfBounds => "line range exceeds the file".to_string(),
     }
 }
 
@@ -892,14 +892,14 @@ async fn submit(
 ) -> Result<Json<Value>, ApiError> {
     if request.verdict != "approved" && request.verdict != "changes_requested" {
         return Err(ApiError::bad_request(
-            "verdict は approved か changes_requested です",
+            "verdict must be approved or changes_requested",
         ));
     }
     {
         let mut submit_state = state.submit_state.lock().expect("submit poisoned");
         match *submit_state {
             SubmitState::Open => *submit_state = SubmitState::Claimed,
-            SubmitState::Claimed => return Err(ApiError::conflict("既に送信されています")),
+            SubmitState::Claimed => return Err(ApiError::conflict("already submitted")),
         }
     }
 
@@ -908,7 +908,7 @@ async fn submit(
             {
                 let mut stop = state.stop.lock().expect("stop poisoned");
                 if matches!(*stop, Some(Stop::Failed(_))) {
-                    return Err(ApiError::conflict("実行時エラーで停止しています"));
+                    return Err(ApiError::conflict("stopped after a runtime error"));
                 }
                 *stop = Some(Stop::Submitted(document.clone()));
             }
@@ -942,7 +942,7 @@ fn save_result(state: &AppState, document: &Value) -> Value {
             "error": null,
         }),
         Err(error) => {
-            eprintln!("kemi: 結果ファイルを保存できませんでした: {error}");
+            eprintln!("kemi: could not save the result file: {error}");
             json!({ "dir": sink.location(), "path": null, "error": error })
         }
     }
@@ -1053,7 +1053,7 @@ fn find_file(state: &AppState, id: &str) -> Result<(FileEntry, String), ApiError
 }
 
 fn file_not_found() -> ApiError {
-    ApiError::not_found("ファイルが見つかりません")
+    ApiError::not_found("file not found")
 }
 
 fn side_lines(bytes: &Option<Vec<u8>>) -> Vec<String> {

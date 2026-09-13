@@ -185,5 +185,5 @@ bindActions({
 applyTheme();
 boot().catch((error) => {
   dom.notice.hidden = false;
-  dom.notice.textContent = `読み込みに失敗しました: ${error}`;
+  dom.notice.textContent = `could not load: ${error}`;
 });

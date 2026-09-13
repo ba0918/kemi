@@ -1,5 +1,5 @@
 // @ts-check
-// グループ単位（最終形 / コミットごと）の切り替えと、作れなかった単位の作り直し。
+// グループ単位（最終形 / コミットごと）の切り替えと、作成に失敗した単位の作り直し。
 
 import * as api from "../api.js";
 import { currentEntry, flatten, state, unitLabel } from "../state.js";
@@ -34,7 +34,7 @@ export async function switchUnit(unit, jump) {
   if (status.state !== "ready") {
     state.pendingUnit = { unit, jump };
     renderUnitSwitch();
-    showToast(`${unitLabel(unit)}を読み込み中です`);
+    showToast(`Loading ${unitLabel(unit)}…`);
     // 手元の状態が古いこともあるので読み直す。できていればそのまま切り替わる。
     void onUnitEvent();
     return;
@@ -47,7 +47,7 @@ export async function switchUnit(unit, jump) {
     try {
       review = await api.getReview(false, unit);
     } catch (error) {
-      showOverlay("グループ単位を切り替えられません", String(error));
+      showOverlay("could not switch the unit", String(error));
       return;
     }
   }
@@ -80,17 +80,17 @@ export async function switchUnit(unit, jump) {
 }
 
 /**
- * 作れなかった単位の理由と、作り直しの操作。
+ * 作成に失敗した単位の理由と、作り直しの操作。
  * @param {any} status
  */
 function openUnitFailure(status) {
   const unit = String(status.unit);
   openModal({
-    title: `${unitLabel(unit)}の単位を作れなかった`,
-    body: `理由: ${status.error || "不明"}\nレビューはこのまま続けられます。`,
-    okLabel: "再試行",
+    title: `could not create the ${unitLabel(unit)} unit`,
+    body: `Reason: ${status.error || "unknown"}\nThe review can continue.`,
+    okLabel: "Retry",
     okClass: "btn primary",
-    cancelLabel: "閉じる",
+    cancelLabel: "Close",
     action: () => {
       state.pendingUnit = { unit, jump: null };
       api
@@ -99,7 +99,7 @@ function openUnitFailure(status) {
           state.units = answer.units || state.units;
           renderUnitSwitch();
         })
-        .catch((error) => showOverlay("作り直せませんでした", String(error)));
+        .catch((error) => showOverlay("could not rebuild the unit", String(error)));
     },
   });
 }

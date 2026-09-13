@@ -5,7 +5,21 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
-（なし）
+### 修正
+
+- ページ上部の meta を開くボタンと、開いた箱の読み上げ用の名前（`aria-label`）に日本語が
+  残っていたのを英語にした。
+
+## [0.1.3] - 2026-09-14
+
+### 変更
+
+- UI の文言と CLI の出力を英語にした。ヘルプ、エラーメッセージ、stderr の運用メッセージ、
+  ページのボタン・ラベル・説明文・エラー表示、レビューの既定の title（"Working tree
+  changes" / "Staged changes" / "Review of changes"）が英語になる。JSON の形と終了コードは
+  変わらない。開発ドキュメント（仕様・用語集）とコードコメントは日本語のまま。同梱の
+  スキルと README も英語のボタン文言に合わせて更新した。`gh skill install` で入れ直すと
+  反映される。
 
 ## [0.1.2] - 2026-09-13
 
@@ -47,6 +61,7 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/ba0918/kemi/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ba0918/kemi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ba0918/kemi/releases/tag/v0.1.1

@@ -175,6 +175,20 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
     run_with_state(dir, args, &state.path)
 }
 
+/// CLI の出力が英語であることの検証（R-DIST の成功条件）。ひらがな・カタカナ・
+/// 漢字（CJK 統合漢字と拡張 A）のいずれかを検出したら日本語とする。
+fn contains_japanese(text: &str) -> bool {
+    text.chars().any(|character| {
+        matches!(
+            character as u32,
+            0x3040..=0x309f
+                | 0x30a0..=0x30ff
+                | 0x3400..=0x4dbf
+                | 0x4e00..=0x9fff
+        )
+    })
+}
+
 fn run_with_state(dir: &Path, args: &[&str], state: &Path) -> std::process::Output {
     kemi_command(dir, state).args(args).output().unwrap()
 }
@@ -212,7 +226,11 @@ fn cli_no_mode_exits_2_with_usage() {
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("使い方"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !contains_japanese(&stderr),
+        "usage must be in English: {stderr}"
+    );
 }
 
 #[test]
@@ -233,7 +251,24 @@ fn cli_out_rejected_with_reason() {
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("静的書き出し"), "{stderr}");
+    assert!(
+        !contains_japanese(&stderr),
+        "the --out rejection must be in English: {stderr}"
+    );
+}
+
+#[test]
+fn cli_missing_manifest_error_has_no_japanese() {
+    let dir = TempDir::new();
+    let output = run(&dir.path, &["no-such-manifest.json"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !contains_japanese(&stderr),
+        "the manifest error must be in English: {stderr}"
+    );
 }
 
 #[test]
@@ -294,6 +329,15 @@ async fn exit_code_approved_is_0_and_stdout_json() {
         .unwrap();
     assert_eq!(review["title"], "e2e のレビュー");
 
+    // 起動時の stderr は、URL の行（start が読む）の後に結果ファイルの保存先の行
+    // （R-RESULT）が続く。ここで読み、後から出るコメントのライブ表示と区別する。
+    let mut save_line = String::new();
+    kemi.stderr.read_line(&mut save_line).unwrap();
+    assert!(
+        save_line.starts_with("kemi: ") && !save_line.contains("http://"),
+        "unexpected stderr after the URL: {save_line:?}"
+    );
+
     let _ = kemi
         .post(
             "api/comment",
@@ -311,7 +355,9 @@ async fn exit_code_approved_is_0_and_stdout_json() {
         .await;
     assert_eq!(response.status(), 200);
 
-    // live 表示は stderr に出る。stdout には submit の JSON だけ。
+    // コメントの追加で、人間向けのライブ表示の行が stderr に出る（R-COMMENT）。
+    // 文言は契約でないので、保存先の行の後に `kemi:` の行が追加で出ることを確かめる。
+    // stdout には submit の JSON だけ。
     let mut stderr_lines = Vec::new();
     for line in kemi.stderr.by_ref().lines() {
         stderr_lines.push(line.unwrap());
@@ -322,8 +368,13 @@ async fn exit_code_approved_is_0_and_stdout_json() {
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["comments"][0]["body"], "ここ直して");
     assert!(
-        stderr_lines.iter().any(|line| line.contains("コメント")),
-        "live stderr missing: {stderr_lines:?}"
+        stderr_lines.iter().any(|line| line.starts_with("kemi: ")),
+        "the comment live display is missing from stderr: {stderr_lines:?}"
+    );
+    let stderr = format!("{save_line}{}", stderr_lines.join("\n"));
+    assert!(
+        !contains_japanese(&stderr),
+        "live stderr must be in English: {stderr_lines:?}"
     );
 }
 
