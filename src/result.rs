@@ -307,6 +307,7 @@ mod tests {
         assert_eq!(load_latest(&scratch.0, None), Some(format!("{KEEP}\n")));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn result_dir_uses_xdg_state_home_only_when_absolute() {
         let home = Some(OsStr::new("/home/user"));

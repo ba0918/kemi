@@ -1007,6 +1007,7 @@ async fn result_outside_git_is_identified_by_the_directory() {
     assert_eq!(sub.status.code(), Some(2));
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn result_relative_xdg_state_home_falls_back_to_home() {
     let dir = TempDir::new();
