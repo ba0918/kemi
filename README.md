@@ -139,7 +139,6 @@ kemi --result --workspace ../app # latest result for another place
           "old": "…",
           "new": "…",
           "status": "modify",
-          "renamed_from": "src/old.rs",
           "focus": true,
           "note": "the important part"
         }
