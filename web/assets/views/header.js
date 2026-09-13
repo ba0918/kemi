@@ -51,7 +51,7 @@ export function renderUnitSwitch() {
     if (status.state === "failed") {
       label = `${label} (failed)`;
       item.classList.add("failed");
-      item.title = `could not create: ${status.error || ""}（押すと理由と再試行）`;
+      item.title = `could not create: ${status.error || ""} (click to see the reason and retry)`;
     } else if (status.state === "building" && pending) {
       label = `${label}（読み込み中…）`;
     }

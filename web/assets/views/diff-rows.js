@@ -212,7 +212,7 @@ function renderOriginReason(line) {
         find: (entries) => originJumpTarget(entries, sha, to),
         side: to.side,
         line: to.line,
-        missing: () => showToast("移り先のファイルが見つかりません"),
+        missing: () => showToast("could not find the target file"),
       });
     });
     panel.append(jump);
