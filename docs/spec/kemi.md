@@ -20,17 +20,11 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 
 - リポジトリ名とバイナリ名は `kemi`（「閲する」から）。
 - ライセンスは MIT OR Apache-2.0。
-- README と `skills/` の配布物は英語（翻訳版は作らない）、UI と docs（この仕様を含む）は
-  日本語。CLI の出力（ヘルプ、エラーメッセージ、stderr の運用メッセージとライブ表示）は
-  英語にする。エラーメッセージには kemi が作るすべてのエラー（入力の読み取り、manifest の
-  検証、git の失敗、focus の検証、API のエラー）を含み、Web UI のエラー表示も英語になる。
-  UI の次のものは英語のままでよい: 状態の `A` / `D` / `R` / `M`、コミットの種類（`R-VIEW` の形式に合う
-  もの）、`unified` / `split`、テーマのプリセット名（`light` / `dark` / `solarized light` /
-  `solarized dark`）、`JSON`、キー名（`Cmd` / `Ctrl` / `Enter` / `Esc`、`n` / `p` / `v` など
-  キーボードの刻印やキー操作として示すもの）、sha、パス・コード・コマンド名、`CONTEXT.md` に英語の
-  見出しで載っている語（suggestion、digest など、その見出しの一覧に限る）。文章と
-  ボタンの文言は日本語にする。レビューの既定の `title`（`R-INPUT`）は Web の見出しにも
-  表示されるため、日本語のままにする。
+- README と `skills/` の配布物は英語（翻訳版は作らない）、docs（この仕様を含む）は
+  日本語。UI の文言（文章、ボタン、説明文、エラー表示）と CLI の出力（ヘルプ、エラー
+  メッセージ、stderr の運用メッセージとライブ表示）は英語にする。エラーメッセージには
+  kemi が作るすべてのエラー（入力の読み取り、manifest の検証、git の失敗、focus の
+  検証、API のエラー）を含む。レビューの既定の `title`（`R-INPUT`）も英語にする。
 - 対応ターゲットは次の 4 つ:
   - `x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`（静的リンク）
   - `x86_64-apple-darwin` / `aarch64-apple-darwin`
@@ -83,7 +77,7 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
   `kemi-<target>.tar.xz` と対応する `.sha256` が存在する。
 - きれいな環境で `mise use -g github:ba0918/kemi` の後、`kemi --version` が
   タグと一致するバージョンを出す。
-- README と `skills/` 配下のすべてのファイルが英語で、UI 文言と docs が日本語、CLI の出力が
+- README と `skills/` 配下のすべてのファイルが英語で、docs が日本語、UI の文言と CLI の出力が
   英語である。
 - e2e テストが、CLI のヘルプと、使い方の誤りで出力されるエラーメッセージに、日本語の
   文字が含まれないことを検証する。
@@ -102,8 +96,7 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 - スキルが、この仕様に無いフラグや JSON のキーを案内している。
 - スキルの本文（末尾の注を除く部分）に、特定のエージェントの道具の名前が出ている。
 - インストールされた `kemi` が動的ライブラリ不足で起動しない（musl 静的の失敗）。
-- UI の文章やボタンの文言に、上の一覧に無い英語の未翻訳文言が混ざる（エラーメッセージは
-  英語と定めているので対象外）。
+- UI の文言（文章、ボタン、説明文、エラー表示）に、日本語の文言が残る。
 - CLI の出力（ヘルプ、エラーメッセージ、stderr の運用メッセージとライブ表示）に日本語の
   文言が残る。
 
@@ -120,20 +113,20 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 | manifest | 作成者が決める | 作成者の値、省略時は `g1`, `g2`, … | 作成者の値（既定 空） |
 | コミット範囲・コミットごと | マージ以外の各コミット | 完全な commit sha | commit の subject |
 | コミット範囲・最終形 | 1 つだけ | `all` | `from...to` |
-| worktree | 1 つだけ | `worktree` | 「作業ツリーの変更」 |
-| staged | 1 つだけ | `staged` | 「ステージ済みの変更」 |
+| worktree | 1 つだけ | `worktree` | "Working tree changes" |
+| staged | 1 つだけ | `staged` | "Staged changes" |
 
 コミット範囲は「最終形」と「コミットごと」の 2 つのグループ単位を両方持ち、画面で
 切り替える（`R-UNIT`）。ほかのモードのグループ単位は 1 つだけ。
 
-レビューの `title` は、manifest は `title` キー（省略時「変更のレビュー」）、
-コミット範囲は `from..to`、worktree は「作業ツリーの変更」、staged は
-「ステージ済みの変更」とする。
+レビューの `title` は、manifest は `title` キー（省略時 "Review of changes"）、
+コミット範囲は `from..to`、worktree は "Working tree changes"、staged は
+"Staged changes" とする。
 
 **成功条件**
 
 - `kemi --worktree --staged` が終了コード 2 で終わる。
-- `title` の無い manifest で、レビューの `title` が「変更のレビュー」になる。
+- `title` の無い manifest で、レビューの `title` が "Review of changes" になる。
 
 **反例**
 
