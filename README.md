@@ -201,8 +201,9 @@ The JSON printed at the end:
 
 - `side` is `new` or `old`. File-wide comments are `new` with `start_line` and
   `end_line` `null`, and `quote` `[]`.
-- `suggestion` is `null` for old-side and file-wide comments. An empty
-  replacement means the lines should be deleted.
+- `suggestion` is `null` when the comment carries no suggestion, and always
+  `null` for old-side and file-wide comments. An empty replacement means the
+  lines should be deleted.
 - `outdated` is `true` when the file changed after the comment was written.
   kemi never moves a comment to a new line number.
 - `comments` are in creation order.

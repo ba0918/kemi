@@ -206,9 +206,10 @@ stderr, tell them:
   file's own numbering. A comment on a whole file has `start_line` and `end_line` `null`,
   `quote` `[]`, and `side` `new`.
 - `suggestion` replaces new-side lines `start_line` through `end_line` of `path` with
-  `replacement`; an empty `replacement` means those lines should go. It is `null` for old-side
-  and whole-file comments. kemi never applies a suggestion, you do: check `quote` against the
-  file as it stands now before you write.
+  `replacement`; an empty `replacement` means those lines should go. It is `null` when the
+  comment carries no suggestion, and always `null` for old-side and whole-file comments. kemi
+  never applies a suggestion, you do: check `quote` against the file as it stands now before
+  you write.
 - `outdated` is `true` when the file changed after the comment was written, or when the commit
   the comment was sitting on left the range. kemi does not renumber a comment, so do not trust
   the line numbers of an outdated one: locate the place by `quote`, and ask the person when it
