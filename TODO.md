@@ -45,7 +45,6 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
 
 ## リリース
 
-- `v*` タグを切って GitHub Releases に配布する（`ba0918-release`）。`--group-by` の既定が
-  `commit` から `file` に変わるのは互換性が崩れる変更なので、次のリリースで扱う
-- `mise use -g github:ba0918/kemi` の実アセット確認もその時に行う
+- v0.1.0 を最初のリリースとして配布する（`ba0918-release`）。変更の記録は `CHANGELOG.md`
+- `mise use -g github:ba0918/kemi` の実アセット確認は、リリースの後にきれいな環境で行う
 - Windows 対応は将来の検討
