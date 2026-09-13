@@ -153,6 +153,8 @@ kemi --result --workspace ../app # latest result for another place
 files instead. Setting both `old` and `old_path` (or `new` and `new_path`) is
 an error. A missing side means an addition or a deletion. `status` is
 `add`, `delete`, `rename`, or `modify`, and is inferred when omitted.
+`renamed_from` names the path a rename came from; with `status` omitted it
+makes the entry a rename.
 
 ## Focus layer
 
