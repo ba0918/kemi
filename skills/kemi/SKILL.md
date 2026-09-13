@@ -126,7 +126,6 @@ reasons live only in your head. The groups and their reasons are your work, not 
           "old_path": "before/example.md",
           "new_path": "docs/example.md",
           "status": "modify",
-          "renamed_from": "docs/old.md",
           "focus": true,
           "note": "why this file matters most"
         }
@@ -145,7 +144,8 @@ reasons live only in your head. The groups and their reasons are your work, not 
   added or deleted. Giving both `old` and `old_path` (or both `new` and `new_path`), or naming a
   path that does not exist, is an error (exit `2`), never a silently empty side.
 - `status` is `add`, `delete`, `rename`, or `modify`, and is inferred when left out.
-  `renamed_from` names the old path and implies a rename.
+  `renamed_from` names the old path a rename came from; with `status` left out it makes the
+  entry a rename.
 - `id` may be left out (`g1`, `g2` and so on are generated), but choose stable ids if a
   `--focus` file will refer to them.
 - Fill `approval` whenever the person is being asked to approve something, and say in the
