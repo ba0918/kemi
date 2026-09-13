@@ -43,15 +43,6 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
   しかない。solarized のプリセットでもハイライトの色は light / dark のまま
 - 画面の文言の `JSON` とキー名は、`R-DIST` の一覧どおり英語のまま出している
 
-## 納品後の環境更新
-
-- `~/.local/bin/diff-review`（旧 Python ツール）を消す。kemi は `cargo install --path .`
-  で `~/.cargo/bin/kemi` に入れてあり、リリース後は mise に置き換える
-- `~/.claude/skills/diff-review-viewer` を消し、`gh skill install ba0918/kemi kemi` で
-  `kemi` スキルを入れる（最初のリリースまでは `skills/kemi/` を手でコピー）。利用者の
-  共通の指示（`~/.claude/CLAUDE.md`）の「diff-review の提示手段は `diff-review-viewer`
-  スキルが担う」を「`kemi` スキルが担う」に直す
-
 ## リリース
 
 - `v*` タグを切って GitHub Releases に配布する（`ba0918-release`）。`--group-by` の既定が
