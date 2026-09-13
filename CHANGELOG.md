@@ -7,6 +7,18 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 （なし）
 
+## [0.1.2] - 2026-09-13
+
+### 変更
+
+- 上部バー: manifest の自由記述の `meta` をバーに並べるのをやめ、題の右の小さな「i」を
+  押すと題の下に label と value の一覧が開く形にした。meta が無ければ「i」は出ない。
+  manifest の回で上部バーが 2 行になっていたのが 1 行に戻り、差分を読む領域が広がる。
+- 承認対象のフッターをやめた。manifest の `approval` の `identity` は人が照合できる値では
+  ないので画面には出さず、結果の JSON の `approval` にそのまま返すだけにする（JSON の形は
+  変わらない）。同梱のスキル `skills/kemi/SKILL.md` は、承認後にその `identity` と実際に
+  コミットするバイト列を突き合わせるよう書き換えた。`gh skill install` で入れ直すと反映される。
+
 ## [0.1.1] - 2026-09-13
 
 最初のリリース。
@@ -35,5 +47,6 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ba0918/kemi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ba0918/kemi/releases/tag/v0.1.1
