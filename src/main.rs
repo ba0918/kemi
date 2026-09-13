@@ -144,7 +144,7 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
 /// 結果の置き場所を決める環境変数が無いときの理由（R-RESULT）。OS ごとに使う変数が違う。
 fn results_unset_reason() -> &'static str {
     if cfg!(windows) {
-        "LOCALAPPDATA is not set"
+        "LOCALAPPDATA is not set or not absolute"
     } else {
         "HOME is not set"
     }

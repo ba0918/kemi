@@ -11,7 +11,7 @@ pub const KEEP: usize = 20;
 
 /// 結果ファイルの置き場所。`XDG_STATE_HOME` が絶対パスなら全 OS でその下。それ以外は
 /// Windows では `LOCALAPPDATA`（絶対パス）の下、unix では `~/.local/state` の下。
-/// 使う環境変数が相対パスか未設定なら決められない。
+/// Windows で `LOCALAPPDATA` が相対パスか未設定、unix で `HOME` が未設定なら決められない。
 pub fn results_dir(
     xdg_state_home: Option<&OsStr>,
     home: Option<&OsStr>,
