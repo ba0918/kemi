@@ -41,7 +41,6 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
   添えている。この扱いも `R-ORIGIN` に取り込んだ
 - 構文ハイライトの配色（syntect のテーマ）はテーマのプリセットと別で、light / dark の 2 つ
   しかない。solarized のプリセットでもハイライトの色は light / dark のまま
-- 画面の文言の `JSON` とキー名は、`R-DIST` の一覧どおり英語のまま出している
 
 ## リリース
 
