@@ -51,7 +51,7 @@ import {
 import { openConfirm } from "./features/submit.js";
 import { renderNotice } from "./views/file-header.js";
 import { renderTree } from "./views/tree.js";
-import { renderFooter, renderHeader, renderUpdateBadge } from "./views/header.js";
+import { placeNotes, renderFooter, renderHeader, renderUpdateBadge } from "./views/header.js";
 import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, state } from "./state.js";
@@ -140,6 +140,7 @@ dom.btnWrap.addEventListener("click", () => setWrap(!state.wrap));
 dom.chipFocus.addEventListener("click", toggleFocusOnly);
 dom.chipSort.addEventListener("click", toggleSortBySize);
 dom.btnTheme.addEventListener("click", stepTheme);
+dom.notes.addEventListener("beforetoggle", placeNotes);
 dom.updateBadge.addEventListener("click", () => void refresh());
 dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));

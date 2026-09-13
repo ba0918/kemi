@@ -185,33 +185,12 @@ button:disabled {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 6px 18px;
+  gap: 18px;
   padding: 12px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   position: relative;
   z-index: 20;
-}
-
-/* 折り返しは、縮める前に行を分ける。常に許すとコミット範囲のように 1 行目が
-   元から詰まっている回で操作が 2 行目へ落ちるので、2 行目が要る回だけ許す。 */
-.topbar:has(> .review-notes:not([hidden])) {
-  flex-wrap: wrap;
-}
-
-/* 題を余りから受け取る形にしないと、題は自然な幅のまま行の分かれ目を決めてしまい、
-   狭い窓で操作が 2 行目へ落ちる。余りのうち題が取らない分は、操作を右端へ押す。 */
-.topbar:has(> .review-notes:not([hidden])) .title-block {
-  flex: 1 1 0;
-  max-width: max-content;
-}
-
-.topbar:has(> .review-notes:not([hidden])) .spacer {
-  flex-grow: 0;
-}
-
-.topbar:has(> .review-notes:not([hidden])) .tools {
-  margin-left: auto;
 }
 
 .brand {
@@ -235,6 +214,30 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.notes-button {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--ink-2);
+  font: 600 11px/1 var(--sans);
+}
+
+.notes-button:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
 .subtitle {
   color: var(--ink-2);
   font-size: 13px;
@@ -243,24 +246,14 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* 集計値は常に短く、常に意味がある。狭いときに縮むのは題のブロックの側。 */
 .meta {
   display: flex;
-  min-width: 0;
-  overflow: hidden;
+  flex-shrink: 0;
   gap: 10px;
   color: var(--ink-3);
   font-size: 12.5px;
   white-space: nowrap;
-}
-
-.meta > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.meta > span.stat {
-  flex-shrink: 0;
 }
 
 .meta b {
@@ -269,26 +262,39 @@ button:disabled {
   margin-right: 4px;
 }
 
+/* 自由記述の meta は上部バーに並べず、題の横の i から開く。長さに上限が無いので、
+   バーの 1 行に押し込むとどこかが必ず … で切れる。位置は開くときに JS が題の下へ置く。 */
 .review-notes {
-  flex: 1 0 100%;
-  display: flex;
-  gap: 14px;
-  min-width: 0;
-  color: var(--ink-3);
-  font-size: 12.5px;
-  white-space: nowrap;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 10px 14px;
+  max-width: min(720px, calc(100vw - 36px));
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  font-size: 13px;
 }
 
-.review-notes > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 閉じているときの display: none はブラウザ既定の [popover] の規則に任せる。 */
+.review-notes:popover-open {
+  display: grid;
 }
 
-.review-notes b {
+.review-notes dt {
   color: var(--ink-2);
   font-weight: 600;
-  margin-right: 4px;
+}
+
+.review-notes dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tools {

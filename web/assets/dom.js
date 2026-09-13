@@ -11,11 +11,13 @@ function must(selector) {
 }
 
 export const dom = {
+  titleBlock: must(".title-block"),
   title: must("#review-title"),
   subtitle: must("#review-subtitle"),
   unitSwitch: must("#unit-switch"),
   meta: must("#review-meta"),
   notes: must("#review-notes"),
+  btnNotes: /** @type {HTMLButtonElement} */ (must("#btn-notes")),
   progress: must("#progress"),
   progressBar: must("#progress-bar"),
   progressText: must("#progress-text"),

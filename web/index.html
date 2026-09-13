@@ -33,7 +33,18 @@
     <header class="topbar">
       <div class="brand">kemi</div>
       <div class="title-block">
-        <div class="title" id="review-title"></div>
+        <div class="title-row">
+          <div class="title" id="review-title"></div>
+          <button
+            class="notes-button"
+            id="btn-notes"
+            type="button"
+            popovertarget="review-notes"
+            aria-label="manifest の meta を開く"
+            title="meta"
+            hidden
+          >i</button>
+        </div>
         <div class="subtitle" id="review-subtitle" hidden></div>
       </div>
       <div class="unit-switch" id="unit-switch" role="group" aria-label="グループ単位" hidden></div>
@@ -104,7 +115,7 @@
         <button class="btn primary" id="btn-approve" type="button">承認</button>
         <button class="btn secondary" id="btn-changes" type="button">変更要求</button>
       </div>
-      <div class="review-notes" id="review-notes" hidden></div>
+      <dl class="review-notes" id="review-notes" popover aria-label="manifest の meta"></dl>
     </header>
 
     <div class="comment-list" id="comment-list" role="dialog" aria-label="コメントの一覧" hidden></div>

@@ -17,16 +17,16 @@ export function renderHeader() {
   dom.notes.textContent = "";
   if (review) {
     for (const item of metaItems(review)) {
-      const span = el("span", item.stat ? "stat" : undefined);
-      span.title = item.label ? `${item.label}: ${item.value}` : item.value;
-      if (item.label) {
-        span.append(textEl("b", "", item.label));
+      if (item.stat) {
+        const span = el("span");
+        span.append(textEl("b", "", item.label), document.createTextNode(item.value));
+        dom.meta.append(span);
+      } else {
+        dom.notes.append(textEl("dt", "", item.label), textEl("dd", "", item.value));
       }
-      span.append(document.createTextNode(item.value));
-      (item.stat ? dom.meta : dom.notes).append(span);
     }
   }
-  dom.notes.hidden = dom.notes.childElementCount === 0;
+  dom.btnNotes.hidden = dom.notes.childElementCount === 0;
   renderUnitSwitch();
   renderProgress();
   dom.commentCount.textContent = String(state.allComments.length);
@@ -98,4 +98,11 @@ export function renderFooter() {
 export function renderSubmitButtons() {
   dom.submitApproved.disabled = state.submitted;
   dom.submitChanges.disabled = state.submitted;
+}
+
+/** 開いた meta の箱を、題の左端に揃えて題のブロックの下へ置く。 */
+export function placeNotes() {
+  const anchor = dom.titleBlock.getBoundingClientRect();
+  dom.notes.style.top = `${Math.round(anchor.bottom + 8)}px`;
+  dom.notes.style.left = `${Math.round(anchor.left)}px`;
 }
