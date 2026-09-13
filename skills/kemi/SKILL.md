@@ -24,7 +24,9 @@ including two lines printed when the server comes up: `kemi: <url>`, and the dir
 results are kept.
 
 1. Start kemi as a background process whose exit your environment tells you about, with stdout
-   redirected to a file of its own so the JSON cannot mix with the log.
+   redirected to a file of its own so the JSON cannot mix with the log. Keep stderr where you
+   can read it back too — a file of its own, or whatever your environment records a background
+   process's output in — since the URL arrives there.
 2. Take the URL out of the `kemi: <url>` line on stderr and hand it to the person.
 3. Stop and wait for the exit. Do not sit in a loop asking whether it is done, and do not begin
    work that assumes a verdict.
