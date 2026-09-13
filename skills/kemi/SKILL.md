@@ -64,8 +64,8 @@ One input mode per run. Giving two is an error (exit `2`).
 | The index | `kemi --staged` | one group |
 | Anything whose reasons only you know | `kemi <manifest.json>`, or `kemi -` to read it from stdin | the groups you write |
 
-A commit range carries both of its groupings at once, and the page switches between them
-without a restart:
+`--to` defaults to `HEAD`. A commit range carries both of its groupings at once, and the page
+switches between them without a restart:
 
 - **Final form** (`--group-by file`, the default): the whole range as one diff, each path
   appearing once in its end state, with the commit that made each change block shown above it.
@@ -100,13 +100,13 @@ A group id is `all` for the final form, the full commit sha for a per-commit gro
 
 ## Surveying a large change first
 
-`--digest` prints a bounded map of the review to stdout and exits without serving a page. Use
-it to decide what to put in front of the person, or to orient yourself in a change too large to
-read straight through. It gives the totals, the per-group and per-directory counts, and the
-files with the most changed lines, with no line content at all, so it stays small even for tens
-of thousands of files. `--digest-top <n>` sets how many top files it asks for (default `100`).
-For a commit range it follows `--group-by`, so it counts the change the same way the page will
-show it.
+`--digest` prints a bounded map of the review to stdout as one JSON document and exits without
+serving a page. Use it to decide what to put in front of the person, or to orient yourself in
+a change too large to read straight through. It gives the totals, the per-group and
+per-directory counts, and the files with the most changed lines, with no line content at all,
+so it stays small even for tens of thousands of files. `--digest-top <n>` sets how many top
+files it asks for (default `100`). For a commit range it follows `--group-by`, so it counts
+the change the same way the page will show it.
 
 ## Writing a manifest
 
