@@ -26,10 +26,11 @@ kemi の CLI 出力（ヘルプ、エラーメッセージ、stderr の運用メ
 - `crates/kemi-server/src/api.rs`（stderr のライブ表示と `ApiError` のメッセージ）
 - `crates/kemi-server/src/lib.rs`（`ServerError::Stopped` の既定文言）
 - `tests/e2e.rs`（CLI 出力の検証）
+- `web/assets/`（フロント独自のエラー表示: showOverlay の題・エラー用 notice・完了画面の保存失敗文言）
 
 変更しないもの（対象外）:
 
-- `web/` — Web UI の通常文言（ボタン・ラベル・説明文）は日本語のまま。エラー表示はサーバが返す英語のメッセージを使うため、フロント側は変更しない
+- `web/` の通常文言（ボタン・ラベル・説明文）は日本語のまま（エラー表示は英語にする。上の「変更してよいファイル」に含む）
 - 既定 title（「作業ツリーの変更」「ステージ済みの変更」「変更のレビュー」）— Web の見出しにも表示されるため日本語のまま
 - JSON の I/F — フィールド名と verdict の値は既に英語。コミットメッセージ・コメント・manifest の本文（入力データ）は変えない
 - `README.md` / `skills/kemi/SKILL.md` — 英語。日本語の CLI メッセージへの言及は確認済みで無い
@@ -107,16 +108,16 @@ Shown by: test — `cargo test --test e2e` で Step 1 の (c) 存在しない ma
 Left to the implementer: 英語の具体文言。
 Stop and hand back if: 既定 title や Web UI の通常文言と共通の文字列を変えなければならないと気付く。
 
-## Step 4 — kemi-server のライブ表示と API エラーを英語にする
+## Step 4 — kemi-server のライブ表示と API エラー、フロントのエラー表示を英語にする
 
-Purpose: stderr のライブ表示と `ApiError` のメッセージ、`ServerError::Stopped` の既定文言を英語にする。
-Specification: `docs/spec/kemi.md`#R-DIST（エラーメッセージとライブ表示は英語）、#R-COMMENT（ライブ表示）、#R-RESULT（保存先・保存失敗の警告）。
+Purpose: stderr のライブ表示と `ApiError` のメッセージ、`ServerError::Stopped` の既定文言、フロント独自のエラー表示を英語にする。
+Specification: `docs/spec/kemi.md`#R-DIST（エラーメッセージとライブ表示は英語、Web UI のエラー表示も英語）、#R-COMMENT（ライブ表示）、#R-RESULT（保存先・保存失敗の警告）。
 Prerequisites: Step 1。
-May change: `crates/kemi-server/src/api.rs`、`crates/kemi-server/src/lib.rs`。
-Done when: `eprintln!` のライブ表示（由来の失敗・コメント追加・結果保存の失敗）と、コメント追加表示内の「ファイル全体」、`ApiError` のメッセージ（not_found / bad_request / forbidden / internal 経由）、`ServerError::Stopped` の既定文言が英語になっている。
+May change: `crates/kemi-server/src/api.rs`、`crates/kemi-server/src/lib.rs`、`web/assets/`（フロント独自のエラー表示）。
+Done when: `eprintln!` のライブ表示（由来の失敗・コメント追加・結果保存の失敗）と、コメント追加表示内の「ファイル全体」、`ApiError` のメッセージ（not_found / bad_request / forbidden / internal 経由）、`ServerError::Stopped` の既定文言、フロント独自のエラー表示（showOverlay の題・エラー用 notice・完了画面の保存失敗文言）が英語になっている。Web UI の通常文言（ボタン・ラベル・説明文）は変えない。
 Shown by: test — `cargo test --test e2e` で Step 1 の (d) ライブ表示の検証が GREEN になる。`cargo test` も通る。
 Left to the implementer: 英語の具体文言。
-Stop and hand back if: `web/` の変更なしに API エラーが英語にならないと気付く（フロントは変更しない）。
+Stop and hand back if: Web UI の通常文言（ボタン・ラベル・説明文）を変えなければ英語にならないと気付く。
 
 ## Step 5 — 全体検証と配布物の整合確認
 
