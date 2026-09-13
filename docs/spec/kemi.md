@@ -888,7 +888,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
   問わない。中断（終了コード 130）とエラー（終了コード 2）では書かない。
 - 置き場所は `$XDG_STATE_HOME/kemi/results/`。`XDG_STATE_HOME` が未設定か相対パスなら
   unix では `~/.local/state/kemi/results/`、Windows では `%LOCALAPPDATA%\kemi\results\`。
-  Windows で `LOCALAPPDATA` も未設定なら決められず、unix で HOME が無い場合と同じ扱い
+  `LOCALAPPDATA` も相対パスなら未設定と同じ扱いにする。Windows で `LOCALAPPDATA`
+  も未設定なら決められず、unix で HOME が無い場合と同じ扱い
   （起動時に決められないエラー）にする。1 回の submit で 1 ファイルを作り、名前に送信時刻を
   含める。同じ時刻に送信したセッションがあっても名前は衝突しない。「最新」と「古い」は
   送信時刻（ミリ秒）で決める。ファイルとディレクトリの権限は unix のみ定める:
