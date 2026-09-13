@@ -110,4 +110,4 @@ submit で stdout に出した JSON と同じ内容を、利用者の状態デ�
 
 ## identity
 manifest の `approval` が与える「承認対象を識別する値」（例 `sha256:...`）。
-kemi は表示するだけで、値の正しさは検証しない。
+kemi は画面に出さず、検証もしない。結果の JSON にそのまま返す。

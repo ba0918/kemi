@@ -153,9 +153,11 @@ reasons live only in your head. The groups and their reasons are your work, not 
 - `id` may be left out (`g1`, `g2` and so on are generated), but choose stable ids if a
   `--focus` file will refer to them.
 - Fill `approval` whenever the person is being asked to approve something, and say in the
-  conversation that the approval is of those bytes. kemi displays `identity` and does not check
-  it; you compute it yourself from the exact bytes in question, for instance with `sha256sum` on
-  the file, or `git show :<path>` piped into `sha256sum` for a staged one.
+  conversation that the approval is of those bytes. kemi neither shows nor checks `identity`;
+  it returns the list unchanged in the result, so that after approval you can compare it with
+  the bytes you actually commit or apply. You compute it yourself from the exact bytes in
+  question, for instance with `sha256sum` on the file, or `git show :<path>` piped into
+  `sha256sum` for a staged one.
 
 ## What to tell the person after it starts
 

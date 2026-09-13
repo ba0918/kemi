@@ -28,7 +28,6 @@ import {
 import { applyPendingJump, revealInTree } from "./navigation.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import {
-  renderFooter,
   renderHeader,
   renderProgress,
   renderUpdateBadge,
@@ -109,7 +108,6 @@ export async function refresh() {
   rebuildVisible(keepId);
   renderHeader();
   renderTree();
-  renderFooter();
   if (!keep && state.visible.length === 0) {
     state.current = null;
     renderGroupHeader();

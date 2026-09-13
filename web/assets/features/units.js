@@ -7,7 +7,7 @@ import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { applyReview, jumpToEntry } from "./files.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
-import { renderFooter, renderHeader, renderUnitSwitch } from "../views/header.js";
+import { renderHeader, renderUnitSwitch } from "../views/header.js";
 import { openModal, showOverlay, showToast } from "../views/overlay.js";
 import { renderTree } from "../views/tree.js";
 
@@ -66,7 +66,6 @@ export async function switchUnit(unit, jump) {
     index = unitSwitchTarget(state.entries, path);
   }
   renderHeader();
-  renderFooter();
   if (index < 0) {
     state.current = null;
     renderTree();

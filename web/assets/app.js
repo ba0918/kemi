@@ -51,7 +51,7 @@ import {
 import { openConfirm } from "./features/submit.js";
 import { renderNotice } from "./views/file-header.js";
 import { renderTree } from "./views/tree.js";
-import { placeNotes, renderFooter, renderHeader, renderUpdateBadge } from "./views/header.js";
+import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
 import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, state } from "./state.js";
@@ -117,7 +117,6 @@ async function boot() {
   applyReview(await api.getReview(false), true);
   renderHeader();
   renderTree();
-  renderFooter();
   if (state.visible.length > 0) {
     await selectIndex(0, { scrollTop: true });
   } else {

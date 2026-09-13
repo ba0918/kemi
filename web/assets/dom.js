@@ -36,7 +36,6 @@ export const dom = {
   notice: must("#notice"),
   viewport: must("#diff-viewport"),
   content: must("#diff-content"),
-  footer: must("#approval-footer"),
   btnUnified: /** @type {HTMLButtonElement} */ (must("#btn-unified")),
   btnSplit: /** @type {HTMLButtonElement} */ (must("#btn-split")),
   btnWrap: /** @type {HTMLButtonElement} */ (must("#btn-wrap")),

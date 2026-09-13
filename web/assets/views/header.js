@@ -1,6 +1,6 @@
 // @ts-check
 // 上部バー（題、meta、グループ単位、進捗、表示の切り替えの押された状態）、更新バッジ、
-// 承認対象のフッタ、送信のボタン。
+// 送信のボタン。
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
@@ -74,24 +74,6 @@ export function renderProgress() {
 
 export function renderUpdateBadge() {
   dom.updateBadge.hidden = !state.updateAvailable;
-}
-
-export function renderFooter() {
-  dom.footer.textContent = "";
-  const approval = state.review ? state.review.approval || [] : [];
-  dom.footer.hidden = approval.length === 0;
-  if (approval.length === 0) {
-    return;
-  }
-  dom.footer.append(textEl("span", "footer-label", "承認対象"));
-  for (const item of approval) {
-    const row = el("span", "approval-item");
-    row.append(
-      textEl("span", "approval-path", item.path),
-      textEl("span", "approval-identity", item.identity),
-    );
-    dom.footer.append(row);
-  }
 }
 
 /** 送信後は承認と変更要求のボタンを押せなくする（R-SUBMIT）。 */
