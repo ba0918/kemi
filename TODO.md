@@ -1,6 +1,6 @@
 # 残課題
 
-最終更新: 2026-09-12（UX 改訂 v2 の仕様追補後）
+最終更新: 2026-09-13（エージェント向けスキルの追加後）
 
 ## レビューで記録のみになった指摘（修正要求ではない）
 
@@ -47,9 +47,10 @@ evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-
 
 - `~/.local/bin/diff-review`（旧 Python ツール）を消す。kemi は `cargo install --path .`
   で `~/.cargo/bin/kemi` に入れてあり、リリース後は mise に置き換える
-- `diff-review-viewer` スキルは kemi 向けに更新済み（バックグラウンドで起動して終了を
-  待つ、stdout の JSON 契約、suggestion はエージェントが適用する）。UX 改訂 v2 の実装後に
-  `kemi --result` の案内と、`--group-by` の既定が最終形に変わったことを足す
+- `~/.claude/skills/diff-review-viewer` を消し、`gh skill install ba0918/kemi kemi` で
+  `kemi` スキルを入れる（最初のリリースまでは `skills/kemi/` を手でコピー）。利用者の
+  共通の指示（`~/.claude/CLAUDE.md`）の「diff-review の提示手段は `diff-review-viewer`
+  スキルが担う」を「`kemi` スキルが担う」に直す
 
 ## リリース
 

@@ -19,6 +19,21 @@ mise use -g github:ba0918/kemi
 Supported targets: `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`
 (static), `x86_64-apple-darwin`, `aarch64-apple-darwin`.
 
+## Agent skill
+
+`skills/kemi/` is a document that teaches an agent how to drive kemi: how to
+start it and wait for it, which input to pick, how to write a manifest, and how
+to read the JSON that comes back. It describes this tool; it is not a rule about
+how anyone ought to review.
+
+```sh
+gh skill install ba0918/kemi kemi
+```
+
+The skill carries no version of its own. `gh skill install` takes the newest
+tagged release, or the default branch when there is no release yet, so a newer
+skill reaches you by installing it again.
+
 ## Usage
 
 ```sh
@@ -124,7 +139,6 @@ kemi --result --workspace ../app # latest result for another place
           "old": "…",
           "new": "…",
           "status": "modify",
-          "renamed_from": "src/old.rs",
           "focus": true,
           "note": "the important part"
         }
@@ -139,6 +153,8 @@ kemi --result --workspace ../app # latest result for another place
 files instead. Setting both `old` and `old_path` (or `new` and `new_path`) is
 an error. A missing side means an addition or a deletion. `status` is
 `add`, `delete`, `rename`, or `modify`, and is inferred when omitted.
+`renamed_from` names the path a rename came from; with `status` omitted it
+makes the entry a rename.
 
 ## Focus layer
 
@@ -185,8 +201,9 @@ The JSON printed at the end:
 
 - `side` is `new` or `old`. File-wide comments are `new` with `start_line` and
   `end_line` `null`, and `quote` `[]`.
-- `suggestion` is `null` for old-side and file-wide comments. An empty
-  replacement means the lines should be deleted.
+- `suggestion` is `null` when the comment carries no suggestion, and always
+  `null` for old-side and file-wide comments. An empty replacement means the
+  lines should be deleted.
 - `outdated` is `true` when the file changed after the comment was written.
   kemi never moves a comment to a new line number.
 - `comments` are in creation order.

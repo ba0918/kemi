@@ -42,3 +42,23 @@ jobs:
         run: npx tsc -p web --noEmit
       - name: Pure logic tests
         run: node --test web
+
+  skill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Skill format
+        run: uvx --from skills-ref==0.1.1 agentskills validate ./skills/kemi
+      - name: Skill frontmatter
+        run: |
+          fm=$(awk 'NR>1 && /^---$/{exit} NR>1' skills/kemi/SKILL.md)
+          if printf '%s\n' "$fm" | grep -nP '[^\x00-\x7F]'; then
+            echo "frontmatter must be ASCII only" >&2
+            exit 1
+          fi
+          keys=$(printf '%s\n' "$fm" | grep -cE '^[a-z][a-z0-9_-]*:') || true
+          if [ "$keys" != 3 ]; then
+            echo "frontmatter must have exactly 3 keys, found $keys" >&2
+            exit 1
+          fi
