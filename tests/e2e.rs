@@ -356,9 +356,10 @@ async fn exit_code_approved_is_0_and_stdout_json() {
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["comments"][0]["body"], "ここ直して");
+    let stderr = stderr_lines.join("\n");
     assert!(
-        stderr_lines.iter().any(|line| line.contains("コメント")),
-        "live stderr missing: {stderr_lines:?}"
+        !contains_japanese(&stderr),
+        "live stderr must be in English: {stderr_lines:?}"
     );
 }
 

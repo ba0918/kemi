@@ -170,7 +170,7 @@ pub async fn serve(
         Some(Stop::Submitted(document)) => Ok(ServeOutcome::Submitted(document)),
         Some(Stop::Failed(message)) => Err(ServerError::Stopped(message)),
         None => Err(ServerError::Stopped(
-            "submit なしでサーバが停止しました".to_string(),
+            "server stopped without a submit".to_string(),
         )),
     }
 }
