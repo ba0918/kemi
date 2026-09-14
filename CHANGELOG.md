@@ -7,6 +7,17 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 （なし）
 
+## [0.1.6] - 2026-09-14
+
+### 修正
+
+- 2 列表示で長い行が隣のペインにはみ出し、文字が重なる不具合を修正した。
+  下端の横スクロールバー、コード上の横スクロール入力、バーのキーボード操作で、
+  左右のコードを一緒に動かせる。行番号とコメントは固定される。
+- 縦スクロールや Wrap・表示モードの切り替え後も、2 列表示の横位置を保持する。
+  内容更新やテーマ・ハイライト変更では幅を測り直し、移動できなくなった位置だけを
+  末端に補正する。別のファイルを開くと左端から表示する。
+
 ## [0.1.5] - 2026-09-14
 
 ### 変更
@@ -77,7 +88,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/ba0918/kemi/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/ba0918/kemi/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ba0918/kemi/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ba0918/kemi/compare/v0.1.2...v0.1.3
