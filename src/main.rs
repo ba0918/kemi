@@ -459,29 +459,6 @@ fn fail(message: &str) -> ! {
     std::process::exit(2);
 }
 
-/// 保留（Ctrl+C / SIGTERM）を待つ。SIGTERM は unix だけ。
-async fn interrupted() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut terminate = match signal(SignalKind::terminate()) {
-            Ok(signal) => signal,
-            Err(_) => {
-                let _ = tokio::signal::ctrl_c().await;
-                return;
-            }
-        };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = terminate.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
-}
-
 /// 復元できるセッションが残るときだけ、機械が読む 1 行を stderr に出す（R-SESSION）。
 fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
     if let Some(stored_session) = stored_session {
@@ -500,6 +477,16 @@ async fn run_review(
 ) -> ! {
     // --serve は互換のための受理のみ。既定で常にサーブする。
     let _ = cli.serve;
+    // シグナルの受け口は URL を出す前に作る。URL を見てすぐ Ctrl+C しても、
+    // 保留として 130 で終われるように（R-SESSION）。
+    #[cfg(unix)]
+    let mut signals = {
+        use tokio::signal::unix::{signal, SignalKind};
+        (
+            signal(SignalKind::interrupt()).expect("install the SIGINT handler"),
+            signal(SignalKind::terminate()).expect("install the SIGTERM handler"),
+        )
+    };
     let listener = match TcpListener::bind((cli.bind, cli.port)).await {
         Ok(listener) => listener,
         Err(error) => fail(&format!(
@@ -552,9 +539,16 @@ async fn run_review(
             .map(|session| session as Arc<dyn SessionSink>),
         share_address,
     };
+    #[cfg(unix)]
     let outcome = tokio::select! {
         outcome = serve(listener, params) => Some(outcome),
-        _ = interrupted() => None,
+        _ = signals.0.recv() => None,
+        _ = signals.1.recv() => None,
+    };
+    #[cfg(not(unix))]
+    let outcome = tokio::select! {
+        outcome = serve(listener, params) => Some(outcome),
+        _ = tokio::signal::ctrl_c() => None,
     };
 
     match outcome {
@@ -609,20 +603,38 @@ async fn run_resume(cli: &Cli) -> ! {
     run_review(cli, source, Some(Arc::new(stored)), results_key).await
 }
 
-/// `id` なしの起動。端末なら選択画面、端末でなければ一覧を出して終わる。
+/// `id` なしの起動。端末なら選択画面、端末でなければ一覧を出して終わる（R-SESSION）。
 fn choose_session(store: &SessionStore) -> String {
     let sessions = match store.list() {
         Ok(sessions) => sessions,
         Err(error) => fail(&error.to_string()),
     };
-    if !std::io::stdin().is_terminal() {
-        list_sessions(&sessions);
-    }
     if sessions.is_empty() {
         fail("no resumable session");
     }
-    // 端末の選択画面（R-SESSION）。
-    fail("run in a terminal to choose a session, or pass an id")
+    if !std::io::stdin().is_terminal() {
+        list_sessions(&sessions);
+    }
+    pick_session(&sessions)
+}
+
+/// 端末の選択画面。Esc と Ctrl+C では何も変えず終了コード 130（R-SESSION）。
+fn pick_session(sessions: &[SessionSummary]) -> String {
+    use inquire::{InquireError, Select};
+    let labels = session::select_labels(sessions);
+    match Select::new("Select a session to resume (Esc cancels)", labels.clone()).prompt() {
+        Ok(label) => {
+            let index = labels
+                .iter()
+                .position(|candidate| candidate == &label)
+                .expect("the chosen label came from the list");
+            sessions[index].id.clone()
+        }
+        Err(InquireError::OperationCanceled) | Err(InquireError::OperationInterrupted) => {
+            std::process::exit(130)
+        }
+        Err(error) => fail(&format!("cannot choose a session: {error}")),
+    }
 }
 
 /// 復元できるセッションの一覧を stdout に出す（R-SESSION）。0 件なら理由を出して 2。
