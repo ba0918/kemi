@@ -87,7 +87,7 @@ kemi --resume          # in a terminal: choose from the list of sessions
 Resuming shows the diff as it was when the review started, with the seen marks, folding,
 comments, and resolutions restored. The original input is not read again, so editing the
 working tree or moving away from the repository does not change the page; only origin notes
-degrade to "unknown" if the repository is gone. Live reload and its update badge are off.
+read "Cannot determine" if the repository is gone. Live reload and its update badge are off.
 Resuming continues the same session rather than creating one, and a submit that follows
 writes its result for the workspace the review was started from, with the manifest
 `approval` unchanged.

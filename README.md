@@ -170,8 +170,8 @@ kemi --resume <id>     # continue a known session, from any directory
 ```
 
 - The diff is frozen: changing the working tree, or deleting the repository
-  itself, does not change what the page shows. Origin notes become "unknown"
-  when the repository is gone.
+  itself, does not change what the page shows. Origin notes read "Cannot
+  determine" when the repository is gone.
 - Seen marks, folding, comments, and resolutions come back. Live reload and
   its update badge are off, and the URL token is new.
 - Resuming continues the same session; it does not create another one. A

@@ -67,7 +67,7 @@ kemi --resume        # in a terminal, choose from the list of sessions
 ```
 
 The resumed page shows the diff as frozen when the review started, so the working tree or the
-repository may have moved on; only origin notes then read "unknown". `--resume` is not an
+repository may have moved on; only origin notes then read "Cannot determine". `--resume` is not an
 input mode to combine with the others: it takes only `--port`, `--bind`, `--no-open`, and
 `--serve`, and any input mode or `--digest` beside it is a usage error (exit `2`). Without an
 id and without a terminal it prints the resumable sessions as tab-separated lines (id, last
