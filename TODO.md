@@ -1,6 +1,6 @@
 # 残課題
 
-最終更新: 2026-09-18（v0.1.7 の実機確認後）
+最終更新: 2026-09-19（セッションの保存と復元のマージ後）
 
 ## レビューで記録のみになった指摘（修正要求ではない）
 
@@ -30,6 +30,17 @@ UI 改訂（main にマージ済み）:
 
 evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-v1.json` と
 `.agents/artifacts/reviews/kemi-ui-fix.json` にある（git 管理外・この環境のみ）。
+
+セッションの保存と復元（main にマージ済み）:
+
+- id 7: 一覧と掃除が payload を含むセッションファイル全体を読む。コメント・見た・
+  折りたたみの変更のたびに全ファイルを書き直し、全セッションを読み直すので、
+  大きいレビューやセッションが増えた環境で操作が重くなる
+- id 15: 復元のたびに写しを再凍結する。同じ内容を encode + gzip し直して書き直すため、
+  何も変えていなくても最終更新が進み、一覧の先頭に移る
+
+evidence と oracle はローカルの `.agents/artifacts/reviews/session-resume.json` にある
+（git 管理外・この環境のみ）。ほかの info（record_only）の指摘も同ファイルにある。
 
 ## 既知の制限
 
