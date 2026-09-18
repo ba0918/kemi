@@ -7,6 +7,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Crockford の base32。並びは ULID の仕様のまま。
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/// このモジュールが作る 26 文字の ULID かどうか。セッションの id として受け取る
+/// 文字列の検証に使う（R-SESSION）。
+pub fn is_valid_id(id: &str) -> bool {
+    id.len() == 26 && id.bytes().all(|byte| ALPHABET.contains(&byte))
+}
+
 /// 26 文字の ULID。128 bit を 5 bit ずつ、上位から並べる。
 pub fn generate_ulid(time_millis: u128, random: [u8; 10]) -> String {
     let mut value = time_millis & 0xffff_ffff_ffff;

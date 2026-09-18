@@ -1910,6 +1910,29 @@ fn resume_with_an_unknown_id_exits_2() {
 }
 
 #[test]
+fn resume_with_an_id_outside_the_sessions_dir_leaves_the_target_alone() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let sentinel = state.path.join("sentinel.lock");
+    std::fs::write(&sentinel, b"keep").unwrap();
+    let absolute = state.path.join("sentinel");
+
+    for id in [
+        absolute.to_string_lossy().into_owned(),
+        "../../sentinel".to_string(),
+    ] {
+        let output = run_with_state(&dir.path, &["--resume", &id], &state.path);
+        assert_eq!(output.status.code(), Some(2), "--resume {id}");
+        assert!(output.stdout.is_empty(), "--resume {id}");
+        assert_eq!(
+            std::fs::read(&sentinel).unwrap(),
+            b"keep",
+            "--resume {id} touched a file outside the sessions directory"
+        );
+    }
+}
+
+#[test]
 fn resume_of_an_unfinished_session_exits_2_with_the_reason() {
     let dir = TempDir::new();
     let state = TempDir::new();

@@ -16,7 +16,7 @@ pub use store::{
     OpenSession, SessionError, SessionLock, SessionStore, StoredSession, COPY_LIMIT, KEEP_BYTES,
     KEEP_SESSIONS,
 };
-pub use ulid::{generate_ulid, new_ulid, now_millis};
+pub use ulid::{generate_ulid, is_valid_id, new_ulid, now_millis};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

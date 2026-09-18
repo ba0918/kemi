@@ -117,6 +117,7 @@ impl SessionStore {
 
     /// 新しいセッションを開く。まだ何も書かず、ロックだけを取る。
     pub fn create(&self, info: SessionInfo) -> Result<OpenSession, SessionError> {
+        checked_id(&info.id)?;
         let lock = SessionLock::acquire(&self.dir, &info.id)?;
         Ok(OpenSession {
             dir: self.dir.clone(),
@@ -130,6 +131,7 @@ impl SessionStore {
 
     /// 復元できるセッションを開く。ロックが取れない・読めない・写しが無いときは理由を返す。
     pub fn open(&self, id: &str) -> Result<OpenSession, SessionError> {
+        checked_id(id)?;
         let lock = SessionLock::acquire(&self.dir, id)?;
         let (meta, payload) = self.read_raw(id)?;
         let path = self.path(id);
@@ -173,6 +175,7 @@ impl SessionStore {
 
     /// 保存済みのセッションを、ロックを取らずに読む。
     pub fn read(&self, id: &str) -> Result<StoredSession, SessionError> {
+        checked_id(id)?;
         let (meta, payload) = self.read_raw(id)?;
         let path = self.path(id);
         let (info, state, copy) = meta.into_parts().map_err(|reason| SessionError::Corrupt {
@@ -245,6 +248,7 @@ impl SessionStore {
 
     /// セッションのファイルを消す。
     pub fn delete(&self, id: &str) -> Result<(), SessionError> {
+        checked_id(id)?;
         let path = self.path(id);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
@@ -282,6 +286,16 @@ impl SessionStore {
                 reason: error.to_string(),
             })?;
         Ok((meta, envelope.payload.map(<[u8]>::to_vec)))
+    }
+}
+
+/// 公開の入口で id を検証する（R-SESSION）。ULID でない id は存在しない id と同じ
+/// 理由にし、保存領域の外へパスを組み立てない。
+fn checked_id(id: &str) -> Result<&str, SessionError> {
+    if super::is_valid_id(id) {
+        Ok(id)
+    } else {
+        Err(SessionError::NotFound { id: id.to_string() })
     }
 }
 
@@ -1137,6 +1151,53 @@ mod tests {
             store.read(&id),
             Err(SessionError::NotFound { .. })
         ));
+    }
+
+    #[test]
+    fn session_open_rejects_an_id_that_is_not_a_ulid_and_keeps_the_lock_alone() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        std::fs::create_dir_all(&scratch.0).unwrap();
+        let sentinel = scratch.0.join("sentinel.lock");
+        std::fs::write(&sentinel, b"keep").unwrap();
+
+        let result = store.open("../sentinel");
+
+        assert!(matches!(result, Err(SessionError::NotFound { .. })));
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn session_read_rejects_an_id_that_is_not_a_ulid() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 100).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+        let outside = scratch.0.join("sentinel.session");
+        std::fs::copy(scratch.dir().join(format!("{id}.session")), &outside).unwrap();
+
+        let result = store.read("../sentinel");
+
+        assert!(matches!(result, Err(SessionError::NotFound { .. })));
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn session_delete_rejects_an_id_that_is_not_a_ulid() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        std::fs::create_dir_all(scratch.dir()).unwrap();
+        let outside = scratch.0.join("sentinel.session");
+        std::fs::write(&outside, b"keep").unwrap();
+
+        let result = store.delete("../sentinel");
+
+        assert!(matches!(result, Err(SessionError::NotFound { .. })));
+        assert!(outside.exists());
     }
 
     #[cfg(unix)]
