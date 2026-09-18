@@ -2152,8 +2152,7 @@ async fn session_copy_over_the_limit_is_unresumable() {
     });
 
     let mut source = FakeSource::new();
-    source.meta.groups[0].files = vec![file_entry("big", "big.bin")];
-    source.contents.clear();
+    source.meta.groups[0].files = vec![file_entry("f1", "src/a.rs"), file_entry("big", "big.bin")];
     source.contents.insert(
         "big".to_string(),
         FileContent {
@@ -2162,6 +2161,9 @@ async fn session_copy_over_the_limit_is_unresumable() {
         },
     );
     let server = TestServer::start_with_session(Arc::new(source), sink).await;
+    // 状態を持つセッションだけが上限超過の印を残せる。状態も写しも無いセッションは
+    // 残さない（R-SESSION）。
+    server.add_new_side_comment().await;
     server.get("api/review").await;
 
     let id = "01HF7YAT00SERVER0000000000";

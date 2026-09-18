@@ -438,12 +438,9 @@ impl OpenSession {
         if self.deleted {
             return Ok(());
         }
-        // 空の状態で写しも無ければ、セッションは残さない。写しを作れなかった印
-        // （Unusable）は、理由を残すために情報だけを残す。
-        if self.state.is_empty()
-            && self.payload.is_none()
-            && !matches!(self.copy, CopyState::Unusable(_))
-        {
+        // 写しを作れなかった理由を残すためでも、状態が空ならセッションは残さない
+        // （R-SESSION）。
+        if self.state.is_empty() && self.payload.is_none() {
             return self.remove_file();
         }
         let payload_len = self
@@ -959,6 +956,21 @@ mod tests {
 
         assert!(matches!(
             store.read(&id),
+            Err(SessionError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn session_without_state_and_an_unusable_copy_is_not_kept() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_copy_with_limit(copy(), 200, 1).unwrap();
+
+        assert!(matches!(
+            store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
             Err(SessionError::NotFound { .. })
         ));
     }
