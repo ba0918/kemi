@@ -92,13 +92,15 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   LAN に公開する（公開時は警告を出す）。URL トークン、Origin / Host 検証。kemi は
   git の状態を書き換えない（suggestion の適用はエージェントが行う）。静的 HTML は
   書き出さない。
-- セッションはメモリのみで、プロセス終了で消える。submit の結果は stdout の JSON で
-  返し、同じ JSON を結果ファイル（unix は `$XDG_STATE_HOME/kemi/results/`、Windows は
-  `%LOCALAPPDATA%\kemi\results\`。`R-RESULT`）にも残す
+- セッション（未 submit のレビュー）は結果ファイルと同じ根の `sessions/` に保存し、
+  `kemi --resume` で当時の差分のまま復元できる（`R-SESSION`）。submit の結果は
+  stdout の JSON で返し、同じ JSON を結果ファイル（unix は
+  `$XDG_STATE_HOME/kemi/results/`、Windows は `%LOCALAPPDATA%\kemi\results\`。
+  `R-RESULT`）にも残す
 
 ## Glossary
 
 正典は `CONTEXT.md`。特に kemi / レビュー / manifest / グループ / コメント /
 suggestion / 適用 / quote / outdated / submit / verdict / digest / ノイズ /
 focus / 重要 / 更新バッジ / グループ単位 / 表示モード / 変更ブロック / 由来 /
-結果ファイル。
+結果ファイル / セッション / 保留 / 復元。
