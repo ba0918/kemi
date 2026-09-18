@@ -1759,7 +1759,7 @@ async fn comment_delete_never_reuses_the_id() {
 // ---- R-SESSION（セッションの保存と凍結、submit での削除） ----
 
 use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 use kemi_core::session::{
     OpenSession, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
@@ -1821,6 +1821,76 @@ impl SessionSink for RecordingSink {
 
     fn delete(&self) -> Result<(), String> {
         self.deleted.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// 最初の状態保存を止める sink。保存が完了した順に状態を記録する。
+struct SlowSink {
+    entered: tokio::sync::Notify,
+    calls: AtomicUsize,
+    gate: Mutex<bool>,
+    gate_opened: Condvar,
+    states: Mutex<Vec<SessionState>>,
+}
+
+impl SlowSink {
+    fn new() -> Self {
+        SlowSink {
+            entered: tokio::sync::Notify::new(),
+            calls: AtomicUsize::new(0),
+            gate: Mutex::new(false),
+            gate_opened: Condvar::new(),
+            states: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn open_first_save(&self) {
+        *self.gate.lock().unwrap() = true;
+        self.gate_opened.notify_all();
+    }
+
+    fn last_saved_bodies(&self) -> Vec<String> {
+        self.states
+            .lock()
+            .unwrap()
+            .last()
+            .map(|state| {
+                state
+                    .comments
+                    .iter()
+                    .map(|comment| comment.body.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+impl SessionSink for SlowSink {
+    fn describe_review(&self, _title: &str, _total_files: usize) {}
+
+    fn save_state(&self, state: SessionState) -> Result<(), String> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.entered.notify_one();
+            let opened = self.gate.lock().unwrap();
+            let _opened = self
+                .gate_opened
+                .wait_while(opened, |opened| !*opened)
+                .unwrap();
+        }
+        self.states.lock().unwrap().push(state);
+        Ok(())
+    }
+
+    fn save_copy(&self, _copy: SessionCopy) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn mark_unresumable(&self, _reason: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn delete(&self) -> Result<(), String> {
         Ok(())
     }
 }
@@ -1889,6 +1959,56 @@ async fn session_state_is_saved_on_every_change() {
     assert_eq!(state.collapsed.get("f1"), Some(&true));
     assert_eq!(*sink.title.lock().unwrap(), "テストのレビュー");
     assert_eq!(*sink.total_files.lock().unwrap(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn session_saves_keep_changes_made_while_a_save_is_slow() {
+    let sink = Arc::new(SlowSink::new());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+
+    let url = server.url.clone();
+    let origin = server.origin.clone();
+    let first = tokio::spawn({
+        let (url, origin) = (url.clone(), origin.clone());
+        async move {
+            post_json(
+                &url,
+                &origin,
+                "api/comment",
+                json!({
+                    "op": "add", "file_id": "f1", "side": "new",
+                    "start_line": 1, "end_line": 1, "body": "first"
+                }),
+            )
+            .await
+        }
+    });
+    sink.entered.notified().await;
+    let mut second = tokio::spawn(async move {
+        post_json(
+            &url,
+            &origin,
+            "api/comment",
+            json!({
+                "op": "add", "file_id": "f1", "side": "new",
+                "start_line": 1, "end_line": 1, "body": "second"
+            }),
+        )
+        .await
+    });
+
+    // 2 つ目の変更が保存に入るのを待つ。保存が直列化されていれば入らないので、
+    // 打ち切ってから最初の保存を解放する。
+    let second_done = tokio::time::timeout(Duration::from_millis(300), &mut second).await;
+    sink.open_first_save();
+    let second_response = match second_done {
+        Ok(result) => result.unwrap(),
+        Err(_) => second.await.unwrap(),
+    };
+
+    assert_eq!(first.await.unwrap().status(), 200);
+    assert_eq!(second_response.status(), 200);
+    assert_eq!(sink.last_saved_bodies(), vec!["first", "second"]);
 }
 
 #[tokio::test]

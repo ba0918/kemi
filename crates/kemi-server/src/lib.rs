@@ -127,6 +127,8 @@ pub(crate) struct AppState {
     /// 再取得を 1 つずつ行う。同じ単位を同時に作り直して計画が入れ替わらないように。
     pub refresh: tokio::sync::Mutex<()>,
     pub session: Mutex<Session>,
+    /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
+    pub persist: Mutex<()>,
     pub events: broadcast::Sender<Event>,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
     pub shutdown: shutdown_watch::Sender<bool>,
@@ -189,6 +191,7 @@ pub async fn serve(
         review: RwLock::new(units::ReviewState::new(&units, review)),
         refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::from_state(initial_state)),
+        persist: Mutex::new(()),
         events,
         shutdown,
         stop: Mutex::new(None),
