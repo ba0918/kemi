@@ -34,18 +34,26 @@ returned unchanged, not checked by kemi.
 
 ## Run and wait
 
-1. Start kemi with stdout in its own file and stderr readable separately. Retain the execution
-   identifier and output paths. Choose an execution method that keeps kemi alive throughout
-   the review; a tool yielding while its process runs is safe, a timeout killing it is not.
-2. Read the `kemi: <url>` line from stderr and send the URL in a progress message. Explain the
-   groups, what needs judgment, any assumptions, and that **Approve** or **Request changes**
-   submits the review. stderr also reports the result storage directory.
-3. Wait for that run to exit, using the execution tool's wait/output mechanism as needed.
-   Keep the turn active unless completion notifications are confirmed to resume you
-   automatically. A shell background process alone provides no such guarantee. Use bounded
-   waits that allow progress updates, without rapid status checks or work assuming a verdict.
-4. Read the exit code and stdout file. For a submitted result, use
-   [the result reference](references/results.md) to interpret the JSON and handle comments.
+Start `kemi` with stdout in its own file and stderr readable separately, choosing an execution
+method that keeps the process alive until the user submits the review. Retain the run's
+identifier and output paths. A tool that yields while the process keeps running is not the
+process ending.
+
+Read the `kemi: <url>` line from stderr and send the URL to the user in a progress message.
+stderr also reports the result storage directory. Explain the groups, what needs judgment,
+any assumptions, and that **Approve** or **Request changes** submits the review.
+
+Wait for the same process to exit using the execution environment's normal process lifecycle.
+Do not terminate or replace the run merely to check its status, and avoid rapid status checks.
+Keep the turn active unless completion notifications are confirmed to resume you automatically;
+otherwise retain the run's identifier and keep using the environment's wait and output
+mechanisms.
+
+After the process exits, collect its exit code and stdout. For a submitted result, use
+[the result reference](references/results.md) to interpret the JSON and handle comments.
+
+If the execution environment cannot preserve a long-running process and later collect its
+result, report that limitation instead of inventing a verdict.
 
 | Exit code | Outcome | What to read |
 |---|---|---|
@@ -70,23 +78,3 @@ its identities with the current bytes. Before applying a suggestion, compare its
 with the file; locate outdated comments by their text rather than trusting old line numbers.
 Use the result reference for field details and `kemi --result` recovery if stdout was lost.
 Recovery retrieves a stored result; it does not wait for the current review to finish.
-
-## Notes for specific agents
-
-Use the note matching the tools available in your environment.
-
-**Claude Code.** Use Bash with `run_in_background: true`. Read the URL from its recorded output.
-If completion notifications resume you, end the turn and collect the exit code and stdout
-file on notification; otherwise use the available task-wait mechanism.
-
-**Codex.** With `exec_command` and `write_stdin`, run kemi without shell backgrounding (`&`).
-Use `yield_time_ms` to yield while it stays alive, retain `session_id`, and call `write_stdin`
-with that id and empty input until exit. Share the URL through commentary; send the final
-answer after collecting the result. If an outer tool also yields, resume it using its own
-identifier first to obtain the execution result.
-
-**OpenCode.** Use a returned task/session identifier with its corresponding wait/output tool
-when available. With only a timeout-limited shell, background kemi with separate output files
-and save its exit code when it ends. Keep the turn active with bounded waits between checking
-that completion record; the launch shell's exit code is not kemi's verdict. If the environment
-cannot preserve the process and let you collect its result, explain that limitation.
