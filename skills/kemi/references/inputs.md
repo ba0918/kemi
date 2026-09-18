@@ -59,7 +59,9 @@ the change the same way the page will show it.
 ## Continuing an interrupted review
 
 An interrupted run (exit `130`) keeps its comments, seen marks, folding, and resolutions in a
-session. Continue it instead of rebuilding the input:
+session. Only a session whose copy completed within the size limit can be listed or resumed;
+one whose copy is unfinished or too large keeps the state alone, and a run with nothing to keep
+leaves no session. Continue it instead of rebuilding the input:
 
 ```text
 kemi --resume <id>   # the id is in the `kemi: resume with:` line on stderr

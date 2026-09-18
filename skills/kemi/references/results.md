@@ -68,8 +68,8 @@ kemi --result --workspace ../app  # the latest result for another place
 belongs to the top of the git repository kemi was started in. Only the newest twenty results
 are kept across all repositories, so read a result soon after the review rather than assuming
 it will still be there. No result is written for an interrupted or failed run; the review
-itself is kept as a session instead, which `kemi --resume` continues (see the input
-reference).
+itself is kept as a session instead when it has state or a copy to keep, and `kemi --resume`
+continues it once its copy completed within the size limit (see the input reference).
 
 `--result` goes together only with `--any` or `--workspace`. Anything else beside it, including
 an input mode, is a usage error (exit `2`). `--any` and `--workspace` are alternatives to each

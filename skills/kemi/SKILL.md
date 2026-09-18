@@ -66,13 +66,17 @@ result, report that limitation instead of inventing a verdict.
 
 Keep the process alive while the user reads. An interrupted review is not lost: the comments,
 seen marks, folding, and resolutions are saved in a session, and stderr prints one line,
-`kemi: resume with: kemi --resume <id>`, when the session can be reopened. An empty stdout
-file while the process runs means no result has arrived yet.
+`kemi: resume with: kemi --resume <id>`, when the session can be reopened. Only a session whose
+copy completed within the size limit can be reopened; one whose copy is unfinished or too large
+keeps the state alone and stays out of the list and `--resume`, and a review with nothing to
+keep leaves no session. An empty stdout file while the process runs means no result has arrived
+yet.
 
 If the user approves in the conversation instead of submitting on the page, record it as a
 conversation decision. Stop only your own run by its retained identifier, never by process
-name; that path yields no review JSON. The review stays as a session, so report the resume
-command if the user may want to continue it.
+name; that path yields no review JSON. The review stays as a session when it has state or a
+copy to keep, so report the resume command if stderr printed one and the user may want to
+continue.
 
 ## Resume an interrupted review
 

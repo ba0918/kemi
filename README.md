@@ -100,7 +100,8 @@ Open that URL, read the change, and press **Approve** or **Request changes**.
 kemi prints the JSON below to stdout and exits with 0
 (approved), 1 (changes requested), 2 (usage, startup, or runtime error), or
 130 (interrupted before submit). An interrupted review is kept as a session,
-so nothing you wrote on the page is lost; `kemi --resume` picks it up again.
+so nothing you wrote on the page is lost; `kemi --resume` picks it up again
+when its frozen copy completed within the size limit (see [Sessions](#sessions)).
 
 ### Exposing kemi to other devices
 
@@ -161,8 +162,12 @@ session under the same state root as results:
 `XDG_STATE_HOME` is unset or relative (unix); on Windows it is
 `%LOCALAPPDATA%\kemi\sessions\`. A session holds the review as it was when it
 started, together with the comments, seen marks, folding, and resolutions.
-Permissions match result files (`0600`/`0700`; unix only), and the newest 100
-sessions or 500 MB are kept across all workspaces.
+Only a session whose copy completed within the size limit can be resumed; one
+whose copy is unfinished or too large keeps the state alone and stays out of
+the list and `--resume` (its id exits with 2), and a review with neither state
+nor copy leaves no session. Permissions match result files (`0600`/`0700`;
+unix only), and the newest 100 sessions or 500 MB are kept across all
+workspaces.
 
 ```sh
 kemi --resume          # in a terminal: choose from the list
