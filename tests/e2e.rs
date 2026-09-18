@@ -242,6 +242,123 @@ fn cli_mode_exclusive_exits_2() {
     assert!(output.stdout.is_empty());
 }
 
+#[tokio::test]
+async fn bind_accepts_an_ipv4_literal() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let kemi = Kemi::spawn(
+        &dir.path,
+        &[
+            "manifest.json",
+            "--bind",
+            "127.0.0.1",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+    );
+
+    let response = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn bind_wildcard_warns_after_the_url_and_serves() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let mut kemi = Kemi::spawn(
+        &dir.path,
+        &[
+            "manifest.json",
+            "--bind",
+            "0.0.0.0",
+            "--port",
+            "0",
+            "--no-open",
+        ],
+    );
+
+    let response = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let mut warning = String::new();
+    kemi.stderr.read_line(&mut warning).unwrap();
+    assert!(
+        warning.starts_with("kemi: exposed on the LAN;"),
+        "the URL line must be followed by the LAN warning: {warning:?}"
+    );
+    assert!(
+        !contains_japanese(&warning),
+        "the warning must be in English: {warning:?}"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn default_bind_keeps_the_loopback_url_without_a_warning() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let mut kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
+
+    assert!(
+        kemi.url.starts_with("http://127.0.0.1:"),
+        "the default URL must stay on loopback: {}",
+        kemi.url
+    );
+    let mut after_url = String::new();
+    kemi.stderr.read_line(&mut after_url).unwrap();
+    assert!(
+        !after_url.starts_with("kemi: exposed on the LAN;"),
+        "the default bind must not warn: {after_url:?}"
+    );
+    kemi.kill();
+}
+
+#[test]
+fn bind_rejects_hostname_ipv6_and_result_or_digest_combinations() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    // 入力モードは有効にして、終了コード 2 が --bind の扱いだけに由来するようにする。
+    let cases: &[&[&str]] = &[
+        &["manifest.json", "--bind", "localhost"],
+        &["manifest.json", "--bind", "::1"],
+        &["--result", "--bind", "0.0.0.0"],
+        &["manifest.json", "--digest", "--bind", "localhost"],
+    ];
+
+    for args in cases {
+        let output = run(&dir.path, args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unknown flag"),
+            "{args:?} must be rejected as a usage error, not as an unknown flag: {stderr}"
+        );
+        assert!(
+            !contains_japanese(&stderr),
+            "{args:?} must be rejected in English: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn digest_accepts_a_valid_bind_without_serving() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", &digest_manifest());
+    let output = run(
+        &dir.path,
+        &["manifest.json", "--digest", "--bind", "127.0.0.1"],
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+}
+
 #[test]
 fn cli_out_rejected_with_reason() {
     let dir = TempDir::new();

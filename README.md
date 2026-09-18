@@ -5,7 +5,8 @@ you attach comments and suggestions to lines, and returns everything you wrote
 to the terminal that started it, as a single JSON document. The name comes
 from the Japanese verb *kemi suru* (to review).
 
-- Single binary, served on loopback only.
+- Single binary. It serves on loopback by default; `--bind` can expose the page
+  to your LAN.
 - No browser extension, no build step for the UI.
 - kemi never edits your files. Suggestions are returned in the JSON for an
   agent to apply.
@@ -49,6 +50,7 @@ kemi -                               # read the manifest from stdin
 kemi --from main                     # the branch as one diff, one entry per path
 kemi --from main --group-by commit   # start with one group per commit in main..HEAD
 kemi --worktree                      # HEAD versus the working tree
+kemi --worktree --bind 0.0.0.0       # also reachable from other devices
 kemi --staged                        # HEAD versus the index
 kemi --from main --digest            # print the review map and exit
 kemi --result                        # print the last submitted result here and exit
@@ -77,13 +79,15 @@ Useful flags:
 | `--focus <path>` | JSON file with focus flags and notes |
 | `--base <dir>` | base for manifest and focus paths (default `.`) |
 | `--port <n>` | listen port (default `0`, pick a free one) |
+| `--bind <addr>` | listen address as an IPv4 literal (default `127.0.0.1`; `0.0.0.0` is every IPv4 interface) |
 | `--no-open` | do not open the browser |
 | `--digest-top <n>` | number of top files in the digest (default `100`) |
 | `--result` | print the latest result for this repository and exit |
 | `--any` | with `--result`: the latest result from anywhere |
 | `--workspace <path>` | with `--result`: the latest result for that place instead of the current one |
 
-When the server starts, kemi prints one line to stderr:
+When the server starts, kemi prints one line to stderr. With the default
+`--bind 127.0.0.1` it looks like this:
 
 ```
 kemi: http://127.0.0.1:<port>/s/<token>/
@@ -93,6 +97,22 @@ Open that URL, read the change, and press **Approve** or **Request changes**.
 kemi prints the JSON below to stdout and exits with 0
 (approved), 1 (changes requested), 2 (usage, startup, or runtime error), or
 130 (interrupted before submit).
+
+### Exposing kemi to other devices
+
+`--bind 0.0.0.0` listens on every IPv4 interface. kemi then prints a URL for
+your machine's default-route address, followed by a warning that the page is
+exposed, and opens your browser on `127.0.0.1`. `--bind <your-ip>` listens on
+that address only. When the address cannot be determined, the URL keeps
+`127.0.0.1` and kemi says so.
+
+Whether another device can reach kemi depends on the OS and the network, not
+on kemi. A local firewall may block the port, and on WSL2 the firewall and
+forwarding settings on the Windows side also matter. kemi never configures
+firewalls or forwarding itself. Pass a fixed `--port` when you expose kemi
+repeatedly, so the URL and any forwarding rule stay stable. The review page
+and the API are plain HTTP: anyone who can reach the port and knows the URL
+can read the diff and submit.
 
 Keys in the page (ignored while typing in a text field):
 

@@ -2,6 +2,7 @@
 
 mod result;
 
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(not(windows))]
@@ -11,7 +12,10 @@ use std::sync::Arc;
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
-use kemi_server::{serve, session_url, Asset, Assets, ResultSink, ServeOutcome, ServeParams};
+use kemi_server::{
+    detect_share_address, exposure_warning, serve, session_host, session_url, Asset, Assets,
+    ResultSink, ServeOutcome, ServeParams,
+};
 use tokio::net::TcpListener;
 
 const USAGE: &str = "\
@@ -27,6 +31,7 @@ common flags:
   --base <dir>       base for manifest and --focus relative paths (default .)
   --group-by <mode>  group unit at startup: file (final form) | commit (per commit). default file
   --port <n>         listen port (default 0 = pick a free one)
+  --bind <addr>      listen address as an IPv4 literal (default 127.0.0.1)
   --no-open          do not open the browser automatically
   --serve            accepted for compatibility (serving is always on)
   --digest           print a digest to stdout and exit
@@ -36,7 +41,6 @@ flags used with --result:
   --any              print the latest result regardless of location
   --workspace <path> print the result for this place instead of the launch directory";
 
-#[derive(Default)]
 struct Cli {
     manifest: Option<String>,
     from: Option<String>,
@@ -47,6 +51,7 @@ struct Cli {
     focus: Option<String>,
     base: PathBuf,
     port: u16,
+    bind: Ipv4Addr,
     no_open: bool,
     digest: bool,
     digest_top: usize,
@@ -63,9 +68,27 @@ struct Cli {
 
 fn parse_args(args: Vec<String>) -> Result<Cli, String> {
     let mut cli = Cli {
+        manifest: None,
+        from: None,
+        to: None,
+        group_by: None,
+        worktree: false,
+        staged: false,
+        focus: None,
         base: PathBuf::from("."),
+        port: 0,
+        bind: Ipv4Addr::LOCALHOST,
+        no_open: false,
+        digest: false,
         digest_top: 100,
-        ..Cli::default()
+        serve: false,
+        out: None,
+        result: false,
+        any: false,
+        workspace: None,
+        version: false,
+        help: false,
+        flags: Vec::new(),
     };
     let mut index = 0;
     while index < args.len() {
@@ -93,6 +116,12 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
                 cli.port = value(&mut index)?
                     .parse()
                     .map_err(|_| "--port requires a number".to_string())?
+            }
+            "--bind" => {
+                let value = value(&mut index)?;
+                cli.bind = value
+                    .parse()
+                    .map_err(|_| format!("--bind requires an IPv4 address literal: {value}"))?
             }
             "--no-open" => cli.no_open = true,
             "--digest" => cli.digest = true,
@@ -398,16 +427,28 @@ async fn main() {
     // --serve は互換のための受理のみ。既定で常にサーブする。
     let _ = cli.serve;
 
-    let listener = match TcpListener::bind(("127.0.0.1", cli.port)).await {
+    let listener = match TcpListener::bind((cli.bind, cli.port)).await {
         Ok(listener) => listener,
-        Err(error) => fail(&format!("cannot listen on 127.0.0.1:{}: {error}", cli.port)),
+        Err(error) => fail(&format!(
+            "cannot listen on {}:{}: {error}",
+            cli.bind, cli.port
+        )),
     };
     let token = random_token();
-    let url = match session_url(&listener, &token) {
+    // 共有アドレスは wildcard のときだけ特定する（R-SERVE）。
+    let share_address = if cli.bind.is_unspecified() {
+        detect_share_address()
+    } else {
+        None
+    };
+    let url = match session_url(&listener, &token, session_host(cli.bind, share_address)) {
         Ok(url) => url,
         Err(error) => fail(&error.to_string()),
     };
     eprintln!("kemi: {url}");
+    if let Some(warning) = exposure_warning(cli.bind, share_address) {
+        eprintln!("{warning}");
+    }
     let results = ResultStore {
         dir: results_dir(),
         key: result::workspace_key(&workspace_root(Path::new("."))),
@@ -420,7 +461,12 @@ async fn main() {
         ),
     }
     if !cli.no_open {
-        open_browser(&url);
+        // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
+        let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
+            Ok(url) => url,
+            Err(error) => fail(&error.to_string()),
+        };
+        open_browser(&browser_url);
     }
 
     let params = ServeParams {
@@ -428,6 +474,7 @@ async fn main() {
         assets: Arc::new(WebAssets),
         token,
         results: Some(Arc::new(results)),
+        share_address,
     };
     let outcome = tokio::select! {
         outcome = serve(listener, params) => outcome,

@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::convert::Infallible;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, Request, State};
@@ -74,9 +75,22 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
     next.run(request).await
 }
 
-pub fn session_url(listener: &TcpListener, token: &str) -> Result<String, ServerError> {
+/// URL に載せるホスト。wildcard (`0.0.0.0`) のときだけ共有アドレスに読み替える（R-SERVE）。
+pub fn session_host(bind: Ipv4Addr, share_address: Option<Ipv4Addr>) -> Ipv4Addr {
+    if bind.is_unspecified() {
+        share_address.unwrap_or(Ipv4Addr::LOCALHOST)
+    } else {
+        bind
+    }
+}
+
+pub fn session_url(
+    listener: &TcpListener,
+    token: &str,
+    host: Ipv4Addr,
+) -> Result<String, ServerError> {
     let address = listener.local_addr().map_err(ServerError::Io)?;
-    Ok(format!("http://127.0.0.1:{}/s/{token}/", address.port()))
+    Ok(format!("http://{host}:{}/s/{token}/", address.port()))
 }
 
 pub(crate) struct ApiError {
@@ -128,19 +142,55 @@ impl IntoResponse for ApiError {
 }
 
 fn validate_post(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok());
-    if host != Some(state.host.as_str()) {
-        return Err(ApiError::forbidden("Host does not match"));
-    }
+    let host = state
+        .allowed
+        .accept(
+            headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok()),
+        )
+        .ok_or_else(|| ApiError::forbidden("Host does not match"))?;
+    let expected_origin = format!("http://{host}");
     let origin = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok());
-    if origin != Some(state.origin.as_str()) {
+    if origin != Some(expected_origin.as_str()) {
         return Err(ApiError::forbidden("Origin does not match"));
     }
     Ok(())
+}
+
+/// 待ち受けアドレスと共有アドレスから決まる、POST を受理する Host の範囲（R-SERVE）。
+pub(crate) struct AllowedHosts {
+    bind: Ipv4Addr,
+    share_address: Option<Ipv4Addr>,
+    port: u16,
+}
+
+impl AllowedHosts {
+    pub(crate) fn new(bind: Ipv4Addr, share_address: Option<Ipv4Addr>, port: u16) -> Self {
+        AllowedHosts {
+            bind,
+            share_address,
+            port,
+        }
+    }
+
+    /// 待ち受け port を伴い、ホスト部が `127.0.0.0/8`・バインドした具体アドレス・共有
+    /// アドレスのいずれかである Host だけを、受理した文字列のまま返す。
+    /// wildcard (`0.0.0.0`) は範囲に含めない。
+    fn accept<'a>(&self, host: Option<&'a str>) -> Option<&'a str> {
+        let host = host?;
+        let (address, port) = host.rsplit_once(':')?;
+        if port.parse::<u16>().ok()? != self.port {
+            return None;
+        }
+        let address: Ipv4Addr = address.parse().ok()?;
+        let allowed = address.is_loopback()
+            || (!self.bind.is_unspecified() && address == self.bind)
+            || self.share_address == Some(address);
+        allowed.then_some(host)
+    }
 }
 
 async fn source_review(state: &AppState) -> Result<ReviewMeta, ApiError> {

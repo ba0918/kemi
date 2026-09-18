@@ -2,18 +2,22 @@
 
 mod api;
 mod highlight;
+mod lan;
 mod session;
 mod units;
 mod watch;
 
 use std::borrow::Cow;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex, RwLock};
 
 use kemi_core::source::ReviewSource;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, watch as shutdown_watch};
 
-pub use api::session_url;
+use api::AllowedHosts;
+pub use api::{session_host, session_url};
+pub use lan::{detect_share_address, exposure_warning};
 pub use session::Session;
 
 /// ページに配る資産。kemi-server は web の中身を知らない。
@@ -69,6 +73,9 @@ pub struct ServeParams {
     pub assets: Arc<dyn Assets>,
     pub token: String,
     pub results: Option<Arc<dyn ResultSink>>,
+    /// LAN に案内する共有アドレス。`--bind 0.0.0.0` のときだけ意味を持ち、
+    /// 特定できなければ `None`（R-SERVE）。URL と警告は起動側が組み立てる。
+    pub share_address: Option<Ipv4Addr>,
 }
 
 /// SSE でページへ知らせること。
@@ -92,8 +99,8 @@ pub(crate) struct AppState {
     pub assets: Arc<dyn Assets>,
     pub results: Option<Arc<dyn ResultSink>>,
     pub token: String,
-    pub origin: String,
-    pub host: String,
+    /// POST を受理する Host の範囲（R-SERVE）。
+    pub allowed: AllowedHosts,
     pub review: RwLock<units::ReviewState>,
     /// 再取得を 1 つずつ行う。同じ単位を同時に作り直して計画が入れ替わらないように。
     pub refresh: tokio::sync::Mutex<()>,
@@ -121,8 +128,15 @@ pub async fn serve(
     params: ServeParams,
 ) -> Result<ServeOutcome, ServerError> {
     let address = listener.local_addr().map_err(ServerError::Io)?;
-    let origin = format!("http://127.0.0.1:{}", address.port());
-    let host = format!("127.0.0.1:{}", address.port());
+    let bind = match address.ip() {
+        IpAddr::V4(bind) => bind,
+        IpAddr::V6(_) => {
+            return Err(ServerError::Stopped(format!(
+                "{address} is not an IPv4 listener"
+            )))
+        }
+    };
+    let allowed = AllowedHosts::new(bind, params.share_address, address.port());
 
     let review = params.source.review().map_err(ServerError::Source)?;
     let units = params.source.units();
@@ -135,8 +149,7 @@ pub async fn serve(
         assets: params.assets,
         results: params.results,
         token: params.token,
-        origin,
-        host,
+        allowed,
         review: RwLock::new(units::ReviewState::new(&units, review)),
         refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::default()),

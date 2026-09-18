@@ -1,13 +1,14 @@
 //! HTTP / SSE サーバの契約テスト（R-SERVE, R-SUBMIT, R-COMMENT）。
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Status};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
-use kemi_server::{serve, session_url, Asset, Assets, ServeOutcome, ServeParams};
+use kemi_server::{serve, session_host, session_url, Asset, Assets, ServeOutcome, ServeParams};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -172,16 +173,23 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        TestServer::start_bound(Ipv4Addr::LOCALHOST, None).await
+    }
+
+    /// wildcard バインドや共有アドレスを再現する。url はテストが繋げる loopback のまま
+    /// （表示 URL の組み立ては `session_url` / `session_host` を直接検証する）。
+    async fn start_bound(bind: Ipv4Addr, share_address: Option<Ipv4Addr>) -> Self {
         let source = Arc::new(FakeSource::new());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind((bind, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = session_url(&listener, "test-token").unwrap();
+        let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
         let origin = url.split("/s/").next().unwrap().to_string();
         let params = ServeParams {
             source: source.clone(),
             assets: Arc::new(FakeAssets),
             token: "test-token".to_string(),
             results: None,
+            share_address,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -219,6 +227,30 @@ impl TestServer {
             ServeOutcome::Submitted(document) => document,
         }
     }
+}
+
+#[test]
+fn session_host_uses_the_share_address_only_for_a_wildcard_bind() {
+    let concrete = Ipv4Addr::new(192, 168, 1, 5);
+    let shared = Ipv4Addr::new(192, 0, 2, 10);
+
+    assert_eq!(session_host(concrete, None), concrete);
+    assert_eq!(session_host(concrete, Some(shared)), concrete);
+    assert_eq!(
+        session_host(Ipv4Addr::UNSPECIFIED, None),
+        Ipv4Addr::LOCALHOST
+    );
+    assert_eq!(session_host(Ipv4Addr::UNSPECIFIED, Some(shared)), shared);
+}
+
+#[tokio::test]
+async fn session_url_uses_the_given_host_and_the_listener_port() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let url = session_url(&listener, "tok", Ipv4Addr::new(192, 0, 2, 10)).unwrap();
+
+    assert_eq!(url, format!("http://192.0.2.10:{port}/s/tok/"));
 }
 
 #[tokio::test]
@@ -279,7 +311,7 @@ async fn cross_origin_rejected_on_comment_post() {
         .post_with_origin(
             "api/state",
             json!({"file_id": "f1", "seen": true}),
-            "http://evil.example",
+            &format!("http://localhost:{}", server.port),
         )
         .await;
 
@@ -299,25 +331,89 @@ async fn post_without_origin_rejected() {
     assert_eq!(response.status(), 403);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn host_mismatch_rejected() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
     let server = TestServer::start().await;
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
-        .await
-        .unwrap();
-    let body = "{}";
-    let request = format!(
-        "POST /s/test-token/api/state HTTP/1.1\r\nHost: evil.example\r\nOrigin: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        server.origin,
-        body.len()
-    );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
+    let host = format!("192.0.2.10:{}", server.port);
 
-    assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    let status = state_post(&server, &host, &format!("http://{host}"), "{}");
+
+    assert_eq!(status, 403);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_from_the_shared_address_accepted() {
+    let shared = Ipv4Addr::new(192, 0, 2, 10);
+    let server = TestServer::start_bound(Ipv4Addr::UNSPECIFIED, Some(shared)).await;
+    let host = format!("{shared}:{}", server.port);
+
+    let status = state_post(
+        &server,
+        &host,
+        &format!("http://{host}"),
+        r#"{"file_id":"f1","seen":true}"#,
+    );
+
+    assert_eq!(status, 200);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_from_an_unlisted_address_rejected() {
+    let shared = Ipv4Addr::new(192, 0, 2, 10);
+    let other = Ipv4Addr::new(198, 51, 100, 9);
+    let server = TestServer::start_bound(Ipv4Addr::UNSPECIFIED, Some(shared)).await;
+    let host = format!("{other}:{}", server.port);
+
+    let status = state_post(&server, &host, &format!("http://{host}"), "{}");
+
+    assert_eq!(status, 403);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_with_wildcard_host_rejected() {
+    let shared = Ipv4Addr::new(192, 0, 2, 10);
+    let server = TestServer::start_bound(Ipv4Addr::UNSPECIFIED, Some(shared)).await;
+    let host = format!("0.0.0.0:{}", server.port);
+
+    let status = state_post(&server, &host, &format!("http://{host}"), "{}");
+
+    assert_eq!(status, 403);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_from_a_lan_address_rejected_without_a_share_address() {
+    let server = TestServer::start_bound(Ipv4Addr::UNSPECIFIED, None).await;
+    let host = format!("192.0.2.10:{}", server.port);
+
+    let status = state_post(&server, &host, &format!("http://{host}"), "{}");
+
+    assert_eq!(status, 403);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_with_a_wrong_port_rejected() {
+    let shared = Ipv4Addr::new(192, 0, 2, 10);
+    let server = TestServer::start_bound(Ipv4Addr::UNSPECIFIED, Some(shared)).await;
+    let host = format!("{shared}:{}", server.port.wrapping_add(1));
+
+    let status = state_post(&server, &host, &format!("http://{host}"), "{}");
+
+    assert_eq!(status, 403);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_with_a_mismatched_origin_rejected() {
+    let shared = Ipv4Addr::new(192, 0, 2, 10);
+    let server = TestServer::start_bound(Ipv4Addr::UNSPECIFIED, Some(shared)).await;
+
+    let status = state_post(
+        &server,
+        &format!("{shared}:{}", server.port),
+        &server.origin,
+        "{}",
+    );
+
+    assert_eq!(status, 403);
 }
 
 #[tokio::test]
@@ -331,6 +427,66 @@ async fn seen_state_kept_on_server() {
     let review: Value = server.get("api/review").await.json().await.unwrap();
     assert_eq!(review["groups"][0]["files"][0]["seen"], true);
     assert_eq!(review["groups"][0]["files"][1]["seen"], false);
+}
+
+#[tokio::test]
+async fn two_clients_share_comments_and_seen_without_an_author_field() {
+    let server = TestServer::start().await;
+    let first = reqwest::Client::new();
+    let second = reqwest::Client::new();
+
+    let response = first
+        .post(format!("{}api/comment", server.url))
+        .header("Origin", &server.origin)
+        .json(&json!({
+            "op": "add", "file_id": "f1", "side": "new",
+            "start_line": 11, "end_line": 11, "body": "1台目から"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let response = first
+        .post(format!("{}api/state", server.url))
+        .header("Origin", &server.origin)
+        .json(&json!({"file_id": "f1", "seen": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let review: Value = second
+        .get(format!("{}api/review", server.url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(review["groups"][0]["files"][0]["seen"], true);
+    assert_eq!(review["comments"][0]["body"], "1台目から");
+
+    let response = second
+        .post(format!("{}api/comment", server.url))
+        .header("Origin", &server.origin)
+        .json(&json!({"op": "reply", "id": "c1", "body": "2台目から"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let response = second
+        .post(format!("{}api/submit", server.url))
+        .header("Origin", &server.origin)
+        .json(&json!({"verdict": "approved"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let document = server.finish().await;
+    let comment = &document["comments"][0];
+    assert_eq!(comment["replies"], json!(["2台目から"]));
+    assert!(comment.get("author").is_none(), "{comment}");
 }
 
 #[tokio::test]
@@ -557,11 +713,32 @@ async fn submit_concurrent_409() {
     let _ = server.finish().await;
 }
 
+/// テスト中のサーバへ、Host と Origin を指定して state の POST を送る。
+fn state_post(server: &TestServer, host: &str, origin: &str, body: &str) -> u16 {
+    raw_post_with_host(
+        ("127.0.0.1", server.port),
+        host,
+        "/s/test-token/api/state",
+        origin,
+        body,
+    )
+}
+
 fn raw_post(address: (&str, u16), path: &str, origin: &str, body: &str) -> u16 {
+    let host = format!("{}:{}", address.0, address.1);
+    raw_post_with_host(address, &host, path, origin, body)
+}
+
+fn raw_post_with_host(
+    address: (&str, u16),
+    host: &str,
+    path: &str,
+    origin: &str,
+    body: &str,
+) -> u16 {
     use std::io::{Read, Write};
 
     let mut stream = std::net::TcpStream::connect(address).unwrap();
-    let host = format!("{}:{}", address.0, address.1);
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -705,6 +882,7 @@ impl LiveServer {
             assets: Arc::new(FakeAssets),
             token: "live-token".to_string(),
             results: None,
+            share_address: None,
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。
