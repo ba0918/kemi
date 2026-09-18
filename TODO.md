@@ -1,21 +1,18 @@
 # 残課題
 
-最終更新: 2026-09-18（LAN 公開 `--bind` の実装後）
-
-## LAN 公開 `--bind`（v0.1.7 としてリリース済み）
-
-- 実機の確認が未実施: 固定ポートの `--bind 0.0.0.0` でブラウザが `127.0.0.1` を開くこと、
-  2 台目の端末からコメントと submit が届くこと
-- レビューで記録のみになった指摘（修正要求ではない）:
-  - id 1: README の `### Exposing kemi to other devices` がキー操作表の直前にあり、
-    `Keys in the page` がその子見出しとして描画される
-  - id 3: Host 許可のループバック枝と「バインドした具体アドレス」の枝を直接確かめるテストが無い。
-    製品の挙動は手動確認で正しい（`--bind 192.168.1.2` で 200 / 403）
-  - id 4: `ServeParams.share_address` に `Some(0.0.0.0)` を渡すと wildcard の Host を受理し、
-    URL にも `0.0.0.0` を使う。CLI 経由では到達しないが、pub な値の前提がコードに現れていない
-  - evidence と oracle はローカルの `.agents/artifacts/reviews/lan-bind.json` にある（git 管理外・この環境のみ）
+最終更新: 2026-09-18（v0.1.7 の実機確認後）
 
 ## レビューで記録のみになった指摘（修正要求ではない）
+
+LAN 公開 `--bind`（v0.1.7）:
+
+- id 1: README の `### Exposing kemi to other devices` がキー操作表の直前にあり、
+  `Keys in the page` がその子見出しとして描画される
+- id 3: Host 許可のループバック枝と「バインドした具体アドレス」の枝を直接確かめるテストが無い。
+  製品の挙動は手動確認で正しい（`--bind 192.168.1.2` で 200 / 403）
+- id 4: `ServeParams.share_address` に `Some(0.0.0.0)` を渡すと wildcard の Host を受理し、
+  URL にも `0.0.0.0` を使う。CLI 経由では到達しないが、pub な値の前提がコードに現れていない
+- evidence と oracle はローカルの `.agents/artifacts/reviews/lan-bind.json` にある（git 管理外・この環境のみ）
 
 kemi v1（main にマージ済み）:
 
@@ -33,6 +30,11 @@ UI 改訂（main にマージ済み）:
 
 evidence と oracle の詳細はローカルの `.agents/artifacts/reviews/kemi-v1.json` と
 `.agents/artifacts/reviews/kemi-ui-fix.json` にある（git 管理外・この環境のみ）。
+
+## 既知の制限
+
+- スマホの画面幅には最適化していない。LAN 公開でスマホから開くと表示は崩れるが、
+  コメントと submit はできる（v0.1.7 の実機確認）
 
 ## UX 改訂 v2 で残したこと
 
