@@ -54,6 +54,8 @@ kemi --worktree --bind 0.0.0.0       # also reachable from other devices
 kemi --staged                        # HEAD versus the index
 kemi --from main --digest            # print the review map and exit
 kemi --result                        # print the last submitted result here and exit
+kemi --resume                        # pick an interrupted review (terminal only)
+kemi --resume <id>                   # continue that review, from any directory
 ```
 
 A commit range has two ways to group the same changes, and the page switches
@@ -85,6 +87,7 @@ Useful flags:
 | `--result` | print the latest result for this repository and exit |
 | `--any` | with `--result`: the latest result from anywhere |
 | `--workspace <path>` | with `--result`: the latest result for that place instead of the current one |
+| `--resume [<id>]` | continue an interrupted review; without an id, choose one (see [Sessions](#sessions)) |
 
 When the server starts, kemi prints one line to stderr. With the default
 `--bind 127.0.0.1` it looks like this:
@@ -96,7 +99,8 @@ kemi: http://127.0.0.1:<port>/s/<token>/
 Open that URL, read the change, and press **Approve** or **Request changes**.
 kemi prints the JSON below to stdout and exits with 0
 (approved), 1 (changes requested), 2 (usage, startup, or runtime error), or
-130 (interrupted before submit).
+130 (interrupted before submit). An interrupted review is kept as a session,
+so nothing you wrote on the page is lost; `kemi --resume` picks it up again.
 
 ### Exposing kemi to other devices
 
@@ -148,6 +152,39 @@ kemi --result --workspace ../app # latest result for another place
 - `kemi --result` prints nothing and exits with 2 when there is no matching
   result. A result that cannot be saved only produces a warning; stdout and
   the exit code stay the same.
+
+## Sessions
+
+An interrupted review (Ctrl+C, SIGTERM, or a runtime error) is kept as a
+session under the same state root as results:
+`$XDG_STATE_HOME/kemi/sessions/`, or `~/.local/state/kemi/sessions/` when
+`XDG_STATE_HOME` is unset or relative (unix); on Windows it is
+`%LOCALAPPDATA%\kemi\sessions\`. A session holds the review as it was when it
+started, together with the comments, seen marks, folding, and resolutions.
+Permissions match result files (`0600`/`0700`; unix only), and the newest 100
+sessions or 500 MB are kept across all workspaces.
+
+```sh
+kemi --resume          # in a terminal: choose from the list
+kemi --resume <id>     # continue a known session, from any directory
+```
+
+- The diff is frozen: changing the working tree, or deleting the repository
+  itself, does not change what the page shows. Origin notes become "unknown"
+  when the repository is gone.
+- Seen marks, folding, comments, and resolutions come back. Live reload and
+  its update badge are off, and the URL token is new.
+- Resuming continues the same session; it does not create another one. A
+  submit from a resumed review writes its result file for the workspace the
+  review was started from, and returns the manifest `approval` unchanged.
+- Without an id and without a terminal, kemi prints the resumable sessions as
+  one tab-separated line each — id, last update, workspace, mode, seen/total —
+  newest first, and exits with 0; with none it prints nothing and exits with 2.
+- `--resume` accepts only `--port`, `--bind`, `--no-open`, and `--serve`.
+  `--digest` and `--result` do not create sessions.
+
+The `kemi: resume with: kemi --resume <id>` line on stderr is how a script
+finds the id after an interruption.
 
 ## Manifest format
 

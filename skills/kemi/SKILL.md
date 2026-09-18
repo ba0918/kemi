@@ -62,15 +62,41 @@ result, report that limitation instead of inventing a verdict.
 | `0` | Approved | Result JSON, including any comments |
 | `1` | Changes requested | Result JSON; this is not an execution failure |
 | `2` | Startup, usage, or runtime error | stderr; stdout is empty |
-| `130` | Interrupted before submit | No result |
+| `130` | Interrupted before submit | No result; stderr may carry the resume line |
 
-Keep the process alive while the user reads. Unsubmitted comments exist only in memory and
-are lost on interruption; explain the loss and offer a fresh review if that happens. An empty
-stdout file while the process runs means no result has arrived yet.
+Keep the process alive while the user reads. An interrupted review is not lost: the comments,
+seen marks, folding, and resolutions are saved in a session, and stderr prints one line,
+`kemi: resume with: kemi --resume <id>`, when the session can be reopened. An empty stdout
+file while the process runs means no result has arrived yet.
 
 If the user approves in the conversation instead of submitting on the page, record it as a
 conversation decision. Stop only your own run by its retained identifier, never by process
-name; that path yields no review JSON and loses unsubmitted page comments.
+name; that path yields no review JSON. The review stays as a session, so report the resume
+command if the user may want to continue it.
+
+## Resume an interrupted review
+
+When a run ends without a submit and the user still wants that review, continue it instead
+of starting over:
+
+```text
+kemi --resume <id>     # from any directory; the id comes from the resume line
+kemi --resume          # in a terminal: choose from the list of sessions
+```
+
+Resuming shows the diff as it was when the review started, with the seen marks, folding,
+comments, and resolutions restored. The original input is not read again, so editing the
+working tree or moving away from the repository does not change the page; only origin notes
+degrade to "unknown" if the repository is gone. Live reload and its update badge are off.
+Resuming continues the same session rather than creating one, and a submit that follows
+writes its result for the workspace the review was started from, with the manifest
+`approval` unchanged.
+
+Without an id and without a terminal, `kemi --resume` prints the resumable sessions as one
+tab-separated line each — id, last update, workspace, mode, seen/total, newest first — and
+exits `0`; with none it exits `2`. `--resume` takes only `--port`, `--bind`, `--no-open`,
+and `--serve`; pairing it with an input mode or `--digest` is a usage error (exit `2`), and
+`--digest` / `--result` never create sessions.
 
 ## Handle the result
 

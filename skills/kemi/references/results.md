@@ -66,8 +66,10 @@ kemi --result --workspace ../app  # the latest result for another place
 `kemi --result` prints that JSON to stdout and exits with the verdict's own code (`0` approved,
 `1` changes requested). With no matching result it prints nothing and exits `2`. A result
 belongs to the top of the git repository kemi was started in. Only the newest twenty results
-are kept across all repositories, and nothing at all is written for an interrupted or failed
-run, so read a result soon after the review rather than assuming it will still be there.
+are kept across all repositories, so read a result soon after the review rather than assuming
+it will still be there. No result is written for an interrupted or failed run; the review
+itself is kept as a session instead, which `kemi --resume` continues (see the input
+reference).
 
 `--result` goes together only with `--any` or `--workspace`. Anything else beside it, including
 an input mode, is a usage error (exit `2`). `--any` and `--workspace` are alternatives to each
