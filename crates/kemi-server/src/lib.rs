@@ -68,11 +68,28 @@ pub trait ResultSink: Send + Sync {
     fn location(&self) -> Option<String>;
 }
 
+/// レビューをセッションとして残す先（R-SESSION）。保存の失敗は警告だけで、レビューは
+/// 終わらせず終了コードも変えない。
+pub trait SessionSink: Send + Sync {
+    /// サーブ開始時。起動時の単位の題と全ファイル数。
+    fn describe_review(&self, title: &str, total_files: usize);
+    /// 状態が変わるたび。空の状態と写しだけで、書くべきものが無ければ何もしない。
+    fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), String>;
+    /// 凍結が完成したとき。写しの上限は実装が判定する。
+    fn save_copy(&self, copy: kemi_core::session::SessionCopy) -> Result<(), String>;
+    /// 凍結できなかったとき。状態と情報だけを残す。
+    fn mark_unresumable(&self, reason: &str) -> Result<(), String>;
+    /// submit の確定後。
+    fn delete(&self) -> Result<(), String>;
+}
+
 pub struct ServeParams {
     pub source: Arc<dyn ReviewSource>,
     pub assets: Arc<dyn Assets>,
     pub token: String,
     pub results: Option<Arc<dyn ResultSink>>,
+    /// セッションの保存先。無ければ保存しない（R-SESSION）。
+    pub session: Option<Arc<dyn SessionSink>>,
     /// LAN に案内する共有アドレス。`--bind 0.0.0.0` のときだけ意味を持ち、
     /// 特定できなければ `None`（R-SERVE）。URL と警告は起動側が組み立てる。
     pub share_address: Option<Ipv4Addr>,
@@ -98,6 +115,7 @@ pub(crate) struct AppState {
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
     pub results: Option<Arc<dyn ResultSink>>,
+    pub session_sink: Option<Arc<dyn SessionSink>>,
     pub token: String,
     /// POST を受理する Host の範囲（R-SERVE）。
     pub allowed: AllowedHosts,
@@ -110,6 +128,8 @@ pub(crate) struct AppState {
     pub shutdown: shutdown_watch::Sender<bool>,
     pub stop: Mutex<Option<Stop>>,
     pub submit_state: Mutex<SubmitState>,
+    /// 凍結のタスクを 1 度だけ始めるための印（R-SESSION）。
+    pub freeze_started: std::sync::atomic::AtomicBool,
 }
 
 /// レビュー中の実行時エラーで停止する。stdout に JSON を出さず終了コード 2（R-SUBMIT）。
@@ -139,6 +159,11 @@ pub async fn serve(
     let allowed = AllowedHosts::new(bind, params.share_address, address.port());
 
     let review = params.source.review().map_err(ServerError::Source)?;
+    // セッションの情報に、起動時の単位の題と全ファイル数を残す（R-SESSION）。
+    if let Some(sink) = &params.session {
+        let total_files = review.groups.iter().map(|group| group.files.len()).sum();
+        sink.describe_review(&review.title, total_files);
+    }
     let units = params.source.units();
     let (events, _) = broadcast::channel(16);
     let (shutdown, _) = shutdown_watch::channel(false);
@@ -148,6 +173,7 @@ pub async fn serve(
         highlighter: std::sync::OnceLock::new(),
         assets: params.assets,
         results: params.results,
+        session_sink: params.session,
         token: params.token,
         allowed,
         review: RwLock::new(units::ReviewState::new(&units, review)),
@@ -157,6 +183,7 @@ pub async fn serve(
         shutdown,
         stop: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),
+        freeze_started: std::sync::atomic::AtomicBool::new(false),
     });
 
     watch::start(state.source.watch_paths(), state.events.clone());

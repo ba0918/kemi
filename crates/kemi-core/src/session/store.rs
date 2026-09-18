@@ -4,6 +4,7 @@
 //! 書き直すが、写しの payload は gzip 済みのバイト列をそのまま使い回す。
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use super::encoding;
 use super::{CopyMeta, CopyState, MetaDto, SessionCopy, SessionInfo, SessionState, SessionSummary};
@@ -43,6 +44,10 @@ pub enum SessionError {
         path: PathBuf,
         version: u8,
     },
+    Range {
+        revision: String,
+        reason: String,
+    },
     Encode {
         reason: String,
     },
@@ -75,6 +80,9 @@ impl std::fmt::Display for SessionError {
                 "session {} has an unsupported format version {version}",
                 path.display()
             ),
+            SessionError::Range { revision, reason } => {
+                write!(formatter, "cannot resolve {revision}: {reason}")
+            }
             SessionError::Encode { reason } => {
                 write!(formatter, "cannot encode the session: {reason}")
             }
@@ -322,6 +330,12 @@ impl OpenSession {
         &self.copy
     }
 
+    /// 起動時に計算した題と全ファイル数を情報に写す。ファイルは書かない。
+    pub fn describe(&mut self, title: &str, total_files: usize) {
+        self.info.title = title.to_string();
+        self.info.total_files = total_files;
+    }
+
     /// 復元の対象になるか（写しが完成しているか）。
     pub fn is_resumable(&self) -> bool {
         matches!(self.copy, CopyState::Ready(_))
@@ -401,7 +415,12 @@ impl OpenSession {
     }
 
     fn persist(&mut self) -> Result<(), SessionError> {
-        if self.state.is_empty() && self.payload.is_none() {
+        // 空の状態で写しも無ければ、セッションは残さない。写しを作れなかった印
+        // （Unusable）は、理由を残すために情報だけを残す。
+        if self.state.is_empty()
+            && self.payload.is_none()
+            && !matches!(self.copy, CopyState::Unusable(_))
+        {
             return self.remove_file();
         }
         let payload_len = self
@@ -422,7 +441,8 @@ impl OpenSession {
 /// セッションのロック。`File::try_lock` を使うので、プロセスが死ねば OS が解放する。
 pub struct SessionLock {
     /// 開いている限りロックが生きる。
-    _file: std::fs::File,
+    file: Option<std::fs::File>,
+    path: PathBuf,
 }
 
 impl SessionLock {
@@ -434,12 +454,28 @@ impl SessionLock {
             source,
         })?;
         match file.try_lock() {
-            Ok(()) => Ok(SessionLock { _file: file }),
+            Ok(()) => Ok(SessionLock {
+                file: Some(file),
+                path,
+            }),
             Err(std::fs::TryLockError::WouldBlock) => {
                 Err(SessionError::Locked { id: id.to_string() })
             }
             Err(std::fs::TryLockError::Error(source)) => Err(SessionError::Io { path, source }),
         }
+    }
+}
+
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        // ロックファイルはプロセスの間だけのもの。名前を先に外してから閉じる（unix）。
+        // 閉じてから外すと、その隙に別のプロセスが古いファイルを掴むことがある。
+        // Windows は開いているファイルを消せないので、閉じてから試す。
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(&self.path);
+        drop(self.file.take());
+        #[cfg(not(unix))]
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -497,6 +533,43 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
             bytes += size;
         } else {
             let _ = std::fs::remove_file(&path);
+        }
+    }
+    prune_orphan_locks(dir, Duration::from_secs(60));
+}
+
+/// セッションのファイルが無いまま残ったロックファイルを片付ける。始まったばかりの
+/// セッションと競合しないよう、`min_age` より新しいものは触らない。ロック中のものは
+/// 他プロセスが使っているので残す。
+fn prune_orphan_locks(dir: &Path, min_age: Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(id) = name
+            .to_str()
+            .and_then(|name| name.strip_suffix(".lock"))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if dir.join(format!("{id}.session")).exists() {
+            continue;
+        }
+        let old_enough = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_none_or(|age| age >= min_age);
+        if !old_enough {
+            continue;
+        }
+        // acquire は既にあるファイルを開き直す。取れたら手放し、Drop が名前を外す。
+        if let Ok(lock) = SessionLock::acquire(dir, &id) {
+            drop(lock);
         }
     }
 }
@@ -1023,6 +1096,29 @@ mod tests {
         );
         assert_eq!(listed[0].seen, 1);
         assert_eq!(listed[0].total_files, 2);
+    }
+
+    #[test]
+    fn session_cleanup_removes_orphan_lock_files() {
+        let scratch = Scratch::new();
+        std::fs::create_dir_all(scratch.dir()).unwrap();
+        let lock_path = scratch.dir().join("01HF7YAT00AAAAAAAAAAAAAAAA.lock");
+        std::fs::write(&lock_path, b"").unwrap();
+
+        // 新しすぎるロックは、始まったばかりのセッションと競合しないよう残す。
+        prune_orphan_locks(&scratch.dir(), Duration::from_secs(60));
+        assert!(lock_path.exists());
+
+        // ロック中のものは他のプロセスのものなので残す。
+        let held = SessionLock::acquire(&scratch.dir(), "01HF7YAT00AAAAAAAAAAAAAAAA").unwrap();
+        prune_orphan_locks(&scratch.dir(), Duration::ZERO);
+        assert!(lock_path.exists());
+        drop(held);
+
+        // 使われていない古いロックは消える。
+        std::fs::write(&lock_path, b"").unwrap();
+        prune_orphan_locks(&scratch.dir(), Duration::ZERO);
+        assert!(!lock_path.exists());
     }
 
     #[test]

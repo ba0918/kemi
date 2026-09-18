@@ -32,6 +32,13 @@ impl FakeSource {
                 new: Some(new.into_bytes()),
             },
         );
+        contents.insert(
+            "f2".to_string(),
+            FileContent {
+                old: Some(vec![0xff, 0x00, 0x01]),
+                new: Some(vec![0xff, 0x00, 0x02]),
+            },
+        );
         let large = "line\n".repeat(10_001);
         contents.insert(
             "f3".to_string(),
@@ -189,6 +196,7 @@ impl TestServer {
             assets: Arc::new(FakeAssets),
             token: "test-token".to_string(),
             results: None,
+            session: None,
             share_address,
         };
         let task = tokio::spawn(serve(listener, params));
@@ -882,6 +890,7 @@ impl LiveServer {
             assets: Arc::new(FakeAssets),
             token: "live-token".to_string(),
             results: None,
+            session: None,
             share_address: None,
         };
         let task = tokio::spawn(serve(listener, params));
@@ -1745,4 +1754,425 @@ async fn comment_delete_never_reuses_the_id() {
     let added = server.add_new_side_comment().await;
 
     assert_eq!(added["id"], "c3");
+}
+
+// ---- R-SESSION（セッションの保存と凍結、submit での削除） ----
+
+use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
+
+use kemi_core::session::{
+    OpenSession, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
+};
+use kemi_server::SessionSink;
+
+/// 保存先の呼び出しを記録する sink。`fail` で保存の失敗を再現する。
+#[derive(Default)]
+struct RecordingSink {
+    title: Mutex<String>,
+    total_files: Mutex<usize>,
+    states: Mutex<Vec<SessionState>>,
+    copies: Mutex<Vec<SessionCopy>>,
+    unusable: Mutex<Vec<String>>,
+    deleted: AtomicBool,
+    fail: AtomicBool,
+}
+
+impl RecordingSink {
+    fn last_state(&self) -> SessionState {
+        self.states
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .expect("no state was saved")
+    }
+}
+
+impl SessionSink for RecordingSink {
+    fn describe_review(&self, title: &str, total_files: usize) {
+        *self.title.lock().unwrap() = title.to_string();
+        *self.total_files.lock().unwrap() = total_files;
+    }
+
+    fn save_state(&self, state: SessionState) -> Result<(), String> {
+        self.states.lock().unwrap().push(state);
+        if self.fail.load(Ordering::SeqCst) {
+            Err("disk is full".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn save_copy(&self, copy: SessionCopy) -> Result<(), String> {
+        self.copies.lock().unwrap().push(copy);
+        Ok(())
+    }
+
+    fn mark_unresumable(&self, reason: &str) -> Result<(), String> {
+        self.unusable.lock().unwrap().push(reason.to_string());
+        Ok(())
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        self.deleted.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+impl TestServer {
+    async fn start_with_session(source: Arc<FakeSource>, sink: Arc<dyn SessionSink>) -> Self {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
+        let origin = url.split("/s/").next().unwrap().to_string();
+        let params = ServeParams {
+            source: source.clone(),
+            assets: Arc::new(FakeAssets),
+            token: "test-token".to_string(),
+            results: None,
+            session: Some(sink),
+            share_address: None,
+        };
+        let task = tokio::spawn(serve(listener, params));
+        TestServer {
+            url,
+            origin,
+            port,
+            source,
+            task,
+        }
+    }
+
+    async fn wait_for_copy(&self, sink: &RecordingSink) -> SessionCopy {
+        for _ in 0..200 {
+            if let Some(copy) = sink.copies.lock().unwrap().first().cloned() {
+                return copy;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the session copy was never saved");
+    }
+}
+
+#[tokio::test]
+async fn session_state_is_saved_on_every_change() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+
+    server
+        .comment(json!({"op": "add", "file_id": "f1", "side": "new", "start_line": 1, "end_line": 1, "body": "x"}))
+        .await;
+    server
+        .post(
+            "api/state",
+            json!({"file_id": "f1", "seen": true, "collapsed": true}),
+        )
+        .await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "reply"}))
+        .await;
+    server
+        .comment(json!({"op": "resolve", "id": "c1", "resolved": true}))
+        .await;
+
+    let state = sink.last_state();
+    assert_eq!(state.comments.len(), 1);
+    assert_eq!(state.comments[0].replies, vec!["reply".to_string()]);
+    assert!(state.comments[0].resolved);
+    assert!(state.seen.contains("f1"));
+    assert_eq!(state.collapsed.get("f1"), Some(&true));
+    assert_eq!(*sink.title.lock().unwrap(), "テストのレビュー");
+    assert_eq!(*sink.total_files.lock().unwrap(), 3);
+}
+
+#[tokio::test]
+async fn session_copy_is_saved_after_the_first_review() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+
+    server.get("api/review").await;
+
+    let copy = server.wait_for_copy(&sink).await;
+    assert_eq!(copy.startup_unit, None);
+    assert_eq!(copy.units.len(), 1);
+    assert_eq!(copy.units[0].review.groups[0].id, "g1");
+    assert!(copy.contents.contains_key("f1"));
+    assert!(copy.contents.contains_key("f2"));
+    assert!(copy.contents.contains_key("f3"));
+}
+
+/// 2 つ目のグループ単位の作成が遅いソース。凍結は両方がそろうまで待つ。
+struct TwoUnitSource {
+    first: ReviewMeta,
+    second: ReviewMeta,
+    contents: HashMap<String, FileContent>,
+}
+
+impl ReviewSource for TwoUnitSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        Ok(self.first.clone())
+    }
+
+    fn units(&self) -> Vec<GroupBy> {
+        vec![GroupBy::File, GroupBy::Commit]
+    }
+
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == GroupBy::Commit {
+            std::thread::sleep(Duration::from_millis(200));
+            Ok(self.second.clone())
+        } else {
+            Ok(self.first.clone())
+        }
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.contents
+            .get(file_id)
+            .cloned()
+            .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))
+    }
+}
+
+#[tokio::test]
+async fn session_copy_waits_for_both_units() {
+    let base = FakeSource::new();
+    let mut second = base.meta.clone();
+    second.groups[0].id = "deadbeef".to_string();
+    let mut contents = base.contents.clone();
+    contents.insert(
+        "f4".to_string(),
+        FileContent {
+            old: None,
+            new: Some(b"second\n".to_vec()),
+        },
+    );
+    second.groups[0]
+        .files
+        .push(file_entry("f4", "src/second.rs"));
+    let source = Arc::new(TwoUnitSource {
+        first: base.meta.clone(),
+        second,
+        contents,
+    });
+    let sink = Arc::new(RecordingSink::default());
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
+    let params = ServeParams {
+        source,
+        assets: Arc::new(FakeAssets),
+        token: "test-token".to_string(),
+        results: None,
+        session: Some(sink.clone()),
+        share_address: None,
+    };
+    tokio::spawn(serve(listener, params));
+
+    reqwest::get(format!("{url}api/review")).await.unwrap();
+
+    let copy = {
+        let mut found = None;
+        for _ in 0..200 {
+            if let Some(copy) = sink.copies.lock().unwrap().first().cloned() {
+                found = Some(copy);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        found.expect("the session copy was never saved")
+    };
+    assert_eq!(copy.startup_unit, Some(GroupBy::File));
+    assert_eq!(copy.units.len(), 2);
+    assert_eq!(copy.units[1].unit, Some(GroupBy::Commit));
+    assert!(copy.contents.contains_key("f4"));
+}
+
+#[tokio::test]
+async fn session_copy_failure_marks_the_session_unresumable() {
+    let mut source = FakeSource::new();
+    source.contents.clear();
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(source), sink.clone()).await;
+
+    server.get("api/review").await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        if !sink.unusable.lock().unwrap().is_empty() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never marked unusable"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert!(sink.copies.lock().unwrap().is_empty());
+    assert!(sink.unusable.lock().unwrap()[0].contains("cannot read"));
+}
+
+#[tokio::test]
+async fn session_review_response_does_not_wait_for_the_freeze() {
+    let source = FakeSource::new();
+    source.set_content_delay(Duration::from_millis(600));
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(source), sink.clone()).await;
+
+    let started = std::time::Instant::now();
+    let response = server.get("api/review").await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(response.status(), 200);
+    assert!(
+        elapsed < Duration::from_millis(400),
+        "review waited {elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn session_is_deleted_on_submit() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    server.get("api/review").await;
+
+    let response = server
+        .post("api/submit", json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    server.finish().await;
+
+    assert!(sink.deleted.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn session_sink_failure_does_not_stop_the_review() {
+    let sink = Arc::new(RecordingSink::default());
+    sink.fail.store(true, Ordering::SeqCst);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+
+    let added = server
+        .comment(json!({"op": "add", "file_id": "f1", "side": "new", "start_line": 1, "end_line": 1, "body": "x"}))
+        .await;
+    assert_eq!(added.status(), 200);
+    let review = server.get("api/review").await;
+    assert_eq!(review.status(), 200);
+
+    let response = server
+        .post("api/submit", json!({"verdict": "changes_requested"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let document = server.finish().await;
+    assert_eq!(document["comments"].as_array().unwrap().len(), 1);
+}
+
+/// 一時ディレクトリのセッションを実際に書く sink。上限の扱いを core に任せる。
+struct StoreSink {
+    open: Mutex<OpenSession>,
+}
+
+impl SessionSink for StoreSink {
+    fn describe_review(&self, _title: &str, _total_files: usize) {}
+
+    fn save_state(&self, state: SessionState) -> Result<(), String> {
+        self.open
+            .lock()
+            .unwrap()
+            .save_state(state)
+            .map_err(|error| error.to_string())
+    }
+
+    fn save_copy(&self, copy: SessionCopy) -> Result<(), String> {
+        self.open
+            .lock()
+            .unwrap()
+            .save_copy(copy)
+            .map_err(|error| error.to_string())
+    }
+
+    fn mark_unresumable(&self, reason: &str) -> Result<(), String> {
+        self.open
+            .lock()
+            .unwrap()
+            .mark_unresumable(reason)
+            .map_err(|error| error.to_string())
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        self.open
+            .lock()
+            .unwrap()
+            .delete()
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn incompressible(size: usize) -> Vec<u8> {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    (0..size)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state & 0xff) as u8
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn session_copy_over_the_limit_is_unresumable() {
+    let dir = std::env::temp_dir().join(format!(
+        "kemi-server-session-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = SessionStore::new(dir.clone());
+    let info = SessionInfo {
+        id: "01HF7YAT00SERVER0000000000".to_string(),
+        created: 1,
+        updated: 1,
+        workspace: PathBuf::from("/tmp/workspace"),
+        workspace_key: "00000000000000aa".to_string(),
+        mode: SessionMode::Worktree,
+        title: "big".to_string(),
+        total_files: 1,
+    };
+    let open = store.create(info).unwrap();
+    let sink = Arc::new(StoreSink {
+        open: Mutex::new(open),
+    });
+
+    let mut source = FakeSource::new();
+    source.meta.groups[0].files = vec![file_entry("big", "big.bin")];
+    source.contents.clear();
+    source.contents.insert(
+        "big".to_string(),
+        FileContent {
+            old: None,
+            new: Some(incompressible(21 * 1024 * 1024)),
+        },
+    );
+    let server = TestServer::start_with_session(Arc::new(source), sink).await;
+    server.get("api/review").await;
+
+    let id = "01HF7YAT00SERVER0000000000";
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(stored) = store.read(id) {
+            if matches!(stored.copy, kemi_core::session::CopyState::Unusable(_)) {
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never became unusable"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(store.list().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
 }

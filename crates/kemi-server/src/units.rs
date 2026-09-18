@@ -89,6 +89,14 @@ impl ReviewState {
             })
     }
 
+    /// 両方のグループ単位のメタデータがそろっているか。凍結はこれが true になるまで待つ
+    /// （R-SESSION）。
+    pub fn all_units_ready(&self) -> bool {
+        self.other
+            .as_ref()
+            .is_none_or(|other| matches!(other.state, BuildState::Ready))
+    }
+
     /// ページに渡す単位の一覧。コミット範囲以外は空。
     pub fn units_json(&self) -> Value {
         let (Some(startup), Some(other)) = (self.startup_unit, &self.other) else {

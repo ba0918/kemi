@@ -1,6 +1,7 @@
 //! kemi の CLI（R-INPUT-6, R-SUBMIT）。stdout は submit の JSON だけに使う。
 
 mod result;
+mod session;
 
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
@@ -9,12 +10,13 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 
+use kemi_core::session::{now_millis, SessionInfo, SessionMode, SessionStore};
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
 use kemi_server::{
     detect_share_address, exposure_warning, serve, session_host, session_url, Asset, Assets,
-    ResultSink, ServeOutcome, ServeParams,
+    ResultSink, ServeOutcome, ServeParams, SessionSink,
 };
 use tokio::net::TcpListener;
 
@@ -186,6 +188,78 @@ fn results_dir() -> Option<PathBuf> {
         std::env::var_os("HOME").as_deref(),
         std::env::var_os("LOCALAPPDATA").as_deref(),
     )
+}
+
+/// セッションの置き場所（R-SESSION）。結果ファイルと同じ根の下。
+fn sessions_dir() -> Option<PathBuf> {
+    result::sessions_dir(
+        std::env::var_os("XDG_STATE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+        std::env::var_os("LOCALAPPDATA").as_deref(),
+    )
+}
+
+/// 起動時の入力から、セッションに記録する情報を組み立てる。コミット範囲は完全な sha に
+/// 解決しておく（R-SESSION）。
+fn session_info(cli: &Cli) -> Result<SessionInfo, String> {
+    let workspace = workspace_root(Path::new("."));
+    let mode = if cli.worktree {
+        SessionMode::Worktree
+    } else if cli.staged {
+        SessionMode::Staged
+    } else if cli.manifest.is_some() {
+        SessionMode::Manifest
+    } else {
+        let from = cli.from.clone().unwrap_or_default();
+        let to = cli.to.clone().unwrap_or_else(|| "HEAD".to_string());
+        let repo =
+            kemi_core::source::git::repo_root(Path::new(".")).map_err(|error| error.to_string())?;
+        let (from_sha, to_sha) = kemi_core::session::resolve_range(&repo, &from, &to)
+            .map_err(|error| error.to_string())?;
+        SessionMode::Range {
+            from,
+            to,
+            from_sha,
+            to_sha,
+        }
+    };
+    let now = now_millis();
+    Ok(SessionInfo {
+        id: kemi_core::session::new_ulid(),
+        created: now,
+        updated: now,
+        workspace_key: result::workspace_key(&workspace),
+        workspace,
+        mode,
+        title: String::new(),
+        total_files: 0,
+    })
+}
+
+/// セッションの保存先を開く。決められない・開けないときは警告だけを出し、セッション
+/// なしでレビューを続ける。
+fn open_session(cli: &Cli) -> Option<Arc<session::StoredSession>> {
+    let Some(dir) = sessions_dir() else {
+        eprintln!(
+            "kemi: cannot determine where to save sessions ({})",
+            results_unset_reason()
+        );
+        return None;
+    };
+    let info = match session_info(cli) {
+        Ok(info) => info,
+        Err(message) => {
+            eprintln!("kemi: cannot start a session: {message}");
+            return None;
+        }
+    };
+    match session::StoredSession::start(&SessionStore::new(dir), info) {
+        Ok(session) => Some(Arc::new(session)),
+        Err(error) => {
+            eprintln!("kemi: cannot start a session: {error}");
+            None
+        }
+    }
 }
 
 /// 結果を識別するリポジトリのトップ。git の外ならその場所そのもの。
@@ -469,11 +543,15 @@ async fn main() {
         open_browser(&browser_url);
     }
 
+    let stored_session = open_session(&cli);
     let params = ServeParams {
         source,
         assets: Arc::new(WebAssets),
         token,
         results: Some(Arc::new(results)),
+        session: stored_session
+            .clone()
+            .map(|session| session as Arc<dyn SessionSink>),
         share_address,
     };
     let outcome = tokio::select! {

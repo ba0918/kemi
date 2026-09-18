@@ -19,7 +19,7 @@ pub use store::{
 pub use ulid::{generate_ulid, new_ulid, now_millis};
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,6 +31,20 @@ use crate::source::FileContent;
 
 /// 保存形式の版。読めない版は復元せず、理由を出して終了コード 2 にする。
 pub const FORMAT: u32 = 1;
+
+/// コミット範囲の端を完全な sha に解決する（R-SESSION）。起動時に 1 度だけ呼ぶ。
+pub fn resolve_range(repo: &Path, from: &str, to: &str) -> Result<(String, String), SessionError> {
+    fn resolve(repo: &Path, revision: &str) -> Result<String, SessionError> {
+        let spec = format!("{revision}^{{commit}}");
+        crate::source::git::git_text(repo, &["rev-parse", "--verify", "--quiet", &spec])
+            .map(|sha| sha.trim().to_string())
+            .map_err(|error| SessionError::Range {
+                revision: revision.to_string(),
+                reason: error.to_string(),
+            })
+    }
+    Ok((resolve(repo, from)?, resolve(repo, to)?))
+}
 
 /// セッション 1 つの情報。一覧の列と、復元の手がかりになる。
 #[derive(Clone, Debug, PartialEq, Eq)]

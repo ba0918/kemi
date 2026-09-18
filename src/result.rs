@@ -17,21 +17,37 @@ pub fn results_dir(
     home: Option<&OsStr>,
     local_app_data: Option<&OsStr>,
 ) -> Option<PathBuf> {
+    state_root(xdg_state_home, home, local_app_data).map(|root| root.join("results"))
+}
+
+/// セッションの置き場所（R-SESSION）。結果ファイルと同じ根の下の `sessions/`。
+pub fn sessions_dir(
+    xdg_state_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+    local_app_data: Option<&OsStr>,
+) -> Option<PathBuf> {
+    state_root(xdg_state_home, home, local_app_data).map(|root| root.join("sessions"))
+}
+
+/// kemi の状態の根（`.../kemi/`）。結果ファイルとセッションがこの下に並ぶ。
+fn state_root(
+    xdg_state_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+    local_app_data: Option<&OsStr>,
+) -> Option<PathBuf> {
     match xdg_state_home.map(Path::new) {
-        Some(path) if path.is_absolute() => Some(path.join("kemi").join("results")),
+        Some(path) if path.is_absolute() => Some(path.join("kemi")),
         #[cfg(windows)]
         _ => {
             let _ = home;
             let app_data = Path::new(local_app_data?);
-            app_data
-                .is_absolute()
-                .then(|| app_data.join("kemi").join("results"))
+            app_data.is_absolute().then(|| app_data.join("kemi"))
         }
         #[cfg(not(windows))]
         _ => {
             let _ = local_app_data;
             let state = Path::new(home?).join(".local").join("state");
-            Some(state.join("kemi").join("results"))
+            Some(state.join("kemi"))
         }
     }
 }
@@ -326,6 +342,22 @@ mod tests {
             Some(PathBuf::from("/home/user/.local/state/kemi/results"))
         );
         assert_eq!(results_dir(None, None, None), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn session_dir_is_next_to_results_under_the_same_root() {
+        let home = Some(OsStr::new("/home/user"));
+
+        assert_eq!(
+            sessions_dir(Some(OsStr::new("/state")), home, None),
+            Some(PathBuf::from("/state/kemi/sessions"))
+        );
+        assert_eq!(
+            sessions_dir(None, home, None),
+            Some(PathBuf::from("/home/user/.local/state/kemi/sessions"))
+        );
+        assert_eq!(sessions_dir(None, None, None), None);
     }
 
     #[cfg(windows)]

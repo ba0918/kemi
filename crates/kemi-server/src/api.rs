@@ -29,7 +29,7 @@ use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::highlight::{self, HighlightedLine, Highlighter};
-use crate::session::{comment_json, Session};
+use crate::session::{comment_json, delete_stored, persist, start_freeze, Session};
 use crate::units::{self, Unavailable};
 use crate::{stop_with_error, AppState, Event, ServerError, Stop, SubmitState};
 
@@ -297,6 +297,8 @@ async fn review(
     };
     // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
     units::start_if_waiting(&state);
+    // 応答を返した後に、写しの凍結を裏で始める（R-SESSION）。
+    start_freeze(&state);
     Ok(Json(body))
 }
 
@@ -754,7 +756,10 @@ async fn comment_api(
                 .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
             comment.body = body;
             comment.suggestion = suggestion.map(|replacement| Suggestion { replacement });
-            Ok(Json(comment_json(comment)))
+            let value = comment_json(comment);
+            drop(session);
+            persist(&state);
+            Ok(Json(value))
         }
         CommentRequest::Delete { id } => {
             let mut session = state.session.lock().expect("session poisoned");
@@ -765,6 +770,8 @@ async fn comment_api(
                 .ok_or_else(comment_not_found)?;
             // id は再利用しない。採番は next_comment が進むだけで、削除では戻さない。
             session.comments.remove(index);
+            drop(session);
+            persist(&state);
             Ok(Json(json!({ "id": id, "deleted": true })))
         }
         CommentRequest::Reply { id, body } => {
@@ -777,6 +784,7 @@ async fn comment_api(
             comment.replies.push(body);
             let value = comment_json(comment);
             drop(session);
+            persist(&state);
             Ok(Json(value))
         }
         CommentRequest::Resolve { id, resolved } => {
@@ -789,6 +797,7 @@ async fn comment_api(
             comment.resolved = resolved;
             let value = comment_json(comment);
             drop(session);
+            persist(&state);
             Ok(Json(value))
         }
     }
@@ -852,6 +861,7 @@ async fn add_comment(
     };
     session.comments.push(comment.clone());
     drop(session);
+    persist(state);
 
     let location = match (comment.start_line, comment.end_line) {
         (Some(start), Some(end)) => format!("{start}-{end}"),
@@ -919,7 +929,7 @@ async fn state_api(
     if let Some(collapsed) = request.collapsed {
         session.collapsed.insert(request.file_id.clone(), collapsed);
     }
-    Ok(Json(json!({
+    let value = json!({
         "id": request.file_id,
         "seen": session.seen.contains(&request.file_id),
         "collapsed": session
@@ -927,7 +937,10 @@ async fn state_api(
             .get(&request.file_id)
             .copied()
             .unwrap_or(false),
-    })))
+    });
+    drop(session);
+    persist(&state);
+    Ok(Json(value))
 }
 
 #[derive(Debug, Deserialize)]
@@ -963,6 +976,8 @@ async fn submit(
                 *stop = Some(Stop::Submitted(document.clone()));
             }
             let saved = save_result(&state, &document);
+            // 結果を書いた後にセッションを消し、その後に停止する（R-SESSION）。
+            delete_stored(&state);
             let _ = state.shutdown.send(true);
             Ok(Json(json!({ "result": document, "saved": saved })))
         }
