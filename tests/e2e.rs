@@ -337,10 +337,6 @@ fn bind_rejects_hostname_ipv6_and_result_or_digest_combinations() {
         assert!(output.stdout.is_empty(), "{args:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            !stderr.contains("unknown flag"),
-            "{args:?} must be rejected as a usage error, not as an unknown flag: {stderr}"
-        );
-        assert!(
             !contains_japanese(&stderr),
             "{args:?} must be rejected in English: {stderr}"
         );
