@@ -6,9 +6,10 @@ license: MIT OR Apache-2.0
 
 # kemi
 
-kemi serves a local review page on `127.0.0.1`. The user can comment on changes and submit
-**Approve** or **Request changes**. It then prints one result JSON document to stdout and
-exits. It does not apply suggestions or edit the reviewed files.
+kemi serves a review page, by default on `127.0.0.1` only. `--bind` can expose it to the
+LAN, and kemi then warns that the URL and the API are plain HTTP. The user can comment on
+changes and submit **Approve** or **Request changes**. It then prints one result JSON
+document to stdout and exits. It does not apply suggestions or edit the reviewed files.
 
 Complete the review handoff by collecting the exit code and result, reading the comments,
 and acting or reporting within the user's requested scope. Sharing the URL is an intermediate
@@ -28,7 +29,8 @@ Use one input mode per run:
 
 Read [the input reference](references/inputs.md) when writing a manifest, choosing commit
 presentation, adding focus marks, or surveying a large change with `--digest`. It also covers
-`--no-open`, `--port`, and `--base`. Choose a review scope that leaves out already reviewed work.
+`--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
+reviewed work.
 For approval, identify the exact bytes being approved; the manifest's `approval` field is
 returned unchanged, not checked by kemi.
 

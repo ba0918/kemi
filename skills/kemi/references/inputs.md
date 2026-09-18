@@ -29,6 +29,7 @@ Other flags worth knowing:
 |---|---|
 | `--no-open` | do not open a browser. Use it whenever a browser should not appear on the person's machine |
 | `--port <n>` | listen on a fixed port; the default `0` picks a free one |
+| `--bind <addr>` | listen address as an IPv4 literal; the default `127.0.0.1` keeps the page local, while `0.0.0.0` listens on every IPv4 interface and exposes it to the network |
 | `--focus <path>` | a JSON file that adds focus marks and watch points to any input mode |
 | `--base <dir>` | where relative paths in a manifest and in `--focus` resolve from; default `.` |
 
