@@ -618,6 +618,7 @@ dependencies = [
 name = "kemi-core"
 version = "0.1.7"
 dependencies = [
+ "miniz_oxide",
  "serde",
  "serde_json",
  "similar",
