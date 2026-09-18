@@ -98,9 +98,10 @@ writes its result for the workspace the review was started from, with the manife
 
 Without an id and without a terminal, `kemi --resume` prints the resumable sessions as one
 tab-separated line each — id, last update, workspace, mode, seen/total, newest first — and
-exits `0`; with none it exits `2`. `--resume` takes only `--port`, `--bind`, `--no-open`,
-and `--serve`; pairing it with an input mode or `--digest` is a usage error (exit `2`), and
-`--digest` / `--result` never create sessions.
+exits `0`; with none it exits `2`. In a terminal, cancelling the chooser (Esc or Ctrl+C) also
+exits `130`; no review starts and nothing is printed to stderr. `--resume` takes only `--port`,
+`--bind`, `--no-open`, and `--serve`; pairing it with an input mode or `--digest` is a usage
+error (exit `2`), and `--digest` / `--result` never create sessions.
 
 ## Handle the result
 
