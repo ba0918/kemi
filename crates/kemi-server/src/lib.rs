@@ -71,6 +71,10 @@ pub trait ResultSink: Send + Sync {
 /// レビューをセッションとして残す先（R-SESSION）。保存の失敗は警告だけで、レビューは
 /// 終わらせず終了コードも変えない。
 pub trait SessionSink: Send + Sync {
+    /// 復元のときに、サーバのメモリへ読み戻す状態。新規のセッションでは空。
+    fn initial_state(&self) -> kemi_core::session::SessionState {
+        kemi_core::session::SessionState::default()
+    }
     /// サーブ開始時。起動時の単位の題と全ファイル数。
     fn describe_review(&self, title: &str, total_files: usize);
     /// 状態が変わるたび。空の状態と写しだけで、書くべきものが無ければ何もしない。
@@ -165,6 +169,12 @@ pub async fn serve(
         sink.describe_review(&review.title, total_files);
     }
     let units = params.source.units();
+    // 復元では、セッションの状態から見た・折りたたみ・コメント・解決を読み戻す（R-SESSION）。
+    let initial_state = params
+        .session
+        .as_ref()
+        .map(|sink| sink.initial_state())
+        .unwrap_or_default();
     let (events, _) = broadcast::channel(16);
     let (shutdown, _) = shutdown_watch::channel(false);
 
@@ -178,7 +188,7 @@ pub async fn serve(
         allowed,
         review: RwLock::new(units::ReviewState::new(&units, review)),
         refresh: tokio::sync::Mutex::new(()),
-        session: Mutex::new(Session::default()),
+        session: Mutex::new(Session::from_state(initial_state)),
         events,
         shutdown,
         stop: Mutex::new(None),

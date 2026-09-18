@@ -1774,6 +1774,7 @@ struct RecordingSink {
     states: Mutex<Vec<SessionState>>,
     copies: Mutex<Vec<SessionCopy>>,
     unusable: Mutex<Vec<String>>,
+    initial: Mutex<Option<SessionState>>,
     deleted: AtomicBool,
     fail: AtomicBool,
 }
@@ -1790,6 +1791,10 @@ impl RecordingSink {
 }
 
 impl SessionSink for RecordingSink {
+    fn initial_state(&self) -> SessionState {
+        self.initial.lock().unwrap().clone().unwrap_or_default()
+    }
+
     fn describe_review(&self, title: &str, total_files: usize) {
         *self.title.lock().unwrap() = title.to_string();
         *self.total_files.lock().unwrap() = total_files;
@@ -2175,4 +2180,41 @@ async fn session_copy_over_the_limit_is_unresumable() {
     }
     assert!(store.list().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn session_initial_state_is_restored() {
+    use kemi_core::domain::review::Side;
+    let comment = kemi_core::domain::review::Comment {
+        id: "c7".to_string(),
+        file_id: "f1".to_string(),
+        group_id: "g1".to_string(),
+        group_title: "最初の変更".to_string(),
+        path: "src/a.rs".to_string(),
+        side: Side::New,
+        start_line: Some(1),
+        end_line: Some(1),
+        quote: vec!["x".to_string()],
+        body: "復元されたコメント".to_string(),
+        replies: vec!["返信".to_string()],
+        resolved: true,
+        outdated: false,
+        content_hash: "hash".to_string(),
+        suggestion: None,
+    };
+    let sink = Arc::new(RecordingSink::default());
+    *sink.initial.lock().unwrap() = Some(SessionState {
+        comments: vec![comment],
+        seen: ["f1".to_string()].into_iter().collect(),
+        collapsed: [("f1".to_string(), true)].into_iter().collect(),
+    });
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink).await;
+
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+    let file = &review["groups"][0]["files"][0];
+
+    assert_eq!(review["comments"][0]["body"], "復元されたコメント");
+    assert_eq!(review["comments"][0]["resolved"], true);
+    assert_eq!(file["seen"], true);
+    assert_eq!(file["collapsed"], true);
 }

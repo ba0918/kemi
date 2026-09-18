@@ -21,6 +21,26 @@ pub struct Session {
     pub next_comment: u32,
 }
 
+impl Session {
+    /// 保存された状態から読み戻す。コメントの id は再利用しないので、採番は既存の
+    /// 最大の番号の次から始める。
+    pub fn from_state(state: SessionState) -> Self {
+        let next_comment = state
+            .comments
+            .iter()
+            .filter_map(|comment| comment.id.strip_prefix('c'))
+            .filter_map(|number| number.parse::<u32>().ok())
+            .max()
+            .unwrap_or(0);
+        Session {
+            comments: state.comments,
+            seen: state.seen,
+            collapsed: state.collapsed,
+            next_comment,
+        }
+    }
+}
+
 /// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。
 pub fn comment_json(comment: &Comment) -> serde_json::Value {
     json!({

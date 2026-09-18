@@ -2078,3 +2078,219 @@ fn digest_and_result_do_not_create_sessions() {
     assert_eq!(result.status.code(), Some(2));
     assert!(!sessions_dir(&state.path).exists());
 }
+
+// ---- R-SESSION（復元の実行） ----
+
+impl Kemi {
+    async fn get_json(&self, path: &str) -> serde_json::Value {
+        let response = reqwest::get(format!("{}{path}", self.url)).await.unwrap();
+        assert_eq!(response.status(), 200, "GET {path}");
+        response.json().await.unwrap()
+    }
+}
+
+#[tokio::test]
+async fn resume_keeps_the_frozen_contents_and_state() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let session = wait_for_session(&state.path).await;
+    let id = session_id(&session);
+    let review = kemi.get_json("api/review").await;
+    let file_id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    kemi.post(
+        "api/comment",
+        serde_json::json!({
+            "op": "add", "file_id": file_id, "side": "new",
+            "start_line": 1, "end_line": 1, "body": "note"
+        }),
+    )
+    .await;
+    kemi.post(
+        "api/comment",
+        serde_json::json!({"op": "resolve", "id": "c1", "resolved": true}),
+    )
+    .await;
+    kemi.post(
+        "api/state",
+        serde_json::json!({"file_id": file_id, "seen": true, "collapsed": true}),
+    )
+    .await;
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+
+    // 保留の間にワークツリーを変える。復元はこの変更を読まない。
+    std::fs::write(dir.path.join("a.txt"), "totally\nchanged\n").unwrap();
+    std::fs::write(dir.path.join("b.txt"), "added\n").unwrap();
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    resumed.wait_serving().await;
+    let review = resumed.get_json("api/review").await;
+    let files = review["groups"][0]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{review}");
+    assert_eq!(files[0]["path"], "a.txt");
+    assert_eq!(files[0]["seen"], true);
+    assert_eq!(files[0]["collapsed"], true);
+    assert_eq!(review["comments"][0]["body"], "note");
+    assert_eq!(review["comments"][0]["resolved"], true);
+
+    let file = resumed.get_json(&format!("api/file/{file_id}")).await;
+    let texts: Vec<&str> = file["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["new"]["text"].as_str())
+        .collect();
+    assert!(texts.contains(&"TWO"), "{texts:?}");
+    assert!(
+        !texts.iter().any(|text| text.contains("changed")),
+        "{texts:?}"
+    );
+
+    // 復元は同じ id の続きで、セッションは増えない。
+    assert_eq!(session_files(&state.path).len(), 1);
+    assert_eq!(session_id(&session_files(&state.path)[0]), id);
+    resumed.kill();
+}
+
+#[tokio::test]
+async fn resume_writes_state_back_to_the_same_session() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_session(&state.path).await);
+    let review = kemi.get_json("api/review").await;
+    let file_id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    kemi.post(
+        "api/comment",
+        serde_json::json!({
+            "op": "add", "file_id": file_id, "side": "new",
+            "start_line": 1, "end_line": 1, "body": "first"
+        }),
+    )
+    .await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    resumed.wait_serving().await;
+    let added = resumed
+        .post(
+            "api/comment",
+            serde_json::json!({
+                "op": "add", "file_id": file_id, "side": "new",
+                "start_line": 1, "end_line": 1, "body": "second"
+            }),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(added["id"], "c2", "comment ids must not be reused");
+    signal(&resumed.child, "-INT");
+    resumed.wait_with_stderr();
+
+    let store = SessionStore::new(sessions_dir(&state.path));
+    let stored = store.read(&id).unwrap();
+    let ids: Vec<&str> = stored
+        .state
+        .comments
+        .iter()
+        .map(|comment| comment.id.as_str())
+        .collect();
+    assert_eq!(ids, vec!["c1", "c2"]);
+    assert_eq!(session_files(&state.path).len(), 1);
+}
+
+#[tokio::test]
+async fn resume_without_the_repository_keeps_origin_unknown() {
+    let dir = TempDir::new();
+    let base = two_commit_repo(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &["--from", &base, "--no-open", "--port", "0"],
+        &state.path,
+    );
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_session(&state.path).await);
+    let review = kemi.get_json("api/review").await;
+    let file_id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+
+    // 元のワークスペースを消しても復元でき、由来だけ「特定できない」になる。
+    std::fs::remove_dir_all(&dir.path).unwrap();
+    let elsewhere = TempDir::new();
+    let resumed = Kemi::spawn_with_state(
+        &elsewhere.path,
+        &["--resume", &id, "--no-open"],
+        &state.path,
+    );
+    resumed.wait_serving().await;
+
+    let review = resumed.get_json("api/review").await;
+    assert_eq!(review["groups"][0]["files"][0]["path"], "a.txt");
+    let origin = resumed.get_json(&format!("api/origin/{file_id}")).await;
+    assert_eq!(origin["available"], false, "{origin}");
+    resumed.kill();
+}
+
+#[tokio::test]
+async fn resume_submit_uses_the_original_workspace_for_the_result() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["manifest.json", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_session(&state.path).await);
+    let original_url = kemi.url.clone();
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+
+    // 別のディレクトリから復元し、submit する。
+    let elsewhere = TempDir::new();
+    let resumed = Kemi::spawn_with_state(
+        &elsewhere.path,
+        &["--resume", &id, "--no-open"],
+        &state.path,
+    );
+    resumed.wait_serving().await;
+    assert_ne!(resumed.url, original_url, "token must be new");
+    let response = resumed
+        .post("api/submit", serde_json::json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let (status, stdout, _) = resumed.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(0));
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        document["approval"],
+        serde_json::json!([{ "path": "a.txt", "identity": "sha256:e2e" }])
+    );
+    // 結果ファイルは、記録した元のワークスペースの識別で置かれる。
+    let result = run_with_state(
+        &elsewhere.path,
+        &["--result", "--workspace", dir.path.to_str().unwrap()],
+        &state.path,
+    );
+    assert_eq!(result.status.code(), Some(0));
+    let from_file: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(from_file["approval"], document["approval"]);
+    assert!(session_files(&state.path).is_empty());
+}

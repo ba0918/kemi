@@ -53,6 +53,10 @@ impl StoredSession {
 }
 
 impl SessionSink for StoredSession {
+    fn initial_state(&self) -> SessionState {
+        self.open.lock().expect("session poisoned").state().clone()
+    }
+
     fn describe_review(&self, title: &str, total_files: usize) {
         self.open
             .lock()
