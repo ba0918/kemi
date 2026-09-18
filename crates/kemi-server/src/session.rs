@@ -156,6 +156,11 @@ async fn freeze(state: Arc<AppState>) {
     for attempt in 0..3 {
         match read_contents(&state, ids.clone()).await {
             Ok(contents) => {
+                // 読み取りの間に submit の停止が始まっていたら、消したセッションを
+                // 作り直さない（R-SESSION）。
+                if *shutdown.borrow() {
+                    return;
+                }
                 if let Some(sink) = &state.session_sink {
                     let copy = SessionCopy {
                         startup_unit,
@@ -180,6 +185,9 @@ async fn freeze(state: Arc<AppState>) {
         }
     }
 
+    if *shutdown.borrow() {
+        return;
+    }
     if let Some(sink) = &state.session_sink {
         let reason = format!("cannot read the review contents: {last_error}");
         if let Err(error) = sink.mark_unresumable(&reason) {

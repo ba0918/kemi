@@ -125,6 +125,7 @@ impl SessionStore {
             state: SessionState::default(),
             copy: CopyState::Pending,
             payload: None,
+            deleted: false,
             _lock: lock,
         })
     }
@@ -169,6 +170,7 @@ impl SessionStore {
             state,
             copy,
             payload,
+            deleted: false,
             _lock: lock,
         })
     }
@@ -323,6 +325,9 @@ pub struct OpenSession {
     copy: CopyState,
     /// 写しの gzip 済み payload。書き直しのたびに圧縮し直さないために持つ。
     payload: Option<Vec<u8>>,
+    /// submit で消した後の保存を無視する印。凍結が submit と競争しても、消えた
+    /// セッションを作り直さない（R-SESSION）。
+    deleted: bool,
     /// このセッションのロック。フィールドとして持ち、Drop で解放する。
     _lock: SessionLock,
 }
@@ -370,8 +375,9 @@ impl OpenSession {
         self.mark_unresumable_at(reason, super::now_millis())
     }
 
-    /// submit の確定後にセッションを消す。
+    /// submit の確定後にセッションを消す。消した後の保存は無視する。
     pub fn delete(&mut self) -> Result<(), SessionError> {
+        self.deleted = true;
         self.remove_file()
     }
 
@@ -429,6 +435,9 @@ impl OpenSession {
     }
 
     fn persist(&mut self) -> Result<(), SessionError> {
+        if self.deleted {
+            return Ok(());
+        }
         // 空の状態で写しも無ければ、セッションは残さない。写しを作れなかった印
         // （Unusable）は、理由を残すために情報だけを残す。
         if self.state.is_empty()
@@ -1198,6 +1207,25 @@ mod tests {
 
         assert!(matches!(result, Err(SessionError::NotFound { .. })));
         assert!(outside.exists());
+    }
+
+    #[test]
+    fn session_is_not_recreated_by_a_copy_saved_after_delete() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.delete().unwrap();
+
+        // submit と競争した凍結が、消えたあとに写しを保存する。
+        open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+
+        assert!(matches!(
+            store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
+            Err(SessionError::NotFound { .. })
+        ));
     }
 
     #[cfg(unix)]
