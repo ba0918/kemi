@@ -18,14 +18,14 @@ pub struct Session {
     pub comments: Vec<Comment>,
     pub seen: BTreeSet<String>,
     pub collapsed: BTreeMap<String, bool>,
-    pub next_comment: u32,
+    pub last_comment: u32,
 }
 
 impl Session {
-    /// 保存された状態から読み戻す。コメントの id は再利用しないので、採番は既存の
-    /// 最大の番号の次から始める。
+    /// 保存された状態から読み戻す。コメントの id は再利用しないので、採番は保存した
+    /// 最終番号と、残っているコメントの番号の大きい方から続ける。
     pub fn from_state(state: SessionState) -> Self {
-        let next_comment = state
+        let from_comments = state
             .comments
             .iter()
             .filter_map(|comment| comment.id.strip_prefix('c'))
@@ -36,7 +36,7 @@ impl Session {
             comments: state.comments,
             seen: state.seen,
             collapsed: state.collapsed,
-            next_comment,
+            last_comment: state.last_comment.max(from_comments),
         }
     }
 }
@@ -74,6 +74,7 @@ pub(crate) fn persist(state: &AppState) {
             comments: session.comments.clone(),
             seen: session.seen.clone(),
             collapsed: session.collapsed.clone(),
+            last_comment: session.last_comment,
         }
     };
     if let Err(error) = sink.save_state(snapshot) {

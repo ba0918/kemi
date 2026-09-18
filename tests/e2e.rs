@@ -1798,6 +1798,7 @@ fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> Sess
         comments: vec![session_comment()],
         seen: ["f1".to_string()].into_iter().collect(),
         collapsed: BTreeMap::new(),
+        last_comment: 1,
     })
     .unwrap();
     open.save_copy(session_copy()).unwrap();
@@ -2241,6 +2242,75 @@ async fn resume_writes_state_back_to_the_same_session() {
         .collect();
     assert_eq!(ids, vec!["c1", "c2"]);
     assert_eq!(session_files(&state.path).len(), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resume_does_not_reuse_a_deleted_comment_id() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_session(&state.path).await);
+    let review = kemi.get_json("api/review").await;
+    let file_id = review["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    kemi.post(
+        "api/comment",
+        serde_json::json!({
+            "op": "add", "file_id": file_id, "side": "new",
+            "start_line": 1, "end_line": 1, "body": "first"
+        }),
+    )
+    .await;
+    let second = kemi
+        .post(
+            "api/comment",
+            serde_json::json!({
+                "op": "add", "file_id": file_id, "side": "new",
+                "start_line": 1, "end_line": 1, "body": "second"
+            }),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let deleted_id = second["id"].as_str().unwrap().to_string();
+    let deleted = kemi
+        .post(
+            "api/comment",
+            serde_json::json!({"op": "delete", "id": deleted_id}),
+        )
+        .await;
+    assert_eq!(deleted.status(), 200, "deleting {deleted_id}");
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    resumed.wait_serving().await;
+    let added = resumed
+        .post(
+            "api/comment",
+            serde_json::json!({
+                "op": "add", "file_id": file_id, "side": "new",
+                "start_line": 1, "end_line": 1, "body": "third"
+            }),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    assert_ne!(
+        added["id"].as_str().unwrap(),
+        deleted_id,
+        "a deleted comment id must not be reused after resuming"
+    );
+    signal(&resumed.child, "-INT");
+    resumed.wait_with_stderr();
 }
 
 #[cfg(unix)]

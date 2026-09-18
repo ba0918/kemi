@@ -2209,6 +2209,7 @@ async fn session_initial_state_is_restored() {
         comments: vec![comment],
         seen: ["f1".to_string()].into_iter().collect(),
         collapsed: [("f1".to_string(), true)].into_iter().collect(),
+        last_comment: 7,
     });
     let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink).await;
 

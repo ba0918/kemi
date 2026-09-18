@@ -96,6 +96,9 @@ pub struct SessionState {
     pub comments: Vec<Comment>,
     pub seen: BTreeSet<String>,
     pub collapsed: BTreeMap<String, bool>,
+    /// 最後に付けたコメントの番号。削除では戻さず、復元しても次の番号から採番する
+    /// （R-COMMENT は id を再利用しないと定める）。
+    pub last_comment: u32,
 }
 
 impl SessionState {
@@ -189,6 +192,8 @@ struct StateDto {
     comments: Vec<CommentDto>,
     seen: BTreeSet<String>,
     collapsed: BTreeMap<String, bool>,
+    #[serde(default)]
+    last_comment: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -408,6 +413,7 @@ impl From<&SessionState> for StateDto {
             comments: state.comments.iter().map(CommentDto::from).collect(),
             seen: state.seen.clone(),
             collapsed: state.collapsed.clone(),
+            last_comment: state.last_comment,
         }
     }
 }
@@ -422,6 +428,7 @@ impl StateDto {
                 .collect::<Result<Vec<_>, String>>()?,
             seen: self.seen,
             collapsed: self.collapsed,
+            last_comment: self.last_comment,
         })
     }
 }

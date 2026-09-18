@@ -770,6 +770,7 @@ mod tests {
             comments: vec![comment()],
             seen: ["f1".to_string()].into_iter().collect(),
             collapsed: [("f1".to_string(), true)].into_iter().collect(),
+            last_comment: 1,
         }
     }
 

@@ -768,7 +768,7 @@ async fn comment_api(
                 .iter()
                 .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
-            // id は再利用しない。採番は next_comment が進むだけで、削除では戻さない。
+            // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
             session.comments.remove(index);
             drop(session);
             persist(&state);
@@ -841,9 +841,9 @@ async fn add_comment(
     let content_hash = comment::content_hash(&lines);
 
     let mut session = state.session.lock().expect("session poisoned");
-    session.next_comment += 1;
+    session.last_comment += 1;
     let comment = Comment {
-        id: format!("c{}", session.next_comment),
+        id: format!("c{}", session.last_comment),
         file_id,
         group_id: file.group_id.clone(),
         group_title,
