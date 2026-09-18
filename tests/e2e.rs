@@ -1638,6 +1638,7 @@ use kemi_core::source::FileContent;
 
 impl Kemi {
     /// 終了を待ち、stdout と stderr の全部を返す。
+    #[cfg(unix)]
     fn wait_with_stderr(mut self) -> (std::process::ExitStatus, String, String) {
         let status = self.child.wait().unwrap();
         let mut stdout = String::new();
@@ -1683,6 +1684,7 @@ fn session_id(path: &Path) -> String {
     path.file_stem().unwrap().to_string_lossy().into_owned()
 }
 
+#[cfg(unix)]
 fn signal(child: &Child, signal: &str) {
     let status = Command::new("kill")
         .arg(signal)
@@ -1829,6 +1831,7 @@ fn resume_flag_conflicts_exit_2_in_english() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupt_leaves_a_session_and_prints_the_resume_line() {
     let dir = TempDir::new();
@@ -1874,6 +1877,7 @@ async fn sigterm_leaves_a_session_and_prints_the_resume_line() {
     assert!(session.exists());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupt_without_state_or_copy_leaves_no_session() {
     let dir = TempDir::new();
@@ -2105,6 +2109,7 @@ fn digest_and_result_do_not_create_sessions() {
 // ---- R-SESSION（復元の実行） ----
 
 impl Kemi {
+    #[cfg(unix)]
     async fn get_json(&self, path: &str) -> serde_json::Value {
         let response = reqwest::get(format!("{}{path}", self.url)).await.unwrap();
         assert_eq!(response.status(), 200, "GET {path}");
@@ -2112,6 +2117,7 @@ impl Kemi {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn resume_keeps_the_frozen_contents_and_state() {
     let dir = TempDir::new();
@@ -2182,6 +2188,7 @@ async fn resume_keeps_the_frozen_contents_and_state() {
     resumed.kill();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn resume_writes_state_back_to_the_same_session() {
     let dir = TempDir::new();
@@ -2236,6 +2243,7 @@ async fn resume_writes_state_back_to_the_same_session() {
     assert_eq!(session_files(&state.path).len(), 1);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn resume_without_the_repository_keeps_origin_unknown() {
     let dir = TempDir::new();
@@ -2273,6 +2281,7 @@ async fn resume_without_the_repository_keeps_origin_unknown() {
     resumed.kill();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn resume_submit_uses_the_original_workspace_for_the_result() {
     let dir = TempDir::new();
