@@ -88,8 +88,10 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   100 KB 未満。
 - 配布: Linux x86_64・aarch64（musl 静的）、macOS x86_64・arm64、Windows
   x86_64・arm64（msvc）。
-- セキュリティ: 127.0.0.1 のみ、URL トークン、Origin / Host 検証。kemi は git の状態を
-  書き換えない（suggestion の適用はエージェントが行う）。静的 HTML は書き出さない。
+- セキュリティ: 既定では 127.0.0.1 にだけバインドし、`--bind` で明示したときだけ
+  LAN に公開する（公開時は警告を出す）。URL トークン、Origin / Host 検証。kemi は
+  git の状態を書き換えない（suggestion の適用はエージェントが行う）。静的 HTML は
+  書き出さない。
 - セッションはメモリのみで、プロセス終了で消える。submit の結果は stdout の JSON で
   返し、同じ JSON を結果ファイル（unix は `$XDG_STATE_HOME/kemi/results/`、Windows は
   `%LOCALAPPDATA%\kemi\results\`。`R-RESULT`）にも残す
