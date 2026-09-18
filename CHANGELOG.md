@@ -7,6 +7,26 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 （なし）
 
+## [0.1.7] - 2026-09-18
+
+### 追加
+
+- `--bind <IPv4>` で待ち受けアドレスを選べるようにした。既定は今までどおり
+  `127.0.0.1` だけで、`0.0.0.0` を指定すると同じ LAN の端末からもページを開ける。
+  `0.0.0.0` のときの URL には既定経路のローカルアドレスを使い、URL の行の後に公開の
+  警告（URL を知る人は誰でも閲覧と submit ができ、平文 HTTP であること）を出す。
+  アドレスを特定できないときは URL が `127.0.0.1` のまま `--bind <自分のIP>` を
+  案内する。公開中の `Host` と `Origin` の検証は、ループバック・バインドした具体
+  アドレス・共有アドレスの 3 つに限る。README に、到達性が OS のファイアウォールや
+  WSL2 では Windows 側の設定、繰り返し公開するときの `--port` の固定に依存することを
+  書いた。
+
+### 変更
+
+- 同梱のスキル `skills/kemi/SKILL.md` から特定のエージェント向けの注を外し、起動と
+  待機の手順を実行環境一般のプロセス lifecycle の言葉に書き直した。`gh skill install`
+  で入れ直すと反映される。
+
 ## [0.1.6] - 2026-09-14
 
 ### 修正
@@ -88,7 +108,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/ba0918/kemi/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/ba0918/kemi/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/ba0918/kemi/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ba0918/kemi/compare/v0.1.3...v0.1.4
