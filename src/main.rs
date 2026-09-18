@@ -1,8 +1,10 @@
 //! kemi の CLI（R-INPUT-6, R-SUBMIT）。stdout は submit の JSON だけに使う。
 
+mod local_time;
 mod result;
 mod session;
 
+use std::io::IsTerminal;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +12,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use kemi_core::session::{now_millis, SessionInfo, SessionMode, SessionStore};
+use kemi_core::session::{now_millis, SessionInfo, SessionMode, SessionStore, SessionSummary};
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
@@ -62,6 +64,8 @@ struct Cli {
     result: bool,
     any: bool,
     workspace: Option<PathBuf>,
+    /// `--resume`。`Some(None)` は id の省略。
+    resume: Option<Option<String>>,
     version: bool,
     help: bool,
     /// 指定されたフラグの名前（値は含めない）。`--result` と組み合わせられるかの判定に使う。
@@ -88,6 +92,7 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
         result: false,
         any: false,
         workspace: None,
+        resume: None,
         version: false,
         help: false,
         flags: Vec::new(),
@@ -137,6 +142,17 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
             "--result" => cli.result = true,
             "--any" => cli.any = true,
             "--workspace" => cli.workspace = Some(PathBuf::from(value(&mut index)?)),
+            "--resume" => {
+                // id は省略できる。次の引数がフラグでなければ id として取る。
+                let id = args
+                    .get(index + 1)
+                    .filter(|next| !next.starts_with('-'))
+                    .cloned();
+                if id.is_some() {
+                    index += 1;
+                }
+                cli.resume = Some(id);
+            }
             "-" => cli.manifest = Some("-".to_string()),
             other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
             path => {
@@ -168,6 +184,23 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     }
     if cli.any && cli.workspace.is_some() {
         return Err("--any and --workspace cannot be used together".to_string());
+    }
+    Ok(())
+}
+
+/// `--resume` と一緒に使えるのは `--port` / `--bind` / `--no-open` / `--serve` だけ
+/// （R-INPUT-6）。
+fn validate_resume_flags(cli: &Cli) -> Result<(), String> {
+    if cli.resume.is_none() {
+        return Ok(());
+    }
+    let allowed = ["--resume", "--port", "--bind", "--no-open", "--serve"];
+    let others = cli
+        .flags
+        .iter()
+        .any(|flag| !allowed.contains(&flag.as_str()));
+    if others || cli.manifest.is_some() {
+        return Err("--resume accepts only --port, --bind, --no-open and --serve".to_string());
     }
     Ok(())
 }
@@ -426,6 +459,187 @@ fn fail(message: &str) -> ! {
     std::process::exit(2);
 }
 
+/// 保留（Ctrl+C / SIGTERM）を待つ。SIGTERM は unix だけ。
+async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut terminate = match signal(SignalKind::terminate()) {
+            Ok(signal) => signal,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// 復元できるセッションが残るときだけ、機械が読む 1 行を stderr に出す（R-SESSION）。
+fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
+    if let Some(stored_session) = stored_session {
+        if let Some(line) = stored_session.resume_line() {
+            eprintln!("{line}");
+        }
+    }
+}
+
+/// サーブして、submit・保留・実行時エラーのどれかで終わる。
+async fn run_review(
+    cli: &Cli,
+    source: Arc<dyn ReviewSource>,
+    stored_session: Option<Arc<session::StoredSession>>,
+    results_key: String,
+) -> ! {
+    // --serve は互換のための受理のみ。既定で常にサーブする。
+    let _ = cli.serve;
+    let listener = match TcpListener::bind((cli.bind, cli.port)).await {
+        Ok(listener) => listener,
+        Err(error) => fail(&format!(
+            "cannot listen on {}:{}: {error}",
+            cli.bind, cli.port
+        )),
+    };
+    let token = random_token();
+    // 共有アドレスは wildcard のときだけ特定する（R-SERVE）。
+    let share_address = if cli.bind.is_unspecified() {
+        detect_share_address()
+    } else {
+        None
+    };
+    let url = match session_url(&listener, &token, session_host(cli.bind, share_address)) {
+        Ok(url) => url,
+        Err(error) => fail(&error.to_string()),
+    };
+    eprintln!("kemi: {url}");
+    if let Some(warning) = exposure_warning(cli.bind, share_address) {
+        eprintln!("{warning}");
+    }
+    let results = ResultStore {
+        dir: results_dir(),
+        key: results_key,
+    };
+    match results.location() {
+        Some(dir) => eprintln!("kemi: results are saved to: {dir}"),
+        None => eprintln!(
+            "kemi: cannot determine where to save results ({})",
+            results_unset_reason()
+        ),
+    }
+    if !cli.no_open {
+        // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
+        let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
+            Ok(url) => url,
+            Err(error) => fail(&error.to_string()),
+        };
+        open_browser(&browser_url);
+    }
+
+    let params = ServeParams {
+        source,
+        assets: Arc::new(WebAssets),
+        token,
+        results: Some(Arc::new(results)),
+        session: stored_session
+            .clone()
+            .map(|session| session as Arc<dyn SessionSink>),
+        share_address,
+    };
+    let outcome = tokio::select! {
+        outcome = serve(listener, params) => Some(outcome),
+        _ = interrupted() => None,
+    };
+
+    match outcome {
+        Some(Ok(ServeOutcome::Submitted(document))) => {
+            match serde_json::to_string(&document) {
+                Ok(json) => println!("{json}"),
+                Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
+            }
+            let code = match document.get("verdict").and_then(|value| value.as_str()) {
+                Some("approved") => 0,
+                Some("changes_requested") => 1,
+                _ => 2,
+            };
+            std::process::exit(code);
+        }
+        Some(Err(error)) => {
+            // 実行時エラーでも、復元できるセッションが残るなら案内を出す（R-SESSION）。
+            print_resume_hint(stored_session.as_deref());
+            fail(&error.to_string());
+        }
+        None => {
+            print_resume_hint(stored_session.as_deref());
+            drop(stored_session);
+            std::process::exit(130);
+        }
+    }
+}
+
+/// `--resume`: セッションを開き、凍結したレビューをサーブする（R-SESSION）。
+async fn run_resume(cli: &Cli) -> ! {
+    let Some(dir) = sessions_dir() else {
+        fail(&format!(
+            "cannot determine where sessions are stored ({})",
+            results_unset_reason()
+        ));
+    };
+    let store = SessionStore::new(dir);
+    let id = match &cli.resume {
+        Some(Some(id)) => id.clone(),
+        Some(None) => choose_session(&store),
+        None => unreachable!("run_resume is called only with --resume"),
+    };
+    let stored = match session::StoredSession::resume(&store, &id) {
+        Ok(stored) => stored,
+        Err(error) => fail(&error.to_string()),
+    };
+    let source = match stored.frozen_source() {
+        Some(source) => Arc::new(source) as Arc<dyn ReviewSource>,
+        None => fail(&format!("session {id} cannot be resumed")),
+    };
+    let results_key = stored.info().workspace_key;
+    run_review(cli, source, Some(Arc::new(stored)), results_key).await
+}
+
+/// `id` なしの起動。端末なら選択画面、端末でなければ一覧を出して終わる。
+fn choose_session(store: &SessionStore) -> String {
+    let sessions = match store.list() {
+        Ok(sessions) => sessions,
+        Err(error) => fail(&error.to_string()),
+    };
+    if !std::io::stdin().is_terminal() {
+        list_sessions(&sessions);
+    }
+    if sessions.is_empty() {
+        fail("no resumable session");
+    }
+    // 端末の選択画面（R-SESSION）。
+    fail("run in a terminal to choose a session, or pass an id")
+}
+
+/// 復元できるセッションの一覧を stdout に出す（R-SESSION）。0 件なら理由を出して 2。
+fn list_sessions(sessions: &[SessionSummary]) -> ! {
+    if sessions.is_empty() {
+        fail("no resumable session");
+    }
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for summary in sessions {
+        let _ = writeln!(out, "{}", session::list_line(summary));
+    }
+    let _ = out.flush();
+    std::process::exit(0);
+}
+
 #[tokio::main]
 async fn main() {
     let cli = match parse_args(std::env::args().skip(1).collect()) {
@@ -447,11 +661,18 @@ async fn main() {
     if cli.result {
         print_result(&cli);
     }
+    if let Err(message) = validate_resume_flags(&cli) {
+        fail(&message);
+    }
 
     if let Some(out) = &cli.out {
         fail(&format!(
             "--out is removed; static files are no longer written ({out} will not be written)"
         ));
+    }
+
+    if cli.resume.is_some() {
+        run_resume(&cli).await;
     }
 
     let modes = [
@@ -498,82 +719,8 @@ async fn main() {
             Err(error) => fail(&error.to_string()),
         }
     }
-    // --serve は互換のための受理のみ。既定で常にサーブする。
-    let _ = cli.serve;
-
-    let listener = match TcpListener::bind((cli.bind, cli.port)).await {
-        Ok(listener) => listener,
-        Err(error) => fail(&format!(
-            "cannot listen on {}:{}: {error}",
-            cli.bind, cli.port
-        )),
-    };
-    let token = random_token();
-    // 共有アドレスは wildcard のときだけ特定する（R-SERVE）。
-    let share_address = if cli.bind.is_unspecified() {
-        detect_share_address()
-    } else {
-        None
-    };
-    let url = match session_url(&listener, &token, session_host(cli.bind, share_address)) {
-        Ok(url) => url,
-        Err(error) => fail(&error.to_string()),
-    };
-    eprintln!("kemi: {url}");
-    if let Some(warning) = exposure_warning(cli.bind, share_address) {
-        eprintln!("{warning}");
-    }
-    let results = ResultStore {
-        dir: results_dir(),
-        key: result::workspace_key(&workspace_root(Path::new("."))),
-    };
-    match results.location() {
-        Some(dir) => eprintln!("kemi: results are saved to: {dir}"),
-        None => eprintln!(
-            "kemi: cannot determine where to save results ({})",
-            results_unset_reason()
-        ),
-    }
-    if !cli.no_open {
-        // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
-        let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
-            Ok(url) => url,
-            Err(error) => fail(&error.to_string()),
-        };
-        open_browser(&browser_url);
-    }
 
     let stored_session = open_session(&cli);
-    let params = ServeParams {
-        source,
-        assets: Arc::new(WebAssets),
-        token,
-        results: Some(Arc::new(results)),
-        session: stored_session
-            .clone()
-            .map(|session| session as Arc<dyn SessionSink>),
-        share_address,
-    };
-    let outcome = tokio::select! {
-        outcome = serve(listener, params) => outcome,
-        _ = tokio::signal::ctrl_c() => {
-            std::process::exit(130);
-        }
-    };
-
-    match outcome {
-        Ok(ServeOutcome::Submitted(document)) => {
-            match serde_json::to_string(&document) {
-                Ok(json) => println!("{json}"),
-                Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
-            }
-            let code = match document.get("verdict").and_then(|value| value.as_str()) {
-                Some("approved") => 0,
-                Some("changes_requested") => 1,
-                _ => 2,
-            };
-            std::process::exit(code);
-        }
-        Err(error) => fail(&error.to_string()),
-    }
+    let results_key = result::workspace_key(&workspace_root(Path::new(".")));
+    run_review(&cli, source, stored_session, results_key).await
 }

@@ -1625,3 +1625,456 @@ async fn origin_reads_utf8_messages_even_if_log_output_encoding_is_legacy() {
     );
     kemi.kill();
 }
+
+// ---- R-SESSION（--resume の受理、保留、一覧） ----
+
+use std::collections::BTreeMap;
+
+use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status, Suggestion};
+use kemi_core::session::{
+    FrozenUnit, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
+};
+use kemi_core::source::FileContent;
+
+impl Kemi {
+    /// 終了を待ち、stdout と stderr の全部を返す。
+    fn wait_with_stderr(mut self) -> (std::process::ExitStatus, String, String) {
+        let status = self.child.wait().unwrap();
+        let mut stdout = String::new();
+        self.stdout.read_to_string(&mut stdout).unwrap();
+        let mut stderr = String::new();
+        self.stderr.read_to_string(&mut stderr).unwrap();
+        (status, stdout, stderr)
+    }
+}
+
+fn sessions_dir(state: &Path) -> PathBuf {
+    state.join("kemi").join("sessions")
+}
+
+fn session_files(state: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(sessions_dir(state))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|extension| extension == "session")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+async fn wait_for_session(state: &Path) -> PathBuf {
+    for _ in 0..500 {
+        if let Some(path) = session_files(state).first() {
+            return path.clone();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("no session file appeared");
+}
+
+fn session_id(path: &Path) -> String {
+    path.file_stem().unwrap().to_string_lossy().into_owned()
+}
+
+fn signal(child: &Child, signal: &str) {
+    let status = Command::new("kill")
+        .arg(signal)
+        .arg(child.id().to_string())
+        .status()
+        .unwrap();
+    assert!(status.success(), "kill {signal} failed");
+}
+
+/// 変更のある worktree のフィクスチャ。
+fn worktree_fixture(dir: &TempDir) {
+    std::fs::write(dir.path.join("a.txt"), "one\ntwo\n").unwrap();
+    git(&dir.path, &["init", "-q"]);
+    git(&dir.path, &["config", "user.email", "e2e@example.com"]);
+    git(&dir.path, &["config", "user.name", "e2e"]);
+    git(&dir.path, &["config", "core.hooksPath", "/dev/null"]);
+    git(&dir.path, &["add", "-A"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path.join("a.txt"), "one\nTWO\n").unwrap();
+}
+
+fn session_info(id: &str, mode: SessionMode, title: &str, workspace: &Path) -> SessionInfo {
+    SessionInfo {
+        id: id.to_string(),
+        created: 1,
+        updated: 1,
+        workspace: workspace.to_path_buf(),
+        workspace_key: "00000000000000aa".to_string(),
+        mode,
+        title: title.to_string(),
+        total_files: 1,
+    }
+}
+
+fn session_comment() -> kemi_core::domain::review::Comment {
+    kemi_core::domain::review::Comment {
+        id: "c1".to_string(),
+        file_id: "f1".to_string(),
+        group_id: "worktree".to_string(),
+        group_title: "Working tree changes".to_string(),
+        path: "a.txt".to_string(),
+        side: Side::New,
+        start_line: Some(1),
+        end_line: Some(1),
+        quote: vec!["one".to_string()],
+        body: "note".to_string(),
+        replies: Vec::new(),
+        resolved: false,
+        outdated: false,
+        content_hash: "hash".to_string(),
+        suggestion: Some(Suggestion {
+            replacement: "ONE".to_string(),
+        }),
+    }
+}
+
+fn session_copy() -> SessionCopy {
+    SessionCopy {
+        startup_unit: None,
+        units: vec![FrozenUnit {
+            unit: None,
+            review: ReviewMeta {
+                title: "Working tree changes".to_string(),
+                subtitle: String::new(),
+                meta: serde_json::Value::Null,
+                groups: vec![Group {
+                    id: "worktree".to_string(),
+                    title: "Working tree changes".to_string(),
+                    why: String::new(),
+                    watch: String::new(),
+                    files: vec![FileEntry {
+                        id: "f1".to_string(),
+                        group_id: "worktree".to_string(),
+                        path: "a.txt".to_string(),
+                        old_path: None,
+                        status: Status::Modify,
+                        add: 1,
+                        del: 1,
+                        binary: false,
+                        old_size: 0,
+                        new_size: 0,
+                        focus: false,
+                        note: String::new(),
+                        noise: false,
+                    }],
+                }],
+                approval: vec![Approval {
+                    path: "a.txt".to_string(),
+                    identity: "sha256:e2e".to_string(),
+                }],
+            },
+        }],
+        contents: BTreeMap::from([(
+            "f1".to_string(),
+            FileContent {
+                old: Some(b"one\n".to_vec()),
+                new: Some(b"ONE\n".to_vec()),
+            },
+        )]),
+    }
+}
+
+/// 復元できるセッションを 1 つ作る。タイトルは一覧の検証に使う。
+fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> SessionStore {
+    let store = SessionStore::new(sessions_dir(state));
+    let workspace = state.join("workspace");
+    let mut open = store
+        .create(session_info(id, mode, title, &workspace))
+        .unwrap();
+    open.save_state(SessionState {
+        comments: vec![session_comment()],
+        seen: ["f1".to_string()].into_iter().collect(),
+        collapsed: BTreeMap::new(),
+    })
+    .unwrap();
+    open.save_copy(session_copy()).unwrap();
+    store
+}
+
+#[test]
+fn resume_flag_conflicts_exit_2_in_english() {
+    let dir = TempDir::new();
+    let cases: &[&[&str]] = &[
+        &["--resume", "--digest"],
+        &["--resume", "--digest-top", "3"],
+        &["--resume", "--worktree"],
+        &["--resume", "--staged"],
+        &["--resume", "--from", "HEAD"],
+        &["--resume", "--group-by", "commit"],
+        &["--resume", "--base", "."],
+        &["--resume", "--focus", "focus.json"],
+        &["--resume", "--result"],
+        &["--resume", "--any"],
+        &["--resume", "--workspace", "."],
+        &["--worktree", "--resume"],
+    ];
+    for args in cases {
+        let output = run(&dir.path, args);
+        assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
+        assert!(output.stdout.is_empty(), "kemi {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.is_empty(), "kemi {args:?}");
+        assert!(!contains_japanese(&stderr), "kemi {args:?}: {stderr}");
+    }
+}
+
+#[tokio::test]
+async fn interrupt_leaves_a_session_and_prints_the_resume_line() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let session = wait_for_session(&state.path).await;
+    let id = session_id(&session);
+
+    signal(&kemi.child, "-INT");
+    let (status, stdout, stderr) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty(), "stdout must stay empty: {stdout}");
+    assert!(
+        stderr.contains(&format!("kemi: resume with: kemi --resume {id}")),
+        "stderr: {stderr}"
+    );
+    assert!(session.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigterm_leaves_a_session_and_prints_the_resume_line() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let session = wait_for_session(&state.path).await;
+    let id = session_id(&session);
+
+    signal(&kemi.child, "-TERM");
+    let (status, stdout, stderr) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert!(
+        stderr.contains(&format!("kemi: resume with: kemi --resume {id}")),
+        "stderr: {stderr}"
+    );
+    assert!(session.exists());
+}
+
+#[tokio::test]
+async fn interrupt_without_state_or_copy_leaves_no_session() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+
+    // api/review を取らないので凍結は始まらず、状態も空のまま。
+    signal(&kemi.child, "-INT");
+    let (status, stdout, stderr) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert!(
+        !stderr.contains("resume with"),
+        "no resumable session yet: {stderr}"
+    );
+    assert!(session_files(&state.path).is_empty());
+}
+
+#[test]
+fn resume_with_an_unknown_id_exits_2() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let output = run_with_state(
+        &dir.path,
+        &["--resume", "01HF7YAT00AAAAAAAAAAAAAAAA"],
+        &state.path,
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+}
+
+#[test]
+fn resume_of_an_unfinished_session_exits_2_with_the_reason() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let store = SessionStore::new(sessions_dir(&state.path));
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut open = store
+        .create(session_info(
+            id,
+            SessionMode::Worktree,
+            "Working tree changes",
+            &state.path,
+        ))
+        .unwrap();
+    open.save_state(SessionState {
+        comments: vec![session_comment()],
+        ..SessionState::default()
+    })
+    .unwrap();
+    drop(open);
+
+    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be resumed"), "stderr: {stderr}");
+}
+
+#[test]
+fn resume_of_an_unreadable_session_exits_2_with_the_reason() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let sessions = sessions_dir(&state.path);
+    std::fs::create_dir_all(&sessions).unwrap();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    std::fs::write(sessions.join(format!("{id}.session")), b"not a session").unwrap();
+
+    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot read session"), "stderr: {stderr}");
+}
+
+#[tokio::test]
+async fn resume_of_a_running_session_exits_2() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_session(&state.path).await);
+
+    let output = run_with_state(&dir.path, &["--resume", &id], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("in use"), "stderr: {stderr}");
+    kemi.kill();
+}
+
+#[test]
+fn resume_without_an_id_lists_five_columns_newest_first() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let older = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let newer = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    craft_session(&state.path, older, SessionMode::Manifest, "a\tb\nc");
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    craft_session(
+        &state.path,
+        newer,
+        SessionMode::Worktree,
+        "Working tree changes",
+    );
+
+    let output = run_with_state(&dir.path, &["--resume"], &state.path);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with(newer), "{stdout}");
+    assert!(lines[1].starts_with(older), "{stdout}");
+    let columns: Vec<&str> = lines[1].split('\t').collect();
+    assert_eq!(columns.len(), 5, "{stdout}");
+    assert_eq!(columns[3], "a b c");
+    assert_eq!(columns[4], "1/1");
+    assert!(columns[1].len() == 16, "timestamp: {}", columns[1]);
+    assert!(!lines[1].contains('\n'));
+}
+
+#[test]
+fn resume_listing_ignores_port_bind_and_no_open() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    craft_session(
+        &state.path,
+        "01HF7YAT00AAAAAAAAAAAAAAAA",
+        SessionMode::Worktree,
+        "Working tree changes",
+    );
+
+    let output = run_with_state(
+        &dir.path,
+        &[
+            "--resume",
+            "--port",
+            "0",
+            "--bind",
+            "127.0.0.1",
+            "--no-open",
+        ],
+        &state.path,
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!output.stdout.is_empty());
+}
+
+#[test]
+fn resume_without_sessions_exits_2_with_empty_stdout() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+
+    let output = run_with_state(&dir.path, &["--resume"], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+
+    // --port / --bind / --no-open を付けても、使い方の誤りではない。
+    let output = run_with_state(
+        &dir.path,
+        &[
+            "--resume",
+            "--port",
+            "0",
+            "--bind",
+            "127.0.0.1",
+            "--no-open",
+        ],
+        &state.path,
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn digest_and_result_do_not_create_sessions() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let state = TempDir::new();
+
+    let digest = run_with_state(&dir.path, &["--digest", "manifest.json"], &state.path);
+    assert_eq!(digest.status.code(), Some(0));
+    assert!(!sessions_dir(&state.path).exists());
+
+    let result = run_with_state(&dir.path, &["--result"], &state.path);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(!sessions_dir(&state.path).exists());
+}
