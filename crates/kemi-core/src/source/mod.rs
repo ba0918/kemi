@@ -1,8 +1,11 @@
 //! 入力ソース（R-INPUT）。manifest / git の読み取りと、表示時の行内容取得。
 
+mod frozen;
 pub mod git;
 pub mod manifest;
 mod origin;
+
+pub use frozen::FrozenSource;
 
 #[cfg(test)]
 pub(crate) mod testutil;
