@@ -48,7 +48,7 @@ export async function applyRenderedView(entry) {
       });
     } catch (error) {
       // 押してから描画に失敗したファイルは、ソース表示のままヘッダに理由を出す。
-      data = { failed: String(error) };
+      data = { failed: error instanceof Error ? error.message : String(error) };
     }
     if (generation !== state.selectGeneration || !isShowingFile(entry.file.id)) {
       // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。

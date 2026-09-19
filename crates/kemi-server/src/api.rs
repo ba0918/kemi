@@ -474,9 +474,10 @@ async fn file(
 }
 
 /// ファイルが描画表示の対象か、切り替えを持つか、既定はどちらか、事前に分かる描画不可の
-/// 理由（R-RENDER）。理由の文言は契約ではない。
+/// 理由（R-RENDER）。理由の文言は契約ではなく、"Cannot render:" の前置はページが 1 か所で
+/// 付ける。
 fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value {
-    const TOO_LARGE: &str = "Too large to render (over 10,000 lines or 1 MB on one side)";
+    const TOO_LARGE: &str = "too large (over 10,000 lines or 1 MB on one side)";
     match render::target_of_file(file) {
         Some(Target::Markdown) => {
             let reason = (!content::within_auto_limit(old, new)).then_some(TOO_LARGE.to_string());
@@ -490,7 +491,7 @@ fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value 
                     .into_iter()
                     .flatten()
                     .find_map(|text| render::unbalanced_line(text, delimiter))
-                    .map(|line| format!("Cannot render: unbalanced quote on line {line}"))
+                    .map(|line| format!("unbalanced quote on line {line}"))
             };
             json!({ "target": "table", "toggle": true, "initial": "source", "reason": reason })
         }

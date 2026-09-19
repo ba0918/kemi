@@ -188,7 +188,7 @@ impl std::fmt::Display for Unrenderable {
             Unrenderable::UnbalancedQuote { line } => {
                 write!(formatter, "unbalanced quote on line {line}")
             }
-            Unrenderable::Failed(message) => write!(formatter, "cannot render: {message}"),
+            Unrenderable::Failed(message) => formatter.write_str(message),
         }
     }
 }
