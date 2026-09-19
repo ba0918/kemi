@@ -5,6 +5,7 @@
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
 import { currentEntry, state } from "../state.js";
+import { formatBytes } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 
 /** @typedef {import("../state.js").Editor} Editor */
@@ -39,6 +40,10 @@ export function renderRendered() {
   const entry = currentEntry();
   dom.renderedDoc.hidden = !state.renderedActive;
   if (!state.renderedActive || !rendered || !entry) {
+    return;
+  }
+  if (rendered.kind === "image" && rendered.image) {
+    dom.renderedDoc.append(renderImages(rendered.image));
     return;
   }
   const body = el("div", "rendered-body");
@@ -83,6 +88,54 @@ export function renderRendered() {
   attachPlus(body, blocks);
   restoreEditorFocus(focus);
   restoreFocusKey(dom.renderedDoc, focusKey);
+}
+
+/**
+ * 旧と新の画像を並べる（R-RENDER）。2 列では左右、1 列では上下（並びは CSS が
+ * `#rendered-doc` の `data-mode` で決める）。改名でバイト列が同じなら 1 枚と "unchanged"。
+ * 読み込みに失敗した側はバイト数だけの枠に差し替える。
+ * @param {{ old: import("../state.js").ImageSide | null, new: import("../state.js").ImageSide | null, same: boolean }} image
+ * @returns {HTMLElement}
+ */
+function renderImages(image) {
+  const panel = el("div", "kb-images");
+  if (image.same && image.new) {
+    panel.append(imageFigure(image.new, "unchanged", "same"));
+    return panel;
+  }
+  if (image.old) {
+    panel.append(imageFigure(image.old, "old", "old"));
+  }
+  if (image.new) {
+    panel.append(imageFigure(image.new, "new", "new"));
+  }
+  return panel;
+}
+
+/**
+ * @param {import("../state.js").ImageSide} side
+ * @param {string} label
+ * @param {string} kind
+ * @returns {HTMLElement}
+ */
+function imageFigure(side, label, kind) {
+  const figure = el("figure", `kb-image kb-image-${kind}`);
+  const picture = /** @type {HTMLImageElement} */ (el("img"));
+  picture.src = side.url;
+  picture.alt = label;
+  picture.addEventListener(
+    "error",
+    () => {
+      const frame = el("div", "kb-img-frame kb-image-broken");
+      frame.append(textEl("span", "kb-img-alt", "Cannot display this image"), textEl("span", "kb-img-path", formatBytes(side.size)));
+      picture.replaceWith(frame);
+    },
+    { once: true },
+  );
+  const caption = el("figcaption");
+  caption.append(textEl("span", "kb-image-label", label), textEl("span", "kb-image-size", formatBytes(side.size)));
+  figure.append(picture, caption);
+  return figure;
 }
 
 /**

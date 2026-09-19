@@ -12,7 +12,7 @@ import {
   state,
 } from "../state.js";
 import { loadDraft } from "../storage.js";
-import { draftKey, placeRenderedComments, renderedStops } from "../model.js";
+import { collapseDefault, draftKey, placeRenderedComments, renderedStops } from "../model.js";
 import { renderDiff } from "./display.js";
 import { renderFileHeader, renderNotice } from "../views/file-header.js";
 import { renderRendered } from "../views/rendered.js";
@@ -27,7 +27,10 @@ import { renderRendered } from "../views/rendered.js";
 export async function applyRenderedView(entry) {
   state.renderFailure = null;
   const info = state.renderInfo;
-  if (!info || !info.target || info.reason || !renderedWanted(entry)) {
+  // 畳まれたノイズは開くまで描画表示も出さない。バイナリ（画像）は畳みの知らせを持たず
+  // 開く操作も無いので、常に描画表示にする。
+  const folded = !entry.file.binary && collapseDefault(entry.file, state.collapsedOverrides);
+  if (!info || !info.target || info.reason || folded || !renderedWanted(entry)) {
     showSource();
     return;
   }
@@ -60,10 +63,12 @@ export async function applyRenderedView(entry) {
     return;
   }
   state.rendered = {
+    kind: data.kind === "image" ? "image" : "document",
     html: String(data.html || ""),
     blocks: data.blocks || [],
     oldLines: data.old_lines || [],
     newLines: data.new_lines || [],
+    image: data.kind === "image" ? { old: data.old || null, new: data.new || null, same: Boolean(data.same) } : null,
   };
   state.renderedActive = true;
   recomputeRenderedThreads();

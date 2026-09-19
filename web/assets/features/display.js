@@ -4,6 +4,7 @@
 
 import { syncHorizontal } from "./horizontal-scroll.js";
 import * as api from "../api.js";
+import { actions } from "../actions.js";
 import { dom, el, focusKeyWithin, restoreFocusKey } from "../dom.js";
 import {
   OVERSCAN,
@@ -197,6 +198,8 @@ export function renderDiff() {
   const focus = captureEditorFocus();
   const focusKey = focusKeyWithin(dom.content);
   dom.content.textContent = "";
+  // 画像の並び（2 列で左右、1 列で上下）は描画表示の側が CSS で決める。
+  dom.renderedDoc.dataset.mode = state.mode;
   if (
     !entry ||
     state.binary ||
@@ -507,6 +510,8 @@ export function collapseAll() {
 export function showCollapsed(entry) {
   markCollapsedShown(entry);
   renderDiff();
+  // 開いた画像や Markdown は、描画表示で見るものならここで出す（R-RENDER）。
+  void actions.applyRenderedView(entry);
 }
 
 /**

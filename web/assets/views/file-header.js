@@ -228,6 +228,10 @@ export function renderNotice() {
     dom.notice.append(textEl("span", "notice-text", state.loading ? "Loading…" : "Rendering…"));
     return;
   }
+  if (state.renderedActive) {
+    // 描画表示が出ているあいだは、バイナリや畳みの知らせを重ねない。
+    return;
+  }
   if (state.binary) {
     dom.notice.hidden = false;
     dom.notice.append(

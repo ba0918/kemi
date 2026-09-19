@@ -2207,3 +2207,58 @@ ul.files ul {
   font-size: 12.5px;
   color: var(--ink-2);
 }
+
+/* 画像は 2 列では左右、1 列では上下に並べる（R-RENDER）。 */
+.kb-images {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+#rendered-doc[data-mode="split"] .kb-images {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.kb-image {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 0;
+  max-width: 100%;
+}
+
+.kb-image img {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  background: var(--hatch);
+}
+
+.kb-image-old img {
+  border-color: var(--del-ink);
+}
+
+.kb-image-new img {
+  border-color: var(--add-ink);
+}
+
+.kb-image figcaption {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.kb-image-old .kb-image-label {
+  color: var(--del-ink);
+}
+
+.kb-image-new .kb-image-label {
+  color: var(--add-ink);
+}
+
+.kb-image-broken {
+  display: inline-flex;
+}

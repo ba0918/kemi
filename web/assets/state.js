@@ -4,6 +4,7 @@
 import { collapseDefault, seenProgress } from "./model.js";
 
 /** @typedef {import("./model.js").RenderedBlock} RenderedBlock */
+/** @typedef {{ url: string, size: number }} ImageSide */
 import { loadMode, loadTheme } from "./storage.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
@@ -113,7 +114,14 @@ export const THEME_LABELS = {
  *   renderedActive: boolean,
  *   renderLoading: boolean,
  *   renderFailure: string | null,
- *   rendered: { html: string, blocks: RenderedBlock[], oldLines: string[], newLines: string[] } | null,
+ *   rendered: {
+ *     kind: "document" | "image",
+ *     html: string,
+ *     blocks: RenderedBlock[],
+ *     oldLines: string[],
+ *     newLines: string[],
+ *     image: { old: ImageSide | null, new: ImageSide | null, same: boolean } | null,
+ *   } | null,
  *   renderedStops: number[],
  *   renderedThreads: { byBlock: Map<number, any[]>, top: any[], floating: any[] },
  * }} */
