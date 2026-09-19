@@ -522,8 +522,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    type Entry = (u128, String, u64, PathBuf);
-    let mut sessions: Vec<Entry> = Vec::new();
+    let mut sessions: Vec<(String, u64, PathBuf)> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(id) = name
@@ -535,13 +534,17 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
         };
         let path = entry.path();
         let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
-        let updated = read_updated(&path).unwrap_or(0);
-        sessions.push((updated, id, size, path));
+        sessions.push((id, size, path));
     }
-    let total: u64 = sessions.iter().map(|(_, _, size, _)| size).sum();
+    let total: u64 = sessions.iter().map(|(_, size, _)| size).sum();
     if sessions.len() <= keep_count && total <= keep_bytes {
         return;
     }
+    // 最終更新は並べ替えにしか使わないので、消すものがあると分かってから読む。
+    let mut sessions: Vec<(u128, String, u64, PathBuf)> = sessions
+        .into_iter()
+        .map(|(id, size, path)| (read_updated(&path).unwrap_or(0), id, size, path))
+        .collect();
     sessions.sort_by(|left, right| (right.0, &right.1).cmp(&(left.0, &left.1)));
     let mut kept = 0usize;
     let mut bytes = 0u64;
