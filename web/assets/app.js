@@ -16,6 +16,7 @@ import {
   showCollapsed,
   toggleOriginReason,
 } from "./features/display.js";
+import { applyNarrow, closeDrawer, toggleDrawer } from "./features/narrow.js";
 import { navigate } from "./features/navigation.js";
 import {
   applyReview,
@@ -81,6 +82,10 @@ function handleKey(event) {
       closeCommentList();
       return;
     }
+    if (state.drawerOpen) {
+      closeDrawer();
+      return;
+    }
     if (state.editor) {
       closeEditor();
       return;
@@ -143,7 +148,13 @@ async function boot() {
   );
 }
 
+// 幅を見るのはここだけ。CSS の狭い画面のメディアクエリと同じ文字列（R-NARROW）。
+const narrowQuery = window.matchMedia("(max-width: 719.98px)");
+state.narrow = narrowQuery.matches;
+narrowQuery.addEventListener("change", (event) => applyNarrow(event.matches));
 document.addEventListener("keydown", handleKey);
+dom.btnTree.addEventListener("click", toggleDrawer);
+dom.drawerScrim.addEventListener("click", closeDrawer);
 document.addEventListener("mouseup", endSelection);
 dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
@@ -175,6 +186,7 @@ bindActions({
   addComment,
   applyRenderedView,
   closeCommentList,
+  closeDrawer,
   closeEditor,
   collapseAll,
   confirmDeleteComment,

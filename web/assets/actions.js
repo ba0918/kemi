@@ -22,6 +22,7 @@
  *   addComment: (payload: any) => void,
  *   applyRenderedView: (entry: import("./state.js").Entry) => Promise<void>,
  *   closeCommentList: () => void,
+ *   closeDrawer: () => void,
  *   collapseAll: () => void,
  *   closeEditor: () => void,
  *   confirmDeleteComment: (comment: any) => void,

@@ -30,6 +30,8 @@ export const dom = {
   navPos: must("#nav-pos"),
   toast: must("#toast"),
   tree: must("#tree"),
+  btnTree: /** @type {HTMLButtonElement} */ (must("#btn-tree")),
+  drawerScrim: must("#drawer-scrim"),
   groupHeader: must("#group-header"),
   fileHeader: must("#file-header"),
   floating: must("#floating-threads"),

@@ -103,6 +103,19 @@ export function renderTree() {
 }
 
 /**
+ * 狭い画面の引き出し（R-NARROW）。開閉は属性で示し、重ね方と隠し方は CSS の狭い画面の
+ * 規則が決める。広い画面ではツリーは常に見えていて、この属性は何も変えない。
+ */
+export function renderDrawer() {
+  if (state.drawerOpen) {
+    dom.tree.dataset.drawer = "open";
+  } else {
+    delete dom.tree.dataset.drawer;
+  }
+  dom.btnTree.setAttribute("aria-expanded", String(state.drawerOpen));
+}
+
+/**
  * 畳める見出しの、いまの開閉と、押したときの切り替え。開閉はページを開いている間だけ
  * `remembered` に覚え、ツリーは作り直さずに見た目だけを変える。
  * @param {HTMLElement} container `data-open` を持つ入れ物

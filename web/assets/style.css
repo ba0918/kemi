@@ -2262,3 +2262,104 @@ ul.files ul {
 .kb-image-broken {
   display: inline-flex;
 }
+
+/* ---------- 狭い画面（R-NARROW） ---------- */
+
+/* 狭い画面でだけ使う要素。常に DOM にあり、広い画面では出さない。 */
+.narrow-only {
+  display: none;
+}
+
+/* 幅で変わる規則はこのメディアクエリに集める。JS は同じ文字列を matchMedia で見る（app.js）。
+   広い画面の規則はこの外にあり、ここでは上書きするだけで変えない。 */
+@media (max-width: 719.98px) {
+  /* 上部バー: ツリーを開く操作を出し、2 列への切り替えは出さない。 */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  #btn-tree {
+    display: inline-flex;
+  }
+
+  .tools .seg[aria-label="Display mode"] {
+    display: none;
+  }
+
+  /* ファイルツリーは左から重ねる引き出し。閉じている間は画面の外で、フォーカスも届かない。
+     本文は全幅。 */
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tree {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: min(85vw, 330px);
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.28);
+    transform: translateX(-100%);
+    visibility: hidden;
+  }
+
+  /* 開くときだけ動かす。閉じるとき（幅をまたいだときを含む）はその場で消える。 */
+  .tree[data-drawer="open"] {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.18s ease;
+  }
+
+  .tree[data-drawer="open"] + #drawer-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  /* ファイルヘッダは 2 行。1 行目はパスで、収まらなければ先頭を省略記号で切って末尾を
+     見せる（箱を RTL にし、文字は view が LTR で隔離している）。2 行目に操作。 */
+  .file-header {
+    padding: 8px 12px;
+  }
+
+  .file-header .path {
+    flex: 1 0 100%;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+    word-break: normal;
+  }
+
+  /* 吹き出しと入力欄は、行の位置からインデントせず本文の幅いっぱいから始める。 */
+  #diff-content .bal-row {
+    padding-left: 0;
+    padding-right: 8px;
+  }
+
+  #floating-threads,
+  #notice {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  #rendered-doc {
+    padding: 12px 12px 48px 32px;
+  }
+
+  .navpill {
+    right: 14px;
+    bottom: 14px;
+  }
+
+  #toast {
+    right: 14px;
+  }
+}

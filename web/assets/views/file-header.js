@@ -87,7 +87,11 @@ export function renderFileHeader() {
   if (!entry) {
     return;
   }
-  dom.fileHeader.append(textEl("span", "path", entry.file.path));
+  // パスの文字は LTR で隔離する。狭い画面では箱を RTL にして先頭を省略記号で切るが、
+  // 隔離しないと `.github/...` の先頭の `.` が末尾へ回る。
+  const path = el("span", "path");
+  path.append(textEl("bdi", "", entry.file.path));
+  dom.fileHeader.append(path);
   if (entry.file.old_path) {
     dom.fileHeader.append(
       textEl("span", "file-old", `← ${entry.file.old_path}`),

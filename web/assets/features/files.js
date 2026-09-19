@@ -153,6 +153,8 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
     // 送信後はサーバが止まっていて、まだ読んでいないファイルは取れない。完了画面を残す。
     return;
   }
+  // 狭い画面では、ファイルを選ぶと引き出しを閉じる（R-NARROW）。
+  actions.closeDrawer();
   // テーマや構文ハイライトの切り替えは同じファイルを読み直すだけ。読んでいた位置を残す。
   const anchor =
     !options.scrollTop && state.current && state.current.file.id === entry.file.id

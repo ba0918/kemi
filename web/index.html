@@ -14,6 +14,7 @@
     <link rel="modulepreload" href="assets/features/display.js" />
     <link rel="modulepreload" href="assets/features/horizontal-scroll.js" />
     <link rel="modulepreload" href="assets/features/files.js" />
+    <link rel="modulepreload" href="assets/features/narrow.js" />
     <link rel="modulepreload" href="assets/features/navigation.js" />
     <link rel="modulepreload" href="assets/features/rendered.js" />
     <link rel="modulepreload" href="assets/features/submit.js" />
@@ -35,6 +36,16 @@
   <body>
     <header class="topbar">
       <div class="brand">kemi</div>
+      <button
+        class="iconbtn narrow-only"
+        id="btn-tree"
+        type="button"
+        title="File tree"
+        aria-label="Open file tree"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M6 2.5v11M8.5 6h3.5M8.5 8.5h3.5"/></svg>
+      </button>
       <div class="title-block">
         <div class="title-row">
           <div class="title" id="review-title"></div>
@@ -125,6 +136,7 @@
 
     <div class="layout">
       <aside class="tree" id="tree" aria-label="File tree"></aside>
+      <div class="narrow-only" id="drawer-scrim"></div>
       <main id="main">
         <div class="group-header" id="group-header"></div>
         <div class="file-header" id="file-header"></div>
