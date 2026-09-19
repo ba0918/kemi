@@ -510,7 +510,8 @@ impl ReviewSource for GitSource {
     ) -> Result<Option<Vec<u8>>, SourceError> {
         // URL は core が正規化したパスから作るが、経路は token を知る誰でも叩けるので、
         // 受け口でも「リポジトリの中の素朴なパス」だけを通す。`..`・絶対パス・`.`・空の
-        // 区切りは、git を呼ぶ前に無いものとして扱う（git の失敗でレビューを止めない）。
+        // 区切り・ドライブ接頭辞は、git を呼ぶ前に無いものとして扱う（git の失敗で
+        // レビューを止めない）。
         if !is_plain_repository_path(path) {
             return Ok(None);
         }
@@ -535,15 +536,21 @@ impl ReviewSource for GitSource {
     }
 }
 
-/// `a/b/c.png` の形か。空・`.`・`..`・`\` を含む区切りと、先頭や末尾の `/` は認めない。
+/// `a/b/c.png` の形か。空・`.`・`..`・`\` か `:` を含む区切り（Windows のドライブ接頭辞
+/// `C:` はパスの基準を置き換える）と、先頭や末尾の `/` は認めない。
 fn is_plain_repository_path(path: &str) -> bool {
     !path.is_empty()
         && path.split('/').all(|segment| {
-            !segment.is_empty() && segment != "." && segment != ".." && !segment.contains('\\')
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && !segment.contains(['\\', ':'])
         })
 }
 
 /// 作業ツリーのファイルを読む。パスのどの部分も symlink なら読まない（辿らない）。
+/// 組み立てたパスがリポジトリの外に出たら（絶対パスやドライブ接頭辞の push は基準を
+/// 置き換える）、受け口の検査と二重に、読まない。
 fn read_worktree_file(
     repo: &Path,
     path: &Path,
@@ -552,6 +559,9 @@ fn read_worktree_file(
     let mut full = repo.to_path_buf();
     for component in path.components() {
         full.push(component);
+        if !full.starts_with(repo) {
+            return Ok(None);
+        }
         let Ok(metadata) = std::fs::symlink_metadata(&full) else {
             return Ok(None);
         };
@@ -1489,6 +1499,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn plain_repository_paths_reject_segments_with_a_colon() {
+        assert!(is_plain_repository_path("docs/img/x.png"));
+        assert!(!is_plain_repository_path("C:/Windows/x.png"));
+        assert!(!is_plain_repository_path("C:x.png"));
+    }
+
+    #[test]
+    fn relative_image_paths_with_a_drive_prefix_are_refused_even_when_such_files_exist() {
+        let repo = image_repo();
+        // Linux では `C:` は普通のディレクトリ名。ファイルが有っても受け口で拒む。
+        write_bytes(&repo, "C:/Windows/x.png", &png(3));
+        write_bytes(&repo, "C:x.png", &png(4));
+        repo.add_and_commit("drive-like paths");
+        repo.write("docs/a.md", "![x](img/x.png) changed\n");
+        let source = source(&repo, GitMode::Worktree);
+        let id = markdown_id(&source);
+
+        for side in [Side::New, Side::Old] {
+            for path in ["C:/Windows/x.png", "C:x.png"] {
+                assert_eq!(
+                    source.repository_file(&id, side, path, 1_000).unwrap(),
+                    None,
+                    "{side:?} {path}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn worktree_files_outside_the_repository_are_not_read_even_if_the_path_resolves() {
+        let repo = TempRepo::new();
+        let outside = TempRepo::new();
+        write_bytes(&outside, "x.png", &png(5));
+        // 絶対パスの push は基準を置き換える（Windows のドライブ接頭辞と同じ）。
+        let escaped = outside.path.join("x.png");
+
+        assert_eq!(
+            read_worktree_file(&repo.path, &escaped, 1_000).unwrap(),
+            None
+        );
     }
 
     #[test]
