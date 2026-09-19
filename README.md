@@ -163,11 +163,12 @@ comment editor. Tapping the same line again, or tapping the diff body anywhere
 other than a line number, clears the selection; taps on the top bar or the
 file header do not. While the editor is open the selection stays, and
 cancelling the editor clears it. In the rendered view, tap a block to show its
-`+`. Comment balloons are hidden by default on a narrow screen; the comment
-count in the top bar and the coloured line beside the line numbers show where
-they are, "Comments" behind the "..." button shows them all, and choosing one
-from the comment list opens just that one. Tap the title to see the subtitle
-and meta. Resizing across 720px switches the layout in place.
+`+`. On a narrow screen comment balloons appear as folded chips, and a new
+comment stays folded instead of opening. "Comments" behind the "..." button
+hides the chips; the comment count in the top bar and the coloured line beside
+the line numbers still show where they are, and choosing one from the comment
+list opens just that one even while they are hidden. Tap the title to see the
+subtitle and meta. Resizing across 720px switches the layout in place.
 
 Keys in the page (ignored while typing in a text field):
 
