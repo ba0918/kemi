@@ -137,7 +137,6 @@ pub struct Block {
     pub start: u32,
     pub end: u32,
     pub mark: Mark,
-    pub images: Vec<ImageRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

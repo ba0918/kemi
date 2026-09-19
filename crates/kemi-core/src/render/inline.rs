@@ -328,7 +328,6 @@ pub(super) struct WordMarks {
 pub(super) struct Sink<'s> {
     pub out: &'s mut String,
     pub image_url: ImageUrl<'s>,
-    pub images: &'s mut Vec<ImageRef>,
 }
 
 /// インラインを HTML にする。`marks` があれば、語の印を書式の中に入れる。
@@ -503,7 +502,6 @@ fn write_image(sink: &mut Sink<'_>, image: &ImageSpec) {
         }
         ImageSource::Reference(reference, path) => {
             let url = (sink.image_url)(reference);
-            sink.images.push(reference.clone());
             sink.out.push_str("<img src=\"");
             push_attribute(sink.out, &url);
             sink.out.push_str("\" alt=\"");

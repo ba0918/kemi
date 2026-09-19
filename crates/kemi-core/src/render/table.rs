@@ -169,7 +169,6 @@ impl TableWriter {
             start: number,
             end: number,
             mark,
-            images: Vec::new(),
         });
     }
 

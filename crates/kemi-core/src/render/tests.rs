@@ -226,7 +226,6 @@ fn images_outside_the_repo_or_without_an_image_extension_or_unreadable_get_a_fra
     assert!(!html.contains("<img"), "{html}");
     assert_eq!(html.matches("kb-img-frame").count(), 3, "{html}");
     assert!(html.contains("../../a.png"), "{html}");
-    assert!(rendered.blocks[0].images.is_empty());
 }
 
 #[test]
@@ -235,13 +234,6 @@ fn relative_image_matching_a_review_file_refers_to_that_file_and_side() {
     input.review_paths = review_paths();
     let rendered = render_markdown(&input, no_highlight(), &plain_url).unwrap();
 
-    assert_eq!(
-        rendered.blocks[0].images,
-        vec![ImageRef::Review {
-            file_id: "f9".to_string(),
-            side: Side::New,
-        }]
-    );
     assert!(
         rendered
             .html
@@ -257,13 +249,6 @@ fn relative_image_not_in_the_review_refers_to_the_normalized_repo_path() {
     input.review_paths = review_paths();
     let rendered = render_markdown(&input, no_highlight(), &plain_url).unwrap();
 
-    assert_eq!(
-        rendered.blocks[0].images,
-        vec![ImageRef::Repo {
-            path: "logo.PNG".to_string(),
-            side: Side::New,
-        }]
-    );
     assert!(
         rendered.html.contains("src=\"repo:new:logo.PNG\""),
         "{}",

@@ -12,9 +12,7 @@ use crate::domain::content;
 
 use super::inline::{self, ImageContext, Inline, Sink, WordMarks};
 use super::lines::{split_front_matter, LineIndex};
-use super::{
-    Block, Highlight, ImageRef, ImageUrl, Mark, MarkdownInput, Rendered, Side, Unrenderable,
-};
+use super::{Block, Highlight, ImageUrl, Mark, MarkdownInput, Rendered, Side, Unrenderable};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -506,7 +504,6 @@ impl<'w> Writer<'w> {
             start: info.start,
             end: info.end,
             mark,
-            images: Vec::new(),
         });
         format!(
             " class=\"kb{}{}{class}\" data-kemi-block=\"{}:{}-{}\"",
@@ -525,8 +522,6 @@ impl<'w> Writer<'w> {
         mark: Mark,
         words: Option<&WordMarks>,
     ) {
-        let block_index = self.blocks.len();
-        let mut images = Vec::new();
         match &info.source {
             Source::Node(node) => match node {
                 Node::Paragraph(_) | Node::Heading(_) => {
@@ -539,7 +534,7 @@ impl<'w> Writer<'w> {
                     self.out.push_str(&attributes);
                     self.out.push('>');
                     if let Some(inline) = &info.inline {
-                        self.write_inline(inline, words, &mut images);
+                        self.write_inline(inline, words);
                     }
                     self.out.push_str(&close);
                 }
@@ -607,9 +602,6 @@ impl<'w> Writer<'w> {
                 self.out.push_str("</pre>\n");
             }
         }
-        if let Some(block) = self.blocks.get_mut(block_index) {
-            block.images = images;
-        }
     }
 
     /// 属性を持たない（ブロックに数えない）ブロックの書き出し。脚注の定義や、段落を
@@ -643,16 +635,10 @@ impl<'w> Writer<'w> {
         self.write_block(walk.doc, &info, Mark::Unchanged, None);
     }
 
-    fn write_inline(
-        &mut self,
-        inline: &Inline,
-        words: Option<&WordMarks>,
-        images: &mut Vec<ImageRef>,
-    ) {
+    fn write_inline(&mut self, inline: &Inline, words: Option<&WordMarks>) {
         let mut sink = Sink {
             out: &mut self.out,
             image_url: self.image_url,
-            images,
         };
         inline::write(&mut sink, inline, words);
     }
@@ -713,8 +699,7 @@ impl<'w> Writer<'w> {
             }
             self.out.push('>');
             let inline = inline::flatten(&cell.children, &doc.image_context);
-            let mut images = Vec::new();
-            self.write_inline(&inline, None, &mut images);
+            self.write_inline(&inline, None);
             self.out.push_str("</");
             self.out.push_str(tag);
             self.out.push_str(">\n");
