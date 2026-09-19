@@ -152,6 +152,17 @@ repeatedly, so the URL and any forwarding rule stay stable. The review page
 and the API are plain HTTP: anyone who can reach the port and knows the URL
 can read the diff and submit.
 
+On a narrow screen (a viewport narrower than 720px, such as a phone) the page
+rearranges itself: the file tree becomes a drawer opened from the top bar, the
+diff is always one column with line wrapping on, and the display options
+(wrap, important only, sort by change size, theme) sit behind the "..." button.
+Comments are added by tapping line numbers: tap a line number to select the
+line, tap another line number on the same side to extend the selection to a
+range, and press the `+` that appears at the end of the selection. Tapping the
+same line again, or anything other than a line number, clears the selection.
+In the rendered view, tap a block to show its `+`. Tap the title to see the
+subtitle and meta. Resizing across 720px switches the layout in place.
+
 Keys in the page (ignored while typing in a text field):
 
 | Key | Action |
