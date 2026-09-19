@@ -65,8 +65,8 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
-| Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>` |
-| Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（`web/` を自前の HTTP サーバから配る。引数は無い） |
+| Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>`（agent-browser をローカルに入れて実行） |
+| Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（agent-browser が要る。`web/` は自前の HTTP サーバから配るので引数は無い） |
 | Release plan | `dist plan`（cargo-dist をローカルに入れて実行） |
 
 ## Conventions specific to this project
