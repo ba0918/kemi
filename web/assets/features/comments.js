@@ -224,7 +224,7 @@ export function closeEditor() {
 export function setCommentOpen(id, open) {
   state.commentOpen.set(id, open);
   if (!open && state.narrowOnlyComment === id) {
-    // 一覧から選んで 1 件だけ出していた吹き出しは、畳むと消える（R-NARROW）。
+    // 一覧から選んで 1 件だけ出していた吹き出しは、畳むと札に戻る（隠している間なら消える。R-NARROW）。
     state.narrowOnlyComment = null;
   }
   remeasureAndRender();

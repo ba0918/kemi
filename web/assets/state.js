@@ -142,9 +142,10 @@ export const state = {
   // 開いている間だけ覚え、localStorage には入れない。
   narrow: false,
   narrowWrap: true,
-  // 狭い画面の吹き出し。既定では出さず、「Comments」の切り替え（ページを開いている間だけ
-  // 覚える）と、コメント一覧から選んだそのコメントだけの印で出す。
-  narrowComments: false,
+  // 狭い画面の吹き出し。narrowComments が真なら畳んだ札で出す（既定）。「Comments」の
+  // 切り替え（ページを開いている間だけ覚える）で札ごと隠し、隠している間はコメント一覧から
+  // 選んだそのコメントだけの印で出す。
+  narrowComments: true,
   narrowOnlyComment: null,
   drawerOpen: false,
   horizontal: { entry: null, width: 0, left: 0 },
@@ -230,8 +231,8 @@ export function displayWrap() {
 }
 
 /**
- * 吹き出し（畳んだ札を含む）を描くコメントだけに絞る。狭い画面では既定で描かない
- * （R-NARROW）。編集中のコメントは、入力欄が消えないよう常に描く。
+ * 吹き出し（畳んだ札を含む）を描くコメントだけに絞る。狭い画面で「Comments」で隠して
+ * いる間は描かない（R-NARROW）。編集中のコメントは、入力欄が消えないよう常に描く。
  * @param {any[]} comments
  * @returns {any[]}
  */

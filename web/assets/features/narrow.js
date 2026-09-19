@@ -42,8 +42,8 @@ export function applyNarrow(narrow) {
 }
 
 /**
- * 狭い画面の吹き出しの出し入れ。出すときも隠すときも 1 件だけの印は捨て、行の高さが変わる
- * ので測り直させる。
+ * 狭い画面の吹き出しを札ごと隠す・戻す切り替え。隠すときも戻すときも 1 件だけの印は捨て、
+ * 行の高さが変わるので測り直させる。
  */
 export function toggleComments() {
   state.narrowComments = !state.narrowComments;

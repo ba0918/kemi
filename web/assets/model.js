@@ -1526,9 +1526,8 @@ export function effectiveDisplay(settings) {
 }
 
 /**
- * 狭い画面で、そのコメントの吹き出し（畳んだ札を含む）を出すか。既定では出さず、
- * 「Comments」の切り替えで全部を、コメント一覧から選んだそのコメントだけを出す（R-NARROW）。
- * 広い画面では常に出す。
+ * 狭い画面で、そのコメントの吹き出し（畳んだ札を含む）を出すか。「Comments」で隠して
+ * いる間は、コメント一覧から選んだそのコメントだけを出す（R-NARROW）。広い画面では常に出す。
  * @param {{ narrow: boolean, narrowComments: boolean, narrowOnlyComment: string | null }} settings
  * @param {string} id
  * @returns {boolean}
