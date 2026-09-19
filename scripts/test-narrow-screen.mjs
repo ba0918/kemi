@@ -134,7 +134,8 @@ const NARROW = ['390', '844'];
 const WIDE = ['1280', '800'];
 const narrowApplied = `getComputedStyle(document.querySelector('#tree')).position === 'fixed' && document.querySelector('#diff-content').dataset.wrap === 'on'`;
 const wideApplied = `getComputedStyle(document.querySelector('#tree')).position !== 'fixed'`;
-const notLoading = `!document.querySelector('#notice') || document.querySelector('#notice').hidden || !/Loading|Rendering/.test(document.querySelector('#notice').textContent)`;
+/** 括弧で囲む: `&&` と並べる呼び出し側で `||` が外へ漏れ、前後の条件が効かなくなるのを防ぐ。 */
+const notLoading = `(!document.querySelector('#notice') || document.querySelector('#notice').hidden || !/Loading|Rendering/.test(document.querySelector('#notice').textContent))`;
 const at = (path) => `document.querySelector('#file-header .path')?.textContent === ${JSON.stringify(path)}`;
 const drawerOpen = `document.querySelector('#tree').dataset.drawer === 'open'`;
 const drawerClosed = `document.querySelector('#tree').dataset.drawer !== 'open'`;

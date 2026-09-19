@@ -190,7 +190,8 @@ const openBlockEditor = async (block) => {
 
 const blocks = () => evaluate(`Array.from(document.querySelectorAll('#rendered-doc [data-kemi-block]')).map(e => e.dataset.kemiBlock)`);
 const renderedShown = `!document.querySelector('#rendered-doc').hidden`;
-const notLoading = `!document.querySelector('#notice') || document.querySelector('#notice').hidden || !/Loading|Rendering/.test(document.querySelector('#notice').textContent)`;
+/** 括弧で囲む: `&&` と並べる呼び出し側で `||` が外へ漏れ、前後の条件が効かなくなるのを防ぐ。 */
+const notLoading = `(!document.querySelector('#notice') || document.querySelector('#notice').hidden || !/Loading|Rendering/.test(document.querySelector('#notice').textContent))`;
 
 const at = (path) => `document.querySelector('#file-header .path')?.textContent === ${JSON.stringify(path)}`;
 
