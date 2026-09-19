@@ -47,6 +47,23 @@ pub(crate) fn encode_file(version: u8, meta: &[u8], payload: Option<&[u8]>) -> V
     out
 }
 
+/// 先頭の固定長（目印・版・meta の長さ）。ここまで読めば meta の長さが分かる。
+pub(crate) const HEAD_LEN: usize = MAGIC.len() + 1 + 4;
+
+/// 先頭の固定長から版と meta の長さを取り出す。payload を読まずに meta だけ欲しい
+/// 読み手（一覧と掃除）のために、`decode_file` と同じ並びを先頭だけで読む。
+pub(crate) fn decode_head(head: &[u8]) -> Result<(u8, usize), DecodeError> {
+    let rest = head.strip_prefix(MAGIC).ok_or(DecodeError::NotASession)?;
+    let (&version, rest) = rest
+        .split_first()
+        .ok_or(DecodeError::Corrupt("no version"))?;
+    if rest.len() < 4 {
+        return Err(DecodeError::Corrupt("no metadata length"));
+    }
+    let length = u32::from_le_bytes(rest[..4].try_into().expect("4 bytes")) as usize;
+    Ok((version, length))
+}
+
 /// ファイルを版・meta・payload（gzip のまま）に分けたもの。
 #[derive(Debug)]
 pub(crate) struct Envelope<'a> {
@@ -57,15 +74,8 @@ pub(crate) struct Envelope<'a> {
 
 /// ファイルを版・meta・payload（gzip のまま）に分ける。
 pub(crate) fn decode_file(bytes: &[u8]) -> Result<Envelope<'_>, DecodeError> {
-    let rest = bytes.strip_prefix(MAGIC).ok_or(DecodeError::NotASession)?;
-    let (&version, rest) = rest
-        .split_first()
-        .ok_or(DecodeError::Corrupt("no version"))?;
-    if rest.len() < 4 {
-        return Err(DecodeError::Corrupt("no metadata length"));
-    }
-    let length = u32::from_le_bytes(rest[..4].try_into().expect("4 bytes")) as usize;
-    let rest = &rest[4..];
+    let (version, length) = decode_head(bytes)?;
+    let rest = &bytes[HEAD_LEN..];
     if rest.len() < length {
         return Err(DecodeError::Corrupt("metadata is cut off"));
     }
@@ -327,5 +337,15 @@ mod tests {
         assert_eq!(decode_file(b"{}").unwrap_err(), DecodeError::NotASession);
         assert!(decode_file(b"kemi-session\n").is_err());
         assert!(decode_file(b"kemi-session\n\x01\x05").is_err());
+    }
+    #[test]
+    fn head_gives_the_version_and_metadata_length_without_the_payload() {
+        let meta = br#"{"format":1}"#;
+        let bytes = encode_file(VERSION, meta, Some(&vec![3u8; 64 * 1024]));
+
+        let (version, length) = decode_head(&bytes[..HEAD_LEN]).unwrap();
+
+        assert_eq!(version, VERSION);
+        assert_eq!(length, meta.len());
     }
 }

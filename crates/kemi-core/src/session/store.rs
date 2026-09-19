@@ -3,6 +3,7 @@
 //! 書き込みは一時ファイルから rename する原子的な差し替え。状態の変更のたびに全体を
 //! 書き直すが、写しの payload は gzip 済みのバイト列をそのまま使い回す。
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -227,7 +228,7 @@ impl SessionStore {
             else {
                 continue;
             };
-            let Ok((meta, _)) = self.read_raw(&id) else {
+            let Ok(meta) = read_meta(&self.path(&id)) else {
                 continue;
             };
             if !meta.is_resumable() {
@@ -595,13 +596,44 @@ fn prune_orphan_locks(dir: &Path, min_age: Duration) {
 }
 
 fn read_updated(path: &Path) -> Option<u128> {
-    let bytes = std::fs::read(path).ok()?;
-    let envelope = encoding::decode_file(&bytes).ok()?;
-    if envelope.version != encoding::VERSION {
-        return None;
+    Some(read_meta(path).ok()?.summary().0.updated)
+}
+
+/// meta だけを読む。payload はファイルの後ろにまとまっているので、先頭の固定長から
+/// meta の長さを知ってそこまでで読むのをやめる（一覧と掃除は payload を使わない）。
+fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
+    let mut file = std::fs::File::open(path).map_err(|source| match source.kind() {
+        std::io::ErrorKind::NotFound => SessionError::NotFound {
+            id: path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into(),
+        },
+        _ => SessionError::Io {
+            path: path.to_path_buf(),
+            source,
+        },
+    })?;
+    let corrupt = |reason: String| SessionError::Corrupt {
+        path: path.to_path_buf(),
+        reason,
+    };
+    let mut head = [0u8; encoding::HEAD_LEN];
+    file.read_exact(&mut head)
+        .map_err(|error| corrupt(error.to_string()))?;
+    let (version, length) =
+        encoding::decode_head(&head).map_err(|error| corrupt(error.to_string()))?;
+    if version != encoding::VERSION {
+        return Err(SessionError::UnsupportedVersion {
+            path: path.to_path_buf(),
+            version,
+        });
     }
-    let meta: MetaDto = serde_json::from_slice(envelope.meta).ok()?;
-    Some(meta.summary().0.updated)
+    let mut meta = vec![0u8; length];
+    file.read_exact(&mut meta)
+        .map_err(|error| corrupt(error.to_string()))?;
+    serde_json::from_slice(&meta).map_err(|error| corrupt(error.to_string()))
 }
 
 fn is_locked(dir: &Path, id: &str) -> bool {
