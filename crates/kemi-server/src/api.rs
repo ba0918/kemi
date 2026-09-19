@@ -20,8 +20,9 @@ use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
 use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{
-    Comment, FileEntry, GroupBy, LineRange, ReviewMeta, Side, Suggestion,
+    Comment, FileEntry, GroupBy, LineRange, ReviewMeta, Side, Status, Suggestion,
 };
+use kemi_core::render::{self, ImageRef, ReviewPaths, Target};
 use kemi_core::source::{FileOrigin, SourceError};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -49,6 +50,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/review", get(review))
         .route("/s/{token}/api/file/{id}", get(file))
         .route("/s/{token}/api/origin/{id}", get(origin))
+        .route("/s/{token}/api/render/{id}", get(render_file))
         .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
         .route("/s/{token}/api/state", post(state_api))
@@ -123,6 +125,13 @@ impl ApiError {
     fn conflict(message: impl Into<String>) -> Self {
         ApiError {
             status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
+    fn unprocessable(message: impl Into<String>) -> Self {
+        ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
             message: message.into(),
         }
     }
@@ -374,6 +383,7 @@ async fn file(
             "rows": [],
             "comments": comments_for(&state, &id),
             "highlight": { "capable": false, "enabled": false, "dark": dark },
+            "render": render_info(&file, None, None),
         })));
     }
 
@@ -403,6 +413,8 @@ async fn file(
         }
     });
     let highlight_info = json!({ "capable": capable, "enabled": enabled, "dark": dark });
+    // 描画表示の対象かと、事前に分かる描画不可は、ここで読んだ内容だけで決める（R-RENDER）。
+    let render_info = render_info(&file, old_text.as_deref(), new_text.as_deref());
 
     update_outdated(&state, &id, &old_lines, &new_lines);
 
@@ -422,6 +434,7 @@ async fn file(
             "next": next,
             "comments": comments_for(&state, &id),
             "highlight": highlight_info,
+            "render": render_info,
         })));
     }
 
@@ -451,7 +464,145 @@ async fn file(
         "rows": rows_json,
         "comments": comments_for(&state, &id),
         "highlight": highlight_info,
+        "render": render_info,
     })))
+}
+
+/// ファイルが描画表示の対象か、切り替えを持つか、既定はどちらか、事前に分かる描画不可の
+/// 理由（R-RENDER）。理由の文言は契約ではない。
+fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value {
+    match render::target_of_file(file) {
+        Some(Target::Markdown) => {
+            let reason = (!content::within_auto_limit(old, new))
+                .then_some("Too large to render (over 10,000 lines or 1 MB on one side)");
+            json!({ "target": "markdown", "toggle": true, "initial": "source", "reason": reason })
+        }
+        _ => json!({ "target": null, "toggle": false, "initial": "source", "reason": null }),
+    }
+}
+
+/// 描画表示の HTML とブロックの一覧（R-RENDER）。表示時に初めて計算する（R-SERVE）。
+async fn render_file(
+    State(state): State<Arc<AppState>>,
+    Path((_token, id)): Path<(String, String)>,
+    Query(query): Query<ExpandQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let (file, _) = find_file(&state, &id)?;
+    match render::target_of_file(&file) {
+        Some(Target::Markdown) => render_markdown_file(&state, &id, &file, &query).await,
+        _ => Err(ApiError::bad_request("this file has no rendered view")),
+    }
+}
+
+async fn render_markdown_file(
+    state: &AppState,
+    id: &str,
+    file: &FileEntry,
+    query: &ExpandQuery,
+) -> Result<Json<Value>, ApiError> {
+    let content = source_content(state, id)
+        .await?
+        .ok_or_else(file_not_found)?;
+    let old_text = content
+        .old
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+    let new_text = content
+        .new
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+    let dark = query.dark.as_deref() == Some("1");
+    let capable = Highlighter::capable(old_text.as_deref(), new_text.as_deref());
+    let forced = query.highlight.as_deref() == Some("on");
+    let enabled = forced || (capable && query.highlight.as_deref() != Some("off"));
+    let highlighter = state.highlighter.get_or_init(Highlighter::new);
+    let highlight = |lang: &str, code: &str| highlighter.highlight_code(lang, code, dark);
+    let file_id = id.to_string();
+    let image_url = move |reference: &ImageRef| match reference {
+        ImageRef::Review { file_id, side } => {
+            format!(
+                "api/image/review/{}/{}",
+                url_segment(file_id),
+                side.as_str()
+            )
+        }
+        ImageRef::Repo { path, side } => format!(
+            "api/image/repo/{}/{}/{}",
+            url_segment(&file_id),
+            side.as_str(),
+            url_path(path)
+        ),
+    };
+    let input = render::MarkdownInput {
+        old: old_text.as_deref(),
+        new: new_text.as_deref(),
+        old_path: (file.status != Status::Add)
+            .then(|| file.old_path.as_deref().unwrap_or(&file.path)),
+        new_path: (file.status != Status::Delete).then_some(file.path.as_str()),
+        review_paths: review_paths_of(state, file),
+        repo_readable: false,
+    };
+    let rendered = render::render_markdown(&input, enabled.then_some(&highlight), &image_url)
+        .map_err(|error| ApiError::unprocessable(error.to_string()))?;
+    Ok(Json(json!({
+        "id": id,
+        "kind": "markdown",
+        "html": rendered.html,
+        "blocks": rendered.blocks.iter().map(|block| json!({
+            "side": block.side.as_str(),
+            "start": block.start,
+            "end": block.end,
+            "mark": block.mark.as_str(),
+        })).collect::<Vec<_>>(),
+        "old_lines": side_lines(&content.old),
+        "new_lines": side_lines(&content.new),
+        "highlight": { "capable": capable, "enabled": enabled, "dark": dark },
+    })))
+}
+
+/// 同じグループのレビュー対象ファイルの、側ごとのパス。相対パス画像がレビュー対象に
+/// 一致するかの判定に使う。
+fn review_paths_of(state: &AppState, file: &FileEntry) -> ReviewPaths {
+    let review = state.review.read().expect("review lock poisoned");
+    let other = review.other.as_ref().and_then(|other| other.meta.as_ref());
+    let mut paths = ReviewPaths::default();
+    let group = std::iter::once(&review.startup)
+        .chain(other)
+        .flat_map(|meta| meta.groups.iter())
+        .find(|group| group.id == file.group_id && group.files.iter().any(|f| f.id == file.id));
+    if let Some(group) = group {
+        for entry in &group.files {
+            if entry.status != Status::Add {
+                let old_path = entry.old_path.clone().unwrap_or_else(|| entry.path.clone());
+                paths.old.push((entry.id.clone(), old_path));
+            }
+            if entry.status != Status::Delete {
+                paths.new.push((entry.id.clone(), entry.path.clone()));
+            }
+        }
+    }
+    paths
+}
+
+/// URL の 1 セグメントに入れる。英数字と `-` `.` `_` `~` 以外はパーセント符号化する。
+fn url_segment(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+/// `/` で区切ったパスをセグメントごとに符号化する。
+fn url_path(path: &str) -> String {
+    path.split('/')
+        .map(url_segment)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[derive(Debug, Deserialize)]

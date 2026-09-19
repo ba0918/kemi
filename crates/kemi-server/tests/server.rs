@@ -47,6 +47,37 @@ impl FakeSource {
                 new: Some(large.into_bytes()),
             },
         );
+        contents.insert(
+            "f4".to_string(),
+            FileContent {
+                old: None,
+                new: Some("para\n".repeat(10_001).into_bytes()),
+            },
+        );
+        contents.insert(
+            "f5".to_string(),
+            FileContent {
+                old: Some(b"# Guide\n\nold words here\n".to_vec()),
+                new: Some(
+                    b"# Guide\n\nnew words here\n\n```rust\nlet a = 1;\n```\n\n![shot](img/shot.png)\n"
+                        .to_vec(),
+                ),
+            },
+        );
+        contents.insert(
+            "f6".to_string(),
+            FileContent {
+                old: None,
+                new: Some(vec![0x89, b'P', b'N', b'G', 0x00]),
+            },
+        );
+        contents.insert(
+            "f7".to_string(),
+            FileContent {
+                old: None,
+                new: Some(format!("{}x\n", "> ".repeat(101)).into_bytes()),
+            },
+        );
         FakeSource {
             meta: ReviewMeta {
                 title: "テストのレビュー".to_string(),
@@ -74,6 +105,21 @@ impl FakeSource {
                             focus: true,
                             note: "重点".to_string(),
                             noise: true,
+                        },
+                        FileEntry {
+                            status: Status::Add,
+                            ..file_entry("f4", "docs/big.md")
+                        },
+                        file_entry("f5", "docs/guide.md"),
+                        FileEntry {
+                            status: Status::Add,
+                            binary: true,
+                            new_size: 5,
+                            ..file_entry("f6", "docs/img/shot.png")
+                        },
+                        FileEntry {
+                            status: Status::Add,
+                            ..file_entry("f7", "docs/deep.md")
                         },
                     ],
                 }],
@@ -1958,7 +2004,7 @@ async fn session_state_is_saved_on_every_change() {
     assert!(state.seen.contains("f1"));
     assert_eq!(state.collapsed.get("f1"), Some(&true));
     assert_eq!(*sink.title.lock().unwrap(), "テストのレビュー");
-    assert_eq!(*sink.total_files.lock().unwrap(), 3);
+    assert_eq!(*sink.total_files.lock().unwrap(), 7);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2340,4 +2386,127 @@ async fn session_initial_state_is_restored() {
     assert_eq!(review["comments"][0]["resolved"], true);
     assert_eq!(file["seen"], true);
     assert_eq!(file["collapsed"], true);
+}
+
+// ---- R-RENDER（描画のエンドポイントと api/file の描画表示の情報） ----
+
+#[tokio::test]
+async fn render_requires_the_token() {
+    let server = TestServer::start().await;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://127.0.0.1:{}/s/wrong-token/api/render/f5",
+            server.port
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
+}
+
+#[tokio::test]
+async fn render_reads_content_only_when_the_rendered_view_is_requested() {
+    let server = TestServer::start().await;
+    let _ = server.get("api/review").await.text().await.unwrap();
+    assert_eq!(server.source.reads(), 0);
+
+    let response = server.get("api/render/f5").await;
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(server.source.reads(), 1);
+}
+
+#[tokio::test]
+async fn file_of_a_markdown_offers_the_rendered_toggle_and_other_files_do_not() {
+    let server = TestServer::start().await;
+
+    let markdown: Value = server.get("api/file/f5").await.json().await.unwrap();
+    assert_eq!(markdown["render"]["target"], "markdown");
+    assert_eq!(markdown["render"]["toggle"], true);
+    assert_eq!(markdown["render"]["initial"], "source");
+    assert_eq!(markdown["render"]["reason"], Value::Null);
+
+    let source: Value = server.get("api/file/f1").await.json().await.unwrap();
+    assert_eq!(source["render"]["target"], Value::Null);
+    assert_eq!(source["render"]["toggle"], false);
+}
+
+#[tokio::test]
+async fn file_of_a_markdown_over_the_line_limit_reports_why_it_cannot_be_rendered() {
+    let server = TestServer::start().await;
+
+    let body: Value = server.get("api/file/f4").await.json().await.unwrap();
+
+    assert_eq!(body["render"]["target"], "markdown");
+    assert_eq!(body["render"]["toggle"], true);
+    assert!(body["render"]["reason"].is_string(), "{body}");
+}
+
+#[tokio::test]
+async fn file_of_an_image_carries_no_line_or_byte_reason() {
+    let server = TestServer::start().await;
+
+    let body: Value = server.get("api/file/f2").await.json().await.unwrap();
+
+    assert_eq!(body["render"]["reason"], Value::Null, "{body}");
+}
+
+#[tokio::test]
+async fn render_follows_the_highlight_setting_and_the_theme() {
+    let server = TestServer::start().await;
+
+    let light: Value = server.get("api/render/f5").await.json().await.unwrap();
+    let off: Value = server
+        .get("api/render/f5?highlight=off")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let dark: Value = server
+        .get("api/render/f5?dark=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    let light_html = light["html"].as_str().unwrap();
+    let off_html = off["html"].as_str().unwrap();
+    let dark_html = dark["html"].as_str().unwrap();
+    assert!(light_html.contains("style=\"color:#"), "{light_html}");
+    assert!(!off_html.contains("style=\"color:#"), "{off_html}");
+    assert!(dark_html.contains("style=\"color:#"), "{dark_html}");
+    assert_ne!(light_html, dark_html);
+    assert!(off_html.contains("let a = 1;"), "{off_html}");
+}
+
+#[tokio::test]
+async fn render_returns_blocks_and_turns_review_image_references_into_urls() {
+    let server = TestServer::start().await;
+
+    let body: Value = server.get("api/render/f5").await.json().await.unwrap();
+
+    assert_eq!(body["kind"], "markdown");
+    let blocks = body["blocks"].as_array().unwrap();
+    assert_eq!(blocks[0]["side"], "new");
+    assert_eq!(blocks[0]["start"], 1);
+    assert_eq!(blocks[0]["end"], 1);
+    assert_eq!(blocks[0]["mark"], "unchanged");
+    assert_eq!(blocks[1]["mark"], "modified");
+    let html = body["html"].as_str().unwrap();
+    assert!(html.contains("<img src=\"api/image/"), "{html}");
+    assert!(html.contains("data-kemi-path=\"img/shot.png\""), "{html}");
+    assert_eq!(body["new_lines"].as_array().unwrap().len(), 9);
+    assert_eq!(body["old_lines"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn render_of_a_markdown_the_parser_rejects_is_a_failure_response() {
+    let server = TestServer::start().await;
+
+    let response = server.get("api/render/f7").await;
+
+    assert_eq!(response.status(), 422);
+    let body: Value = response.json().await.unwrap();
+    assert!(body["error"].is_string(), "{body}");
 }

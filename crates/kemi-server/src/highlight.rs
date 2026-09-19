@@ -36,12 +36,34 @@ impl Highlighter {
 
     /// 内容を行ごとのスタイル列に変える。`dark` でテーマを選ぶ。
     pub fn highlight(&self, path: &str, content: &str, dark: bool) -> Vec<HighlightedLine> {
+        self.highlight_with(self.syntax_for(path), content, dark)
+    }
+
+    /// 描画表示のコード塊。フェンスの言語名で構文を引き、行ごとの HTML にする。言語が
+    /// 引けなければ None（無地）。
+    pub fn highlight_code(&self, lang: &str, code: &str, dark: bool) -> Option<Vec<String>> {
+        let syntax = self.syntaxes.find_syntax_by_token(lang)?;
+        let mut content = code.to_string();
+        content.push('\n');
+        Some(
+            self.highlight_with(syntax, &content, dark)
+                .iter()
+                .map(|ranges| render_line(ranges, &[]))
+                .collect(),
+        )
+    }
+
+    fn highlight_with(
+        &self,
+        syntax: &SyntaxReference,
+        content: &str,
+        dark: bool,
+    ) -> Vec<HighlightedLine> {
         let theme = &self.themes[if dark {
             EmbeddedThemeName::TwoDark
         } else {
             EmbeddedThemeName::InspiredGithub
         }];
-        let syntax = self.syntax_for(path);
         let mut highlighter = HighlightLines::new(syntax, theme);
         let mut lines = Vec::new();
 
