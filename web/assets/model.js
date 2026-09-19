@@ -1460,3 +1460,67 @@ export function measureHorizontal(previous, measured, viewport, reset = false) {
   const width = reset ? measured : Math.max(previous.width, measured);
   return { ...previous, width, left: Math.max(0, Math.min(previous.left, width - viewport)) };
 }
+
+/**
+ * 表示中の行のうち、指定した側の行番号の集合。折りたたみの中の行は含まない。
+ * @param {DisplayLine[]} display
+ * @param {string} side
+ * @returns {Set<number>}
+ */
+export function shownLineNumbers(display, side) {
+  /** @type {Set<number>} */
+  const numbers = new Set();
+  for (const line of display) {
+    const target = side === "old" ? line.oldLine : line.newLine;
+    if (target) {
+      numbers.add(Number(target.number));
+    }
+  }
+  return numbers;
+}
+
+/**
+ * @typedef {{ side: string, start: number, end: number, anchor: number }} LineSelection
+ */
+
+/**
+ * 狭い画面で行番号をタップしたときの次の選択（R-NARROW）。選択が無ければその 1 行。
+ * 1 行の選択があり、同じ側で表示中の連続した別の行なら 2 行を両端とする範囲。同じ行の
+ * 再タップは解除。それ以外（反対側、折りたたみをまたぐ行、範囲があるときの 3 つ目）は
+ * その 1 行の新しい選択。
+ * @param {LineSelection | null} selection
+ * @param {{ side: string, number: number }} tap
+ * @param {Set<number>} shown タップした側で表示中の行番号
+ * @returns {LineSelection | null}
+ */
+export function tapSelection(selection, tap, shown) {
+  const single = { side: tap.side, start: tap.number, end: tap.number, anchor: tap.number };
+  if (!selection || selection.side !== tap.side || selection.start !== selection.end) {
+    return single;
+  }
+  const anchor = selection.anchor;
+  if (anchor === tap.number) {
+    return null;
+  }
+  const start = Math.min(anchor, tap.number);
+  const end = Math.max(anchor, tap.number);
+  for (let number = start; number <= end; number += 1) {
+    if (!shown.has(number)) {
+      return single;
+    }
+  }
+  return { side: tap.side, start, end, anchor };
+}
+
+/**
+ * 描画に使う表示モードと折返し（R-NARROW）。狭い画面では常に 1 列で、折返しは狭い画面用の
+ * 値。広い画面では覚えている値をそのまま使うので、狭い画面から戻れば元に戻る。
+ * @param {{ narrow: boolean, mode: "unified" | "split", wrap: boolean, narrowWrap: boolean }} settings
+ * @returns {{ mode: "unified" | "split", wrap: boolean }}
+ */
+export function effectiveDisplay(settings) {
+  if (settings.narrow) {
+    return { mode: "unified", wrap: settings.narrowWrap };
+  }
+  return { mode: settings.mode, wrap: settings.wrap };
+}

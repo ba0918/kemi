@@ -51,6 +51,9 @@ import {
   displayRowKey,
   placeRenderedComments,
   renderedStops,
+  tapSelection,
+  shownLineNumbers,
+  effectiveDisplay,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1287,4 +1290,90 @@ test("最初のブロックより前のコメントは文書の先頭に置か�
 
 test("r は描画表示とソース表示の切り替え", () => {
   assert.deepEqual(keyAction("r", "unified", 3, 0), { type: "rendered" });
+});
+
+// 狭い画面のタップの選択（R-NARROW）。表示中の行番号は、タップした側で画面に出ている行の集合。
+const shownNew = new Set([1, 2, 3, 4, 5, 10, 11, 12]);
+
+test("選択が無いときのタップは、その行だけの選択になる", () => {
+  assert.deepEqual(tapSelection(null, { side: "new", number: 3 }, shownNew), {
+    side: "new",
+    start: 3,
+    end: 3,
+    anchor: 3,
+  });
+});
+
+test("同じ側で表示中の連続した別の行のタップは、2 行を両端とする範囲になる", () => {
+  const first = tapSelection(null, { side: "new", number: 5 }, shownNew);
+  assert.deepEqual(tapSelection(first, { side: "new", number: 2 }, shownNew), {
+    side: "new",
+    start: 2,
+    end: 5,
+    anchor: 5,
+  });
+});
+
+test("反対側の行のタップは、その行だけの新しい選択になる", () => {
+  const first = tapSelection(null, { side: "new", number: 3 }, shownNew);
+  assert.deepEqual(tapSelection(first, { side: "old", number: 4 }, new Set([4])), {
+    side: "old",
+    start: 4,
+    end: 4,
+    anchor: 4,
+  });
+});
+
+test("折りたたみをまたぐ行のタップは、その行だけの新しい選択になる", () => {
+  const first = tapSelection(null, { side: "new", number: 5 }, shownNew);
+  assert.deepEqual(tapSelection(first, { side: "new", number: 11 }, shownNew), {
+    side: "new",
+    start: 11,
+    end: 11,
+    anchor: 11,
+  });
+});
+
+test("範囲があるときの 3 つ目の行のタップは、その行だけの新しい選択になる", () => {
+  const range = { side: "new", start: 2, end: 5, anchor: 5 };
+  assert.deepEqual(tapSelection(range, { side: "new", number: 3 }, shownNew), {
+    side: "new",
+    start: 3,
+    end: 3,
+    anchor: 3,
+  });
+});
+
+test("同じ行の再タップは選択を解除する", () => {
+  const first = tapSelection(null, { side: "new", number: 3 }, shownNew);
+  assert.equal(tapSelection(first, { side: "new", number: 3 }, shownNew), null);
+});
+
+test("表示中の行番号は、指定した側の行を持つ表示行から集め、折りたたみの中は含まない", () => {
+  const display = toDisplayLines(
+    withRowIndex([
+      equal(1, "a"),
+      { kind: "skip", count: 3, from: 1, to: 4 },
+      deleted(5, "gone"),
+      equal(6, "b"),
+    ]),
+    "unified",
+  );
+  assert.deepEqual([...shownLineNumbers(display, "new")], [1, 6]);
+  assert.deepEqual([...shownLineNumbers(display, "old")], [1, 5, 6]);
+});
+
+// 描画に使う実効値（R-NARROW）。狭い画面は 1 列と狭い画面用の折返し、広い画面は state の値。
+test("狭い画面では表示モードが 1 列で、折返しは狭い画面用の値になる", () => {
+  assert.deepEqual(
+    effectiveDisplay({ narrow: true, mode: "split", wrap: false, narrowWrap: true }),
+    { mode: "unified", wrap: true },
+  );
+});
+
+test("広い画面では覚えている表示モードと折返しをそのまま使う", () => {
+  assert.deepEqual(
+    effectiveDisplay({ narrow: false, mode: "split", wrap: false, narrowWrap: true }),
+    { mode: "split", wrap: false },
+  );
 });
