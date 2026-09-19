@@ -300,3 +300,124 @@ fn code_blocks_are_plain_without_a_highlighter_and_use_it_when_given() {
         highlighted.html
     );
 }
+
+fn render_pair(old: &str, new: &str) -> Rendered {
+    render_markdown(&input(Some(old), Some(new)), no_highlight(), &plain_url).unwrap()
+}
+
+fn marks(rendered: &Rendered) -> Vec<(Side, u32, u32, Mark)> {
+    rendered
+        .blocks
+        .iter()
+        .map(|block| (block.side, block.start, block.end, block.mark))
+        .collect()
+}
+
+#[test]
+fn one_word_change_in_a_paragraph_with_the_same_structure_is_one_block_with_both_marks() {
+    let rendered = render_pair(
+        "intro\n\nthe *quick* brown fox\n\nend\n",
+        "intro\n\nthe *quick* red fox\n\nend\n",
+    );
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::New, 1, 1, Mark::Unchanged),
+            (Side::New, 3, 3, Mark::Modified),
+            (Side::New, 5, 5, Mark::Unchanged),
+        ]
+    );
+    let html = &rendered.html;
+    assert!(
+        html.contains("<span class=\"kw-del\">brown</span>"),
+        "{html}"
+    );
+    assert!(html.contains("<span class=\"kw-add\">red</span>"), "{html}");
+    assert!(html.contains("<em>quick</em>"), "{html}");
+}
+
+#[test]
+fn a_paragraph_whose_link_became_plain_text_is_shown_as_two_blocks() {
+    let rendered = render_pair(
+        "see [the docs](https://example.com) now\n",
+        "see the docs now\n",
+    );
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::Old, 1, 1, Mark::Deleted),
+            (Side::New, 1, 1, Mark::Added),
+        ]
+    );
+    assert!(
+        rendered.html.contains("data-kemi-block=\"old:1-1\""),
+        "{}",
+        rendered.html
+    );
+    assert!(!rendered.html.contains("kw-del"), "{}", rendered.html);
+}
+
+#[test]
+fn a_deleted_paragraph_is_inserted_at_its_position_with_the_old_line_range() {
+    let rendered = render_pair(
+        "# Head\n\nfirst\n\nsecond\nmore\n\nthird\n",
+        "# Head\n\nfirst\n\nthird\n",
+    );
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::New, 1, 1, Mark::Unchanged),
+            (Side::New, 3, 3, Mark::Unchanged),
+            (Side::Old, 5, 6, Mark::Deleted),
+            (Side::New, 5, 5, Mark::Unchanged),
+        ]
+    );
+    let html = &rendered.html;
+    let deleted = html.find("old:5-6").unwrap();
+    let third = html.find("new:5-5").unwrap();
+    assert!(deleted < third, "{html}");
+    assert!(html.contains("kb-del"), "{html}");
+}
+
+#[test]
+fn a_deleted_file_renders_the_old_document_with_every_block_deleted() {
+    let rendered =
+        render_markdown(&input(Some("# A\n\nb\n"), None), no_highlight(), &plain_url).unwrap();
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::Old, 1, 1, Mark::Deleted),
+            (Side::Old, 3, 3, Mark::Deleted),
+        ]
+    );
+}
+
+#[test]
+fn an_added_file_renders_every_block_added() {
+    let rendered = render_new("# A\n\nb\n");
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::New, 1, 1, Mark::Added),
+            (Side::New, 3, 3, Mark::Added),
+        ]
+    );
+}
+
+#[test]
+fn a_code_block_change_is_shown_as_old_and_new_blocks_stacked() {
+    let rendered = render_pair("```\na\n```\n", "```\nb\n```\n");
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::Old, 1, 3, Mark::Deleted),
+            (Side::New, 1, 3, Mark::Added),
+        ]
+    );
+}

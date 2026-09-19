@@ -7,6 +7,7 @@
 mod inline;
 mod lines;
 mod markdown;
+mod overlay;
 mod url;
 
 #[cfg(test)]

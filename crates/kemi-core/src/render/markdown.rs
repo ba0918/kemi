@@ -32,6 +32,13 @@ pub(super) enum Kind {
     FrontMatter,
 }
 
+impl Kind {
+    /// 旧と新で構造が同じなら 1 つに重ねる「文のブロック」か。
+    pub(super) fn is_sentence(self) -> bool {
+        matches!(self, Kind::Paragraph | Kind::Heading(_))
+    }
+}
+
 /// ブロックの元になるノード。参照の寿命（`'r`）と構文木の寿命（`'a`）は別で、
 /// 構文木は寿命に対して不変なので、短い借用からも作れるようにしておく。
 pub(super) enum Source<'r, 'a> {
@@ -56,6 +63,8 @@ pub(super) struct SideDoc<'a> {
     pub document: &'a Document<'a>,
     pub front_matter: bool,
     pub blocks: Vec<BlockInfo<'a, 'a>>,
+    /// 正規化した全行。旧新の整列に使う。
+    pub lines: &'a [String],
     image_context: ImageContext<'a>,
 }
 
@@ -92,6 +101,7 @@ struct Prepared {
     front_lines: u32,
     front: Option<String>,
     body: String,
+    lines: Vec<String>,
 }
 
 fn prepare(text: &str) -> Prepared {
@@ -101,6 +111,7 @@ fn prepare(text: &str) -> Prepared {
         front_lines,
         front: front.map(str::to_string),
         body: body.to_string(),
+        lines: content::lines(&normalized),
     }
 }
 
@@ -178,7 +189,7 @@ pub(super) fn render(
         }
         (old, Some(new)) => {
             let plan = match old {
-                Some(_) => Plan::uniform(new.blocks.len(), Mark::Unchanged),
+                Some(old) => super::overlay::plan(old, new),
                 None => Plan::uniform(new.blocks.len(), Mark::Added),
             };
             writer.write_document(new, &plan, old.as_ref());
@@ -219,6 +230,7 @@ fn collect_side<'a>(
         document,
         front_matter: prepared.front.is_some(),
         blocks: collector.blocks,
+        lines: &prepared.lines,
         image_context,
     }
 }
