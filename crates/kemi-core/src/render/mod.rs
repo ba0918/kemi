@@ -54,6 +54,42 @@ pub fn target_of_file(file: &FileEntry) -> Option<Target> {
     target_of(&file.path)
 }
 
+/// 画像として並べるファイルの種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageKind {
+    /// 切り替えを持たず、常に描画表示。
+    Raster,
+    /// テキストなので切り替えを持ち、既定が描画表示。
+    Svg,
+}
+
+/// 画像として並べるか。拡張子が画像で内容がバイナリと判定されたものと、`.svg`。拡張子が
+/// 画像でも内容がテキストのもの（LFS のポインタ、空ファイル）は画像にしない（R-RENDER）。
+pub fn image_kind(file: &FileEntry) -> Option<ImageKind> {
+    match target_of_file(file)? {
+        Target::Image { svg: true } => Some(ImageKind::Svg),
+        Target::Image { svg: false } if file.binary => Some(ImageKind::Raster),
+        _ => None,
+    }
+}
+
+/// 画像の片側の上限。これを超えるとバイト数の増減だけを示す。相対パス画像も同じ。
+pub const IMAGE_MAX_BYTES: u64 = 5 * 1_048_576;
+
+/// 画像の応答の `Content-Type`。拡張子から決める。
+pub fn image_content_type(path: &str) -> Option<&'static str> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let (_, extension) = name.rsplit_once('.')?;
+    match extension.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
 /// ブロックに付ける変更の印。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {

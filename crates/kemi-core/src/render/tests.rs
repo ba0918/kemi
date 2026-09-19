@@ -563,3 +563,34 @@ fn the_first_row_is_the_header_and_uneven_rows_are_kept() {
     assert_eq!(html.matches("<td>").count(), 4, "{html}");
     assert_eq!(rendered.blocks.len(), 3);
 }
+
+// ---- 画像 ----
+
+#[test]
+fn image_files_are_binary_images_or_svg_and_text_images_are_not() {
+    let binary_png = FileEntry {
+        binary: true,
+        ..entry(Status::Modify, "a/logo.PNG", None)
+    };
+    assert_eq!(image_kind(&binary_png), Some(ImageKind::Raster));
+    let text_png = entry(Status::Modify, "a/pointer.png", None);
+    assert_eq!(image_kind(&text_png), None);
+    let svg = entry(Status::Modify, "a/icon.svg", None);
+    assert_eq!(image_kind(&svg), Some(ImageKind::Svg));
+    assert_eq!(
+        image_kind(&entry(Status::Modify, "a/readme.md", None)),
+        None
+    );
+}
+
+#[test]
+fn image_content_types_come_from_the_extension() {
+    assert_eq!(image_content_type("x.png"), Some("image/png"));
+    assert_eq!(image_content_type("x.JPG"), Some("image/jpeg"));
+    assert_eq!(image_content_type("x.jpeg"), Some("image/jpeg"));
+    assert_eq!(image_content_type("x.gif"), Some("image/gif"));
+    assert_eq!(image_content_type("x.webp"), Some("image/webp"));
+    assert_eq!(image_content_type("x.svg"), Some("image/svg+xml"));
+    assert_eq!(image_content_type("x.txt"), None);
+    assert_eq!(IMAGE_MAX_BYTES, 5 * 1_048_576);
+}

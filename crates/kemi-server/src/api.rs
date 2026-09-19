@@ -22,7 +22,7 @@ use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{
     Comment, FileEntry, GroupBy, LineRange, ReviewMeta, Side, Status, Suggestion,
 };
-use kemi_core::render::{self, ImageRef, ReviewPaths, Target};
+use kemi_core::render::{self, ImageKind, ImageRef, ReviewPaths, Target, IMAGE_MAX_BYTES};
 use kemi_core::source::{FileOrigin, SourceError};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -51,6 +51,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/file/{id}", get(file))
         .route("/s/{token}/api/origin/{id}", get(origin))
         .route("/s/{token}/api/render/{id}", get(render_file))
+        .route("/s/{token}/api/image/review/{id}/{side}", get(review_image))
         .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
         .route("/s/{token}/api/state", post(state_api))
@@ -489,8 +490,126 @@ fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value 
             };
             json!({ "target": "table", "toggle": true, "initial": "source", "reason": reason })
         }
+        Some(Target::Image { .. }) => {
+            // 画像には行数・バイト数の描画不可を当てず、5 MB の規則だけが効く。
+            let (old_bytes, new_bytes) = side_bytes(file, old, new);
+            let within = old_bytes <= IMAGE_MAX_BYTES && new_bytes <= IMAGE_MAX_BYTES;
+            match render::image_kind(file) {
+                Some(kind) if within => json!({
+                    "target": "image",
+                    "toggle": kind == ImageKind::Svg,
+                    "initial": "rendered",
+                    "reason": null,
+                }),
+                _ => {
+                    json!({ "target": null, "toggle": false, "initial": "source", "reason": null })
+                }
+            }
+        }
         _ => json!({ "target": null, "toggle": false, "initial": "source", "reason": null }),
     }
+}
+
+/// 各側のバイト数。内容を読んだテキストはその長さ、読んでいないバイナリはエントリの
+/// サイズ。
+fn side_bytes(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> (u64, u64) {
+    if file.binary {
+        (file.old_size, file.new_size)
+    } else {
+        (
+            old.map_or(0, |text| text.len() as u64),
+            new.map_or(0, |text| text.len() as u64),
+        )
+    }
+}
+
+fn review_image_url(id: &str, side: Side) -> String {
+    format!("api/image/review/{}/{}", url_segment(id), side.as_str())
+}
+
+/// レビュー対象の画像の旧と新（R-RENDER）。改名でバイト列が同じなら `same`。
+async fn render_image_file(
+    state: &AppState,
+    id: &str,
+    file: &FileEntry,
+) -> Result<Json<Value>, ApiError> {
+    if render::image_kind(file).is_none() {
+        return Err(ApiError::bad_request("this file is not an image"));
+    }
+    let content = source_content(state, id)
+        .await?
+        .ok_or_else(file_not_found)?;
+    let over = |bytes: &Option<Vec<u8>>| {
+        bytes
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() as u64 > IMAGE_MAX_BYTES)
+    };
+    if over(&content.old) || over(&content.new) {
+        return Err(ApiError::unprocessable(
+            "the image exceeds 5 MB on one side",
+        ));
+    }
+    let side_json = |bytes: &Option<Vec<u8>>, side: Side| {
+        bytes
+            .as_ref()
+            .map(|bytes| json!({ "url": review_image_url(id, side), "size": bytes.len() }))
+    };
+    Ok(Json(json!({
+        "id": id,
+        "kind": "image",
+        "old": side_json(&content.old, Side::Old),
+        "new": side_json(&content.new, Side::New),
+        "same": content.old.is_some() && content.old == content.new,
+    })))
+}
+
+/// レビュー対象の画像のバイト列（R-SERVE）。kemi がそのレビューで読んだものをそのまま配る
+/// ので、入力モードを問わず、復元でも写しから出る。
+async fn review_image(
+    State(state): State<Arc<AppState>>,
+    Path((_token, id, side)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    let (file, _) = find_file(&state, &id)?;
+    if render::image_kind(&file).is_none() {
+        return Err(file_not_found());
+    }
+    let side = parse_side(&side).map_err(|_| file_not_found())?;
+    let content = source_content(&state, &id)
+        .await?
+        .ok_or_else(file_not_found)?;
+    let (bytes, path) = match side {
+        Side::Old => (
+            content.old,
+            file.old_path.clone().unwrap_or_else(|| file.path.clone()),
+        ),
+        Side::New => (content.new, file.path.clone()),
+    };
+    let bytes = bytes.ok_or_else(file_not_found)?;
+    if bytes.len() as u64 > IMAGE_MAX_BYTES {
+        return Err(file_not_found());
+    }
+    image_response(bytes, &path)
+}
+
+/// 画像の応答。拡張子から決めた `Content-Type` に、`nosniff` と `sandbox` を付ける。
+/// 同じオリジンで直接開かれた SVG の中のスクリプトが kemi の API に届かないため。
+fn image_response(bytes: Vec<u8>, path: &str) -> Result<Response, ApiError> {
+    let content_type = render::image_content_type(path).ok_or_else(file_not_found)?;
+    let mut response = axum::body::Bytes::from(bytes).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static(content_type),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        header::HeaderValue::from_static("sandbox"),
+    );
+    Ok(response)
 }
 
 /// 描画表示の HTML とブロックの一覧（R-RENDER）。表示時に初めて計算する（R-SERVE）。
@@ -503,7 +622,8 @@ async fn render_file(
     match render::target_of_file(&file) {
         Some(Target::Markdown) => render_markdown_file(&state, &id, &file, &query).await,
         Some(Target::Table { delimiter }) => render_table_file(&state, &id, delimiter).await,
-        _ => Err(ApiError::bad_request("this file has no rendered view")),
+        Some(Target::Image { .. }) => render_image_file(&state, &id, &file).await,
+        None => Err(ApiError::bad_request("this file has no rendered view")),
     }
 }
 

@@ -92,6 +92,31 @@ impl FakeSource {
                 new: Some(b"name\tnote\nx\ttwo\n".to_vec()),
             },
         );
+        contents.insert(
+            "f11".to_string(),
+            FileContent {
+                old: Some(
+                    b"<svg xmlns=\"http://www.w3.org/2000/svg\"><circle r=\"1\"/></svg>\n".to_vec(),
+                ),
+                new: Some(
+                    b"<svg xmlns=\"http://www.w3.org/2000/svg\"><circle r=\"2\"/></svg>\n".to_vec(),
+                ),
+            },
+        );
+        contents.insert(
+            "f10".to_string(),
+            FileContent {
+                old: None,
+                new: Some(vec![0x89; 6_000_000]),
+            },
+        );
+        contents.insert(
+            "f12".to_string(),
+            FileContent {
+                old: Some(vec![0x89, b'P', b'N', b'G', 0x00, 0x01]),
+                new: Some(vec![0x89, b'P', b'N', b'G', 0x00, 0x01]),
+            },
+        );
         FakeSource {
             meta: ReviewMeta {
                 title: "テストのレビュー".to_string(),
@@ -137,6 +162,21 @@ impl FakeSource {
                         },
                         file_entry("f8", "data/rows.csv"),
                         file_entry("f9", "data/rows.tsv"),
+                        FileEntry {
+                            status: Status::Add,
+                            binary: true,
+                            new_size: 6_000_000,
+                            ..file_entry("f10", "assets/huge.png")
+                        },
+                        file_entry("f11", "art/icon.svg"),
+                        FileEntry {
+                            status: Status::Rename,
+                            old_path: Some("art/old-name.png".to_string()),
+                            binary: true,
+                            old_size: 6,
+                            new_size: 6,
+                            ..file_entry("f12", "art/new-name.png")
+                        },
                     ],
                 }],
                 approval: vec![Approval {
@@ -2020,7 +2060,7 @@ async fn session_state_is_saved_on_every_change() {
     assert!(state.seen.contains("f1"));
     assert_eq!(state.collapsed.get("f1"), Some(&true));
     assert_eq!(*sink.title.lock().unwrap(), "テストのレビュー");
-    assert_eq!(*sink.total_files.lock().unwrap(), 9);
+    assert_eq!(*sink.total_files.lock().unwrap(), 12);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2555,4 +2595,97 @@ async fn render_of_a_tsv_returns_table_rows_as_blocks() {
     assert!(html.contains("data-kemi-block=\"old:2-2\""), "{html}");
     assert!(html.contains("data-kemi-block=\"new:2-2\""), "{html}");
     assert_eq!(body["blocks"].as_array().unwrap().len(), 3);
+}
+
+// ---- R-RENDER（画像） ----
+
+#[tokio::test]
+async fn review_image_bytes_carry_the_content_type_nosniff_and_sandbox_headers() {
+    let server = TestServer::start().await;
+
+    let response = server.get("api/image/review/f2/new").await;
+
+    assert_eq!(response.status(), 200);
+    let headers = response.headers().clone();
+    assert_eq!(headers.get("content-type").unwrap(), "image/png");
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(headers.get("content-security-policy").unwrap(), "sandbox");
+    assert_eq!(
+        response.bytes().await.unwrap().to_vec(),
+        vec![0xff, 0x00, 0x02]
+    );
+
+    let old = server.get("api/image/review/f2/old").await;
+    assert_eq!(old.bytes().await.unwrap().to_vec(), vec![0xff, 0x00, 0x01]);
+    let svg = server.get("api/image/review/f11/new").await;
+    assert_eq!(svg.headers().get("content-type").unwrap(), "image/svg+xml");
+}
+
+#[tokio::test]
+async fn review_image_is_refused_without_the_token_and_for_unknown_or_non_image_ids() {
+    let server = TestServer::start().await;
+    let without_token = reqwest::Client::new()
+        .get(format!(
+            "http://127.0.0.1:{}/s/wrong-token/api/image/review/f2/new",
+            server.port
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(without_token.status(), 404);
+
+    assert_eq!(server.get("api/image/review/nope/new").await.status(), 404);
+    assert_eq!(server.get("api/image/review/f1/new").await.status(), 404);
+    assert_eq!(server.get("api/image/review/f6/old").await.status(), 404);
+}
+
+#[tokio::test]
+async fn file_of_an_image_over_five_megabytes_only_reports_the_byte_counts() {
+    let server = TestServer::start().await;
+
+    let body: Value = server.get("api/file/f10").await.json().await.unwrap();
+
+    assert_eq!(body["binary"], true);
+    assert_eq!(body["new_size"], 6_000_000);
+    assert_eq!(body["render"]["target"], Value::Null);
+    assert_eq!(server.get("api/render/f10").await.status(), 422);
+}
+
+#[tokio::test]
+async fn file_of_an_svg_has_the_toggle_with_rendered_as_default_and_other_images_have_no_toggle() {
+    let server = TestServer::start().await;
+
+    let svg: Value = server.get("api/file/f11").await.json().await.unwrap();
+    assert_eq!(svg["render"]["target"], "image");
+    assert_eq!(svg["render"]["toggle"], true);
+    assert_eq!(svg["render"]["initial"], "rendered");
+    assert_eq!(svg["binary"], false);
+
+    let png: Value = server.get("api/file/f2").await.json().await.unwrap();
+    assert_eq!(png["render"]["target"], "image");
+    assert_eq!(png["render"]["toggle"], false);
+    assert_eq!(png["render"]["initial"], "rendered");
+}
+
+#[tokio::test]
+async fn render_of_an_image_gives_both_sides_and_marks_a_rename_with_identical_bytes_as_unchanged()
+{
+    let server = TestServer::start().await;
+
+    let changed: Value = server.get("api/render/f2").await.json().await.unwrap();
+    assert_eq!(changed["kind"], "image");
+    assert_eq!(changed["same"], false);
+    assert_eq!(changed["old"]["size"], 3);
+    assert_eq!(changed["new"]["size"], 3);
+    assert!(changed["old"]["url"]
+        .as_str()
+        .unwrap()
+        .contains("api/image/review/f2/old"));
+
+    let renamed: Value = server.get("api/render/f12").await.json().await.unwrap();
+    assert_eq!(renamed["same"], true);
+
+    let added: Value = server.get("api/render/f6").await.json().await.unwrap();
+    assert_eq!(added["old"], Value::Null);
+    assert_eq!(added["new"]["size"], 5);
 }
