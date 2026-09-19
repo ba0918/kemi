@@ -99,10 +99,12 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   `R-RESULT`）にも残す
 - 描画表示（`R-RENDER`）: Markdown / CSV / TSV は片側 10,000 行 or 1 MB 超で描画しない。
   画像は片側 5 MB 超で並べない。描画は表示時に計算し、起動時には行わない
+- 狭い画面（幅 720px 未満、`R-NARROW`）で変わる規則は 1 つのメディアクエリ（CSS と
+  `matchMedia`）に集め、広い画面で見えている要素と操作は変えない
 
 ## Glossary
 
 正典は `CONTEXT.md`。特に kemi / レビュー / manifest / グループ / コメント /
 suggestion / 適用 / quote / outdated / submit / verdict / digest / ノイズ /
 focus / 重要 / 更新バッジ / グループ単位 / 表示モード / 変更ブロック / 由来 /
-結果ファイル / セッション / 保留 / 復元 / 描画表示 / ソース表示 / ブロック。
+結果ファイル / セッション / 保留 / 復元 / 描画表示 / ソース表示 / ブロック / 狭い画面。
