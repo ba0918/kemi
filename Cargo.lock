@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "kemi"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "getrandom",
  "inquire",
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "kemi-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "miniz_oxide",
  "ox_content_allocator",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "kemi-server"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "axum",
  "futures-util",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "kemi-webview"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "rust-embed",
 ]
