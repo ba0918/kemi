@@ -741,7 +741,6 @@ dependencies = [
  "ox_content_allocator",
  "ox_content_ast",
  "ox_content_parser",
- "ox_content_renderer",
  "serde",
  "serde_json",
  "similar",
@@ -954,22 +953,6 @@ dependencies = [
  "ox_content_allocator",
  "ox_content_ast",
  "rustc-hash",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
-name = "ox_content_renderer"
-version = "3.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81a3e5597188dee24936623637ef0c94e518519b61e5fb819905c843252a043e"
-dependencies = [
- "compact_str",
- "memchr",
- "ox_content_allocator",
- "ox_content_ast",
- "rustc-hash",
- "serde_json",
  "smallvec",
  "thiserror",
 ]
@@ -1259,7 +1242,6 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
- "indexmap",
  "itoa",
  "memchr",
  "serde",
