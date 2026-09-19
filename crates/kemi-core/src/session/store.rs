@@ -536,6 +536,8 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
         let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
         sessions.push((id, size, path));
     }
+    // 孤児のロックは、セッションを消すかどうかと関係なく毎回片付ける。
+    prune_orphan_locks(dir, Duration::from_secs(60));
     let total: u64 = sessions.iter().map(|(_, size, _)| size).sum();
     if sessions.len() <= keep_count && total <= keep_bytes {
         return;
@@ -559,7 +561,6 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
             let _ = std::fs::remove_file(&path);
         }
     }
-    prune_orphan_locks(dir, Duration::from_secs(60));
 }
 
 /// セッションのファイルが無いまま残ったロックファイルを片付ける。始まったばかりの
