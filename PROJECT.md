@@ -97,10 +97,12 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   stdout の JSON で返し、同じ JSON を結果ファイル（unix は
   `$XDG_STATE_HOME/kemi/results/`、Windows は `%LOCALAPPDATA%\kemi\results\`。
   `R-RESULT`）にも残す
+- 描画表示（`R-RENDER`）: Markdown / CSV / TSV は片側 10,000 行 or 1 MB 超で描画しない。
+  画像は片側 5 MB 超で並べない。描画は表示時に計算し、起動時には行わない
 
 ## Glossary
 
 正典は `CONTEXT.md`。特に kemi / レビュー / manifest / グループ / コメント /
 suggestion / 適用 / quote / outdated / submit / verdict / digest / ノイズ /
 focus / 重要 / 更新バッジ / グループ単位 / 表示モード / 変更ブロック / 由来 /
-結果ファイル / セッション / 保留 / 復元。
+結果ファイル / セッション / 保留 / 復元 / 描画表示 / ソース表示 / ブロック。
