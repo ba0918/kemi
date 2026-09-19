@@ -129,9 +129,12 @@ commit or its parent). A manifest or a resumed session only shows images that
 are part of the review; anything else, a path outside the repository, a
 symlink, or a file over 5 MB becomes a placeholder showing the path. Raw HTML
 is escaped, only `http(s)`, `#`, and relative links are kept, and relative
-links are shown as text with the path in their tooltip. A file over 10,000
-lines or 1 MB on one side, a CSV / TSV with an unbalanced quote, or an image
-over 5 MB on one side is not rendered; the switch's tooltip says why.
+links are shown as text with the path in their tooltip. A Markdown or CSV /
+TSV file over 10,000 lines or 1 MB on one side, or a CSV / TSV with an
+unbalanced quote, is not rendered: the switch is disabled and its tooltip says
+why. An image over 5 MB on one side has no rendered view and shows only its
+byte counts, like any other binary file; so does an untracked image over 1 MB,
+whose content kemi does not read.
 
 ### Exposing kemi to other devices
 
