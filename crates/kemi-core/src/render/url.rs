@@ -39,16 +39,8 @@ fn has_scheme(value: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-pub(super) const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
-
 pub(super) fn has_image_extension(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    match name.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() => IMAGE_EXTENSIONS
-            .iter()
-            .any(|known| extension.eq_ignore_ascii_case(known)),
-        _ => false,
-    }
+    matches!(super::target_of(path), Some(super::Target::Image { .. }))
 }
 
 /// 相対パスを Markdown のディレクトリ基準で正規化する。先頭の `/` はリポジトリの根。

@@ -13,7 +13,44 @@ mod url;
 #[cfg(test)]
 mod tests;
 
+use crate::domain::review::FileEntry;
 pub use crate::domain::review::Side;
+
+/// 描画表示の対象。拡張子で決める（R-RENDER）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Markdown,
+    Table {
+        delimiter: u8,
+    },
+    /// SVG だけはテキストなので切り替えを持ち、既定が描画表示。
+    Image {
+        svg: bool,
+    },
+}
+
+/// 拡張子（大小文字を区別しない）から描画表示の対象を決める。
+pub fn target_of(path: &str) -> Option<Target> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let (stem, extension) = name.rsplit_once('.')?;
+    if stem.is_empty() {
+        return None;
+    }
+    match extension.to_ascii_lowercase().as_str() {
+        "md" | "markdown" => Some(Target::Markdown),
+        "csv" => Some(Target::Table { delimiter: b',' }),
+        "tsv" => Some(Target::Table { delimiter: b'\t' }),
+        "svg" => Some(Target::Image { svg: true }),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => Some(Target::Image { svg: false }),
+        _ => None,
+    }
+}
+
+/// ファイルエントリの対象。改名では新側のパス、削除では旧側のパスで決める。エントリの
+/// `path` は改名なら新側、削除なら旧側のパスなので、それをそのまま使う。
+pub fn target_of_file(file: &FileEntry) -> Option<Target> {
+    target_of(&file.path)
+}
 
 /// ブロックに付ける変更の印。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

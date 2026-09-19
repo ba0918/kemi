@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::review::{FileEntry, Status};
 
 fn no_highlight() -> Option<Highlight<'static>> {
     None
@@ -420,4 +421,67 @@ fn a_code_block_change_is_shown_as_old_and_new_blocks_stacked() {
             (Side::New, 1, 3, Mark::Added),
         ]
     );
+}
+
+fn entry(status: Status, path: &str, old_path: Option<&str>) -> FileEntry {
+    FileEntry {
+        id: "f1".to_string(),
+        group_id: "g".to_string(),
+        path: path.to_string(),
+        old_path: old_path.map(str::to_string),
+        status,
+        add: 0,
+        del: 0,
+        binary: false,
+        old_size: 0,
+        new_size: 0,
+        focus: false,
+        note: String::new(),
+        noise: false,
+    }
+}
+
+#[test]
+fn target_is_decided_by_the_new_path_for_renames_and_the_old_path_for_deletions() {
+    assert_eq!(
+        target_of_file(&entry(Status::Rename, "docs/b.md", Some("docs/a.txt"))),
+        Some(Target::Markdown)
+    );
+    assert_eq!(
+        target_of_file(&entry(Status::Rename, "docs/b.txt", Some("docs/a.md"))),
+        None
+    );
+    assert_eq!(
+        target_of_file(&entry(Status::Delete, "notes/gone.MD", None)),
+        Some(Target::Markdown)
+    );
+    assert_eq!(target_of("a.markdown"), Some(Target::Markdown));
+    assert_eq!(
+        target_of("data.CSV"),
+        Some(Target::Table { delimiter: b',' })
+    );
+    assert_eq!(
+        target_of("data.tsv"),
+        Some(Target::Table { delimiter: b'\t' })
+    );
+    assert_eq!(target_of("logo.svg"), Some(Target::Image { svg: true }));
+    assert_eq!(target_of("photo.JPEG"), Some(Target::Image { svg: false }));
+    assert_eq!(target_of("README"), None);
+    assert_eq!(target_of("archive.tar.gz"), None);
+}
+
+#[test]
+fn a_side_over_the_line_or_byte_limit_is_not_rendered() {
+    let long = "x\n".repeat(10_001);
+    assert_eq!(
+        render_markdown(&input(None, Some(&long)), no_highlight(), &plain_url).unwrap_err(),
+        Unrenderable::TooLarge
+    );
+    let big = "y".repeat(1_048_577);
+    assert_eq!(
+        render_markdown(&input(Some(&big), Some("ok\n")), no_highlight(), &plain_url).unwrap_err(),
+        Unrenderable::TooLarge
+    );
+    let limit = "x\n".repeat(10_000);
+    assert!(render_markdown(&input(None, Some(&limit)), no_highlight(), &plain_url).is_ok());
 }
