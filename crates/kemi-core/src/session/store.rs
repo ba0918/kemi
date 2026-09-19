@@ -798,6 +798,8 @@ mod tests {
                     focus: false,
                     note: "note".to_string(),
                     noise: false,
+                    // 復元でも「内容を読まなかった」判定が同じになるよう、写しに残る。
+                    content_skipped: true,
                 }],
             }],
             approval: vec![crate::domain::review::Approval {

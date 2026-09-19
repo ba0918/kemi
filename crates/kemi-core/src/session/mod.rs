@@ -249,6 +249,9 @@ struct FileDto {
     focus: bool,
     note: String,
     noise: bool,
+    /// 古い写しには無い（既定 false）。
+    #[serde(default)]
+    content_skipped: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -518,6 +521,7 @@ impl From<&ReviewMeta> for ReviewDto {
                             focus: file.focus,
                             note: file.note.clone(),
                             noise: file.noise,
+                            content_skipped: file.content_skipped,
                         })
                         .collect(),
                 })
@@ -592,6 +596,7 @@ impl FileDto {
             focus: self.focus,
             note: self.note,
             noise: self.noise,
+            content_skipped: self.content_skipped,
         })
     }
 }

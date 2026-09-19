@@ -110,6 +110,9 @@ pub struct FileEntry {
     pub focus: bool,
     pub note: String,
     pub noise: bool,
+    /// 上限を超えて内容を読まなかった untracked（R-INPUT-3）。内容が無いので、
+    /// 描画表示の対象にしない（R-RENDER）。worktree 以外の入力では常に false。
+    pub content_skipped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

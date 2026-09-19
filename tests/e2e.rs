@@ -1769,6 +1769,7 @@ fn session_copy() -> SessionCopy {
                         focus: false,
                         note: String::new(),
                         noise: false,
+                        content_skipped: false,
                     }],
                 }],
                 approval: vec![Approval {

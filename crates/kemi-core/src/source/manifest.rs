@@ -170,6 +170,7 @@ fn build_diff(
         focus: diff.focus,
         note: diff.note.clone(),
         noise,
+        content_skipped: false,
     };
     let planned = PlannedFile {
         id: file_id.to_string(),

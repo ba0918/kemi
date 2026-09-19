@@ -136,6 +136,7 @@ mod tests {
             focus: false,
             note: String::new(),
             noise: false,
+            content_skipped: false,
         }
     }
 

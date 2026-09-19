@@ -42,6 +42,7 @@ struct DiffEntry {
     add: u64,
     del: u64,
     binary: bool,
+    content_skipped: bool,
 }
 
 pub struct GitSource {
@@ -106,7 +107,8 @@ impl GitSource {
         for path in split_z(&untracked) {
             let full = self.repo.join(path_from_bytes(path));
             let size = std::fs::metadata(&full).map_or(0, |meta| meta.len());
-            let (add, binary) = if size > UNTRACKED_LIMIT {
+            let content_skipped = size > UNTRACKED_LIMIT;
+            let (add, binary) = if content_skipped {
                 (0, true)
             } else {
                 let bytes = std::fs::read(&full).map_err(|source| SourceError::Io {
@@ -129,6 +131,7 @@ impl GitSource {
                 add,
                 del: 0,
                 binary,
+                content_skipped,
             });
         }
 
@@ -382,6 +385,7 @@ impl GitSource {
                 focus: false,
                 note: String::new(),
                 noise,
+                content_skipped: entry.content_skipped,
             });
             planned.push(PlannedFile { id, old, new });
         }
@@ -687,6 +691,7 @@ fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
                 add: stat.add,
                 del: stat.del,
                 binary: stat.binary,
+                content_skipped: false,
             }
         })
         .collect())
@@ -840,6 +845,7 @@ fn combine_entries(name_status: Vec<NameStatus>, numstat: Vec<Numstat>) -> Vec<D
                 add: stat.map_or(0, |stat| stat.add),
                 del: stat.map_or(0, |stat| stat.del),
                 binary: stat.is_some_and(|stat| stat.binary),
+                content_skipped: false,
                 path: name.path,
                 old_path: name.old_path,
                 status: name.status,
@@ -1667,6 +1673,7 @@ mod tests {
         assert!(entry.binary);
         assert_eq!((entry.add, entry.del), (0, 0));
         assert_eq!(entry.new_size, UNTRACKED_LIMIT + 1);
+        assert!(entry.content_skipped);
     }
 
     #[test]

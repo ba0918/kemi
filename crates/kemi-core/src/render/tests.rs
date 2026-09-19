@@ -423,6 +423,7 @@ fn entry(status: Status, path: &str, old_path: Option<&str>) -> FileEntry {
         focus: false,
         note: String::new(),
         noise: false,
+        content_skipped: false,
     }
 }
 

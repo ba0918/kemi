@@ -147,6 +147,7 @@ impl FakeSource {
                             focus: true,
                             note: "重点".to_string(),
                             noise: true,
+                            content_skipped: false,
                         },
                         FileEntry {
                             status: Status::Add,
@@ -236,6 +237,7 @@ fn file_entry(id: &str, path: &str) -> FileEntry {
         focus: false,
         note: String::new(),
         noise: false,
+        content_skipped: false,
     }
 }
 
