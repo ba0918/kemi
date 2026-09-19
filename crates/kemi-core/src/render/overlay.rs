@@ -23,6 +23,33 @@ struct Aligned {
     anchor_of_old: Vec<Option<u32>>,
 }
 
+/// ブロックの行番号は構文木の span から、整列の行番号は表示用の行の分割から来るので、
+/// 入力によってはブロックの行番号が整列の行数を超える。超えた行は、対応する行が無く
+/// 変わってもいないものとして読む。
+impl Aligned {
+    fn old_changed(&self, line: u32) -> bool {
+        self.old_changed
+            .get(line as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn new_changed(&self, line: u32) -> bool {
+        self.new_changed
+            .get(line as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn new_of_old(&self, line: u32) -> Option<u32> {
+        self.new_of_old.get(line as usize).copied().flatten()
+    }
+
+    fn anchor_of_old(&self, line: u32) -> Option<u32> {
+        self.anchor_of_old.get(line as usize).copied().flatten()
+    }
+}
+
 fn align(old: &[String], new: &[String]) -> Aligned {
     let rows = diff::align(old, new);
     let mut aligned = Aligned {
@@ -83,8 +110,9 @@ pub(super) fn plan(old: &SideDoc<'_>, new: &SideDoc<'_>) -> Plan {
     let mut candidates_of_new: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); new.blocks.len()];
     for (a, block) in old.blocks.iter().enumerate() {
         for line in block.start..=block.end {
-            let paired = aligned.new_of_old[line as usize].and_then(|n| new_at[n as usize]);
-            let interior = aligned.anchor_of_old[line as usize]
+            let paired = aligned.new_of_old(line).and_then(|n| new_at[n as usize]);
+            let interior = aligned
+                .anchor_of_old(line)
                 .and_then(|n| new_at[n as usize].filter(|b| new.blocks[*b].start < n));
             for b in paired.into_iter().chain(interior) {
                 candidates_of_old[a].insert(b);
@@ -100,7 +128,7 @@ pub(super) fn plan(old: &SideDoc<'_>, new: &SideDoc<'_>) -> Plan {
         .iter()
         .enumerate()
         .map(|(a, block)| {
-            (block.start..=block.end).any(|line| aligned.old_changed[line as usize])
+            (block.start..=block.end).any(|line| aligned.old_changed(line))
                 || candidates_of_old[a].len() > 1
         })
         .collect();
@@ -109,7 +137,7 @@ pub(super) fn plan(old: &SideDoc<'_>, new: &SideDoc<'_>) -> Plan {
         .iter()
         .enumerate()
         .map(|(b, block)| {
-            (block.start..=block.end).any(|line| aligned.new_changed[line as usize])
+            (block.start..=block.end).any(|line| aligned.new_changed(line))
                 || candidates_of_new[b].len() > 1
                 || candidates_of_new[b].iter().any(|a| old_changed[*a])
         })
@@ -164,8 +192,9 @@ fn deletion_target(
     new_blocks: &[BlockInfo<'_, '_>],
     block: &BlockInfo<'_, '_>,
 ) -> Option<usize> {
-    let anchor = aligned.anchor_of_old[block.start as usize]
-        .or_else(|| aligned.new_of_old[block.start as usize])?;
+    let anchor = aligned
+        .anchor_of_old(block.start)
+        .or_else(|| aligned.new_of_old(block.start))?;
     new_blocks
         .iter()
         .position(|candidate| candidate.end >= anchor)
@@ -228,6 +257,20 @@ fn word_marks(old: &str, new: &str) -> WordMarks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn text(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|line| line.to_string()).collect()
+    }
+
+    #[test]
+    fn line_numbers_past_the_aligned_lines_have_no_pair_and_no_change() {
+        let aligned = align(&text(&["a", "b"]), &text(&["a", "c"]));
+
+        assert_eq!(aligned.new_of_old(9), None);
+        assert_eq!(aligned.anchor_of_old(9), None);
+        assert!(!aligned.old_changed(9));
+        assert!(!aligned.new_changed(9));
+    }
 
     #[test]
     fn word_marks_place_deleted_words_at_their_new_offset() {

@@ -47,8 +47,6 @@ kemi v1 と UI 改訂（`kemi-v1.json`、`kemi-ui-fix.json`）:
 
 描画表示（`rendered-view.json`）:
 
-- `overlay::plan` がブロックの行番号で整列の配列を直接添字する。行数を超える行番号のブロックが
-  出ると panic しうる（再現する入力は未確認）
 - `content_skipped` が立っていても `api/render` / `api/image/review` を直接叩けばディスクを読む
   （ページは呼ばない）
 
