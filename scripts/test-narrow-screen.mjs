@@ -6,8 +6,8 @@
 // 1 回目の起動: 引き出し、1 列と折返し、折返しの記憶と localStorage、ファイルヘッダの 2 行、
 // 吹き出しの左端と画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
 // 選択・下書き・上端の行、上部バーの 2 段、「…」のメニュー、320px の進捗、title と
-// コメント一覧のシート、広い画面の上部バー、広い画面のドラッグ、狭い画面のタップの選択、
-// 押し下げとホバーで選択が始まらないこと、描画表示のブロックのタップ。
+// コメント一覧のシート、広い画面の上部バー、広い画面のドラッグ、狭い画面のタップの選択と
+// 解除の範囲、押し下げとホバーで選択が始まらないこと、描画表示のブロックのタップ。
 // 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -166,8 +166,11 @@ const newNumber = (number) => `Array.from(document.querySelectorAll('#diff-conte
 const oldNumber = (number) => `Array.from(document.querySelectorAll('#diff-content .row .no-cell:nth-child(1) .num')).find(n => n.textContent === ${JSON.stringify(String(number))})`;
 /** 選択中の行番号（表示順）。 */
 const selectedNumbers = () => evaluate(`Array.from(document.querySelectorAll('#diff-content .num.selected')).map(n => n.textContent)`);
+/** 見えている `+`。 */
+const shownPlus = `Array.from(document.querySelectorAll('#diff-content .line-add-btn')).filter(b => getComputedStyle(b).display !== 'none')`;
 /** `+` が見えている行の、その `+` の側の行番号。 */
-const plusRows = () => evaluate(`Array.from(document.querySelectorAll('#diff-content .line-add-btn')).filter(b => getComputedStyle(b).display !== 'none').map(b => b.closest('.no-cell').querySelector('.num').textContent)`);
+const plusRows = () => evaluate(`${shownPlus}.map(b => b.closest('.no-cell').querySelector('.num').textContent)`);
+const editorOpen = `document.querySelector('#diff-content .editor textarea[data-editor-field="body"]') !== null`;
 
 /** 要素の中心を実際のマウスで押す（タップ）。 */
 async function tap(elementCode) {
@@ -452,8 +455,9 @@ try {
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('#diff-content .line-add-btn')).filter(b => getComputedStyle(b).display !== 'none').length`), 1);
   console.log('PASS 1280px では押し下げとホバーで範囲が作れ、ホバーした行に + が出る');
 
-  // (14) 390px のタップ: 1 行 → 同じ側の別の行で範囲（+ は最後の行だけ）→ 反対側で 1 行 →
-  //      行番号以外を押すと解除。
+  // (14) 390px のタップ: 1 行 → 同じ側の別の行で範囲（+ は最後の行だけ）→ 反対側で 1 行。
+  //      ファイルヘッダを押しても残り、`+` で入力欄が開いている間は本文を押しても残り、
+  //      入力を取り消すと解除される。本文の中で行番号以外を押すと解除される。
   await browser('set', 'viewport', ...NARROW);
   await waitFor(narrowApplied);
   await tap(newNumber(2));
@@ -466,10 +470,22 @@ try {
   assert.deepEqual(await selectedNumbers(), ['6']);
   assert.equal(await evaluate(`document.querySelector('#diff-content .num.selected').closest('.no-cell').matches(':first-child')`), true);
   assert.deepEqual(await plusRows(), ['6']);
+  await tap(`document.querySelector('#file-header .path')`);
+  assert.deepEqual(await selectedNumbers(), ['6']);
+  await tap(`${shownPlus}[0]`);
+  await waitFor(editorOpen);
+  await tap(`document.querySelector('#diff-content .row.kind-equal .code')`);
+  assert.deepEqual(await selectedNumbers(), ['6']);
+  assert.equal(await evaluate(editorOpen), true);
+  await browser('press', 'Escape');
+  await waitFor(`!(${editorOpen})`);
+  assert.deepEqual(await selectedNumbers(), []);
+  await tap(newNumber(2));
+  assert.deepEqual(await selectedNumbers(), ['2']);
   await tap(`document.querySelector('#diff-content .row.kind-equal .code')`);
   assert.deepEqual(await selectedNumbers(), []);
   assert.deepEqual(await plusRows(), []);
-  console.log('PASS 390px のタップで 1 行、範囲、反対側の 1 行、解除ができる');
+  console.log('PASS 390px のタップで 1 行、範囲、反対側の 1 行ができ、解除は本文の中の行番号以外と入力の取り消しだけ');
 
   // (15) 390px では行番号の押し下げとホバーで選択が始まらない。
   await evaluate(`${newNumber(2)}.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); ${newNumber(3)}.dispatchEvent(new MouseEvent('mouseenter')); true`);
