@@ -103,6 +103,36 @@ kemi prints the JSON below to stdout and exits with 0
 so nothing you wrote on the page is lost; `kemi --resume` picks it up again
 when its frozen copy completed within the size limit (see [Sessions](#sessions)).
 
+### Rendered view
+
+Markdown (`.md`, `.markdown`), CSV / TSV, and images also get a rendered view
+next to the line diff. The file header has a **Rendered | Source** switch
+(key `r`) for Markdown, CSV / TSV, and SVG; it starts on Source, except SVG,
+which starts rendered. Other images have no switch and are always shown as
+images: old and new side by side in two-column mode, stacked in one-column
+mode, each with its byte count. A rename with identical bytes shows one image
+marked "unchanged".
+
+The rendered view shows the new document as a whole, without folding. Added
+blocks get a green left bar; deleted blocks stay at their old position with a
+red one; a rewritten paragraph or heading with the same structure is shown
+once, with deleted words struck through and added words highlighted. Code
+blocks use the file's highlighting setting; CSV / TSV rows are table rows with
+the first row as the header. Hover a block and press `+` to comment on its
+source lines: the comment is an ordinary line comment in the submitted JSON,
+on the new side (with an optional suggestion) or on the old side for a deleted
+block. `n` / `p` stop at changed blocks and comments.
+
+Relative image paths in Markdown are read from the repository at the version
+of that side (working tree or `HEAD`, index or `HEAD`, `to` or `from`, the
+commit or its parent). A manifest or a resumed session only shows images that
+are part of the review; anything else, a path outside the repository, a
+symlink, or a file over 5 MB becomes a placeholder showing the path. Raw HTML
+is escaped, only `http(s)`, `#`, and relative links are kept, and relative
+links are shown as text with the path in their tooltip. A file over 10,000
+lines or 1 MB on one side, a CSV / TSV with an unbalanced quote, or an image
+over 5 MB on one side is not rendered; the switch's tooltip says why.
+
 ### Exposing kemi to other devices
 
 `--bind 0.0.0.0` listens on every IPv4 interface. kemi then prints a URL for
@@ -129,6 +159,7 @@ Keys in the page (ignored while typing in a text field):
 | `g` / `G` | first / last file |
 | `u` / `s` | one column (unified) / two columns (split) |
 | `w` | toggle line wrapping |
+| `r` | rendered view / source view (Markdown, CSV / TSV, SVG) |
 
 ## Result file
 
