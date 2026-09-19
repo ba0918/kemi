@@ -99,7 +99,12 @@ pub(crate) fn delete_stored(state: &AppState) {
 /// 最初の `api/review` の応答の後に、凍結のタスクを裏で始める（R-SESSION）。
 /// 起動は待たせない。1 度だけ始める。
 pub(crate) fn start_freeze(state: &Arc<AppState>) {
-    if state.session_sink.is_none() {
+    // 復元は同じセッションの続きで、写しは既にディスクにある。作り直しても内容は
+    // 同じで、読み直しと再圧縮と書き直しの分だけ払うことになる（R-SESSION）。
+    let Some(sink) = &state.session_sink else {
+        return;
+    };
+    if !sink.needs_copy() {
         return;
     }
     if state.freeze_started.swap(true, Ordering::SeqCst) {

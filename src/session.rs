@@ -57,6 +57,13 @@ impl SessionSink for StoredSession {
         self.open.lock().expect("session poisoned").state().clone()
     }
 
+    fn needs_copy(&self) -> bool {
+        !matches!(
+            self.open.lock().expect("session poisoned").copy(),
+            kemi_core::session::CopyState::Ready(_)
+        )
+    }
+
     fn describe_review(&self, title: &str, total_files: usize) {
         self.open
             .lock()

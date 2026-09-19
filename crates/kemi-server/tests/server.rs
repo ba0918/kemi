@@ -1927,6 +1927,8 @@ struct RecordingSink {
     initial: Mutex<Option<SessionState>>,
     deleted: AtomicBool,
     fail: AtomicBool,
+    /// 復元のように、写しが既に保存されている状態を装う。
+    copy_already_saved: AtomicBool,
 }
 
 impl RecordingSink {
@@ -1943,6 +1945,10 @@ impl RecordingSink {
 impl SessionSink for RecordingSink {
     fn initial_state(&self) -> SessionState {
         self.initial.lock().unwrap().clone().unwrap_or_default()
+    }
+
+    fn needs_copy(&self) -> bool {
+        !self.copy_already_saved.load(Ordering::SeqCst)
     }
 
     fn describe_review(&self, title: &str, total_files: usize) {
@@ -2261,6 +2267,20 @@ async fn session_copy_waits_for_both_units() {
     assert_eq!(copy.units.len(), 2);
     assert_eq!(copy.units[1].unit, Some(GroupBy::Commit));
     assert!(copy.contents.contains_key("f4"));
+}
+
+#[tokio::test]
+async fn session_with_a_saved_copy_is_not_frozen_again() {
+    let sink = Arc::new(RecordingSink::default());
+    sink.copy_already_saved.store(true, Ordering::SeqCst);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+
+    server.get("api/review").await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert_eq!(server.source.reads.load(Ordering::SeqCst), 0);
+    assert!(sink.copies.lock().unwrap().is_empty());
+    assert!(sink.unusable.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -75,6 +75,10 @@ pub trait SessionSink: Send + Sync {
     fn initial_state(&self) -> kemi_core::session::SessionState {
         kemi_core::session::SessionState::default()
     }
+    /// 写しをこれから作る必要があるか。復元のように既に保存された写しがあるなら false。
+    fn needs_copy(&self) -> bool {
+        true
+    }
     /// サーブ開始時。起動時の単位の題と全ファイル数。
     fn describe_review(&self, title: &str, total_files: usize);
     /// 状態が変わるたび。空の状態と写しだけで、書くべきものが無ければ何もしない。
