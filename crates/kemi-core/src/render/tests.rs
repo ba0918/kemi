@@ -485,3 +485,81 @@ fn a_side_over_the_line_or_byte_limit_is_not_rendered() {
     let limit = "x\n".repeat(10_000);
     assert!(render_markdown(&input(None, Some(&limit)), no_highlight(), &plain_url).is_ok());
 }
+
+// ---- 表（CSV / TSV） ----
+
+fn render_table_pair(
+    old: Option<&str>,
+    new: Option<&str>,
+    delimiter: u8,
+) -> Result<Rendered, Unrenderable> {
+    render_table(&TableInput {
+        old,
+        new,
+        delimiter,
+    })
+}
+
+#[test]
+fn quoted_fields_keep_the_delimiter_and_doubled_quotes_become_one() {
+    assert_eq!(
+        split_fields("x,\"a,b\",\"say \"\"hi\"\"\",", b','),
+        Ok(vec![
+            "x".to_string(),
+            "a,b".to_string(),
+            "say \"hi\"".to_string(),
+            String::new()
+        ])
+    );
+}
+
+#[test]
+fn tsv_splits_on_tabs_and_leaves_commas_alone() {
+    assert_eq!(
+        split_fields("a,b\tc", b'\t'),
+        Ok(vec!["a,b".to_string(), "c".to_string()])
+    );
+}
+
+#[test]
+fn a_line_with_an_unbalanced_quote_makes_the_table_unrenderable() {
+    assert_eq!(split_fields("a,\"b", b','), Err(UnbalancedQuote));
+    assert_eq!(
+        render_table_pair(None, Some("h1,h2\na,\"b\n"), b',').unwrap_err(),
+        Unrenderable::UnbalancedQuote { line: 2 }
+    );
+    assert_eq!(unbalanced_line("h\n\"ok\"\n\"no\n", b','), Some(3));
+    assert_eq!(unbalanced_line("h\n\"ok\"\n", b','), None);
+}
+
+#[test]
+fn a_rewritten_row_is_shown_as_the_old_row_deleted_and_the_new_row_added() {
+    let rendered =
+        render_table_pair(Some("h1,h2\n1,2\n3,4\n"), Some("h1,h2\n1,2\n3,5\n"), b',').unwrap();
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::New, 1, 1, Mark::Unchanged),
+            (Side::New, 2, 2, Mark::Unchanged),
+            (Side::Old, 3, 3, Mark::Deleted),
+            (Side::New, 3, 3, Mark::Added),
+        ]
+    );
+    let html = &rendered.html;
+    assert!(
+        html.find("old:3-3").unwrap() < html.find("new:3-3").unwrap(),
+        "{html}"
+    );
+    assert!(html.contains("<td>5</td>"), "{html}");
+}
+
+#[test]
+fn the_first_row_is_the_header_and_uneven_rows_are_kept() {
+    let rendered = render_table_pair(None, Some("h1,h2\n1\n2,3,4\n"), b',').unwrap();
+
+    let html = &rendered.html;
+    assert!(html.contains("<thead>\n<tr class=\"kb kb-add\" data-kemi-block=\"new:1-1\">\n<th>h1</th>\n<th>h2</th>"), "{html}");
+    assert_eq!(html.matches("<td>").count(), 4, "{html}");
+    assert_eq!(rendered.blocks.len(), 3);
+}

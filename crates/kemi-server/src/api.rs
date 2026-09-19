@@ -471,11 +471,23 @@ async fn file(
 /// ファイルが描画表示の対象か、切り替えを持つか、既定はどちらか、事前に分かる描画不可の
 /// 理由（R-RENDER）。理由の文言は契約ではない。
 fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value {
+    const TOO_LARGE: &str = "Too large to render (over 10,000 lines or 1 MB on one side)";
     match render::target_of_file(file) {
         Some(Target::Markdown) => {
-            let reason = (!content::within_auto_limit(old, new))
-                .then_some("Too large to render (over 10,000 lines or 1 MB on one side)");
+            let reason = (!content::within_auto_limit(old, new)).then_some(TOO_LARGE.to_string());
             json!({ "target": "markdown", "toggle": true, "initial": "source", "reason": reason })
+        }
+        Some(Target::Table { delimiter }) => {
+            let reason = if !content::within_auto_limit(old, new) {
+                Some(TOO_LARGE.to_string())
+            } else {
+                [new, old]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|text| render::unbalanced_line(text, delimiter))
+                    .map(|line| format!("Cannot render: unbalanced quote on line {line}"))
+            };
+            json!({ "target": "table", "toggle": true, "initial": "source", "reason": reason })
         }
         _ => json!({ "target": null, "toggle": false, "initial": "source", "reason": null }),
     }
@@ -490,8 +502,56 @@ async fn render_file(
     let (file, _) = find_file(&state, &id)?;
     match render::target_of_file(&file) {
         Some(Target::Markdown) => render_markdown_file(&state, &id, &file, &query).await,
+        Some(Target::Table { delimiter }) => render_table_file(&state, &id, delimiter).await,
         _ => Err(ApiError::bad_request("this file has no rendered view")),
     }
+}
+
+async fn render_table_file(
+    state: &AppState,
+    id: &str,
+    delimiter: u8,
+) -> Result<Json<Value>, ApiError> {
+    let content = source_content(state, id)
+        .await?
+        .ok_or_else(file_not_found)?;
+    let old_text = side_text(&content.old);
+    let new_text = side_text(&content.new);
+    let rendered = render::render_table(&render::TableInput {
+        old: old_text.as_deref(),
+        new: new_text.as_deref(),
+        delimiter,
+    })
+    .map_err(|error| ApiError::unprocessable(error.to_string()))?;
+    Ok(Json(json!({
+        "id": id,
+        "kind": "table",
+        "html": rendered.html,
+        "blocks": blocks_json(&rendered),
+        "old_lines": side_lines(&content.old),
+        "new_lines": side_lines(&content.new),
+    })))
+}
+
+fn side_text(bytes: &Option<Vec<u8>>) -> Option<String> {
+    bytes
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn blocks_json(rendered: &render::Rendered) -> Vec<Value> {
+    rendered
+        .blocks
+        .iter()
+        .map(|block| {
+            json!({
+                "side": block.side.as_str(),
+                "start": block.start,
+                "end": block.end,
+                "mark": block.mark.as_str(),
+            })
+        })
+        .collect()
 }
 
 async fn render_markdown_file(
@@ -503,14 +563,8 @@ async fn render_markdown_file(
     let content = source_content(state, id)
         .await?
         .ok_or_else(file_not_found)?;
-    let old_text = content
-        .old
-        .as_deref()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
-    let new_text = content
-        .new
-        .as_deref()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+    let old_text = side_text(&content.old);
+    let new_text = side_text(&content.new);
     let dark = query.dark.as_deref() == Some("1");
     let capable = Highlighter::capable(old_text.as_deref(), new_text.as_deref());
     let forced = query.highlight.as_deref() == Some("on");
@@ -548,12 +602,7 @@ async fn render_markdown_file(
         "id": id,
         "kind": "markdown",
         "html": rendered.html,
-        "blocks": rendered.blocks.iter().map(|block| json!({
-            "side": block.side.as_str(),
-            "start": block.start,
-            "end": block.end,
-            "mark": block.mark.as_str(),
-        })).collect::<Vec<_>>(),
+        "blocks": blocks_json(&rendered),
         "old_lines": side_lines(&content.old),
         "new_lines": side_lines(&content.new),
         "highlight": { "capable": capable, "enabled": enabled, "dark": dark },

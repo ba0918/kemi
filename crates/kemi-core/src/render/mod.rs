@@ -8,6 +8,7 @@ mod inline;
 mod lines;
 mod markdown;
 mod overlay;
+mod table;
 mod url;
 
 #[cfg(test)]
@@ -15,6 +16,7 @@ mod tests;
 
 use crate::domain::review::FileEntry;
 pub use crate::domain::review::Side;
+pub use table::{render_table, split_fields, unbalanced_line, TableInput, UnbalancedQuote};
 
 /// 描画表示の対象。拡張子で決める（R-RENDER）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +71,16 @@ impl Mark {
             Mark::Added => "added",
             Mark::Deleted => "deleted",
             Mark::Modified => "modified",
+        }
+    }
+
+    /// ブロックの要素に付ける印のクラス（`kb` に続ける）。
+    pub(crate) fn class(self) -> &'static str {
+        match self {
+            Mark::Unchanged => "",
+            Mark::Added => " kb-add",
+            Mark::Deleted => " kb-del",
+            Mark::Modified => " kb-mod",
         }
     }
 }
@@ -127,6 +139,10 @@ pub type ImageUrl<'u> = &'u dyn Fn(&ImageRef) -> String;
 pub enum Unrenderable {
     /// 片側が行数かバイト数の上限を超える。
     TooLarge,
+    /// 表で、`"` の対応が取れない行がある（1 始まりの行番号）。
+    UnbalancedQuote {
+        line: u32,
+    },
     Failed(String),
 }
 
@@ -134,6 +150,9 @@ impl std::fmt::Display for Unrenderable {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Unrenderable::TooLarge => formatter.write_str("the file exceeds the rendering limit"),
+            Unrenderable::UnbalancedQuote { line } => {
+                write!(formatter, "unbalanced quote on line {line}")
+            }
             Unrenderable::Failed(message) => write!(formatter, "cannot render: {message}"),
         }
     }

@@ -508,14 +508,9 @@ impl<'w> Writer<'w> {
             mark,
             images: Vec::new(),
         });
-        let mark_class = match mark {
-            Mark::Unchanged => "",
-            Mark::Added => " kb-add",
-            Mark::Deleted => " kb-del",
-            Mark::Modified => " kb-mod",
-        };
         format!(
-            " class=\"kb{mark_class}{}{class}\" data-kemi-block=\"{}:{}-{}\"",
+            " class=\"kb{}{}{class}\" data-kemi-block=\"{}:{}-{}\"",
+            mark.class(),
             if class.is_empty() { "" } else { " " },
             doc.side.as_str(),
             info.start,

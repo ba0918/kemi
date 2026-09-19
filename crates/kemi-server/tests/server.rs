@@ -78,6 +78,20 @@ impl FakeSource {
                 new: Some(format!("{}x\n", "> ".repeat(101)).into_bytes()),
             },
         );
+        contents.insert(
+            "f8".to_string(),
+            FileContent {
+                old: Some(b"name,note\nx,\"fine\"\n".to_vec()),
+                new: Some(b"name,note\nx,\"fine\"\ny,\"broken\n".to_vec()),
+            },
+        );
+        contents.insert(
+            "f9".to_string(),
+            FileContent {
+                old: Some(b"name\tnote\nx\tone\n".to_vec()),
+                new: Some(b"name\tnote\nx\ttwo\n".to_vec()),
+            },
+        );
         FakeSource {
             meta: ReviewMeta {
                 title: "テストのレビュー".to_string(),
@@ -121,6 +135,8 @@ impl FakeSource {
                             status: Status::Add,
                             ..file_entry("f7", "docs/deep.md")
                         },
+                        file_entry("f8", "data/rows.csv"),
+                        file_entry("f9", "data/rows.tsv"),
                     ],
                 }],
                 approval: vec![Approval {
@@ -2004,7 +2020,7 @@ async fn session_state_is_saved_on_every_change() {
     assert!(state.seen.contains("f1"));
     assert_eq!(state.collapsed.get("f1"), Some(&true));
     assert_eq!(*sink.title.lock().unwrap(), "テストのレビュー");
-    assert_eq!(*sink.total_files.lock().unwrap(), 7);
+    assert_eq!(*sink.total_files.lock().unwrap(), 9);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2509,4 +2525,34 @@ async fn render_of_a_markdown_the_parser_rejects_is_a_failure_response() {
     assert_eq!(response.status(), 422);
     let body: Value = response.json().await.unwrap();
     assert!(body["error"].is_string(), "{body}");
+}
+
+#[tokio::test]
+async fn file_of_a_csv_with_an_unbalanced_quote_reports_why_it_cannot_be_rendered() {
+    let server = TestServer::start().await;
+
+    let body: Value = server.get("api/file/f8").await.json().await.unwrap();
+
+    assert_eq!(body["render"]["target"], "table");
+    assert_eq!(body["render"]["toggle"], true);
+    assert!(body["render"]["reason"].is_string(), "{body}");
+    let response = server.get("api/render/f8").await;
+    assert_eq!(response.status(), 422);
+}
+
+#[tokio::test]
+async fn render_of_a_tsv_returns_table_rows_as_blocks() {
+    let server = TestServer::start().await;
+
+    let file: Value = server.get("api/file/f9").await.json().await.unwrap();
+    assert_eq!(file["render"]["target"], "table");
+    assert_eq!(file["render"]["reason"], Value::Null);
+
+    let body: Value = server.get("api/render/f9").await.json().await.unwrap();
+    assert_eq!(body["kind"], "table");
+    let html = body["html"].as_str().unwrap();
+    assert!(html.contains("<th>note</th>"), "{html}");
+    assert!(html.contains("data-kemi-block=\"old:2-2\""), "{html}");
+    assert!(html.contains("data-kemi-block=\"new:2-2\""), "{html}");
+    assert_eq!(body["blocks"].as_array().unwrap().len(), 3);
 }
