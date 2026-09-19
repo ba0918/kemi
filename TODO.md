@@ -1,6 +1,6 @@
 # 残課題
 
-最終更新: 2026-09-20（描画表示のマージ後）
+最終更新: 2026-09-20（狭い画面のマージ後）
 
 ## レビューで記録のみになった指摘（修正要求ではない）
 
@@ -59,20 +59,38 @@ evidence と oracle はローカルの `.agents/artifacts/reviews/session-resume
 evidence と oracle はローカルの `.agents/artifacts/reviews/rendered-view.json` にある
 （git 管理外・この環境のみ）。
 
+狭い画面（main にマージ済み）:
+
+- id 6: 上部バーの 2 段目で進捗を数字だけにする判定（`fitProgress`）が幅を見ないので広い画面でも
+  走り、描画のたびに強制レイアウトが 1 回増える（見た目は変わらない）
+- id 7: ファイル選択の先頭で常に引き出しを閉じるので、更新バッジの再取得やテーマの読み直しでも
+  引き出しが閉じる。仕様は「ファイルを選ぶか外を押すと閉じる」しか言わない
+- id 8: 描画表示のブロックのタップ（click）が広い画面でも登録される。マウスでは mouseover が
+  先に届くので観察される差は無い
+- id 9: 幅をまたいだときに、閉じている popover にも `hidePopover()` を呼ぶ。WebKit で例外に
+  ならないかは未確認（Chromium と利用者の実機では通っている）
+- id 10: `#menu-theme` の中身は `applyTheme` が作り直すので index.html 側は使われない。テーマの
+  SVG が 3 箇所に重複
+- id 11: `scripts/test-narrow-screen.mjs` の 2 回目の起動に try/finally が無く、途中で落ちると
+  kemi と agent-browser のセッションが残る
+- 仕様に無いと実装時に挙がった点（決めていない）: 範囲の端の行の再タップは新しい 1 行の選択、
+  「…」のメニューは項目を押しても閉じない、引き出しを開いたまま `n` / `p` でファイルが
+  切り替わると閉じる、一覧から選んだコメントの Edit / Delete 後の印の扱い
+
+evidence と oracle はローカルの `.agents/artifacts/reviews/narrow-screen.json` にある
+（git 管理外・この環境のみ）。
+
 ## 既知の制限
+- `PROJECT.md` の `scripts/` の説明と Commands の表に、3 本のブラウザ自動化
+  （`test-rendered-view.mjs` / `test-horizontal-scroll.mjs` / `test-narrow-screen.mjs`）が無い
 
 - 写しの作成が終わる前に SIGKILL されると、`sessions/` に 0 バイトの `.lock` だけが残る
   （本体の `.session` は無い）。計測スクリプトのようにプロセスを即座に落とす使い方で起きる。
   復元の一覧には出ず実害は無いが、掃除もされない
 
-- スマホの画面幅には最適化していない。LAN 公開でスマホから開くと表示は崩れるが、
-  コメントと submit はできる（v0.1.7 の実機確認）
 
 ## やりたいこと（未着手）
 
-- スマホ対応（レスポンシブ表示）。いまは画面幅を想定しておらず、スマホから開くと表示が
-  崩れる（コメントと submit はできる）。狭い幅での見せ方（1 列 / 2 列、上部バー、
-  ファイルの木など）は表示の仕様に関わるので、着手するなら brainstorm から
 
 ## UX 改訂 v2 で残したこと
 
