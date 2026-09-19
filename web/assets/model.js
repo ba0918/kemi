@@ -1231,6 +1231,92 @@ export function placeThreads(displayLines, comments) {
 }
 
 /**
+ * 描画表示のブロック。`data-kemi-block` と同じ側と行レンジ、変更の印（R-RENDER）。
+ * @typedef {{ side: string, start: number, end: number, mark: string }} RenderedBlock
+ */
+
+/**
+ * 描画表示でコメントを置くブロック（R-RENDER）。行レンジに重なる最初のブロック、重ならなければ
+ * 同じ側で直前のブロック。直前も無ければ -1（文書の先頭）。
+ * @param {RenderedBlock[]} blocks
+ * @param {any} comment
+ * @returns {number}
+ */
+function renderedBlockFor(blocks, comment) {
+  const start = Number(comment.start_line);
+  const end = Number(comment.end_line ?? comment.start_line);
+  const overlapping = blocks.findIndex(
+    (block) => block.side === comment.side && block.start <= end && start <= block.end,
+  );
+  if (overlapping >= 0) {
+    return overlapping;
+  }
+  let previous = -1;
+  blocks.forEach((block, index) => {
+    if (block.side === comment.side && block.end < start) {
+      previous = index;
+    }
+  });
+  return previous;
+}
+
+/**
+ * 描画表示でのコメントの置き場（R-RENDER）。`byBlock` はブロックの添字ごとの吹き出し、`top` は
+ * 文書の先頭に出すもの、`floating` はファイル全体のコメント。
+ * @param {RenderedBlock[]} blocks
+ * @param {any[]} comments
+ * @returns {{ byBlock: Map<number, any[]>, top: any[], floating: any[] }}
+ */
+export function placeRenderedComments(blocks, comments) {
+  /** @type {Map<number, any[]>} */
+  const byBlock = new Map();
+  /** @type {any[]} */
+  const top = [];
+  /** @type {any[]} */
+  const floating = [];
+  for (const comment of comments) {
+    if (!hasLines(comment)) {
+      floating.push(comment);
+      continue;
+    }
+    const index = renderedBlockFor(blocks, comment);
+    if (index < 0) {
+      top.push(comment);
+      continue;
+    }
+    const list = byBlock.get(index) || [];
+    list.push(comment);
+    byBlock.set(index, list);
+  }
+  return { byBlock, top, floating };
+}
+
+/**
+ * 描画表示で止まる場所（R-NAV）。変更の印の付いたブロックと、コメントの吹き出しの位置。
+ * 文書の先頭の吹き出しは -1。昇順。
+ * @param {RenderedBlock[]} blocks
+ * @param {any[]} comments
+ * @returns {number[]}
+ */
+export function renderedStops(blocks, comments) {
+  /** @type {Set<number>} */
+  const stops = new Set();
+  blocks.forEach((block, index) => {
+    if (block.mark !== "unchanged") {
+      stops.add(index);
+    }
+  });
+  const placed = placeRenderedComments(blocks, comments);
+  for (const index of placed.byBlock.keys()) {
+    stops.add(index);
+  }
+  if (placed.top.length > 0) {
+    stops.add(-1);
+  }
+  return [...stops].sort((left, right) => left - right);
+}
+
+/**
  * レビュー全体の件数と増減を集計する。
  * @param {any} review
  * @returns {{ files: number, groups: number, add: number, del: number }}

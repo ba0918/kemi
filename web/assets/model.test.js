@@ -49,6 +49,8 @@ import {
   anchorIndex,
   rowAtOffset,
   displayRowKey,
+  placeRenderedComments,
+  renderedStops,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1216,4 +1218,69 @@ test("リサイズと幅の測り直しでは移動不能な横位置だけ末�
   assert.deepEqual(measureHorizontal(initial, 100, 900), { ...initial, left: 500 });
   assert.deepEqual(measureHorizontal(initial, 1000, 500, true), { ...initial, width: 1000, left: 500 });
   assert.deepEqual(measureHorizontal(initial, 100, 500, true), { ...initial, width: 100, left: 0 });
+});
+
+// ---- 描画表示の止まる場所とコメントの置き場（R-RENDER, R-NAV） ----
+
+/**
+ * @param {string} side
+ * @param {number} start
+ * @param {number} end
+ * @param {string} mark
+ */
+function block(side, start, end, mark) {
+  return { side, start, end, mark };
+}
+
+/**
+ * @param {string} side
+ * @param {number} start
+ * @param {number} end
+ */
+function lineComment(side, start, end) {
+  return { id: `${side}:${start}-${end}`, side, start_line: start, end_line: end };
+}
+
+test("描画表示では、変更の印の付いたブロックの先頭で止まり、印の無いブロックでは止まらない", () => {
+  const blocks = [
+    block("new", 1, 1, "unchanged"),
+    block("new", 3, 4, "added"),
+    block("old", 6, 6, "deleted"),
+    block("new", 6, 6, "modified"),
+    block("new", 8, 8, "unchanged"),
+  ];
+  assert.deepEqual(renderedStops(blocks, []), [1, 2, 3]);
+});
+
+test("描画表示では、コメントの吹き出しの位置でも止まる", () => {
+  const blocks = [block("new", 1, 1, "unchanged"), block("new", 3, 3, "unchanged")];
+  assert.deepEqual(renderedStops(blocks, [lineComment("new", 3, 3)]), [1]);
+});
+
+test("コメントは行レンジに重なる最初のブロックの下に置かれる", () => {
+  const blocks = [block("new", 1, 2, "unchanged"), block("new", 3, 5, "added"), block("new", 6, 6, "unchanged")];
+  const placed = placeRenderedComments(blocks, [lineComment("new", 4, 4)]);
+  assert.deepEqual([...placed.byBlock.keys()], [1]);
+  assert.deepEqual(placed.top, []);
+});
+
+test("複数のブロックに重なるコメントは最初のブロックの下に置かれる", () => {
+  const blocks = [block("new", 1, 2, "unchanged"), block("new", 3, 5, "added"), block("new", 6, 6, "unchanged")];
+  const placed = placeRenderedComments(blocks, [lineComment("new", 2, 6)]);
+  assert.deepEqual([...placed.byBlock.keys()], [0]);
+});
+
+test("どのブロックにも重ならないコメントは直前のブロックの下に置かれる", () => {
+  const blocks = [block("new", 1, 1, "unchanged"), block("old", 2, 2, "deleted"), block("new", 4, 4, "unchanged")];
+  const placed = placeRenderedComments(blocks, [lineComment("new", 3, 3), lineComment("old", 5, 5)]);
+  assert.deepEqual(placed.byBlock.get(0)?.map((comment) => comment.id), ["new:3-3"]);
+  assert.deepEqual(placed.byBlock.get(1)?.map((comment) => comment.id), ["old:5-5"]);
+});
+
+test("最初のブロックより前のコメントは文書の先頭に置かれ、そこも止まる場所になる", () => {
+  const blocks = [block("new", 5, 5, "unchanged")];
+  const placed = placeRenderedComments(blocks, [lineComment("new", 1, 2), { id: "w", side: "new", start_line: null, end_line: null }]);
+  assert.deepEqual(placed.top.map((comment) => comment.id), ["new:1-2"]);
+  assert.deepEqual(placed.floating.map((comment) => comment.id), ["w"]);
+  assert.deepEqual(renderedStops(blocks, [lineComment("new", 1, 2)]), [-1]);
 });
