@@ -548,6 +548,19 @@ try {
   assert.deepEqual(await balloons(), { open: 0, chips: 0 });
   console.log('PASS 390px ではコメントを付けても吹き出しが出ず、行番号の欄に線が付き、Comments で出る');
 
+  // (20) コメント一覧のシートから選ぶと、そのコメントだけ吹き出しを開いて見せ、畳むと消える。
+  await browser('click', '#btn-comments');
+  await waitFor(`!document.querySelector('#comment-list').hidden`);
+  await evaluate(`Array.from(document.querySelectorAll('#comment-list .cl-target')).find(b => b.querySelector('.cl-first').textContent === 'narrow comment').click(); true`);
+  await waitFor(`document.querySelector('#comment-list').hidden && ${notLoading} && document.querySelectorAll('#diff-content .bal').length === 1`);
+  assert.deepEqual(await balloons(), { open: 1, chips: 0 });
+  assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.bal') !== null`), true, 'the chosen comment should be open at its line');
+  // 札と吹き出しの「畳む」は同じ鍵を持つ。
+  await evaluate(`document.querySelector('#diff-content .bal [data-focus-key^="comment:"]').click(); true`);
+  await waitFor(`document.querySelectorAll('#diff-content .bal').length === 0`);
+  assert.deepEqual(await balloons(), { open: 0, chips: 0 });
+  console.log('PASS コメント一覧から選ぶとそのコメントだけ開き、畳むと消える');
+
   // (16) 390px の描画表示では、ブロックのタップで `+` が出る。
   await browser('click', '#btn-tree');
   await waitFor(drawerOpen);

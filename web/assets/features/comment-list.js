@@ -81,6 +81,10 @@ export async function goToComment(comment, unit) {
       ? null
       : Number(comment.start_line);
   state.commentOpen.set(comment.id, true);
+  if (state.narrow) {
+    // 狭い画面では吹き出しを既定で出さないので、選んだこのコメントだけ開いて見せる（R-NARROW）。
+    state.narrowOnlyComment = comment.id;
+  }
   /** @param {Entry[]} entries */
   const find = (entries) =>
     entries.findIndex(
