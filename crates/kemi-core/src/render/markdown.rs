@@ -179,6 +179,8 @@ pub(super) fn render(
         image_url,
         plain: 0,
         in_table: false,
+        deferred: Vec::new(),
+        before_written: false,
     };
     match (&old_side, &new_side) {
         (Some(old), None) => {
@@ -339,6 +341,11 @@ struct Writer<'w> {
     /// （脚注の定義や、段落を持たないリスト項目の中身）。
     plain: usize,
     in_table: bool,
+    /// 表の中に差し込む位置になった、行でない旧のブロック。`<table>` の中に書くと
+    /// ブラウザが表の前へ移して DOM の並びがブロックの列とずれるので、表の後に書く。
+    deferred: Vec<usize>,
+    /// 表の 1 行目の前に差し込む旧ブロックを、表を開く前に書き終えた。
+    before_written: bool,
 }
 
 /// 文書を歩きながらブロックを書く。ブロックの列は `Collector` と同じ順で消費する。
@@ -388,6 +395,10 @@ impl<'w> Writer<'w> {
                 }
                 Node::List(list) => self.write_list(list, walk),
                 Node::Table(table) => {
+                    // 表の直前に差し込む旧ブロックは、表を開く前に書く（表の中には置けない）。
+                    if self.plain == 0 && !table.children.is_empty() {
+                        self.write_before_table(walk);
+                    }
                     self.out.push_str("<table class=\"kb-table\">\n");
                     let was_in_table = std::mem::replace(&mut self.in_table, true);
                     for (index, row) in table.children.iter().enumerate() {
@@ -410,6 +421,10 @@ impl<'w> Writer<'w> {
                     }
                     self.in_table = was_in_table;
                     self.out.push_str("</table>\n");
+                    if let Some(old) = walk.old {
+                        let deferred = std::mem::take(&mut self.deferred);
+                        self.write_old_blocks(old, &deferred);
+                    }
                 }
                 _ => {}
             }
@@ -458,17 +473,35 @@ impl<'w> Writer<'w> {
         let info = &walk.doc.blocks[index];
         let decision = &walk.plan.decisions[index];
         if let Some(old) = walk.old {
-            self.write_old_blocks(old, &decision.before);
+            if !std::mem::take(&mut self.before_written) {
+                self.write_old_blocks(old, &decision.before);
+            }
         }
         self.write_block(walk.doc, info, decision.mark, decision.words.as_ref());
     }
 
+    /// 表の 1 行目の前に差し込む旧ブロックを、表を開く前に書く。1 行目の `next_block` は
+    /// それを二度書かない。
+    fn write_before_table(&mut self, walk: &Walk<'_, '_, '_>) {
+        let Some(old) = walk.old else {
+            return;
+        };
+        let decision = &walk.plan.decisions[walk.cursor];
+        self.write_old_blocks(old, &decision.before);
+        self.before_written = true;
+    }
+
     /// 消した旧のブロックを差し込む。表の外に置く表の行は、続く分をまとめて表にする。
+    /// 表の中に置く行でないブロックは、表を閉じた後に回す。
     fn write_old_blocks(&mut self, old: &SideDoc<'_>, indexes: &[usize]) {
         let mut open_table = false;
         for index in indexes {
             let info = &old.blocks[*index];
             let is_row = matches!(info.kind, Kind::TableRow { .. });
+            if self.in_table && !is_row {
+                self.deferred.push(*index);
+                continue;
+            }
             if is_row && !self.in_table && !open_table {
                 self.out
                     .push_str("<table class=\"kb-table kb-del-table\">\n");

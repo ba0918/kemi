@@ -114,6 +114,9 @@ function png(r, g, b) {
 
 const svg = (fill) => `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="8" fill="${fill}"/></svg>\n`;
 const IMAGES_MD = '# Images\n\n![shot](img/shot.png)\n\n![linked](img/link.png)\n\n![nowhere](img/missing.png)\n\n![base](img/base.png)\n';
+/** 旧では段落が表を 2 つに割り、新ではその段落（と 2 つ目の見出し行）だけ消えて 1 つの表になる。 */
+const OLD_TABLE_MD = '| a | b |\n|---|---|\n| 1 | 2 |\n\nBetween.\n\n| a | b |\n|---|---|\n| 3 | 4 |\n';
+const NEW_TABLE_MD = '| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n';
 
 async function makeFixture() {
   const dir = await mkdtemp(join(tmpdir(), 'kemi-render-'));
@@ -127,6 +130,7 @@ async function makeFixture() {
   }
   await write('docs/guide.md', OLD_GUIDE);
   await write('docs/images.md', '# Images\n');
+  await write('docs/table.md', OLD_TABLE_MD);
   await write('docs/img/base.png', png(9, 9, 9));
   await symlink('base.png', join(dir, 'docs/img/link.png'));
   await write('art/photo.png', png(255, 0, 0));
@@ -138,6 +142,7 @@ async function makeFixture() {
   await git('commit', '-q', '-m', 'base');
   await write('docs/guide.md', NEW_GUIDE);
   await write('docs/images.md', IMAGES_MD);
+  await write('docs/table.md', NEW_TABLE_MD);
   await write('docs/img/shot.png', png(200, 100, 0));
   await write('docs/big.md', Array.from({ length: 10_001 }, (_, i) => `line ${i + 1}\n`).join(''));
   await write('art/photo.png', png(0, 0, 255));
@@ -308,6 +313,21 @@ try {
   const images = await evaluate(`Array.from(document.querySelectorAll('#rendered-doc .rendered-body img, #rendered-doc .rendered-body .kb-img-frame')).map(e => e.tagName === 'IMG' ? 'img:' + e.getAttribute('src').replace(/review[/]f[0-9]+/, 'review/<id>').replace(/repo[/]f[0-9]+/, 'repo/<id>') : 'frame:' + e.title)`);
   assert.deepEqual(images, ['img:api/image/review/<id>/new', 'frame:img/link.png', 'frame:img/missing.png', 'img:api/image/repo/<id>/new/docs/img/base.png']);
   console.log('PASS symlink と無いファイルの相対パス画像は枠になり、他は出る');
+
+  // (12) 表の途中で消えた段落は表の中に書き出されず、ページのブロックの並び（data-kemi-block）が
+  // api/render の blocks の並びと一致する（ページは DOM の並びの添字で blocks を引く）。
+  await selectFile('docs/table.md');
+  await browser('press', 'r');
+  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc [data-kemi-block]').length === 5`);
+  const served = await evaluate(`fetch('api/review').then(r => r.json())
+    .then(review => review.groups.flatMap(g => g.files).find(f => f.path === 'docs/table.md'))
+    .then(file => fetch('api/render/' + encodeURIComponent(file.id)).then(r => r.json()))
+    .then(data => data.blocks.map(b => b.side + ':' + b.start + '-' + b.end))`);
+  assert.equal(served.length, 5, served.join(','));
+  assert.ok(served.includes('old:5-5'), served.join(','));
+  assert.deepEqual(await blocks(), served);
+  assert.equal(await evaluate(`document.querySelectorAll('#rendered-doc table > :not(thead, tbody), #rendered-doc tbody > :not(tr), #rendered-doc thead > :not(tr)').length`), 0);
+  console.log('PASS 表の途中で消えた段落が表の中に入らず、ブロックの並びが一致する');
 } finally {
   kemi.child.kill('SIGTERM');
 }

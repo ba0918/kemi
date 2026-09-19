@@ -369,6 +369,28 @@ fn a_deleted_paragraph_is_inserted_at_its_position_with_the_old_line_range() {
 }
 
 #[test]
+fn a_paragraph_deleted_right_before_a_table_stays_before_the_table() {
+    let rendered = render_pair(
+        "Lead.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n",
+    );
+
+    assert_eq!(
+        marks(&rendered),
+        vec![
+            (Side::Old, 1, 1, Mark::Deleted),
+            (Side::New, 1, 1, Mark::Unchanged),
+            (Side::New, 3, 3, Mark::Unchanged),
+        ]
+    );
+    let html = &rendered.html;
+    assert!(
+        html.find("old:1-1").unwrap() < html.find("<table").unwrap(),
+        "{html}"
+    );
+}
+
+#[test]
 fn a_deleted_file_renders_the_old_document_with_every_block_deleted() {
     let rendered =
         render_markdown(&input(Some("# A\n\nb\n"), None), no_highlight(), &plain_url).unwrap();
