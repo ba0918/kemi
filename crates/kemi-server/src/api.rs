@@ -682,10 +682,12 @@ async fn render_table_file(
     })))
 }
 
+/// 描画に渡す側のテキスト。`api/file` の事前判定と同じく改行を正規化してから渡し、
+/// 上限を同じテキストで測る（CRLF のファイルで判定と描画の成否が食い違わないため）。
 fn side_text(bytes: &Option<Vec<u8>>) -> Option<String> {
     bytes
         .as_deref()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .map(|bytes| content::normalize(&String::from_utf8_lossy(bytes)))
 }
 
 fn blocks_json(rendered: &render::Rendered) -> Vec<Value> {

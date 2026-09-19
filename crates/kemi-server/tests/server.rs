@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use kemi_core::domain::content::AUTO_MAX_BYTES;
 use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
 use kemi_server::{serve, session_host, session_url, Asset, Assets, ServeOutcome, ServeParams};
@@ -201,6 +202,12 @@ impl FakeSource {
                 .map(|(path, bytes)| (path.to_string(), bytes.to_vec()))
                 .collect(),
         );
+        self
+    }
+
+    fn with_file(mut self, entry: FileEntry, content: FileContent) -> Self {
+        self.contents.insert(entry.id.clone(), content);
+        self.meta.groups[0].files.push(entry);
         self
     }
 
@@ -2604,6 +2611,36 @@ async fn render_of_a_markdown_the_parser_rejects_is_a_failure_response() {
     assert_eq!(response.status(), 422);
     let body: Value = response.json().await.unwrap();
     assert!(body["error"].is_string(), "{body}");
+}
+
+#[tokio::test]
+async fn crlf_markdown_is_measured_the_same_way_before_and_at_rendering() {
+    // 生バイトは 1 MB を超え、改行を正規化すると下回る。行数（10,000）は上限の中。
+    let text = format!("{}\r\n\r\n", "x".repeat(206)).repeat(5_000);
+    assert!(text.len() > AUTO_MAX_BYTES);
+    assert!(text.len() - 10_000 <= AUTO_MAX_BYTES);
+    let source = FakeSource::new().with_file(
+        FileEntry {
+            status: Status::Add,
+            ..file_entry("f13", "docs/crlf.md")
+        },
+        FileContent {
+            old: None,
+            new: Some(text.into_bytes()),
+        },
+    );
+    let server = TestServer::start_source(Arc::new(source), Ipv4Addr::LOCALHOST, None).await;
+
+    let file: Value = server
+        .get("api/file/f13?highlight=off")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let render = server.get("api/render/f13").await;
+
+    assert_eq!(file["render"]["reason"], Value::Null, "{}", file["render"]);
+    assert_eq!(render.status(), 200);
 }
 
 #[tokio::test]
