@@ -389,13 +389,15 @@ try {
   assert.equal(await isShown('#review-meta'), false);
   console.log('PASS 390px の上部バーは 2 段で、1 段目と 2 段目の要素が仕様の並び');
 
-  // (10) 「…」を押すと折返し・重要のみ・変更量順・テーマがこの順で文字ラベル付きに出る。
+  // (10) 「…」を押すと折返し・重要のみ・変更量順・テーマの操作がこの順で、それぞれ空でない
+  //      文字ラベル付きに出る。文言は契約ではないので見ない。
   await browser('click', '#btn-more');
   await waitFor(`document.querySelector('#view-menu').matches(':popover-open')`);
-  const menuLabels = await evaluate(`Array.from(document.querySelectorAll('#view-menu button')).map(b => b.textContent.trim())`);
-  assert.deepEqual(menuLabels.slice(0, 3), ['Wrap', 'Important only', 'Sort by change size']);
-  assert.match(menuLabels[3], /^Theme: /);
-  assert.equal(menuLabels.length, 4);
+  const menuItems = await evaluate(`Array.from(document.querySelectorAll('#view-menu button')).map(b => ({ id: b.id, label: b.textContent.trim() }))`);
+  assert.deepEqual(menuItems.map(item => item.id), ['menu-wrap', 'menu-focus', 'menu-sort', 'menu-theme']);
+  for (const item of menuItems) {
+    assert.notEqual(item.label, '', `${item.id} should carry a text label`);
+  }
   assert.equal(await evaluate(`document.querySelector('#view-menu button').getAttribute('aria-pressed')`), 'true');
   await browser('press', 'Escape');
   await waitFor(`!document.querySelector('#view-menu').matches(':popover-open')`);
@@ -403,8 +405,7 @@ try {
 
   // (11) 320px では見たの進捗が数字だけになり、送信ボタンの文言は変わらない。
   await browser('set', 'viewport', '320', '844');
-  await waitFor(`document.querySelector('#progress').dataset.compact !== undefined`);
-  assert.equal(await isShown('#progress .bar'), false);
+  await waitFor(`(() => { const bar = document.querySelector('#progress .bar'); return bar === null || getComputedStyle(bar).display === 'none' || bar.getClientRects().length === 0; })()`);
   assert.equal(await isShown('#progress-text'), true);
   assert.match(await evaluate(`document.querySelector('#progress-text').textContent`), /^Seen \d+ \/ \d+$/);
   assert.equal(await evaluate(`document.querySelector('#btn-approve').textContent.trim()`), 'Approve');
@@ -528,8 +529,9 @@ await waitFor(`${drawerClosed} && document.querySelectorAll('[data-kemi-row]').l
 await tap(newNumber(2));
 await tap(newNumber(3));
 assert.deepEqual(await selectedNumbers(), ['2', '3']);
-await tap(`document.querySelector('#diff-content .no-cell.selection-end .line-add-btn')`);
-await waitFor(`document.querySelector('#diff-content .editor textarea[data-editor-field="body"]') !== null`);
+assert.deepEqual(await plusRows(), ['3']);
+await tap(`${shownPlus}[0]`);
+await waitFor(editorOpen);
 await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'tapped range comment');
 await evaluate(`document.querySelector('#diff-content .editor button[type="submit"]').click(); true`);
 await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
