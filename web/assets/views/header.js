@@ -48,6 +48,7 @@ export function renderHeader() {
   dom.menuFocus.setAttribute("aria-pressed", String(state.focusOnly));
   dom.chipSort.setAttribute("aria-pressed", String(state.sortBySize));
   dom.menuSort.setAttribute("aria-pressed", String(state.sortBySize));
+  dom.menuComments.setAttribute("aria-pressed", String(state.narrowComments));
 }
 
 /**

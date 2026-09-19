@@ -54,6 +54,7 @@ import {
   tapSelection,
   shownLineNumbers,
   effectiveDisplay,
+  balloonShown,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1376,4 +1377,33 @@ test("広い画面では覚えている表示モードと折返しをそのま�
     effectiveDisplay({ narrow: false, mode: "split", wrap: false, narrowWrap: true }),
     { mode: "split", wrap: false },
   );
+});
+
+// 狭い画面の吹き出し（R-NARROW）。既定では出さず、「Comments」の切り替えか、一覧から選んだ
+// そのコメントだけを出す。広い画面では常に出す。
+test("広い画面では吹き出しを常に出す", () => {
+  assert.equal(
+    balloonShown({ narrow: false, narrowComments: false, narrowOnlyComment: null }, "c1"),
+    true,
+  );
+});
+
+test("狭い画面では既定で吹き出しを出さない", () => {
+  assert.equal(
+    balloonShown({ narrow: true, narrowComments: false, narrowOnlyComment: null }, "c1"),
+    false,
+  );
+});
+
+test("狭い画面で Comments を切り替えると吹き出しを出す", () => {
+  assert.equal(
+    balloonShown({ narrow: true, narrowComments: true, narrowOnlyComment: null }, "c1"),
+    true,
+  );
+});
+
+test("狭い画面で一覧から選んだコメントだけ吹き出しを出す", () => {
+  const settings = { narrow: true, narrowComments: false, narrowOnlyComment: "c1" };
+  assert.equal(balloonShown(settings, "c1"), true);
+  assert.equal(balloonShown(settings, "c2"), false);
 });

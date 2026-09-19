@@ -9,6 +9,7 @@ import {
   displayMode,
   selectionContains,
   selectionEndsAt,
+  shownComments,
   state,
 } from "../state.js";
 import { countLabel, lineAnchor, lineHasAnchor, originJumpTarget, sideTone } from "../model.js";
@@ -39,7 +40,7 @@ export function renderBlock(line, index) {
   }
   const threads = state.threads.byLine.get(index);
   if (threads) {
-    for (const comment of threads) {
+    for (const comment of shownComments(threads)) {
       // 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める。
       const row = el("div", `bal-row mode-${displayMode()} side-${comment.side}`);
       row.append(renderCommentOrEditor(comment));

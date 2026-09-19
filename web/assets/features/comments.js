@@ -223,6 +223,10 @@ export function closeEditor() {
  */
 export function setCommentOpen(id, open) {
   state.commentOpen.set(id, open);
+  if (!open && state.narrowOnlyComment === id) {
+    // 一覧から選んで 1 件だけ出していた吹き出しは、畳むと消える（R-NARROW）。
+    state.narrowOnlyComment = null;
+  }
   remeasureAndRender();
   refreshRendered();
 }
@@ -259,7 +263,10 @@ export async function addComment(payload) {
     const comment = await api.postComment(payload);
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
-    state.commentOpen.set(comment.id, true);
+    if (!state.narrow) {
+      // 付けた直後は開いて出す（R-VIEW）。狭い画面ではこれを適用しない（R-NARROW）。
+      state.commentOpen.set(comment.id, true);
+    }
     refreshCommentBadges(before);
     renderHeader();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の

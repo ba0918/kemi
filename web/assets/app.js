@@ -16,7 +16,7 @@ import {
   showCollapsed,
   toggleOriginReason,
 } from "./features/display.js";
-import { applyNarrow, closeDrawer, toggleDrawer } from "./features/narrow.js";
+import { applyNarrow, closeDrawer, toggleComments, toggleDrawer } from "./features/narrow.js";
 import { navigate } from "./features/navigation.js";
 import {
   applyReview,
@@ -165,6 +165,7 @@ dom.menuWrap.addEventListener("click", () => setWrap(!displayWrap()));
 dom.menuFocus.addEventListener("click", toggleFocusOnly);
 dom.menuSort.addEventListener("click", toggleSortBySize);
 dom.menuTheme.addEventListener("click", stepTheme);
+dom.menuComments.addEventListener("click", toggleComments);
 document.addEventListener("mouseup", endSelection);
 dom.viewport.addEventListener("click", clearTapSelection);
 dom.btnUnified.addEventListener("click", () => setMode("unified"));

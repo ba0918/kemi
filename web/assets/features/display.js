@@ -13,6 +13,7 @@ import {
   displayMode,
   displayWrap,
   originShown,
+  shownComments,
   state,
 } from "../state.js";
 import { saveMode } from "../storage.js";
@@ -264,7 +265,7 @@ export function renderDiff() {
 export function renderFloating() {
   const focusKey = focusKeyWithin(dom.floating);
   dom.floating.textContent = "";
-  const floating = state.threads.floating;
+  const floating = shownComments(state.threads.floating);
   const wideEditor = state.editor && state.editor.wide && !state.editor.editId ? state.editor : null;
   if (floating.length === 0 && !wideEditor) {
     dom.floating.hidden = true;

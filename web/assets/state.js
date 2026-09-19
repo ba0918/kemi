@@ -1,7 +1,7 @@
 // @ts-check
 // ページの状態と、その状態から決まる読み。ここは api も要素も触らない。
 
-import { collapseDefault, effectiveDisplay, seenProgress } from "./model.js";
+import { balloonShown, collapseDefault, effectiveDisplay, seenProgress } from "./model.js";
 
 /** @typedef {import("./model.js").RenderedBlock} RenderedBlock */
 /** @typedef {{ url: string, size: number }} ImageSide */
@@ -55,6 +55,8 @@ export const THEME_LABELS = {
  *   wrap: boolean,
  *   narrow: boolean,
  *   narrowWrap: boolean,
+ *   narrowComments: boolean,
+ *   narrowOnlyComment: string | null,
  *   drawerOpen: boolean,
  *   horizontal: import("./model.js").HorizontalState,
  *   horizontalMeasurePending: boolean,
@@ -140,6 +142,10 @@ export const state = {
   // 開いている間だけ覚え、localStorage には入れない。
   narrow: false,
   narrowWrap: true,
+  // 狭い画面の吹き出し。既定では出さず、「Comments」の切り替え（ページを開いている間だけ
+  // 覚える）と、コメント一覧から選んだそのコメントだけの印で出す。
+  narrowComments: false,
+  narrowOnlyComment: null,
   drawerOpen: false,
   horizontal: { entry: null, width: 0, left: 0 },
   horizontalMeasurePending: false,
@@ -221,6 +227,17 @@ export function displayMode() {
 /** 描画に使う折返し。狭い画面では狭い画面用の値（R-NARROW）。 */
 export function displayWrap() {
   return effectiveDisplay(state).wrap;
+}
+
+/**
+ * 吹き出し（畳んだ札を含む）を描くコメントだけに絞る。狭い画面では既定で描かない
+ * （R-NARROW）。編集中のコメントは、入力欄が消えないよう常に描く。
+ * @param {any[]} comments
+ * @returns {any[]}
+ */
+export function shownComments(comments) {
+  const editing = state.editor ? state.editor.editId : undefined;
+  return comments.filter((comment) => comment.id === editing || balloonShown(state, comment.id));
 }
 
 /**

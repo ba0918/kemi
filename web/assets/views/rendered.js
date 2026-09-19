@@ -4,7 +4,7 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
-import { currentEntry, state } from "../state.js";
+import { currentEntry, shownComments, state } from "../state.js";
 import { formatBytes } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 
@@ -51,15 +51,16 @@ export function renderRendered() {
   dom.renderedDoc.append(body);
 
   const blocks = blockElements();
-  if (state.renderedThreads.top.length > 0) {
+  const top = shownComments(state.renderedThreads.top);
+  if (top.length > 0) {
     const holder = el("div", "kb-notes kb-notes-top");
-    for (const comment of state.renderedThreads.top) {
+    for (const comment of top) {
       holder.append(noteItem(renderCommentOrEditor(comment)));
     }
     body.prepend(holder);
   }
   blocks.forEach((element, index) => {
-    const notes = state.renderedThreads.byBlock.get(index) || [];
+    const notes = shownComments(state.renderedThreads.byBlock.get(index) || []);
     const editor = editorFor(index);
     if (notes.length === 0 && !editor) {
       return;

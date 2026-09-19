@@ -7,7 +7,8 @@
 // 吹き出しの左端と画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
 // 選択・下書き・上端の行、上部バーの 2 段、「…」のメニュー、320px の進捗、title と
 // コメント一覧のシート、広い画面の上部バー、広い画面のドラッグ、狭い画面のタップの選択と
-// 解除の範囲、押し下げとホバーで選択が始まらないこと、描画表示のブロックのタップ。
+// 解除の範囲、押し下げとホバーで選択が始まらないこと、吹き出しの既定と「…」の Comments と
+// 一覧からの 1 件だけの表示、描画表示のブロックのタップ。
 // 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -171,6 +172,21 @@ const shownPlus = `Array.from(document.querySelectorAll('#diff-content .line-add
 /** `+` が見えている行の、その `+` の側の行番号。 */
 const plusRows = () => evaluate(`${shownPlus}.map(b => b.closest('.no-cell').querySelector('.num').textContent)`);
 const editorOpen = `document.querySelector('#diff-content .editor textarea[data-editor-field="body"]') !== null`;
+const menuOpen = `document.querySelector('#view-menu').matches(':popover-open')`;
+/** 本文に見えている吹き出し（開いたもの）と畳んだ札の数。 */
+const balloons = () => evaluate(`JSON.stringify({ open: document.querySelectorAll('#diff-content .bal').length, chips: document.querySelectorAll('#diff-content .cchip').length })`).then(JSON.parse);
+
+/** 「…」のメニューを開いて Comments を切り替え、メニューを閉じる。切り替え後の押された状態を返す。 */
+async function toggleComments() {
+  await browser('click', '#btn-more');
+  await waitFor(menuOpen);
+  const before = await evaluate(`document.querySelector('#menu-comments').getAttribute('aria-pressed')`);
+  await browser('click', '#menu-comments');
+  await waitFor(`document.querySelector('#menu-comments').getAttribute('aria-pressed') !== ${JSON.stringify(before)}`);
+  await browser('press', 'Escape');
+  await waitFor(`!(${menuOpen})`);
+  return evaluate(`document.querySelector('#menu-comments').getAttribute('aria-pressed')`);
+}
 
 /** 要素の中心を実際のマウスで押す（タップ）。 */
 async function tap(elementCode) {
@@ -289,14 +305,19 @@ try {
   await browser('click', '#btn-tree');
   await waitFor(drawerOpen);
   await selectFile('src/dir0/file0.txt');
-  // 再読込で札に畳まれているので、押して吹き出しにしてから測る。
-  await waitFor(`${drawerClosed} && document.querySelector('#diff-content .bal-row .cchip') !== null`);
+  // 狭い画面では吹き出しは既定で出ないので Comments で出し、再読込で札に畳まれているので
+  // 押して吹き出しにしてから測る。
+  await waitFor(`${drawerClosed} && ${notLoading}`);
+  assert.equal(await toggleComments(), 'true');
+  await waitFor(`document.querySelector('#diff-content .bal-row .cchip') !== null`);
   await evaluate(`document.querySelector('#diff-content .bal-row .cchip').click(); true`);
   await waitFor(`document.querySelector('#diff-content .bal') !== null`);
   const balloonBox = await rect('#diff-content .bal');
   const contentBox = await rect('#diff-content');
   assert.equal(Math.round(balloonBox.left), Math.round(contentBox.left));
   assert.ok(balloonBox.width <= 390, `balloon should fit: ${balloonBox.width}`);
+  // 後の項目は既定（出さない）から始める。
+  assert.equal(await toggleComments(), 'false');
   await browser('click', '#btn-tree');
   await waitFor(drawerOpen);
   await selectFile('art/photo.png');
@@ -389,18 +410,19 @@ try {
   assert.equal(await isShown('#review-meta'), false);
   console.log('PASS 390px の上部バーは 2 段で、1 段目と 2 段目の要素が仕様の並び');
 
-  // (10) 「…」を押すと折返し・重要のみ・変更量順・テーマの操作がこの順で、それぞれ空でない
-  //      文字ラベル付きに出る。文言は契約ではないので見ない。
+  // (10) 「…」を押すと折返し・重要のみ・変更量順・テーマの操作がこの順で、その後に吹き出しの
+  //      切り替えが、それぞれ空でない文字ラベル付きに出る。文言は契約ではないので見ない
+  //      （吹き出しの切り替えの文言は (19) で見る）。
   await browser('click', '#btn-more');
-  await waitFor(`document.querySelector('#view-menu').matches(':popover-open')`);
+  await waitFor(menuOpen);
   const menuItems = await evaluate(`Array.from(document.querySelectorAll('#view-menu button')).map(b => ({ id: b.id, label: b.textContent.trim() }))`);
-  assert.deepEqual(menuItems.map(item => item.id), ['menu-wrap', 'menu-focus', 'menu-sort', 'menu-theme']);
+  assert.deepEqual(menuItems.map(item => item.id), ['menu-wrap', 'menu-focus', 'menu-sort', 'menu-theme', 'menu-comments']);
   for (const item of menuItems) {
     assert.notEqual(item.label, '', `${item.id} should carry a text label`);
   }
   assert.equal(await evaluate(`document.querySelector('#view-menu button').getAttribute('aria-pressed')`), 'true');
   await browser('press', 'Escape');
-  await waitFor(`!document.querySelector('#view-menu').matches(':popover-open')`);
+  await waitFor(`!(${menuOpen})`);
   console.log('PASS 「…」のメニューに表示の操作が文字ラベル付きで並ぶ');
 
   // (11) 320px では見たの進捗が数字だけになり、送信ボタンの文言は変わらない。
@@ -494,6 +516,36 @@ try {
   await browser('hover', `#diff-content .row.kind-equal`);
   assert.deepEqual(await plusRows(), []);
   console.log('PASS 390px では押し下げとホバーで選択が始まらない');
+
+  // (19) 390px で付けたコメントは吹き出し（畳んだ札も）が出ず、行番号の欄にコメント色の線が
+  //      付き、「…」の「Comments」で出る（付けた直後のものは開かず畳んだ札）。
+  await tap(newNumber(6));
+  await tap(`${shownPlus}[0]`);
+  await waitFor(editorOpen);
+  await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'narrow comment');
+  await evaluate(`document.querySelector('#diff-content .editor button[type="submit"]').click(); true`);
+  await waitFor(`document.querySelector('#comment-count').textContent === '2' && !(${editorOpen})`);
+  assert.deepEqual(await balloons(), { open: 0, chips: 0 });
+  // 線は行番号の欄の左端（行の 1 つ目の欄）に付く。
+  const numberCell = await evaluate(`(() => {
+    const row = ${newNumber(6)}.closest('.row');
+    return JSON.stringify({ commented: row.classList.contains('commented'), shadow: getComputedStyle(row.querySelector('.no-cell')).boxShadow });
+  })()`).then(JSON.parse);
+  assert.equal(numberCell.commented, true, JSON.stringify(numberCell));
+  assert.notEqual(numberCell.shadow, 'none', `the line-number cell should carry the comment line: ${JSON.stringify(numberCell)}`);
+  await browser('click', '#btn-more');
+  await waitFor(menuOpen);
+  assert.equal(await evaluate(`document.querySelector('#menu-comments').textContent.trim()`), 'Comments');
+  assert.equal(await evaluate(`document.querySelector('#menu-comments').getAttribute('aria-pressed')`), 'false');
+  await browser('press', 'Escape');
+  await waitFor(`!(${menuOpen})`);
+  assert.equal(await toggleComments(), 'true');
+  // (5) で開いた広い画面のコメントは開いたまま、いま付けたものは畳んだ札。
+  assert.deepEqual(await balloons(), { open: 1, chips: 1 });
+  assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.cchip') !== null`), true, 'the new comment should be a folded chip at its line');
+  assert.equal(await toggleComments(), 'false');
+  assert.deepEqual(await balloons(), { open: 0, chips: 0 });
+  console.log('PASS 390px ではコメントを付けても吹き出しが出ず、行番号の欄に線が付き、Comments で出る');
 
   // (16) 390px の描画表示では、ブロックのタップで `+` が出る。
   await browser('click', '#btn-tree');
