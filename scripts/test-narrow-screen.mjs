@@ -5,7 +5,8 @@
 //
 // 1 回目の起動: 引き出し、1 列と折返し、折返しの記憶と localStorage、ファイルヘッダの 2 行、
 // 吹き出しの左端と画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
-// 選択・下書き・上端の行。
+// 選択・下書き・上端の行、上部バーの 2 段、「…」のメニュー、320px の進捗、title と
+// コメント一覧のシート、広い画面の上部バー。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -318,6 +319,9 @@ try {
   //     選択と下書きは残り、上端に見えていた行が同じ位置にある。
   await browser('set', 'viewport', ...NARROW);
   await waitFor(narrowApplied);
+  // 全行を展開して本文を長くし、上端の行が先頭でない位置まで送る。
+  await evaluate(`document.querySelector('#file-header button[aria-label="Expand all lines"]').click(); true`);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 30 && ${notLoading}`);
   await evaluate(`document.querySelector('#diff-viewport').scrollTop = 120; true`);
   await waitFor(`document.querySelector('#diff-viewport').scrollTop === 120`);
   await evaluate(`(() => {
@@ -344,6 +348,84 @@ try {
   assert.equal(await evaluate(`document.querySelector('#diff-content .editor textarea[data-editor-field="body"]').value`), 'kept draft');
   assert.equal(await topRow(), topBefore);
   console.log('PASS 幅をまたぐと引き出しは閉じ、選択と下書きと上端の行は残る');
+
+  // (9) 390px の上部バーは 2 段。1 段目に kemi・title・ツリー・コメント一覧の入口・更新バッジ、
+  //     2 段目にグループ単位の切り替え（左端）・見たの進捗・Approve・Request changes。
+  await browser('set', 'viewport', ...NARROW);
+  await waitFor(narrowApplied);
+  const bar = await evaluate(`JSON.stringify(Object.fromEntries(['.brand', '#btn-title', '#btn-tree', '#btn-comments', '#btn-more', '#unit-switch', '#progress', '#btn-approve', '#btn-changes'].map(s => {
+    const box = document.querySelector(s).getBoundingClientRect();
+    return [s, { top: box.top, bottom: box.bottom, left: box.left, right: box.right, mid: (box.top + box.bottom) / 2 }];
+  })))`).then(JSON.parse);
+  const firstRowBottom = Math.max(bar['.brand'].bottom, bar['#btn-tree'].bottom, bar['#btn-more'].bottom);
+  for (const key of ['.brand', '#btn-title', '#btn-tree', '#btn-comments', '#btn-more']) {
+    assert.ok(bar[key].mid < firstRowBottom && bar[key].right <= 390, `${key} should be on the first row: ${JSON.stringify(bar[key])}`);
+  }
+  for (const key of ['#unit-switch', '#progress', '#btn-approve', '#btn-changes']) {
+    assert.ok(bar[key].top >= firstRowBottom - 1 && bar[key].right <= 390, `${key} should be below the first row: ${JSON.stringify(bar[key])}`);
+  }
+  assert.ok(bar['#unit-switch'].left <= bar['#progress'].left, 'the unit switch should be at the left of the second row');
+  assert.equal(await evaluate(`document.querySelector('#update-badge').hidden`), true);
+  assert.equal(await isShown('#review-subtitle'), false);
+  assert.equal(await isShown('#review-meta'), false);
+  console.log('PASS 390px の上部バーは 2 段で、1 段目と 2 段目の要素が仕様の並び');
+
+  // (10) 「…」を押すと折返し・重要のみ・変更量順・テーマがこの順で文字ラベル付きに出る。
+  await browser('click', '#btn-more');
+  await waitFor(`document.querySelector('#view-menu').matches(':popover-open')`);
+  const menuLabels = await evaluate(`Array.from(document.querySelectorAll('#view-menu button')).map(b => b.textContent.trim())`);
+  assert.deepEqual(menuLabels.slice(0, 3), ['Wrap', 'Important only', 'Sort by change size']);
+  assert.match(menuLabels[3], /^Theme: /);
+  assert.equal(menuLabels.length, 4);
+  assert.equal(await evaluate(`document.querySelector('#view-menu button').getAttribute('aria-pressed')`), 'true');
+  await browser('press', 'Escape');
+  await waitFor(`!document.querySelector('#view-menu').matches(':popover-open')`);
+  console.log('PASS 「…」のメニューに表示の操作が文字ラベル付きで並ぶ');
+
+  // (11) 320px では見たの進捗が数字だけになり、送信ボタンの文言は変わらない。
+  await browser('set', 'viewport', '320', '844');
+  await waitFor(`document.querySelector('#progress').dataset.compact !== undefined`);
+  assert.equal(await isShown('#progress .bar'), false);
+  assert.equal(await isShown('#progress-text'), true);
+  assert.match(await evaluate(`document.querySelector('#progress-text').textContent`), /^Seen \d+ \/ \d+$/);
+  assert.equal(await evaluate(`document.querySelector('#btn-approve').textContent.trim()`), 'Approve');
+  assert.equal(await evaluate(`document.querySelector('#btn-changes').textContent.trim()`), 'Request changes');
+  assert.equal(await evaluate(`document.querySelector('#btn-changes').getBoundingClientRect().right <= 320`), true);
+  await browser('set', 'viewport', ...NARROW);
+  await waitFor(narrowApplied);
+  console.log('PASS 320px では見たの進捗が数字だけになり、送信ボタンの文言は変わらない');
+
+  // (12) title のシートとコメント一覧のシートが開いて閉じる。
+  await browser('click', '#btn-title');
+  await waitFor(`document.querySelector('#title-sheet').matches(':popover-open')`);
+  const sheetBox = await rect('#title-sheet');
+  assert.deepEqual([sheetBox.left, sheetBox.top, sheetBox.width, sheetBox.height].map(Math.round), [0, 0, 390, 844]);
+  assert.equal(await evaluate(`document.querySelector('#sheet-title').textContent`), await evaluate(`document.querySelector('#review-title').textContent`));
+  assert.ok(await evaluate(`document.querySelectorAll('#sheet-meta span').length`) > 0, 'the sheet should carry the meta');
+  await browser('click', '#sheet-close');
+  await waitFor(`!document.querySelector('#title-sheet').matches(':popover-open')`);
+  await browser('click', '#btn-comments');
+  await waitFor(`!document.querySelector('#comment-list').hidden`);
+  const listBox = await rect('#comment-list');
+  assert.deepEqual([listBox.left, listBox.top, listBox.width, listBox.height].map(Math.round), [0, 0, 390, 844]);
+  await browser('click', '#comment-list .cl-close');
+  await waitFor(`document.querySelector('#comment-list').hidden`);
+  console.log('PASS title のシートとコメント一覧のシートが開いて閉じる');
+
+  // (13) 1280px では、文字ラベルを持つ上部バーの操作がグループ単位・送信・更新バッジ・
+  //      コメント一覧の入口だけで、subtitle と meta が上部に出て、狭い画面専用の操作が見えない。
+  await browser('set', 'viewport', ...WIDE);
+  await waitFor(wideApplied);
+  const labelled = await evaluate(`Array.from(document.querySelectorAll('.topbar button')).filter(b => b.textContent.trim() !== '' && getComputedStyle(b).display !== 'none' && b.getClientRects().length > 0).map(b => b.id || b.className)`);
+  assert.deepEqual([...new Set(labelled)].sort(), ['btn-approve', 'btn-changes', 'btn-comments', 'unit-button']);
+  assert.equal(await isShown('#review-meta'), true);
+  assert.ok(await evaluate(`document.querySelectorAll('#review-meta span').length`) > 0);
+  assert.equal(await evaluate(`document.querySelector('#review-subtitle').hidden || getComputedStyle(document.querySelector('#review-subtitle')).display !== 'none'`), true);
+  for (const selector of ['#btn-tree', '#btn-title', '#btn-more', '#view-menu', '#title-sheet', '#drawer-scrim']) {
+    assert.equal(await isShown(selector), false, `${selector} should be hidden on a wide screen`);
+  }
+  assert.equal(await isShown('#btn-split'), true);
+  console.log('PASS 1280px では上部バーの文字ラベルの操作が 4 種類だけで、狭い画面専用の操作が見えない');
 } finally {
   kemi.child.kill('SIGTERM');
   await kemi.exited;
