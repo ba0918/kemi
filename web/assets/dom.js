@@ -25,6 +25,7 @@ export const dom = {
   menuFocus: /** @type {HTMLButtonElement} */ (must("#menu-focus")),
   menuSort: /** @type {HTMLButtonElement} */ (must("#menu-sort")),
   menuTheme: /** @type {HTMLButtonElement} */ (must("#menu-theme")),
+  menuThemeLabel: must("#menu-theme-label"),
   menuComments: /** @type {HTMLButtonElement} */ (must("#menu-comments")),
   titleSheet: must("#title-sheet"),
   sheetTitle: must("#sheet-title"),

@@ -48,8 +48,6 @@ kemi v1 と UI 改訂（`kemi-v1.json`、`kemi-ui-fix.json`）:
   観察される差は無い）
 - 幅をまたいだときに、閉じている popover にも `hidePopover()` を呼ぶ。WebKit で例外にならないかは
   未確認（Chromium と利用者の実機では通っている）
-- `#menu-theme` の中身は `applyTheme` が作り直すので index.html 側は使われない。テーマの SVG が
-  3 箇所に重複
 - `scripts/test-narrow-screen.mjs` の 2 回目の起動に try/finally が無く、途中で落ちると kemi と
   agent-browser のセッションが残る
 
