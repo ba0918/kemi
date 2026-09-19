@@ -208,6 +208,14 @@ export function renderDiff() {
     renderRuler([0]);
     return;
   }
+  if (state.renderedActive) {
+    // 描画表示は行を持たない。行の窓は空にし、帯と移動は描画表示の側から測る。
+    dom.content.style.height = "0px";
+    syncHorizontal();
+    renderNav([0]);
+    renderRuler([0]);
+    return;
+  }
   const offsets = lineOffsets(state.heights);
   const totalHeight = offsets[offsets.length - 1] || 0;
   dom.content.style.height = `${totalHeight}px`;

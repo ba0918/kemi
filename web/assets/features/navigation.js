@@ -22,7 +22,8 @@ import {
   nextFileIndex,
 } from "../model.js";
 import { scheduleRender } from "./display.js";
-import { navView } from "../views/nav.js";
+import { navView, stopTops } from "../views/nav.js";
+import { blockElements, blockTop } from "../views/rendered.js";
 import { showToast } from "../views/overlay.js";
 
 /** @typedef {import("../state.js").Entry} Entry */
@@ -66,6 +67,15 @@ function scrollToRow(index, offsets) {
 }
 
 /**
+ * 描画表示で、測った上端を基準線の位置へ送る。行の高さの置き直しは無い。
+ * @param {number} top
+ */
+function scrollToTop(top) {
+  dom.viewport.scrollTop = Math.max(0, top - NAV_MARGIN);
+  scheduleRender();
+}
+
+/**
  * n / p: ファイルの中の次（前）の止まる場所へ。端では、見えている順で次（前）のファイルの
  * 最初（最後）の止まる場所へ移る。最後（最初）のファイルでは止まって知らせる（R-NAV）。
  * @param {1 | -1} direction
@@ -76,15 +86,19 @@ export async function navigate(direction) {
     return;
   }
   const offsets = lineOffsets(state.heights);
-  const stops = reachableStops();
-  const tops = stops.map((index) => offsets[index] ?? 0);
+  const stops = state.renderedActive ? state.renderedStops : reachableStops();
+  const tops = stopTops(offsets);
   const view = navView();
   const index =
     direction > 0
       ? navNextTarget(tops, view, NAV_MARGIN)
       : navPrevTarget(tops, view, NAV_MARGIN);
   if (index !== null) {
-    scrollToRow(stops[index], offsets);
+    if (state.renderedActive) {
+      scrollToTop(tops[index]);
+    } else {
+      scrollToRow(stops[index], offsets);
+    }
     return;
   }
   const visible = state.visible;
@@ -166,6 +180,24 @@ export function applyPendingJump() {
     return;
   }
   const offsets = lineOffsets(state.heights);
+  if (state.renderedActive) {
+    const tops = stopTops(offsets);
+    if (jump === "first" || jump === "last") {
+      if (tops.length > 0) {
+        scrollToTop(jump === "first" ? tops[0] : tops[tops.length - 1]);
+      }
+      return;
+    }
+    const blocks = state.rendered ? state.rendered.blocks : [];
+    const index = blocks.findIndex(
+      (block) => block.side === jump.side && block.start <= jump.line && jump.line <= block.end,
+    );
+    const element = index >= 0 ? blockElements()[index] : undefined;
+    if (element) {
+      scrollToTop(blockTop(element));
+    }
+    return;
+  }
   const stops = reachableStops();
   if (jump === "first" || jump === "last") {
     if (stops.length > 0) {

@@ -20,6 +20,7 @@
 /**
  * @typedef {{
  *   addComment: (payload: any) => void,
+ *   applyRenderedView: (entry: import("./state.js").Entry) => Promise<void>,
  *   closeCommentList: () => void,
  *   collapseAll: () => void,
  *   closeEditor: () => void,
@@ -33,8 +34,10 @@
  *   openCommentEditor: (comment: any) => void,
  *   openEditorAt: (side: string, number: number) => void,
  *   openFileWideEditor: () => void,
+ *   openBlockEditor: (index: number) => void,
  *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => Promise<void>,
  *   setCommentOpen: (id: string, open: boolean) => void,
+ *   setRendered: (entry: import("./state.js").Entry, rendered: boolean) => void,
  *   showCollapsed: (entry: import("./state.js").Entry) => void,
  *   startSelection: (side: "old" | "new", number: number) => void,
  *   toggleHighlight: (entry: import("./state.js").Entry) => void,

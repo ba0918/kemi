@@ -28,6 +28,12 @@ import {
   toggleSeen,
   toggleSortBySize,
 } from "./features/files.js";
+import {
+  applyRenderedView,
+  openBlockEditor,
+  setRendered,
+  toggleRendered,
+} from "./features/rendered.js";
 import { applyTheme, onSystemThemeChange, stepTheme } from "./features/theme.js";
 import {
   addComment,
@@ -111,6 +117,11 @@ function handleKey(event) {
     }
   } else if (action.type === "wrap") {
     setWrap(Boolean(action.value));
+  } else if (action.type === "rendered") {
+    const entry = currentEntry();
+    if (entry) {
+      toggleRendered(entry);
+    }
   }
 }
 
@@ -162,6 +173,7 @@ window
 
 bindActions({
   addComment,
+  applyRenderedView,
   closeCommentList,
   closeEditor,
   collapseAll,
@@ -174,9 +186,11 @@ bindActions({
   goToComment,
   openCommentEditor,
   openEditorAt,
+  openBlockEditor,
   openFileWideEditor,
   selectIndex,
   setCommentOpen,
+  setRendered,
   showCollapsed,
   startSelection,
   switchUnit,

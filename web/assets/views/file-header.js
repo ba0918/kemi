@@ -23,6 +23,7 @@ import {
   currentEntry,
   groupProgressFor,
   originAvailable,
+  renderToggleEnabled,
   state,
 } from "../state.js";
 import { collapseDefault, countLabel, formatBytes, statusLetter } from "../model.js";
@@ -127,7 +128,7 @@ export function renderFileHeader() {
     fullyExpanded ? "Collapse all" : "Expand all lines",
     EXPAND_ICON,
   );
-  expand.disabled = state.submitted || state.binary || busy;
+  expand.disabled = state.submitted || state.binary || busy || state.renderedActive;
   expand.dataset.focusKey = "file-expand";
   expand.classList.toggle("active", fullyExpanded);
   expand.setAttribute("aria-pressed", String(fullyExpanded));
@@ -147,6 +148,8 @@ export function renderFileHeader() {
   highlight.setAttribute("aria-pressed", String(state.highlightEnabled));
   highlight.addEventListener("click", () => actions.toggleHighlight(entry));
   dom.fileHeader.append(highlight);
+
+  renderViewSwitch(entry);
 
   if (originAvailable() && !state.binary && !state.highlightCapable) {
     const forced = state.originForced.has(entry.file.id);
@@ -173,6 +176,42 @@ export function renderFileHeader() {
   restoreFocusKey(dom.fileHeader, focusKey);
 }
 
+/**
+ * 描画表示とソース表示の切り替え（R-RENDER）。対象のファイルにだけ出し、取得中と、事前に
+ * 分かる描画不可では押せず、理由をツールチップに出す。押してから描画に失敗したときは
+ * ソース表示のまま、理由をヘッダに出す。
+ * @param {import("../state.js").Entry} entry
+ */
+function renderViewSwitch(entry) {
+  const info = state.renderInfo;
+  if (!info || !info.toggle) {
+    return;
+  }
+  const group = el("div", "seg view-switch");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "View");
+  const enabled = renderToggleEnabled();
+  const rendered = button("iconbtn view-rendered");
+  rendered.textContent = "Rendered";
+  rendered.title = info.reason ? `Cannot render: ${info.reason}` : "Rendered view (r)";
+  rendered.disabled = !enabled;
+  rendered.dataset.focusKey = "file-rendered";
+  rendered.setAttribute("aria-pressed", String(state.renderedActive));
+  rendered.addEventListener("click", () => actions.setRendered(entry, true));
+  const source = button("iconbtn view-source");
+  source.textContent = "Source";
+  source.title = "Source view (r)";
+  source.disabled = !enabled;
+  source.dataset.focusKey = "file-source";
+  source.setAttribute("aria-pressed", String(!state.renderedActive));
+  source.addEventListener("click", () => actions.setRendered(entry, false));
+  group.append(rendered, source);
+  dom.fileHeader.append(group);
+  if (state.renderFailure) {
+    dom.fileHeader.append(textEl("span", "render-failed", `Cannot render: ${state.renderFailure}`));
+  }
+}
+
 export function renderNotice() {
   dom.notice.hidden = true;
   dom.notice.textContent = "";
@@ -184,9 +223,9 @@ export function renderNotice() {
     }
     return;
   }
-  if (state.loading) {
+  if (state.loading || state.renderLoading) {
     dom.notice.hidden = false;
-    dom.notice.append(textEl("span", "notice-text", "Loading…"));
+    dom.notice.append(textEl("span", "notice-text", state.loading ? "Loading…" : "Rendering…"));
     return;
   }
   if (state.binary) {

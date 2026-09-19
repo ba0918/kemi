@@ -13,6 +13,7 @@ import {
   renderDiff,
   renderFloating,
 } from "./display.js";
+import { refreshRendered } from "./rendered.js";
 import { renderCommentList } from "../views/comment-list.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderHeader } from "../views/header.js";
@@ -167,12 +168,14 @@ export function openCommentEditor(comment) {
     editId: comment.id,
   };
   remeasureAndRender();
+  refreshRendered();
 }
 
 export function closeEditor() {
   state.editor = null;
   state.selection = null;
   remeasureAndRender();
+  refreshRendered();
 }
 
 /**
@@ -183,6 +186,7 @@ export function closeEditor() {
 export function setCommentOpen(id, open) {
   state.commentOpen.set(id, open);
   remeasureAndRender();
+  refreshRendered();
 }
 
 /**
@@ -203,6 +207,7 @@ function updateComments(change) {
   renderFileHeader();
   renderDiff();
   renderFloating();
+  refreshRendered();
   if (!dom.commentList.hidden) {
     renderCommentList();
   }
@@ -233,6 +238,7 @@ export async function addComment(payload) {
         renderDiff();
         renderFloating();
         renderFileHeader();
+        refreshRendered();
       }
     }
     const selection =

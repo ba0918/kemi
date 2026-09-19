@@ -3,6 +3,7 @@
 
 import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
 import * as api from "../api.js";
+import { actions } from "../actions.js";
 import { dom } from "../dom.js";
 import {
   currentEntry,
@@ -97,6 +98,7 @@ export async function refresh() {
   state.cache.clear();
   state.commentStore.clear();
   state.origins.clear();
+  state.renderCache.clear();
   // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
   state.reviews = new Map();
   applyReview(await api.getReview(true, state.unit), true);
@@ -206,6 +208,7 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   const data = state.cache.get(key);
   state.rows = data.rows || [];
   state.binary = Boolean(data.binary);
+  state.renderInfo = data.render || null;
   state.highlightCapable = Boolean(data.highlight && data.highlight.capable);
   state.highlightEnabled = Boolean(data.highlight && data.highlight.enabled);
   const storedComments = state.commentStore.get(id);
@@ -225,6 +228,11 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   renderNotice();
   renderFloating();
   renderDiff();
+  // 描画表示で見るファイルは、取得して出してから移り先へ送る（R-RENDER）。
+  await actions.applyRenderedView(entry);
+  if (generation !== state.selectGeneration) {
+    return;
+  }
   applyPendingJump();
   void loadOrigin(entry);
 }

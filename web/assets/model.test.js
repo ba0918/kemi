@@ -1284,3 +1284,7 @@ test("最初のブロックより前のコメントは文書の先頭に置か�
   assert.deepEqual(placed.floating.map((comment) => comment.id), ["w"]);
   assert.deepEqual(renderedStops(blocks, [lineComment("new", 1, 2)]), [-1]);
 });
+
+test("r は描画表示とソース表示の切り替え", () => {
+  assert.deepEqual(keyAction("r", "unified", 3, 0), { type: "rendered" });
+});

@@ -41,7 +41,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
 - `features/` の中の順番は
-  `horizontal-scroll → display → navigation → files → theme → comments → units → comment-list → submit` で、
+  `horizontal-scroll → display → navigation → files → rendered → theme → comments → units → comment-list → submit` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
 - `state.js` は `storage.js` と `model.js` を import してよい。ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、

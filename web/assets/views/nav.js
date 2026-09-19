@@ -4,6 +4,7 @@
 import { dom } from "../dom.js";
 import { NAV_MARGIN, currentEntry, reachableStops, state } from "../state.js";
 import { navCurrentIndex, rulerMarks } from "../model.js";
+import { blockElements, blockTop } from "./rendered.js";
 
 /** @typedef {import("../model.js").DisplayLine} DisplayLine */
 
@@ -21,6 +22,23 @@ export function navView() {
 }
 
 /**
+ * 表示中のファイルの止まる場所の上端（昇順）。描画表示ではブロック要素の位置を測る
+ * （文書の先頭は 0）。ソース表示では表示行の上端。
+ * @param {number[]} offsets 表示行の上端（ソース表示）
+ * @returns {number[]}
+ */
+export function stopTops(offsets) {
+  if (state.renderedActive) {
+    const elements = blockElements();
+    return state.renderedStops.map((index) => {
+      const element = index < 0 ? undefined : elements[index];
+      return element ? blockTop(element) : 0;
+    });
+  }
+  return reachableStops().map((index) => offsets[index] ?? 0);
+}
+
+/**
  * 右下の「前の変更 / 次の変更」と「現在 / 全体」（R-NAV）。
  * @param {number[]} offsets
  */
@@ -30,7 +48,7 @@ export function renderNav(offsets) {
   if (!entry) {
     return;
   }
-  const tops = reachableStops().map((index) => offsets[index] ?? 0);
+  const tops = stopTops(offsets);
   const current = navCurrentIndex(tops, navView(), NAV_MARGIN);
   dom.navPos.textContent = `${current < 0 ? "–" : current + 1} / ${tops.length}`;
   dom.navPrev.disabled = state.loading || state.navigating;
@@ -60,10 +78,59 @@ function rulerKind(line, index) {
 }
 
 /**
+ * 描画表示の帯の元: ブロックごとの種類と位置。ブロックの間は印の無い区間にする。
+ * @returns {{ kinds: string[], offsets: number[] }}
+ */
+function renderedRulerData() {
+  /** @type {string[]} */
+  const kinds = [];
+  const offsets = [0];
+  const blocks = state.rendered ? state.rendered.blocks : [];
+  let cursor = 0;
+  blockElements().forEach((element, index) => {
+    const top = blockTop(element);
+    const bottom = Math.max(top + 1, top + element.getBoundingClientRect().height);
+    if (top > cursor) {
+      kinds.push("");
+      offsets.push(top);
+    }
+    const mark = blocks[index] ? blocks[index].mark : "unchanged";
+    kinds.push(
+      state.renderedThreads.byBlock.has(index)
+        ? "note"
+        : mark === "deleted"
+          ? "del"
+          : mark === "unchanged"
+            ? ""
+            : "add",
+    );
+    offsets.push(bottom);
+    cursor = bottom;
+  });
+  const total = Math.max(cursor, dom.viewport.scrollHeight);
+  if (total > cursor) {
+    kinds.push("");
+    offsets.push(total);
+  }
+  return { kinds, offsets };
+}
+
+/**
  * スクロールバーの横の位置の帯。印は帯の高さに縮めて描くので、全行を DOM に描かない。
  * @param {number[]} offsets
  */
 export function renderRuler(offsets) {
+  /** @type {string[]} */
+  let kinds = [];
+  if (state.renderedActive) {
+    // 画像の読み込みでブロックの位置が動くので、描画表示では毎回測り直す。
+    const data = renderedRulerData();
+    kinds = data.kinds;
+    offsets = data.offsets;
+    state.rulerDirty = true;
+  } else {
+    kinds = state.display.map(rulerKind);
+  }
   const height = dom.ruler.clientHeight;
   const total = offsets[offsets.length - 1] || 0;
   const canvas = dom.rulerCanvas;
@@ -87,7 +154,6 @@ export function renderRuler(offsets) {
         del: styles.getPropertyValue("--del-ink").trim(),
         note: styles.getPropertyValue("--note-line").trim(),
       };
-      const kinds = state.display.map(rulerKind);
       for (const mark of rulerMarks(kinds, offsets, height)) {
         context.fillStyle = colors[mark.kind];
         if (mark.kind === "note") {

@@ -8,7 +8,16 @@
 async function getJson(path) {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
-    throw new Error(`${path}: HTTP ${response.status}`);
+    let message = `${path}: HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload && typeof payload.error === "string") {
+        message = payload.error;
+      }
+    } catch {
+      // JSON でないエラーは status のまま
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -82,6 +91,23 @@ export function getFile(id, range, options = {}) {
   }
   const query = params.toString();
   return getJson(`api/file/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);
+}
+
+/**
+ * 描画表示の HTML とブロックの一覧（R-RENDER）。表示時に初めて計算される。
+ * @param {string} id
+ * @param {{dark?: boolean, highlight?: string}} [options]
+ */
+export function getRender(id, options = {}) {
+  const params = new URLSearchParams();
+  if (options.dark) {
+    params.set("dark", "1");
+  }
+  if (options.highlight) {
+    params.set("highlight", options.highlight);
+  }
+  const query = params.toString();
+  return getJson(`api/render/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);
 }
 
 /**

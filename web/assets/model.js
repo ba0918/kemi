@@ -503,6 +503,8 @@ export function keyAction(key, _mode, count, index, wrap = false) {
       return { type: "nav", direction: -1 };
     case "v":
       return { type: "seen" };
+    case "r":
+      return { type: "rendered" };
     default:
       return { type: "none" };
   }

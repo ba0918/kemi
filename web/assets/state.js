@@ -2,6 +2,8 @@
 // ページの状態と、その状態から決まる読み。ここは api も要素も触らない。
 
 import { collapseDefault, seenProgress } from "./model.js";
+
+/** @typedef {import("./model.js").RenderedBlock} RenderedBlock */
 import { loadMode, loadTheme } from "./storage.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
@@ -105,6 +107,15 @@ export const THEME_LABELS = {
  *   groupHeads: Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>,
  *   modalAction: (() => void) | null,
  *   landing: { index: number, top: number, scrollTop: number, margin: number } | null,
+ *   renderedFiles: Map<string, boolean>,
+ *   renderInfo: { target: string | null, toggle: boolean, initial: string, reason: string | null } | null,
+ *   renderCache: Map<string, any>,
+ *   renderedActive: boolean,
+ *   renderLoading: boolean,
+ *   renderFailure: string | null,
+ *   rendered: { html: string, blocks: RenderedBlock[], oldLines: string[], newLines: string[] } | null,
+ *   renderedStops: number[],
+ *   renderedThreads: { byBlock: Map<number, any[]>, top: any[], floating: any[] },
  * }} */
 export const state = {
   review: null,
@@ -169,6 +180,17 @@ export const state = {
   groupHeads: new Map(),
   modalAction: null,
   landing: null,
+  // 描画表示（R-RENDER）。ファイルごとの切り替えはページを開いている間だけ覚え、
+  // localStorage にもサーバのセッション状態にも書かない。
+  renderedFiles: new Map(),
+  renderInfo: null,
+  renderCache: new Map(),
+  renderedActive: false,
+  renderLoading: false,
+  renderFailure: null,
+  rendered: null,
+  renderedStops: [],
+  renderedThreads: { byBlock: new Map(), top: [], floating: [] },
 };
 
 export function currentEntry() {
@@ -213,6 +235,28 @@ export function commentsOf(entry) {
   return state.allComments.filter(
     (comment) => comment.group_id === entry.group.id && comment.path === entry.file.path,
   );
+}
+
+/**
+ * 表示中のファイルを描画表示で見たいか。切り替えていなければ `api/file` の既定に従う。
+ * @param {Entry} entry
+ * @returns {boolean}
+ */
+export function renderedWanted(entry) {
+  const chosen = state.renderedFiles.get(entry.file.id);
+  if (chosen !== undefined) {
+    return chosen;
+  }
+  return Boolean(state.renderInfo && state.renderInfo.initial === "rendered");
+}
+
+/**
+ * 描画表示の切り替えが押せるか。対象でない、取得中、事前に分かる描画不可では押せない。
+ * @returns {boolean}
+ */
+export function renderToggleEnabled() {
+  const info = state.renderInfo;
+  return Boolean(info && info.toggle && !info.reason) && !state.loading && !state.renderLoading;
 }
 
 /**
