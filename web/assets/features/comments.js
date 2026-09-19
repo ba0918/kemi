@@ -5,7 +5,7 @@ import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
-import { commentLabel, draftKey, firstLine } from "../model.js";
+import { commentLabel, draftKey, firstLine, shownLineNumbers, tapSelection } from "../model.js";
 import {
   recomputeThreads,
   remeasure,
@@ -25,7 +25,8 @@ import { refreshCommentBadges } from "../views/tree.js";
  * @param {number} number
  */
 export function startSelection(side, number) {
-  if (state.submitted) {
+  if (state.submitted || state.narrow) {
+    // 狭い画面では押し下げとホバーの選択（ドラッグ）は働かず、タップで選ぶ（R-NARROW）。
     return;
   }
   const entry = currentEntry();
@@ -50,7 +51,7 @@ export function startSelection(side, number) {
 export function extendSelection(side, number) {
   const drag = state.dragging;
   const entry = currentEntry();
-  if (!drag || !entry || drag.fileId !== entry.file.id || drag.side !== side) {
+  if (!drag || !entry || drag.fileId !== entry.file.id || drag.side !== side || state.narrow) {
     return;
   }
   const selection = state.selection;
@@ -68,6 +69,43 @@ export function extendSelection(side, number) {
 /** ドラッグの終了。行番号の上でボタンを離したかに関わらず、選択の伸ばしを止める。 */
 export function endSelection() {
   state.dragging = null;
+}
+
+/**
+ * 狭い画面の行番号のタップ（R-NARROW）。次の選択は純粋関数が決め、既存の選択の入れ物に
+ * 入れる。広い画面では何もしない（そこでは押し下げとホバーが選ぶ）。
+ * @param {"old" | "new"} side
+ * @param {number} number
+ */
+export function tapLine(side, number) {
+  const entry = currentEntry();
+  if (!state.narrow || state.submitted || !entry) {
+    return;
+  }
+  const current =
+    state.selection && state.selection.fileId === entry.file.id ? state.selection : null;
+  const next = tapSelection(current, { side, number }, shownLineNumbers(state.display, side));
+  state.selection = next ? { fileId: entry.file.id, ...next } : null;
+  renderDiff();
+}
+
+/**
+ * 狭い画面で、行番号以外を押すと選択を解除する（R-NARROW）。`+`、入力欄、吹き出しの中と
+ * 描画表示は除く。入力欄が開いている間は、その範囲を示す選択を残す。
+ * @param {MouseEvent} event
+ */
+export function clearTapSelection(event) {
+  const target = /** @type {HTMLElement} */ (event.target);
+  if (
+    !state.narrow ||
+    !state.selection ||
+    state.editor ||
+    target.closest(".num, .line-add-btn, .editor, .bal, .cchip, #rendered-doc")
+  ) {
+    return;
+  }
+  state.selection = null;
+  renderDiff();
 }
 
 export function openFileWideEditor() {

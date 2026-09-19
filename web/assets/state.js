@@ -369,6 +369,17 @@ export function selectionContains(side, number) {
   );
 }
 
+/**
+ * 選択中の範囲の最後の行か。狭い画面では、この行にだけ `+` を出す（R-NARROW）。
+ * @param {"old" | "new"} side
+ * @param {number} number
+ * @returns {boolean}
+ */
+export function selectionEndsAt(side, number) {
+  const selection = state.selection;
+  return Boolean(selection && selection.side === side && selection.end === number);
+}
+
 export function selectionText() {
   const selection = state.selection;
   if (!selection) {

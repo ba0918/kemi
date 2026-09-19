@@ -1,6 +1,6 @@
 // @ts-check
-// 描画表示（R-RENDER）: 描画した文書、ブロックにホバーすると出る `+`、ブロックの直下の
-// 吹き出しと入力欄、読み込めなかった画像の枠。
+// 描画表示（R-RENDER）: 描画した文書、ブロックにホバーかタップすると出る `+`、ブロックの
+// 直下の吹き出しと入力欄、読み込めなかった画像の枠。
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
@@ -205,8 +205,9 @@ function replaceWithFrame(image) {
 }
 
 /**
- * ホバーしたブロックの左上に出す `+`。要素は 1 つで、ブロックを追いかける（`<hr>` や
- * `<tr>` には子要素を置けないため）。
+ * ホバーかタップしたブロックの左上に出す `+`。要素は 1 つで、ブロックを追いかける（`<hr>` や
+ * `<tr>` には子要素を置けないため）。タップ（R-NARROW）はホバーの無い端末のための入口で、
+ * 同じ要素を同じ位置に出す。
  * @param {HTMLElement} body
  * @param {HTMLElement[]} blocks
  */
@@ -221,7 +222,8 @@ function attachPlus(body, blocks) {
   plus.hidden = true;
   let hovered = -1;
   dom.renderedDoc.append(plus);
-  body.addEventListener("mouseover", (event) => {
+  /** @param {Event} event */
+  const showPlusAt = (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
     const block = target.closest("[data-kemi-block]");
     if (!(block instanceof HTMLElement) || !body.contains(block)) {
@@ -233,7 +235,9 @@ function attachPlus(body, blocks) {
     plus.style.top = `${Math.round(rect.top - base.top)}px`;
     plus.style.left = `${Math.round(Math.max(0, rect.left - base.left - 24))}px`;
     plus.hidden = false;
-  });
+  };
+  body.addEventListener("mouseover", showPlusAt);
+  body.addEventListener("click", showPlusAt);
   dom.renderedDoc.addEventListener("mouseleave", () => {
     plus.hidden = true;
   });

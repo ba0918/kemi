@@ -2572,6 +2572,15 @@ ul.files ul {
     word-break: normal;
   }
 
+  /* `+` はホバーでは出さず、タップで選んだ範囲の最後の行にだけ出す（印は view が付ける）。 */
+  #diff-content .row:hover .line-add-btn {
+    display: none;
+  }
+
+  #diff-content .no-cell.selection-end .line-add-btn {
+    display: inline-flex;
+  }
+
   /* 吹き出しと入力欄は、行の位置からインデントせず本文の幅いっぱいから始める。 */
   #diff-content .bal-row {
     padding-left: 0;

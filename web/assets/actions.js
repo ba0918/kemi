@@ -46,6 +46,7 @@
  *   toggleOriginReason: (openKey: string, sha: string) => void,
  *   toggleSeen: (file: import("./model.js").FileEntry) => void,
  *   switchUnit: (unit: string, jump: UnitJump | null) => void,
+ *   tapLine: (side: "old" | "new", number: number) => void,
  * }} Actions
  */
 

@@ -38,6 +38,7 @@ import {
 import { applyTheme, onSystemThemeChange, stepTheme } from "./features/theme.js";
 import {
   addComment,
+  clearTapSelection,
   closeEditor,
   confirmDeleteComment,
   editComment,
@@ -48,6 +49,7 @@ import {
   openFileWideEditor,
   setCommentOpen,
   startSelection,
+  tapLine,
 } from "./features/comments.js";
 import { onUnitEvent, switchUnit } from "./features/units.js";
 import {
@@ -164,6 +166,7 @@ dom.menuFocus.addEventListener("click", toggleFocusOnly);
 dom.menuSort.addEventListener("click", toggleSortBySize);
 dom.menuTheme.addEventListener("click", stepTheme);
 document.addEventListener("mouseup", endSelection);
+dom.viewport.addEventListener("click", clearTapSelection);
 dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
 dom.btnWrap.addEventListener("click", () => setWrap(!displayWrap()));
@@ -214,6 +217,7 @@ bindActions({
   showCollapsed,
   startSelection,
   switchUnit,
+  tapLine,
   toggleHighlight,
   toggleOrigin,
   toggleOriginReason,

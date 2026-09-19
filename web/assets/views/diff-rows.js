@@ -3,7 +3,14 @@
 
 import { actions } from "../actions.js";
 import { appendSegments, button, el, textEl } from "../dom.js";
-import { currentEntry, currentOrigin, displayMode, selectionContains, state } from "../state.js";
+import {
+  currentEntry,
+  currentOrigin,
+  displayMode,
+  selectionContains,
+  selectionEndsAt,
+  state,
+} from "../state.js";
 import { countLabel, lineAnchor, lineHasAnchor, originJumpTarget, sideTone } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 import { renderFileHeader } from "./file-header.js";
@@ -89,22 +96,22 @@ function renderLine(line) {
         "old",
         line.oldLine,
         line.oldSegments,
-        canComment && plusSide === "old",
+        canComment && plusHere("old", line.oldLine, plusSide),
         sideTone(line.kind, "old"),
       ),
       sideCell(
         "new",
         line.newLine,
         line.newSegments,
-        canComment && plusSide === "new",
+        canComment && plusHere("new", line.newLine, plusSide),
         sideTone(line.kind, "new"),
       ),
     );
     return row;
   }
   row.append(
-    numberCell("old", line.oldLine, canComment && plusSide === "old"),
-    numberCell("new", line.newLine, canComment && plusSide === "new"),
+    numberCell("old", line.oldLine, canComment && plusHere("old", line.oldLine, plusSide)),
+    numberCell("new", line.newLine, canComment && plusHere("new", line.newLine, plusSide)),
     textEl("span", "mk", signFor(line.kind)),
   );
   const code = el("span", "code");
@@ -271,6 +278,21 @@ function fillCode(code, line, segments) {
 }
 
 /**
+ * この側の行番号の欄に `+` を作るか。既定は行の側（新側があれば新側）。狭い画面では
+ * 選択中の範囲の最後の行にも作り、見せるのはその 1 つだけにする（R-NARROW）。
+ * @param {"old" | "new"} side
+ * @param {import("../model.js").Line|null} line
+ * @param {string | null} plusSide
+ * @returns {boolean}
+ */
+function plusHere(side, line, plusSide) {
+  if (plusSide === side) {
+    return true;
+  }
+  return state.narrow && line !== null && selectionEndsAt(side, Number(line.number));
+}
+
+/**
  * @param {"old" | "new"} side
  * @param {import("../model.js").Line|null} line
  * @param {boolean} withPlus
@@ -286,8 +308,12 @@ function numberCell(side, line, withPlus) {
       actions.startSelection(side, value);
     });
     number.addEventListener("mouseenter", () => actions.extendSelection(side, value));
+    number.addEventListener("click", () => actions.tapLine(side, value));
     if (selectionContains(side, value)) {
       number.classList.add("selected");
+    }
+    if (state.narrow && selectionEndsAt(side, value)) {
+      cell.classList.add("selection-end");
     }
   }
   cell.append(number);
