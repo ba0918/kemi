@@ -21,8 +21,6 @@
 
 LAN 公開 `--bind`（`lan-bind.json`）:
 
-- README の `### Exposing kemi to other devices` がキー操作表の前にあり、`Keys in the page` が
-  その子として描画される
 - Host 許可のループバック枝と「バインドした具体アドレス」の枝を直接確かめるテストが無い。
   製品の挙動は手動確認で正しい（`--bind 192.168.1.2` で 200 / 403）
 - `ServeParams.share_address` に `Some(0.0.0.0)` を渡すと wildcard の Host を受理し、URL にも

@@ -170,7 +170,9 @@ the line numbers still show where they are, and choosing one from the comment
 list opens just that one even while they are hidden. Tap the title to see the
 subtitle and meta. Resizing across 720px switches the layout in place.
 
-Keys in the page (ignored while typing in a text field):
+### Keys in the page
+
+These are ignored while typing in a text field.
 
 | Key | Action |
 |---|---|
