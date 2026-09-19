@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use crate::domain::focus::{self, FocusTargets};
 use crate::domain::origin::{BlockOrigin, RangeCommit};
-use crate::domain::review::{GroupBy, ReviewMeta};
+use crate::domain::review::{GroupBy, ReviewMeta, Side};
 
 #[derive(Debug)]
 pub enum SourceError {
@@ -94,6 +94,24 @@ pub trait ReviewSource: Send + Sync {
     /// 監視する「新側の供給元」のパス（R-LIVE）。空なら監視しない。
     fn watch_paths(&self) -> Vec<PathBuf> {
         Vec::new()
+    }
+    /// リポジトリの中のファイルを、描画の時点で読めるか（R-RENDER の相対パス画像）。
+    /// git の入力モードだけが真で、manifest と復元は偽。
+    fn reads_repository(&self) -> bool {
+        false
+    }
+    /// リポジトリの中のファイルを、レビュー対象ファイル `file_id` の `side` の版で読む
+    /// （R-RENDER の相対パス画像）。symlink は辿らず配らず、`limit` を超えるものと無い
+    /// ものは None。読めない入力（manifest・復元）は常に None。
+    fn repository_file(
+        &self,
+        file_id: &str,
+        side: Side,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        let _ = (file_id, side, path, limit);
+        Ok(None)
     }
 }
 
@@ -222,6 +240,17 @@ impl PlanStore {
         })
     }
 
+    /// ファイル id の内容参照の計画。
+    pub fn planned(&self, file_id: &str) -> Option<PlannedFile> {
+        self.state
+            .lock()
+            .expect("plan store poisoned")
+            .values()
+            .flat_map(|plan| plan.files.iter())
+            .find(|file| file.id == file_id)
+            .cloned()
+    }
+
     /// ディスク上の新側ファイル（worktree の監視対象）。
     pub fn disk_paths(&self) -> Vec<PathBuf> {
         let plans = self.state.lock().expect("plan store poisoned");
@@ -320,6 +349,20 @@ impl ReviewSource for FocusSource {
 
     fn watch_paths(&self) -> Vec<PathBuf> {
         self.inner.watch_paths()
+    }
+
+    fn reads_repository(&self) -> bool {
+        self.inner.reads_repository()
+    }
+
+    fn repository_file(
+        &self,
+        file_id: &str,
+        side: Side,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        self.inner.repository_file(file_id, side, path, limit)
     }
 }
 

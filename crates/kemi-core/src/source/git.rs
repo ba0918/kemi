@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use crate::domain::content;
 use crate::domain::focus::FocusTargets;
 use crate::domain::noise::{classify, linguist_generated, NoiseInput};
-use crate::domain::review::{FileEntry, Group, ReviewMeta, Status};
+use crate::domain::review::{FileEntry, Group, ReviewMeta, Side, Status};
 use crate::source::origin::{file_origin, OriginPaths, OriginRange};
 use crate::source::{FileOrigin, Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError};
 
@@ -494,6 +494,142 @@ impl ReviewSource for GitSource {
             GitMode::Range { to, .. } => ref_watch_paths(&self.repo, to).unwrap_or_default(),
         }
     }
+
+    fn reads_repository(&self) -> bool {
+        true
+    }
+
+    /// 版は、そのファイルのその側の内容参照から決める。作業ツリーならディスク、git の
+    /// 参照なら同じ接頭辞（`HEAD:`、`:`（インデックス）、`<sha>:`、`<sha>^:`）で読む。
+    fn repository_file(
+        &self,
+        file_id: &str,
+        side: Side,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        let Some(planned) = self.store.planned(file_id) else {
+            return Ok(None);
+        };
+        let reference = match side {
+            Side::Old => planned.old,
+            Side::New => planned.new,
+        };
+        match reference {
+            SideRef::Disk(_) => read_worktree_file(&self.repo, Path::new(path), limit),
+            SideRef::Git { spec, .. } => {
+                let spec = spec.to_string_lossy();
+                let Some((revision, _)) = spec.split_once(':') else {
+                    return Ok(None);
+                };
+                read_tree_file(&self.repo, revision, Path::new(path), limit)
+            }
+            SideRef::Absent | SideRef::Inline(_) => Ok(None),
+        }
+    }
+}
+
+/// 作業ツリーのファイルを読む。パスのどの部分も symlink なら読まない（辿らない）。
+fn read_worktree_file(
+    repo: &Path,
+    path: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, SourceError> {
+    let mut full = repo.to_path_buf();
+    for component in path.components() {
+        full.push(component);
+        let Ok(metadata) = std::fs::symlink_metadata(&full) else {
+            return Ok(None);
+        };
+        if metadata.file_type().is_symlink() {
+            return Ok(None);
+        }
+    }
+    let Ok(metadata) = std::fs::metadata(&full) else {
+        return Ok(None);
+    };
+    if !metadata.is_file() || metadata.len() > limit {
+        return Ok(None);
+    }
+    std::fs::read(&full)
+        .map(Some)
+        .map_err(|source| SourceError::Io { path: full, source })
+}
+
+/// 木（コミットかインデックス）の中のファイルを読む。パスのどの部分も symlink（mode
+/// 120000）なら読まない。無いものと上限を超えるものは None。
+fn read_tree_file(
+    repo: &Path,
+    revision: &str,
+    path: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, SourceError> {
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        let Some(mode) = tree_entry_mode(repo, revision, &prefix)? else {
+            return Ok(None);
+        };
+        if mode == "120000" {
+            return Ok(None);
+        }
+    }
+    let spec = git_spec(&format!("{revision}:"), path);
+    let size = git_raw_os(
+        repo,
+        &[OsStr::new("cat-file"), OsStr::new("-s"), spec.as_os_str()],
+    );
+    let Ok(size) = size else {
+        return Ok(None);
+    };
+    let size: u64 = std::str::from_utf8(&size)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(u64::MAX);
+    if size > limit {
+        return Ok(None);
+    }
+    show(repo, &spec).map(Some)
+}
+
+/// 木の中のエントリの mode（`100644`、`120000` など）。無ければ None。インデックス
+/// （空の revision）は `ls-files -s`、コミットは `ls-tree` で引く。
+fn tree_entry_mode(
+    repo: &Path,
+    revision: &str,
+    path: &Path,
+) -> Result<Option<String>, SourceError> {
+    let output = if revision.is_empty() {
+        git_raw_os(
+            repo,
+            &[
+                OsStr::new("ls-files"),
+                OsStr::new("-s"),
+                OsStr::new("-z"),
+                OsStr::new("--"),
+                path.as_os_str(),
+            ],
+        )?
+    } else {
+        git_raw_os(
+            repo,
+            &[
+                OsStr::new("ls-tree"),
+                OsStr::new("-z"),
+                OsStr::new(revision),
+                OsStr::new("--"),
+                path.as_os_str(),
+            ],
+        )?
+    };
+    // 1 行目の先頭の欄が mode。ディレクトリを ls-files に渡すと中身が並ぶが、mode が
+    // 120000 でないことだけ分かればよい。
+    Ok(output
+        .split(|byte| *byte == 0)
+        .next()
+        .filter(|record| !record.is_empty())
+        .and_then(|record| record.split(|byte| *byte == b' ').next())
+        .map(|mode| String::from_utf8_lossy(mode).into_owned()))
 }
 
 /// worktree の統計を求める。変更が多いときはパスで分けて並列に diff する。
@@ -1125,6 +1261,7 @@ pub(crate) fn git_text(repo: &Path, args: &[&str]) -> Result<String, SourceError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::review::Side;
     use crate::source::testutil::TempRepo;
 
     fn source(repo: &TempRepo, mode: GitMode) -> GitSource {
@@ -1138,6 +1275,182 @@ mod tests {
             .flat_map(|group| group.files.iter())
             .find(|file| file.path == path)
             .unwrap_or_else(|| panic!("file not found: {path}"))
+    }
+
+    // ---- 相対パス画像の読み取り（R-RENDER, R-SERVE） ----
+
+    fn png(tag: u8) -> Vec<u8> {
+        vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, tag]
+    }
+
+    fn write_bytes(repo: &TempRepo, relative: &str, bytes: &[u8]) {
+        let full = repo.path.join(relative);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, bytes).unwrap();
+    }
+
+    fn image_repo() -> TempRepo {
+        let repo = TempRepo::new();
+        repo.write("docs/a.md", "![x](img/x.png)\n");
+        write_bytes(&repo, "docs/img/x.png", &png(1));
+        repo.add_and_commit("base");
+        repo
+    }
+
+    fn markdown_id(source: &GitSource) -> String {
+        let review = source.review().unwrap();
+        find_file(&review, "docs/a.md").id.clone()
+    }
+
+    #[test]
+    fn worktree_reads_relative_images_from_the_working_tree_and_head() {
+        let repo = image_repo();
+        repo.write("docs/a.md", "![x](img/x.png) changed\n");
+        write_bytes(&repo, "docs/img/x.png", &png(2));
+        let source = source(&repo, GitMode::Worktree);
+        let id = markdown_id(&source);
+
+        assert!(source.reads_repository());
+        let new = source
+            .repository_file(&id, Side::New, "docs/img/x.png", 1_000)
+            .unwrap();
+        let old = source
+            .repository_file(&id, Side::Old, "docs/img/x.png", 1_000)
+            .unwrap();
+        assert_eq!(new, Some(png(2)));
+        assert_eq!(old, Some(png(1)));
+    }
+
+    #[test]
+    fn staged_reads_relative_images_from_the_index_and_head() {
+        let repo = image_repo();
+        repo.write("docs/a.md", "![x](img/x.png) staged\n");
+        write_bytes(&repo, "docs/img/x.png", &png(2));
+        repo.git(&["add", "-A"]);
+        write_bytes(&repo, "docs/img/x.png", &png(3));
+        let source = source(&repo, GitMode::Staged);
+        let id = markdown_id(&source);
+
+        let new = source
+            .repository_file(&id, Side::New, "docs/img/x.png", 1_000)
+            .unwrap();
+        let old = source
+            .repository_file(&id, Side::Old, "docs/img/x.png", 1_000)
+            .unwrap();
+        assert_eq!(new, Some(png(2)));
+        assert_eq!(old, Some(png(1)));
+    }
+
+    #[test]
+    fn final_state_reads_relative_images_from_to_and_from() {
+        let repo = image_repo();
+        let base = repo.head();
+        repo.write("docs/a.md", "![x](img/x.png) second\n");
+        write_bytes(&repo, "docs/img/x.png", &png(2));
+        let head = repo.add_and_commit("second");
+        let source = source(
+            &repo,
+            GitMode::Range {
+                from: base,
+                to: head,
+                group_by: GroupBy::File,
+            },
+        );
+        let id = markdown_id(&source);
+
+        let new = source
+            .repository_file(&id, Side::New, "docs/img/x.png", 1_000)
+            .unwrap();
+        let old = source
+            .repository_file(&id, Side::Old, "docs/img/x.png", 1_000)
+            .unwrap();
+        assert_eq!(new, Some(png(2)));
+        assert_eq!(old, Some(png(1)));
+    }
+
+    #[test]
+    fn per_commit_reads_relative_images_from_the_commit_and_its_parent() {
+        let repo = image_repo();
+        let base = repo.head();
+        repo.write("docs/a.md", "![x](img/x.png) second\n");
+        write_bytes(&repo, "docs/img/x.png", &png(2));
+        repo.add_and_commit("second");
+        write_bytes(&repo, "docs/img/x.png", &png(3));
+        let head = repo.add_and_commit("third");
+        let source = source(
+            &repo,
+            GitMode::Range {
+                from: base,
+                to: head,
+                group_by: GroupBy::Commit,
+            },
+        );
+        let id = markdown_id(&source);
+
+        let new = source
+            .repository_file(&id, Side::New, "docs/img/x.png", 1_000)
+            .unwrap();
+        let old = source
+            .repository_file(&id, Side::Old, "docs/img/x.png", 1_000)
+            .unwrap();
+        assert_eq!(new, Some(png(2)));
+        assert_eq!(old, Some(png(1)));
+    }
+
+    #[test]
+    fn relative_images_that_are_symlinks_too_large_or_missing_are_not_served() {
+        let repo = image_repo();
+        repo.write("docs/a.md", "![x](img/x.png) changed\n");
+        write_bytes(&repo, "docs/img/big.png", &[0x89; 64]);
+        std::os::unix::fs::symlink(
+            repo.path.join("docs/img/x.png"),
+            repo.path.join("docs/img/link.png"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(repo.path.join("docs/img"), repo.path.join("docs/alias"))
+            .unwrap();
+        repo.add_and_commit("links");
+        repo.write("docs/a.md", "![x](img/x.png) changed again\n");
+        let source = source(&repo, GitMode::Worktree);
+        let id = markdown_id(&source);
+
+        for side in [Side::New, Side::Old] {
+            assert_eq!(
+                source
+                    .repository_file(&id, side, "docs/img/link.png", 1_000)
+                    .unwrap(),
+                None,
+                "{side:?} symlink"
+            );
+            assert_eq!(
+                source
+                    .repository_file(&id, side, "docs/alias/x.png", 1_000)
+                    .unwrap(),
+                None,
+                "{side:?} symlinked directory"
+            );
+            assert_eq!(
+                source
+                    .repository_file(&id, side, "docs/img/big.png", 32)
+                    .unwrap(),
+                None,
+                "{side:?} over the limit"
+            );
+            assert_eq!(
+                source
+                    .repository_file(&id, side, "docs/img/missing.png", 1_000)
+                    .unwrap(),
+                None,
+                "{side:?} missing"
+            );
+            assert_eq!(
+                source
+                    .repository_file(&id, side, "docs/img/x.png", 1_000)
+                    .unwrap(),
+                Some(png(1)),
+                "{side:?} regular"
+            );
+        }
     }
 
     #[test]

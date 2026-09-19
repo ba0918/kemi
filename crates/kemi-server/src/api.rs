@@ -52,6 +52,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/origin/{id}", get(origin))
         .route("/s/{token}/api/render/{id}", get(render_file))
         .route("/s/{token}/api/image/review/{id}/{side}", get(review_image))
+        .route(
+            "/s/{token}/api/image/repo/{id}/{side}/{*path}",
+            get(repository_image),
+        )
         .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
         .route("/s/{token}/api/state", post(state_api))
@@ -591,6 +595,30 @@ async fn review_image(
     image_response(bytes, &path)
 }
 
+/// Markdown の相対パス画像を、その Markdown のその側の版のリポジトリから読んで配る
+/// （R-RENDER, R-SERVE）。symlink・上限超え・無いファイル・読めない入力は 404。
+async fn repository_image(
+    State(state): State<Arc<AppState>>,
+    Path((_token, id, side, path)): Path<(String, String, String, String)>,
+) -> Result<Response, ApiError> {
+    find_file(&state, &id)?;
+    let side = parse_side(&side).map_err(|_| file_not_found())?;
+    if render::image_content_type(&path).is_none() {
+        return Err(file_not_found());
+    }
+    let source = state.source.clone();
+    let file_id = id.clone();
+    let repository_path = path.clone();
+    let bytes = tokio::task::spawn_blocking(move || {
+        source.repository_file(&file_id, side, &repository_path, IMAGE_MAX_BYTES)
+    })
+    .await
+    .map_err(|error| runtime_error(&state, error))?
+    .map_err(|error| runtime_error(&state, error))?
+    .ok_or_else(file_not_found)?;
+    image_response(bytes, &path)
+}
+
 /// 画像の応答。拡張子から決めた `Content-Type` に、`nosniff` と `sandbox` を付ける。
 /// 同じオリジンで直接開かれた SVG の中のスクリプトが kemi の API に届かないため。
 fn image_response(bytes: Vec<u8>, path: &str) -> Result<Response, ApiError> {
@@ -714,7 +742,7 @@ async fn render_markdown_file(
             .then(|| file.old_path.as_deref().unwrap_or(&file.path)),
         new_path: (file.status != Status::Delete).then_some(file.path.as_str()),
         review_paths: review_paths_of(state, file),
-        repo_readable: false,
+        repo_readable: state.source.reads_repository(),
     };
     let rendered = render::render_markdown(&input, enabled.then_some(&highlight), &image_url)
         .map_err(|error| ApiError::unprocessable(error.to_string()))?;

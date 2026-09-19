@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Status};
+use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
 use kemi_server::{serve, session_host, session_url, Asset, Assets, ServeOutcome, ServeParams};
 use serde_json::{json, Value};
@@ -19,6 +19,8 @@ struct FakeSource {
     reads: AtomicUsize,
     content_delay_ms: AtomicUsize,
     content_started: tokio::sync::Notify,
+    /// リポジトリを読める入力（git のモード）を装う。相対パス画像はこの表から返す。
+    repository: Option<HashMap<String, Vec<u8>>>,
 }
 
 impl FakeSource {
@@ -188,7 +190,18 @@ impl FakeSource {
             reads: AtomicUsize::new(0),
             content_delay_ms: AtomicUsize::new(0),
             content_started: tokio::sync::Notify::new(),
+            repository: None,
         }
+    }
+
+    fn with_repository(mut self, files: &[(&str, &[u8])]) -> Self {
+        self.repository = Some(
+            files
+                .iter()
+                .map(|(path, bytes)| (path.to_string(), bytes.to_vec()))
+                .collect(),
+        );
+        self
     }
 
     fn reads(&self) -> usize {
@@ -252,6 +265,25 @@ impl ReviewSource for FakeSource {
             .cloned()
             .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))
     }
+
+    fn reads_repository(&self) -> bool {
+        self.repository.is_some()
+    }
+
+    fn repository_file(
+        &self,
+        _file_id: &str,
+        _side: Side,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        Ok(self
+            .repository
+            .as_ref()
+            .and_then(|files| files.get(path))
+            .filter(|bytes| bytes.len() as u64 <= limit)
+            .cloned())
+    }
 }
 
 struct FakeAssets;
@@ -288,7 +320,14 @@ impl TestServer {
     /// wildcard バインドや共有アドレスを再現する。url はテストが繋げる loopback のまま
     /// （表示 URL の組み立ては `session_url` / `session_host` を直接検証する）。
     async fn start_bound(bind: Ipv4Addr, share_address: Option<Ipv4Addr>) -> Self {
-        let source = Arc::new(FakeSource::new());
+        TestServer::start_source(Arc::new(FakeSource::new()), bind, share_address).await
+    }
+
+    async fn start_source(
+        source: Arc<FakeSource>,
+        bind: Ipv4Addr,
+        share_address: Option<Ipv4Addr>,
+    ) -> Self {
         let listener = TcpListener::bind((bind, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
@@ -2688,4 +2727,106 @@ async fn render_of_an_image_gives_both_sides_and_marks_a_rename_with_identical_b
     let added: Value = server.get("api/render/f6").await.json().await.unwrap();
     assert_eq!(added["old"], Value::Null);
     assert_eq!(added["new"]["size"], 5);
+}
+
+// ---- R-RENDER（Markdown の相対パス画像） ----
+
+/// f5（docs/guide.md）の相対パス画像: img/shot.png はレビュー対象の f6 に一致し、
+/// img/other.png はレビュー対象に無い。
+fn guide_with_two_images() -> FakeSource {
+    let mut source = FakeSource::new();
+    source.contents.insert(
+        "f5".to_string(),
+        FileContent {
+            old: None,
+            new: Some(b"![a](img/shot.png)\n\n![b](img/other.png)\n".to_vec()),
+        },
+    );
+    source
+}
+
+fn image_sources(html: &str) -> Vec<String> {
+    html.match_indices("<img src=\"")
+        .map(|(at, prefix)| {
+            let rest = &html[at + prefix.len()..];
+            rest[..rest.find('"').unwrap()].to_string()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn relative_images_in_the_review_use_the_review_url_and_others_use_the_repository_url() {
+    let source =
+        Arc::new(guide_with_two_images().with_repository(&[("docs/img/other.png", &[0x89, 1])]));
+    let server = TestServer::start_source(source, Ipv4Addr::LOCALHOST, None).await;
+
+    let body: Value = server.get("api/render/f5").await.json().await.unwrap();
+    let sources = image_sources(body["html"].as_str().unwrap());
+
+    assert_eq!(sources.len(), 2, "{sources:?}");
+    assert!(
+        sources[0].contains("api/image/review/f6/new"),
+        "{sources:?}"
+    );
+    assert!(!sources[1].contains("review"), "{sources:?}");
+    let response = server.get(&sources[1]).await;
+    let status = response.status();
+    assert_eq!(
+        status,
+        200,
+        "{} -> {}",
+        sources[1],
+        response.text().await.unwrap()
+    );
+    let response = server.get(&sources[1]).await;
+    assert_eq!(response.headers().get("content-type").unwrap(), "image/png");
+    assert_eq!(
+        response.headers().get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    assert_eq!(
+        response.headers().get("content-security-policy").unwrap(),
+        "sandbox"
+    );
+    assert_eq!(response.bytes().await.unwrap().to_vec(), vec![0x89, 1]);
+}
+
+#[tokio::test]
+async fn relative_images_the_source_cannot_serve_are_404_from_the_repository_url() {
+    let source = Arc::new(guide_with_two_images().with_repository(&[]));
+    let server = TestServer::start_source(source, Ipv4Addr::LOCALHOST, None).await;
+
+    let body: Value = server.get("api/render/f5").await.json().await.unwrap();
+    let sources = image_sources(body["html"].as_str().unwrap());
+
+    assert_eq!(sources.len(), 2, "{sources:?}");
+    assert_eq!(server.get(&sources[1]).await.status(), 404);
+    let without_token = reqwest::Client::new()
+        .get(format!(
+            "http://127.0.0.1:{}/s/wrong-token/{}",
+            server.port, sources[1]
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(without_token.status(), 404);
+}
+
+#[tokio::test]
+async fn relative_images_are_frames_when_the_source_cannot_read_the_repository() {
+    let server =
+        TestServer::start_source(Arc::new(guide_with_two_images()), Ipv4Addr::LOCALHOST, None)
+            .await;
+
+    let body: Value = server.get("api/render/f5").await.json().await.unwrap();
+    let html = body["html"].as_str().unwrap();
+    let sources = image_sources(html);
+
+    assert_eq!(sources.len(), 1, "{sources:?}");
+    assert!(
+        sources[0].contains("api/image/review/f6/new"),
+        "{sources:?}"
+    );
+    assert!(html.contains("kb-img-frame"), "{html}");
+    assert!(html.contains("img/other.png"), "{html}");
 }
