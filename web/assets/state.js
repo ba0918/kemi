@@ -1,7 +1,7 @@
 // @ts-check
 // ページの状態と、その状態から決まる読み。ここは api も要素も触らない。
 
-import { collapseDefault, seenProgress } from "./model.js";
+import { collapseDefault, effectiveDisplay, seenProgress } from "./model.js";
 
 /** @typedef {import("./model.js").RenderedBlock} RenderedBlock */
 /** @typedef {{ url: string, size: number }} ImageSide */
@@ -53,6 +53,9 @@ export const THEME_LABELS = {
  *   index: number,
  *   mode: "unified" | "split",
  *   wrap: boolean,
+ *   narrow: boolean,
+ *   narrowWrap: boolean,
+ *   drawerOpen: boolean,
  *   horizontal: import("./model.js").HorizontalState,
  *   horizontalMeasurePending: boolean,
  *   focusOnly: boolean,
@@ -133,6 +136,11 @@ export const state = {
   index: 0,
   mode: loadMode(),
   wrap: false,
+  // 狭い画面（R-NARROW）。幅は app.js の matchMedia が入れる。折返しの値はページを
+  // 開いている間だけ覚え、localStorage には入れない。
+  narrow: false,
+  narrowWrap: true,
+  drawerOpen: false,
   horizontal: { entry: null, width: 0, left: 0 },
   horizontalMeasurePending: false,
   focusOnly: false,
@@ -203,6 +211,16 @@ export const state = {
 
 export function currentEntry() {
   return state.current;
+}
+
+/** 描画に使う表示モード。狭い画面では常に 1 列（R-NARROW）。 */
+export function displayMode() {
+  return effectiveDisplay(state).mode;
+}
+
+/** 描画に使う折返し。狭い画面では狭い画面用の値（R-NARROW）。 */
+export function displayWrap() {
+  return effectiveDisplay(state).wrap;
 }
 
 /**

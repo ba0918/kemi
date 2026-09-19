@@ -3,7 +3,7 @@
 
 import { actions } from "../actions.js";
 import { appendSegments, button, el, textEl } from "../dom.js";
-import { currentEntry, currentOrigin, selectionContains, state } from "../state.js";
+import { currentEntry, currentOrigin, displayMode, selectionContains, state } from "../state.js";
 import { countLabel, lineAnchor, lineHasAnchor, originJumpTarget, sideTone } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 import { renderFileHeader } from "./file-header.js";
@@ -34,7 +34,7 @@ export function renderBlock(line, index) {
   if (threads) {
     for (const comment of threads) {
       // 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める。
-      const row = el("div", `bal-row mode-${state.mode} side-${comment.side}`);
+      const row = el("div", `bal-row mode-${displayMode()} side-${comment.side}`);
       row.append(renderCommentOrEditor(comment));
       block.append(row);
     }
@@ -61,7 +61,8 @@ function renderLine(line) {
   if (line.kind === "origin") {
     return renderOriginLine(line);
   }
-  const tone = state.mode === "split" ? "" : sideTone(line.kind, null);
+  const mode = displayMode();
+  const tone = mode === "split" ? "" : sideTone(line.kind, null);
   const row = el("div", `row kind-${line.kind}${tone ? ` tone-${tone}` : ""}`);
   if (line.kind === "skip") {
     const skip = line.skip;
@@ -81,7 +82,7 @@ function renderLine(line) {
   const anchor = lineAnchor(line);
   const canComment = Boolean(anchor) && !state.submitted;
   const plusSide = anchor ? anchor.side : null;
-  if (state.mode === "split") {
+  if (mode === "split") {
     row.classList.add("split");
     row.append(
       sideCell(

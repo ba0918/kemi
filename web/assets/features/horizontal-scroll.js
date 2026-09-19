@@ -1,6 +1,6 @@
 // @ts-check
 import { dom } from "../dom.js";
-import { currentEntry, state } from "../state.js";
+import { currentEntry, displayMode, displayWrap, state } from "../state.js";
 import { horizontalEntry, measureHorizontal } from "../model.js";
 
 export function invalidateHorizontalWidth() {
@@ -9,7 +9,7 @@ export function invalidateHorizontalWidth() {
 
 export function syncHorizontal() {
   state.horizontal = horizontalEntry(state.horizontal, currentEntry()?.file.id ?? null);
-  const active = state.mode === "split" && !state.wrap;
+  const active = displayMode() === "split" && !displayWrap();
   const codes = Array.from(dom.content.querySelectorAll(".split .code"));
   if (!active || state.loading || codes.length === 0) {
     dom.horizontal.hidden = true;

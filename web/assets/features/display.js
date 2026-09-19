@@ -10,6 +10,8 @@ import {
   OVERSCAN,
   ROW_HEIGHT,
   currentEntry,
+  displayMode,
+  displayWrap,
   originShown,
   state,
 } from "../state.js";
@@ -199,7 +201,7 @@ export function renderDiff() {
   const focusKey = focusKeyWithin(dom.content);
   dom.content.textContent = "";
   // 画像の並び（2 列で左右、1 列で上下）は描画表示の側が CSS で決める。
-  dom.renderedDoc.dataset.mode = state.mode;
+  dom.renderedDoc.dataset.mode = displayMode();
   if (
     !entry ||
     state.binary ||
@@ -228,7 +230,7 @@ export function renderDiff() {
     dom.viewport.clientHeight,
     OVERSCAN,
   );
-  if (state.wrap) {
+  if (displayWrap()) {
     dom.content.dataset.wrap = "on";
   } else {
     delete dom.content.dataset.wrap;
@@ -248,7 +250,7 @@ export function renderDiff() {
   const needsMeasure =
     state.measureNext ||
     state.staleRows.size > 0 ||
-    state.wrap ||
+    displayWrap() ||
     state.threads.byLine.size > 0 ||
     state.originOpen.size > 0 ||
     Boolean(state.editor && !state.editor.wide);
@@ -377,7 +379,7 @@ export function recomputeDisplay(anchor = captureAnchor()) {
   const sameFile = fileId !== null && fileId === state.displayFileId;
   const previous = sameFile ? state.display : [];
   const previousHeights = sameFile ? state.heights : [];
-  state.display = toDisplayLines(withRowIndex(state.rows), state.mode, {
+  state.display = toDisplayLines(withRowIndex(state.rows), displayMode(), {
     origin: originShown(),
   });
   state.displayFileId = fileId;
@@ -547,6 +549,10 @@ export function toggleOriginReason(openKey, sha) {
  * @param {"unified" | "split"} mode
  */
 export function setMode(mode) {
+  if (state.narrow) {
+    // 狭い画面は常に 1 列で、覚えている表示モード（広い画面に戻ったときの値）は変えない。
+    return;
+  }
   state.mode = mode;
   saveMode(mode);
   recomputeDisplay();
@@ -560,7 +566,11 @@ export function setMode(mode) {
  */
 export function setWrap(wrap) {
   const anchor = captureAnchor();
-  state.wrap = wrap;
+  if (state.narrow) {
+    state.narrowWrap = wrap;
+  } else {
+    state.wrap = wrap;
+  }
   resetHeights();
   markStaleRows();
   restoreAnchor(anchor);

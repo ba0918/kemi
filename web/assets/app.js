@@ -61,7 +61,7 @@ import { renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
 import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
-import { currentEntry, state } from "./state.js";
+import { currentEntry, displayMode, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
 
 /**
@@ -99,10 +99,10 @@ function handleKey(event) {
   }
   const action = keyAction(
     event.key,
-    state.mode,
+    displayMode(),
     state.visible.length,
     state.index,
-    state.wrap,
+    displayWrap(),
   );
   if (action.type === "file") {
     void selectIndex(Number(action.index), { scrollTop: true });
@@ -147,7 +147,7 @@ document.addEventListener("keydown", handleKey);
 document.addEventListener("mouseup", endSelection);
 dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
-dom.btnWrap.addEventListener("click", () => setWrap(!state.wrap));
+dom.btnWrap.addEventListener("click", () => setWrap(!displayWrap()));
 dom.chipFocus.addEventListener("click", toggleFocusOnly);
 dom.chipSort.addEventListener("click", toggleSortBySize);
 dom.btnTheme.addEventListener("click", stepTheme);

@@ -4,7 +4,7 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
-import { state, unitLabel } from "../state.js";
+import { displayMode, displayWrap, state, unitLabel } from "../state.js";
 import { metaItems, seenProgress, unitSwitchOrder } from "../model.js";
 
 export function renderHeader() {
@@ -31,9 +31,9 @@ export function renderHeader() {
   renderProgress();
   dom.commentCount.textContent = String(state.allComments.length);
   dom.btnComments.setAttribute("aria-label", `Comment list (${state.allComments.length})`);
-  dom.btnUnified.setAttribute("aria-pressed", String(state.mode === "unified"));
-  dom.btnSplit.setAttribute("aria-pressed", String(state.mode === "split"));
-  dom.btnWrap.setAttribute("aria-pressed", String(state.wrap));
+  dom.btnUnified.setAttribute("aria-pressed", String(displayMode() === "unified"));
+  dom.btnSplit.setAttribute("aria-pressed", String(displayMode() === "split"));
+  dom.btnWrap.setAttribute("aria-pressed", String(displayWrap()));
   dom.chipFocus.setAttribute("aria-pressed", String(state.focusOnly));
   dom.chipSort.setAttribute("aria-pressed", String(state.sortBySize));
 }
