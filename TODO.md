@@ -71,11 +71,6 @@ kemi v1 と UI 改訂（`kemi-v1.json`、`kemi-ui-fix.json`）:
 - 構文ハイライトの配色（syntect のテーマ）はテーマのプリセットと別で、light / dark の 2 つしか
   ない。solarized のプリセットでもハイライトの色は light / dark のまま
 
-## 文書の古さ
-
-- `PROJECT.md` の `scripts/` の説明と Commands の表に、3 本のブラウザ自動化
-  （`test-rendered-view.mjs` / `test-horizontal-scroll.mjs` / `test-narrow-screen.mjs`）が無い
-
 ## リリース
 
 - 最新のリリースは v0.1.7。main には描画表示と狭い画面が入っていて未リリース（v0.1.8 候補）。

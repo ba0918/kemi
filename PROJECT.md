@@ -25,7 +25,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `crates/kemi-webview/` | 資産の埋め込み |
 | `web/` | ESM と CSS のソース。`tsc --checkJs` は型検査のみ（層は下の節） |
 | `skills/kemi/SKILL.md` | エージェント向けの kemi の使い方。仕様から派生した配布物で、契約の正典ではない |
-| `scripts/` | フィクスチャ生成と起動時間の計測 |
+| `scripts/` | フィクスチャ生成、起動時間の計測、ブラウザ自動化 |
 
 ### `web/assets/` の層
 
@@ -65,6 +65,8 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
+| Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>` |
+| Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（`web/` を自前の HTTP サーバから配る。引数は無い） |
 | Release plan | `dist plan`（cargo-dist をローカルに入れて実行） |
 
 ## Conventions specific to this project
