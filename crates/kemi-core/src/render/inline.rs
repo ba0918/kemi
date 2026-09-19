@@ -14,6 +14,8 @@ pub(super) enum WrapKind {
     Link,
     Superscript,
     Subscript,
+    /// インラインコード。中身をテキストとして持ち、語の印が `<code>` の中に入る。
+    Code,
 }
 
 /// テキストを包む書式。リンクは飛び先の判定を持つ。
@@ -40,7 +42,6 @@ pub(super) struct ImageSpec {
 /// テキストでない、それ自体で 1 つの要素。
 pub(super) enum Atom {
     Break,
-    Code(String),
     Image(Box<ImageSpec>),
     Footnote(String),
 }
@@ -48,7 +49,6 @@ pub(super) enum Atom {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AtomKind {
     Break,
-    Code,
     Image,
     Footnote,
 }
@@ -57,7 +57,6 @@ impl Atom {
     fn kind(&self) -> AtomKind {
         match self {
             Atom::Break => AtomKind::Break,
-            Atom::Code(_) => AtomKind::Code,
             Atom::Image(_) => AtomKind::Image,
             Atom::Footnote(_) => AtomKind::Footnote,
         }
@@ -174,7 +173,14 @@ fn walk(
                 link.title.map(str::to_string),
                 |inline, stack| walk(&link.children, stack, inline, context),
             ),
-            Node::InlineCode(code) => push_atom(inline, stack, Atom::Code(code.value.to_string())),
+            Node::InlineCode(code) => wrapped(
+                inline,
+                stack,
+                WrapKind::Code,
+                None,
+                None,
+                |inline, stack| push_text(inline, stack, code.value),
+            ),
             Node::Break(_) => push_atom(inline, stack, Atom::Break),
             Node::Image(image) => push_atom(
                 inline,
@@ -422,6 +428,7 @@ fn open_wrap(out: &mut String, wrap: &Wrap) {
         WrapKind::Strike => out.push_str("<del>"),
         WrapKind::Superscript => out.push_str("<sup>"),
         WrapKind::Subscript => out.push_str("<sub>"),
+        WrapKind::Code => out.push_str("<code>"),
         WrapKind::Link => match &wrap.target {
             Some(LinkTarget::External(url)) => {
                 out.push_str("<a href=\"");
@@ -455,6 +462,7 @@ fn close_wrap(out: &mut String, wrap: &Wrap) {
         WrapKind::Strike => out.push_str("</del>"),
         WrapKind::Superscript => out.push_str("</sup>"),
         WrapKind::Subscript => out.push_str("</sub>"),
+        WrapKind::Code => out.push_str("</code>"),
         WrapKind::Link => match &wrap.target {
             Some(LinkTarget::External(_) | LinkTarget::Anchor(_)) => out.push_str("</a>"),
             _ => out.push_str("</span>"),
@@ -473,11 +481,6 @@ fn push_title(out: &mut String, title: Option<&str>) {
 fn write_atom(sink: &mut Sink<'_>, atom: &Atom) {
     match atom {
         Atom::Break => sink.out.push_str("<br>"),
-        Atom::Code(code) => {
-            sink.out.push_str("<code>");
-            push_escaped(sink.out, code);
-            sink.out.push_str("</code>");
-        }
         Atom::Footnote(label) => {
             sink.out.push_str("<sup class=\"kb-fnref\">[");
             push_escaped(sink.out, label);

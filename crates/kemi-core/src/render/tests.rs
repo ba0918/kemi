@@ -594,3 +594,17 @@ fn image_content_types_come_from_the_extension() {
     assert_eq!(image_content_type("x.txt"), None);
     assert_eq!(IMAGE_MAX_BYTES, 5 * 1_048_576);
 }
+
+#[test]
+fn a_change_inside_inline_code_gets_word_marks_inside_the_code_element() {
+    let rendered = render_pair("call `foo()` now\n", "call `bar()` now\n");
+
+    assert_eq!(marks(&rendered), vec![(Side::New, 1, 1, Mark::Modified)]);
+    let html = &rendered.html;
+    assert!(
+        html.contains(
+            "<code><span class=\"kw-del\">foo()</span><span class=\"kw-add\">bar()</span></code>"
+        ),
+        "{html}"
+    );
+}
