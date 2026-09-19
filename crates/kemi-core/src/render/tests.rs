@@ -204,3 +204,99 @@ fn external_image_sources_are_passed_through() {
         rendered.html
     );
 }
+
+fn review_paths() -> ReviewPaths {
+    ReviewPaths {
+        old: vec![("f7".to_string(), "docs/img/old.png".to_string())],
+        new: vec![("f9".to_string(), "docs/img/new.png".to_string())],
+    }
+}
+
+#[test]
+fn images_outside_the_repo_or_without_an_image_extension_or_unreadable_get_a_frame() {
+    let mut input = input(
+        None,
+        Some("![a](../../a.png) ![b](notes.txt) ![c](img/c.png)\n"),
+    );
+    input.repo_readable = false;
+    let rendered = render_markdown(&input, no_highlight(), &plain_url).unwrap();
+
+    let html = &rendered.html;
+    assert!(!html.contains("<img"), "{html}");
+    assert_eq!(html.matches("kb-img-frame").count(), 3, "{html}");
+    assert!(html.contains("../../a.png"), "{html}");
+    assert!(rendered.blocks[0].images.is_empty());
+}
+
+#[test]
+fn relative_image_matching_a_review_file_refers_to_that_file_and_side() {
+    let mut input = input(None, Some("![n](img/new.png)\n"));
+    input.review_paths = review_paths();
+    let rendered = render_markdown(&input, no_highlight(), &plain_url).unwrap();
+
+    assert_eq!(
+        rendered.blocks[0].images,
+        vec![ImageRef::Review {
+            file_id: "f9".to_string(),
+            side: Side::New,
+        }]
+    );
+    assert!(
+        rendered
+            .html
+            .contains("<img src=\"review:f9:new\" alt=\"n\" data-kemi-path=\"img/new.png\">"),
+        "{}",
+        rendered.html
+    );
+}
+
+#[test]
+fn relative_image_not_in_the_review_refers_to_the_normalized_repo_path() {
+    let mut input = input(None, Some("![o](/assets/../logo.PNG)\n"));
+    input.review_paths = review_paths();
+    let rendered = render_markdown(&input, no_highlight(), &plain_url).unwrap();
+
+    assert_eq!(
+        rendered.blocks[0].images,
+        vec![ImageRef::Repo {
+            path: "logo.PNG".to_string(),
+            side: Side::New,
+        }]
+    );
+    assert!(
+        rendered.html.contains("src=\"repo:new:logo.PNG\""),
+        "{}",
+        rendered.html
+    );
+}
+
+#[test]
+fn code_blocks_are_plain_without_a_highlighter_and_use_it_when_given() {
+    let text = "```rust\nlet a = <1>;\nlet b = 2;\n```\n";
+    let plain = render_new(text);
+    assert!(
+        plain
+            .html
+            .contains("<code class=\"language-rust\">let a = &lt;1&gt;;\nlet b = 2;</code>"),
+        "{}",
+        plain.html
+    );
+
+    let highlight = |lang: &str, code: &str| -> Option<Vec<String>> {
+        assert_eq!(lang, "rust");
+        Some(
+            code.lines()
+                .map(|line| format!("<i>{}</i>", line.len()))
+                .collect(),
+        )
+    };
+    let highlighted =
+        render_markdown(&input(None, Some(text)), Some(&highlight), &plain_url).unwrap();
+    assert!(
+        highlighted
+            .html
+            .contains("<code class=\"language-rust\"><i>12</i>\n<i>10</i></code>"),
+        "{}",
+        highlighted.html
+    );
+}
