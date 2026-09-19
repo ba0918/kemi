@@ -6,7 +6,9 @@
 // 1 回目の起動: 引き出し、1 列と折返し、折返しの記憶と localStorage、ファイルヘッダの 2 行、
 // 吹き出しの左端と画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
 // 選択・下書き・上端の行、上部バーの 2 段、「…」のメニュー、320px の進捗、title と
-// コメント一覧のシート、広い画面の上部バー。
+// コメント一覧のシート、広い画面の上部バー、広い画面のドラッグ、狭い画面のタップの選択、
+// 押し下げとホバーで選択が始まらないこと、描画表示のブロックのタップ。
+// 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -94,6 +96,8 @@ async function makeFixture() {
   await mkdir(join(dir, dirname(LONG_PATH)), { recursive: true });
   await write(LONG_PATH, LINES(30, 'step'));
   await write('art/photo.png', png(0, 0, 255));
+  await mkdir(join(dir, 'docs'), { recursive: true });
+  await write('docs/note.md', '# Note\n\nFirst paragraph.\n\nSecond paragraph.\n');
   const file0 = (await readFile(join(dir, 'src/dir0/file0.txt'), 'utf8')).split('\n');
   // 5〜8 行目を消し、20 行目を書き換える。旧側だけの行と、折りたたみで分かれた 2 つの塊ができる。
   const changed = [...file0.slice(0, 4), ...file0.slice(8, 19), 'file 0 line 20 changed', ...file0.slice(20)];
@@ -157,8 +161,19 @@ async function selectFile(path) {
   await waitFor(`${at(path)} && ${notLoading}`);
 }
 
-/** 新側の行番号の要素。 */
+/** 新側・旧側の行番号の要素。 */
 const newNumber = (number) => `Array.from(document.querySelectorAll('#diff-content .row .no-cell:nth-child(2) .num')).find(n => n.textContent === ${JSON.stringify(String(number))})`;
+const oldNumber = (number) => `Array.from(document.querySelectorAll('#diff-content .row .no-cell:nth-child(1) .num')).find(n => n.textContent === ${JSON.stringify(String(number))})`;
+/** 選択中の行番号（表示順）。 */
+const selectedNumbers = () => evaluate(`Array.from(document.querySelectorAll('#diff-content .num.selected')).map(n => n.textContent)`);
+/** `+` が見えている行の、その `+` の側の行番号。 */
+const plusRows = () => evaluate(`Array.from(document.querySelectorAll('#diff-content .line-add-btn')).filter(b => getComputedStyle(b).display !== 'none').map(b => b.closest('.no-cell').querySelector('.num').textContent)`);
+
+/** 要素の中心を実際のマウスで押す（タップ）。 */
+async function tap(elementCode) {
+  const box = await evaluate(`(() => { const e = ${elementCode}; e.scrollIntoView({ block: 'center' }); return JSON.stringify(e.getBoundingClientRect()); })()`).then(JSON.parse);
+  await clickAt(Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2));
+}
 
 /**
  * 広い画面のドラッグ: 新側の行番号を押し下げてから別の行へ動かし、範囲を選ぶ。行にホバー
@@ -166,6 +181,7 @@ const newNumber = (number) => `Array.from(document.querySelectorAll('#diff-conte
  */
 async function dragSelect(fromNumber, toNumber) {
   const moveTo = async (number) => {
+    await evaluate(`${newNumber(number)}.scrollIntoView({ block: 'center' }); true`);
     for (let pass = 0; pass < 2; pass += 1) {
       const box = await evaluate(`JSON.stringify(${newNumber(number)}.getBoundingClientRect())`).then(JSON.parse);
       await browser('mouse', 'move', String(Math.round(box.left + box.width / 2)), String(Math.round(box.top + box.height / 2)));
@@ -426,8 +442,95 @@ try {
   }
   assert.equal(await isShown('#btn-split'), true);
   console.log('PASS 1280px では上部バーの文字ラベルの操作が 4 種類だけで、狭い画面専用の操作が見えない');
+
+  // (18) 1280px では行番号の押し下げとホバーで範囲が作れ、ホバーした行に `+` が出る。
+  await browser('press', 'Escape');
+  await waitFor(`document.querySelector('#diff-content .editor') === null`);
+  await dragSelect(5, 6);
+  assert.deepEqual(await selectedNumbers(), ['5', '6']);
+  await browser('hover', `#diff-content .row:has(.num.selected)`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('#diff-content .line-add-btn')).filter(b => getComputedStyle(b).display !== 'none').length`), 1);
+  console.log('PASS 1280px では押し下げとホバーで範囲が作れ、ホバーした行に + が出る');
+
+  // (14) 390px のタップ: 1 行 → 同じ側の別の行で範囲（+ は最後の行だけ）→ 反対側で 1 行 →
+  //      行番号以外を押すと解除。
+  await browser('set', 'viewport', ...NARROW);
+  await waitFor(narrowApplied);
+  await tap(newNumber(2));
+  assert.deepEqual(await selectedNumbers(), ['2']);
+  assert.deepEqual(await plusRows(), ['2']);
+  await tap(newNumber(3));
+  assert.deepEqual(await selectedNumbers(), ['2', '3']);
+  assert.deepEqual(await plusRows(), ['3']);
+  await tap(oldNumber(6));
+  assert.deepEqual(await selectedNumbers(), ['6']);
+  assert.equal(await evaluate(`document.querySelector('#diff-content .num.selected').closest('.no-cell').matches(':first-child')`), true);
+  assert.deepEqual(await plusRows(), ['6']);
+  await tap(`document.querySelector('#diff-content .row.kind-equal .code')`);
+  assert.deepEqual(await selectedNumbers(), []);
+  assert.deepEqual(await plusRows(), []);
+  console.log('PASS 390px のタップで 1 行、範囲、反対側の 1 行、解除ができる');
+
+  // (15) 390px では行番号の押し下げとホバーで選択が始まらない。
+  await evaluate(`${newNumber(2)}.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); ${newNumber(3)}.dispatchEvent(new MouseEvent('mouseenter')); true`);
+  assert.deepEqual(await selectedNumbers(), []);
+  await browser('hover', `#diff-content .row.kind-equal`);
+  assert.deepEqual(await plusRows(), []);
+  console.log('PASS 390px では押し下げとホバーで選択が始まらない');
+
+  // (16) 390px の描画表示では、ブロックのタップで `+` が出る。
+  await browser('click', '#btn-tree');
+  await waitFor(drawerOpen);
+  await selectFile('docs/note.md');
+  await waitFor(drawerClosed);
+  await browser('click', '#file-header .view-rendered');
+  await waitFor(`!document.querySelector('#rendered-doc').hidden && document.querySelectorAll('#rendered-doc [data-kemi-block]').length > 0`);
+  assert.equal(await evaluate(`document.querySelector('#rendered-doc .kb-plus').hidden`), true);
+  await tap(`document.querySelectorAll('#rendered-doc [data-kemi-block]')[1]`);
+  await waitFor(`!document.querySelector('#rendered-doc .kb-plus').hidden`);
+  const plusBox = await rect('#rendered-doc .kb-plus');
+  const blockBox = await evaluate(`JSON.stringify(document.querySelectorAll('#rendered-doc [data-kemi-block]')[1].getBoundingClientRect())`).then(JSON.parse);
+  assert.ok(Math.abs(plusBox.top - blockBox.top) < 4, `plus should sit at the block: ${plusBox.top} vs ${blockBox.top}`);
+  await browser('click', '#rendered-doc .kb-plus');
+  await waitFor(`document.querySelector('#rendered-doc .editor textarea[data-editor-field="body"]') !== null`);
+  console.log('PASS 390px の描画表示ではブロックのタップで + が出る');
 } finally {
   kemi.child.kill('SIGTERM');
   await kemi.exited;
 }
+
+// (17) 別の起動で、390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
+const state2 = await mkdtemp(join(tmpdir(), 'kemi-narrow-state-'));
+kemi = await startKemi(fixture, state2, ['--from', from]);
+await browser('set', 'viewport', ...NARROW);
+await browser('open', kemi.url);
+await waitFor(`document.querySelectorAll('#tree button').length > 0 && ${narrowApplied}`);
+await browser('click', '#btn-tree');
+await waitFor(drawerOpen);
+await selectFile('src/dir0/file0.txt');
+await waitFor(`${drawerClosed} && document.querySelectorAll('[data-kemi-row]').length > 0`);
+await tap(newNumber(2));
+await tap(newNumber(3));
+assert.deepEqual(await selectedNumbers(), ['2', '3']);
+await tap(`document.querySelector('#diff-content .no-cell.selection-end .line-add-btn')`);
+await waitFor(`document.querySelector('#diff-content .editor textarea[data-editor-field="body"]') !== null`);
+await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'tapped range comment');
+await evaluate(`document.querySelector('#diff-content .editor button[type="submit"]').click(); true`);
+await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+assert.deepEqual(await selectedNumbers(), []);
+await browser('click', '#btn-approve');
+await waitFor(`!document.querySelector('#modal').hidden`);
+await browser('click', '#modal-ok');
+const { code, stdout } = await kemi.exited;
+assert.equal(code, 0);
+const result = JSON.parse(stdout);
+assert.equal(result.verdict, 'approved');
+assert.equal(result.comments.length, 1);
+const [comment] = result.comments;
+assert.equal(comment.side, 'new');
+assert.equal(comment.start_line, 2);
+assert.equal(comment.end_line, 3);
+assert.deepEqual(comment.quote, ['file 0 line 2', 'file 0 line 3']);
+assert.equal(comment.body, 'tapped range comment');
+console.log('PASS 390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る');
 await run('agent-browser', ['--session', session, 'close']);
