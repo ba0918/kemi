@@ -1,6 +1,6 @@
 //! ルーティングとハンドラ（R-SERVE, R-SUBMIT, R-COMMENT の API）。
 //!
-//! 内部 API の JSON 形は D7 としてここで決める。
+//! 内部 API の JSON 形は D7 として、この階層（`api` と子モジュール）で決める。
 
 mod rendered;
 
