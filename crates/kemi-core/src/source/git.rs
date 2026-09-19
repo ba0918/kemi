@@ -508,6 +508,12 @@ impl ReviewSource for GitSource {
         path: &str,
         limit: u64,
     ) -> Result<Option<Vec<u8>>, SourceError> {
+        // URL は core が正規化したパスから作るが、経路は token を知る誰でも叩けるので、
+        // 受け口でも「リポジトリの中の素朴なパス」だけを通す。`..`・絶対パス・`.`・空の
+        // 区切りは、git を呼ぶ前に無いものとして扱う（git の失敗でレビューを止めない）。
+        if !is_plain_repository_path(path) {
+            return Ok(None);
+        }
         let Some(planned) = self.store.planned(file_id) else {
             return Ok(None);
         };
@@ -527,6 +533,14 @@ impl ReviewSource for GitSource {
             SideRef::Absent | SideRef::Inline(_) => Ok(None),
         }
     }
+}
+
+/// `a/b/c.png` の形か。空・`.`・`..`・`\` を含む区切りと、先頭や末尾の `/` は認めない。
+fn is_plain_repository_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.split('/').all(|segment| {
+            !segment.is_empty() && segment != "." && segment != ".." && !segment.contains('\\')
+        })
 }
 
 /// 作業ツリーのファイルを読む。パスのどの部分も symlink なら読まない（辿らない）。
@@ -1450,6 +1464,30 @@ mod tests {
                 Some(png(1)),
                 "{side:?} regular"
             );
+        }
+    }
+
+    #[test]
+    fn relative_image_paths_that_are_not_plain_repository_paths_are_refused_without_an_error() {
+        let repo = image_repo();
+        repo.write("docs/a.md", "![x](img/x.png) changed\n");
+        let source = source(&repo, GitMode::Worktree);
+        let id = markdown_id(&source);
+
+        for side in [Side::New, Side::Old] {
+            for path in [
+                "../x.png",
+                "/etc/passwd.png",
+                "./docs/img/x.png",
+                "docs//img/x.png",
+                "docs/img/../img/x.png",
+            ] {
+                assert_eq!(
+                    source.repository_file(&id, side, path, 1_000).unwrap(),
+                    None,
+                    "{side:?} {path}"
+                );
+            }
         }
     }
 
