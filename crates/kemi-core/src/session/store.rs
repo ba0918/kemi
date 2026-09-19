@@ -634,6 +634,16 @@ fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
             version,
         });
     }
+    // 長さはファイルの中の値なので、壊れたファイルで巨大な確保を試みないように
+    // 実際の大きさで頭打ちにする（`decode_file` の境界検査に当たる）。
+    let rest = file
+        .metadata()
+        .map_err(|error| corrupt(error.to_string()))?
+        .len()
+        .saturating_sub(encoding::HEAD_LEN as u64);
+    if length as u64 > rest {
+        return Err(corrupt("metadata is cut off".to_string()));
+    }
     let mut meta = vec![0u8; length];
     file.read_exact(&mut meta)
         .map_err(|error| corrupt(error.to_string()))?;
