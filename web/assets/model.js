@@ -1427,7 +1427,7 @@ export function lineHasAnchor(line, side, number) {
 /**
  * 行にコメントを付けるときの既定の側。新側があれば新側、無ければ旧側。
  * @param {DisplayLine} line
- * @returns {{ side: string, number: number } | null}
+ * @returns {{ side: "old" | "new", number: number } | null}
  */
 export function lineAnchor(line) {
   if (line.newLine) {
@@ -1437,6 +1437,22 @@ export function lineAnchor(line) {
     return { side: "old", number: Number(line.oldLine.number) };
   }
   return null;
+}
+
+/**
+ * コメントの入口（`+`）を出す側。既定は行の側で、2 列表示の書き換え行は旧新の両側に
+ * 出す。書き換え行の旧側は削除された行なので、そこにもコメントを付けられる
+ * （`R-COMMENT`）。1 列表示では書き換えが旧の塊と新の塊に分かれるので、両側になる行は
+ * 現れない。
+ * @param {DisplayLine} line
+ * @returns {("old" | "new")[]}
+ */
+export function plusSides(line) {
+  if (line.kind === "replace" && line.oldLine && line.newLine) {
+    return ["old", "new"];
+  }
+  const anchor = lineAnchor(line);
+  return anchor ? [anchor.side] : [];
 }
 
 /** @typedef {{ entry: string | null, width: number, left: number }} HorizontalState */

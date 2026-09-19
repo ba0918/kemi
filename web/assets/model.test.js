@@ -17,6 +17,7 @@ import {
   nextHighlightOverride,
   nextTheme,
   placeThreads,
+  plusSides,
   resolveTheme,
   suggestionAllowed,
   toDisplayLines,
@@ -555,6 +556,31 @@ test("lineAnchor_prefers_new_side_and_falls_back_to_old", () => {
     /** @type {any} */ ({ newLine: null, oldLine: null })
   );
   assert.equal(lineAnchor(empty), null);
+});
+
+/** @param {object} line @returns {import("./model.js").DisplayLine} */
+const displayLine = (line) =>
+  /** @type {import("./model.js").DisplayLine} */ (/** @type {any} */ (line));
+
+test("plusSides_offers_both_sides_of_a_replace_row", () => {
+  const replace = displayLine({
+    kind: "replace",
+    oldLine: { number: 4 },
+    newLine: { number: 12 },
+  });
+
+  assert.deepEqual(plusSides(replace), ["old", "new"]);
+});
+
+test("plusSides_offers_only_the_side_the_line_is_on", () => {
+  const equal = displayLine({ kind: "equal", oldLine: { number: 4 }, newLine: { number: 12 } });
+  assert.deepEqual(plusSides(equal), ["new"]);
+
+  const deleted = displayLine({ kind: "delete", oldLine: { number: 4 }, newLine: null });
+  assert.deepEqual(plusSides(deleted), ["old"]);
+
+  const empty = displayLine({ kind: "skip", oldLine: null, newLine: null });
+  assert.deepEqual(plusSides(empty), []);
 });
 
 

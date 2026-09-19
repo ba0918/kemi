@@ -12,7 +12,7 @@ import {
   shownComments,
   state,
 } from "../state.js";
-import { countLabel, lineAnchor, lineHasAnchor, originJumpTarget, sideTone } from "../model.js";
+import { countLabel, lineHasAnchor, originJumpTarget, plusSides, sideTone } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 import { renderFileHeader } from "./file-header.js";
 import { showToast } from "./overlay.js";
@@ -87,9 +87,8 @@ function renderLine(line) {
     }
     return row;
   }
-  const anchor = lineAnchor(line);
-  const canComment = Boolean(anchor) && !state.submitted;
-  const plusSide = anchor ? anchor.side : null;
+  const sides = plusSides(line);
+  const canComment = sides.length > 0 && !state.submitted;
   if (mode === "split") {
     row.classList.add("split");
     row.append(
@@ -97,22 +96,22 @@ function renderLine(line) {
         "old",
         line.oldLine,
         line.oldSegments,
-        canComment && plusHere("old", line.oldLine, plusSide),
+        canComment && plusHere("old", line.oldLine, sides),
         sideTone(line.kind, "old"),
       ),
       sideCell(
         "new",
         line.newLine,
         line.newSegments,
-        canComment && plusHere("new", line.newLine, plusSide),
+        canComment && plusHere("new", line.newLine, sides),
         sideTone(line.kind, "new"),
       ),
     );
     return row;
   }
   row.append(
-    numberCell("old", line.oldLine, canComment && plusHere("old", line.oldLine, plusSide)),
-    numberCell("new", line.newLine, canComment && plusHere("new", line.newLine, plusSide)),
+    numberCell("old", line.oldLine, canComment && plusHere("old", line.oldLine, sides)),
+    numberCell("new", line.newLine, canComment && plusHere("new", line.newLine, sides)),
     textEl("span", "mk", signFor(line.kind)),
   );
   const code = el("span", "code");
@@ -279,15 +278,15 @@ function fillCode(code, line, segments) {
 }
 
 /**
- * この側の行番号の欄に `+` を作るか。既定は行の側（新側があれば新側）。狭い画面では
+ * この側の行番号の欄に `+` を作るか。既定はその行が `+` を出す側。狭い画面では
  * 選択中の範囲の最後の行にも作り、見せるのはその 1 つだけにする（R-NARROW）。
  * @param {"old" | "new"} side
  * @param {import("../model.js").Line|null} line
- * @param {string | null} plusSide
+ * @param {("old" | "new")[]} sides
  * @returns {boolean}
  */
-function plusHere(side, line, plusSide) {
-  if (plusSide === side) {
+function plusHere(side, line, sides) {
+  if (sides.includes(side)) {
     return true;
   }
   return state.narrow && line !== null && selectionEndsAt(side, Number(line.number));
