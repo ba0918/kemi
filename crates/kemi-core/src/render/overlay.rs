@@ -25,7 +25,7 @@ struct Aligned {
 
 /// ブロックの行番号は構文木の span から、整列の行番号は表示用の行の分割から来るので、
 /// 入力によってはブロックの行番号が整列の行数を超える。超えた行は、対応する行が無く
-/// 変わってもいないものとして読む。
+/// 変わってもいないものとして読む（`R-RENDER` の「変更の見せ方」）。
 impl Aligned {
     fn old_changed(&self, line: u32) -> bool {
         self.old_changed
