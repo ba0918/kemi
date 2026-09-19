@@ -158,10 +158,13 @@ diff is always one column with line wrapping on, and the display options
 (wrap, important only, sort by change size, theme) sit behind the "..." button.
 Comments are added by tapping line numbers: tap a line number to select the
 line, tap another line number on the same side to extend the selection to a
-range, and press the `+` that appears at the end of the selection. Tapping the
-same line again, or anything other than a line number, clears the selection.
-In the rendered view, tap a block to show its `+`. Tap the title to see the
-subtitle and meta. Resizing across 720px switches the layout in place.
+range, and press the `+` that appears at the end of the selection to open the
+comment editor. Tapping the same line again, or tapping the diff body anywhere
+other than a line number, clears the selection; taps on the top bar or the
+file header do not. While the editor is open the selection stays, and
+cancelling the editor clears it. In the rendered view, tap a block to show its
+`+`. Tap the title to see the subtitle and meta. Resizing across 720px
+switches the layout in place.
 
 Keys in the page (ignored while typing in a text field):
 
