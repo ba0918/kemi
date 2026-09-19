@@ -9,20 +9,29 @@ import { metaItems, seenProgress, unitSwitchOrder } from "../model.js";
 
 export function renderHeader() {
   const review = state.review;
-  dom.title.textContent = review ? review.title : "kemi";
+  const title = review ? review.title : "kemi";
+  dom.title.textContent = title;
+  dom.btnTitle.textContent = title;
+  dom.sheetTitle.textContent = title;
   const subtitle = review ? review.subtitle : "";
   dom.subtitle.textContent = subtitle || "";
   dom.subtitle.hidden = !subtitle;
+  dom.sheetSubtitle.textContent = subtitle || "";
+  dom.sheetSubtitle.hidden = !subtitle;
   dom.meta.textContent = "";
   dom.notes.textContent = "";
+  // 狭い画面では subtitle と meta を title から開くシートに入れる（R-NARROW）。同じ中身を
+  // シートにも描き、どちらを見せるかは CSS の狭い画面の規則が決める。
+  dom.sheetMeta.textContent = "";
+  dom.sheetNotes.textContent = "";
   if (review) {
     for (const item of metaItems(review)) {
       if (item.stat) {
-        const span = el("span");
-        span.append(textEl("b", "", item.label), document.createTextNode(item.value));
-        dom.meta.append(span);
+        dom.meta.append(metaStat(item));
+        dom.sheetMeta.append(metaStat(item));
       } else {
         dom.notes.append(textEl("dt", "", item.label), textEl("dd", "", item.value));
+        dom.sheetNotes.append(textEl("dt", "", item.label), textEl("dd", "", item.value));
       }
     }
   }
@@ -34,8 +43,21 @@ export function renderHeader() {
   dom.btnUnified.setAttribute("aria-pressed", String(displayMode() === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(displayMode() === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(displayWrap()));
+  dom.menuWrap.setAttribute("aria-pressed", String(displayWrap()));
   dom.chipFocus.setAttribute("aria-pressed", String(state.focusOnly));
+  dom.menuFocus.setAttribute("aria-pressed", String(state.focusOnly));
   dom.chipSort.setAttribute("aria-pressed", String(state.sortBySize));
+  dom.menuSort.setAttribute("aria-pressed", String(state.sortBySize));
+}
+
+/**
+ * @param {{ label: string, value: string }} item
+ * @returns {HTMLElement}
+ */
+function metaStat(item) {
+  const span = el("span");
+  span.append(textEl("b", "", item.label), document.createTextNode(item.value));
+  return span;
 }
 
 /** コミット範囲だけに出す「最終形 | コミットごと」の切り替え（R-UNIT）。 */
@@ -70,6 +92,24 @@ export function renderProgress() {
   dom.progress.hidden = !state.review || progress.total === 0;
   dom.progressBar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
   dom.progressText.textContent = `Seen ${progress.seen} / ${progress.total}`;
+  fitProgress();
+}
+
+/**
+ * 狭い画面の 2 段目に進捗と送信のボタンが入りきらないときは、進捗を数字だけにする
+ * （R-NARROW）。幅を測らず、バー付きで並べてみて送信のボタンが下の段へ折れたかで決める。
+ * 広い画面の上部バーは折れないので、ここで印が付くことは無い。
+ */
+export function fitProgress() {
+  delete dom.progress.dataset.compact;
+  if (dom.progress.hidden) {
+    return;
+  }
+  const progress = dom.progress.getBoundingClientRect();
+  const submit = dom.submitChanges.getBoundingClientRect();
+  if (submit.top >= progress.bottom) {
+    dom.progress.dataset.compact = "";
+  }
 }
 
 export function renderUpdateBadge() {

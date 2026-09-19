@@ -35,7 +35,7 @@ import {
 import { renderCommentOrEditor, renderEditor } from "../views/comment.js";
 import { renderBlock } from "../views/diff-rows.js";
 import { renderFileHeader, renderNotice } from "../views/file-header.js";
-import { renderHeader } from "../views/header.js";
+import { fitProgress, renderHeader } from "../views/header.js";
 import { renderNav, renderRuler } from "../views/nav.js";
 
 /** @typedef {import("../model.js").LogicalRow} LogicalRow */
@@ -592,5 +592,6 @@ export function scrollToRulerPosition(event) {
 /** 窓の幅が変わると折返しの高さも変わる。帯を描き直し、本文は renderDiff が測り直す。 */
 export function onResize() {
   state.rulerDirty = true;
+  fitProgress();
   scheduleRender();
 }

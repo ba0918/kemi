@@ -2,6 +2,7 @@
 // 狭い画面（R-NARROW）: 幅がしきい値をまたいだときの切り替えと、ファイルツリーの引き出しの
 // 開閉。幅そのものは app.js の matchMedia が見て、ここへは真偽値だけが届く。
 
+import { dom } from "../dom.js";
 import { state } from "../state.js";
 import { captureAnchor, recomputeDisplay, renderDiff, renderFloating } from "./display.js";
 import { refreshRendered } from "./rendered.js";
@@ -22,6 +23,9 @@ export function applyNarrow(narrow) {
   state.narrow = narrow;
   closeDrawer();
   closeCommentList();
+  dom.titleSheet.hidePopover();
+  dom.viewMenu.hidePopover();
+  dom.notes.hidePopover();
   recomputeDisplay(anchor);
   renderHeader();
   renderDiff();

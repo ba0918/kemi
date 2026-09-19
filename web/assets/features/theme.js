@@ -2,10 +2,13 @@
 // テーマの適用と切り替え。
 
 import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
-import { dom } from "../dom.js";
+import { dom, svgIcon } from "../dom.js";
 import { THEME_LABELS, currentEntry, state } from "../state.js";
 import { saveTheme } from "../storage.js";
 import { isDarkTheme, nextTheme, resolveTheme } from "../model.js";
+
+const THEME_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>';
 import { scheduleRender } from "./display.js";
 import { selectEntry } from "./files.js";
 
@@ -22,6 +25,9 @@ export function applyTheme() {
     THEME_LABELS[state.theme] || THEME_LABELS.auto;
   const next = THEME_LABELS[nextTheme(state.theme)] || "";
   dom.btnTheme.title = `Theme: ${current} (click for ${next})`;
+  dom.menuTheme.textContent = "";
+  dom.menuTheme.append(svgIcon(THEME_ICON), document.createTextNode(`Theme: ${current}`));
+  dom.menuTheme.title = `click for ${next}`;
   if (changed && !state.submitted) {
     state.cache.clear();
     const entry = currentEntry();

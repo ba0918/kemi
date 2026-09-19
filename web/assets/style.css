@@ -2273,19 +2273,253 @@ ul.files ul {
 /* 幅で変わる規則はこのメディアクエリに集める。JS は同じ文字列を matchMedia で見る（app.js）。
    広い画面の規則はこの外にあり、ここでは上書きするだけで変えない。 */
 @media (max-width: 719.98px) {
-  /* 上部バー: ツリーを開く操作を出し、2 列への切り替えは出さない。 */
+  /* 上部バーは 2 段。既存の要素を order で並べ替え、.spacer を段の区切りにする。
+     1 段目: kemi、title、ツリーを開く操作、コメント一覧の入口、更新バッジ、「…」。
+     2 段目: グループ単位の切り替え、見たの進捗、承認と変更要求。入りきらなければ
+     進捗を数字だけにし（views/header.js が印を付ける）、それでも入らなければ折り返す。 */
   .topbar {
     flex-wrap: wrap;
     gap: 6px;
     padding: 8px 10px;
   }
 
+  .tools {
+    display: contents;
+  }
+
+  .brand {
+    order: 1;
+  }
+
+  .title-block {
+    order: 2;
+    flex: 1 1 0;
+  }
+
+  .title-block .title,
+  .subtitle,
+  .notes-button,
+  .meta,
+  .tools .seg[aria-label="Display mode"],
+  #btn-wrap,
+  #chip-focus,
+  #chip-sort,
+  #btn-theme {
+    display: none;
+  }
+
+  /* title を押すと subtitle と meta のシートが開く。 */
+  #btn-title {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   #btn-tree {
+    order: 3;
     display: inline-flex;
   }
 
-  .tools .seg[aria-label="Display mode"] {
+  #btn-comments {
+    order: 4;
+  }
+
+  #update-badge {
+    order: 5;
+  }
+
+  #btn-more {
+    order: 6;
+    display: inline-flex;
+  }
+
+  .topbar > .spacer {
+    order: 7;
+    flex: 0 0 100%;
+    height: 0;
+  }
+
+  .unit-switch {
+    order: 8;
+  }
+
+  .unit-button {
+    padding: 3px 7px;
+  }
+
+  .progress {
+    order: 9;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .progress[data-compact] .bar {
     display: none;
+  }
+
+  #btn-approve {
+    order: 10;
+    margin-left: auto;
+  }
+
+  #btn-changes {
+    order: 11;
+  }
+
+  .topbar .btn {
+    padding: 0 8px;
+    font-size: 13px;
+  }
+
+  /* 「…」のメニュー: 表示の操作を R-VIEW の並びで文字ラベル付きに出す小さな覆い。 */
+  #view-menu:popover-open {
+    display: grid;
+    inset: auto;
+    top: 46px;
+    right: 10px;
+    margin: 0;
+    min-width: 220px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--ink);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--ink-2);
+    font-size: 14px;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .menu-item svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  .menu-item[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  /* title のシート: subtitle と meta を画面いっぱいに重ねる。 */
+  #title-sheet:popover-open {
+    display: flex;
+    flex-direction: column;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .sheet-close {
+    margin-left: auto;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font-size: 13.5px;
+  }
+
+  .sheet-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 14px 12px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .sheet-title {
+    font-weight: 600;
+    font-size: 17px;
+    overflow-wrap: anywhere;
+  }
+
+  .sheet-subtitle {
+    color: var(--ink-2);
+    font-size: 13.5px;
+    overflow-wrap: anywhere;
+  }
+
+  .sheet-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+
+  .sheet-meta b {
+    color: var(--ink-2);
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
+  .sheet-notes {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 14px;
+    row-gap: 6px;
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .sheet-notes:empty {
+    display: none;
+  }
+
+  .sheet-notes dt {
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+
+  .sheet-notes dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* コメント一覧は画面いっぱいのシート。中身と閉じる操作は広い画面と同じ。 */
+  .comment-list {
+    inset: 0;
+    width: auto;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
   }
 
   /* ファイルツリーは左から重ねる引き出し。閉じている間は画面の外で、フォーカスも届かない。
@@ -2354,9 +2588,19 @@ ul.files ul {
     padding: 12px 12px 48px 32px;
   }
 
+  /* 移動の操作は 1 行に収める。キーの表示は 320px で入りきらないので出さない。 */
   .navpill {
     right: 14px;
     bottom: 14px;
+    max-width: calc(100vw - 28px);
+  }
+
+  .navpill button {
+    white-space: nowrap;
+  }
+
+  .navpill kbd {
+    display: none;
   }
 
   #toast {

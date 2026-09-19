@@ -78,6 +78,10 @@ function handleKey(event) {
       closeModal();
       return;
     }
+    if (dom.viewMenu.matches(":popover-open") || dom.titleSheet.matches(":popover-open")) {
+      // 狭い画面のメニューとシートはブラウザが閉じる。下の入力欄まで閉じない。
+      return;
+    }
     if (!dom.commentList.hidden) {
       closeCommentList();
       return;
@@ -155,6 +159,10 @@ narrowQuery.addEventListener("change", (event) => applyNarrow(event.matches));
 document.addEventListener("keydown", handleKey);
 dom.btnTree.addEventListener("click", toggleDrawer);
 dom.drawerScrim.addEventListener("click", closeDrawer);
+dom.menuWrap.addEventListener("click", () => setWrap(!displayWrap()));
+dom.menuFocus.addEventListener("click", toggleFocusOnly);
+dom.menuSort.addEventListener("click", toggleSortBySize);
+dom.menuTheme.addEventListener("click", stepTheme);
 document.addEventListener("mouseup", endSelection);
 dom.btnUnified.addEventListener("click", () => setMode("unified"));
 dom.btnSplit.addEventListener("click", () => setMode("split"));
