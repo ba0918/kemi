@@ -737,12 +737,13 @@ Markdown の描画
   | staged | インデックス | `HEAD` |
   | コミット範囲（最終形） | `to` | `from` |
   | コミット範囲（コミットごと） | そのコミット | その親 |
-  | manifest | 出さない | 出さない |
+  | manifest | レビュー対象の画像だけ | 同左 |
   | 復元 | 写しにある（レビュー対象の）画像だけ | 同左 |
 
   描画の時点で分かるもの（正規化した結果がリポジトリの外に出るパス、画像の拡張子で
-  ないもの、上の表で出さないもの）は `src` を出さず、alt テキストとパスを示す枠に
-  する。ファイルを読まないと分からないもの（symlink、上限を超えるもの、存在しない
+  ないもの、manifest と復元でレビュー対象に一致しないもの）は `src` を出さず、alt
+  テキストとパスを示す枠にする。レビュー対象の画像は、kemi がそのレビューで読んだ
+  バイト列を配る（`R-SERVE`）。ファイルを読まないと分からないもの（symlink、上限を超えるもの、存在しない
   ファイル）は `src` を出し、エンドポイントが 404 を返したらページが同じ枠に差し替える。
 - 外部 URL（`http:` / `https:`）の画像はブラウザがそのまま読む。プロキシは持たない
   （P20）。
@@ -1581,9 +1582,10 @@ scripts/
 - 乱数（URL トークン）: `getrandom`（C 依存を持ち込まない）
 - セッションに保存する内容の圧縮: `miniz_oxide`（pure Rust。C 依存を持ち込まない）
 - 端末の選択画面: `inquire`（pure Rust）
-- Markdown の描画: `ox_content_parser` + `ox_content_renderer`（ox-content、MIT、
-  pure Rust）。計画時に `cargo deny check licenses` と `cargo tree` で依存の木を確認する。
-  表（CSV / TSV）の分割は自前で持つ
+- Markdown の構文木: `ox_content_ast` + `ox_content_parser` + `ox_content_allocator`
+  （ox-content、MIT、pure Rust）。HTML はブロックごとの属性と語の印のために kemi が
+  自分で書き、ox-content の描画器は使わない。計画時に `cargo deny check licenses` と
+  `cargo tree` で依存の木を確認する。表（CSV / TSV）の分割は自前で持つ
 
 許可する依存ライセンスは MIT / Apache-2.0 / BSD-3-Clause / ISC / Unicode-3.0 と
 その互換（0BSD 等）に限る。
