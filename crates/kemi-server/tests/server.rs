@@ -955,7 +955,7 @@ async fn highlight_can_be_turned_off() {
 
 // ---- R-LIVE（監視）の結合テスト ----
 
-use kemi_core::source::git::{GitMode, GitSource, GroupBy};
+use kemi_core::source::git::{GitMode, GitSource, GroupBy, UNTRACKED_LIMIT};
 use kemi_core::source::manifest::ManifestSource;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -2727,6 +2727,46 @@ async fn file_of_an_image_over_five_megabytes_only_reports_the_byte_counts() {
     assert_eq!(body["new_size"], 6_000_000);
     assert_eq!(body["render"]["target"], Value::Null);
     assert_eq!(server.get("api/render/f10").await.status(), 422);
+}
+
+#[tokio::test]
+async fn untracked_files_over_the_limit_are_not_rendered_because_their_content_was_not_read() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    // 1 MB 超 5 MB 未満の untracked。画像は 5 MB の規則の中だが、内容を読んでいない。
+    let big = vec![b'x'; UNTRACKED_LIMIT as usize + 1];
+    std::fs::write(repo.path.join("shot.png"), &big).unwrap();
+    std::fs::write(repo.path.join("notes.md"), &big).unwrap();
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server = LiveServer::start(source).await;
+
+    let review = server.get_json("api/review").await;
+    let id_of = |path: &str| {
+        file_in(&review, 0, path)["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let image = server
+        .get_json(&format!("api/file/{}", id_of("shot.png")))
+        .await;
+    let markdown = server
+        .get_json(&format!("api/file/{}", id_of("notes.md")))
+        .await;
+
+    assert_eq!(
+        image["render"]["target"],
+        Value::Null,
+        "{}",
+        image["render"]
+    );
+    assert!(
+        markdown["render"]["reason"].is_string(),
+        "{}",
+        markdown["render"]
+    );
+    server.stop();
 }
 
 #[tokio::test]

@@ -478,27 +478,37 @@ async fn file(
 /// 付ける。
 fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value {
     const TOO_LARGE: &str = "too large (over 10,000 lines or 1 MB on one side)";
+    // 上限超えで内容を読まなかった untracked（R-INPUT-3）は、内容が無いので描画できない。
+    const NOT_READ: &str = "the file exceeds the untracked limit and its content was not read";
+    let not_read = file.content_skipped.then(|| NOT_READ.to_string());
     match render::target_of_file(file) {
         Some(Target::Markdown) => {
-            let reason = (!content::within_auto_limit(old, new)).then_some(TOO_LARGE.to_string());
+            let reason = not_read.or_else(|| {
+                (!content::within_auto_limit(old, new)).then_some(TOO_LARGE.to_string())
+            });
             json!({ "target": "markdown", "toggle": true, "initial": "source", "reason": reason })
         }
         Some(Target::Table { delimiter }) => {
-            let reason = if !content::within_auto_limit(old, new) {
-                Some(TOO_LARGE.to_string())
-            } else {
-                [new, old]
-                    .into_iter()
-                    .flatten()
-                    .find_map(|text| render::unbalanced_line(text, delimiter))
-                    .map(|line| format!("unbalanced quote on line {line}"))
-            };
+            let reason = not_read.or_else(|| {
+                if !content::within_auto_limit(old, new) {
+                    Some(TOO_LARGE.to_string())
+                } else {
+                    [new, old]
+                        .into_iter()
+                        .flatten()
+                        .find_map(|text| render::unbalanced_line(text, delimiter))
+                        .map(|line| format!("unbalanced quote on line {line}"))
+                }
+            });
             json!({ "target": "table", "toggle": true, "initial": "source", "reason": reason })
         }
         Some(Target::Image { .. }) => {
-            // 画像には行数・バイト数の描画不可を当てず、5 MB の規則だけが効く。
+            // 画像には行数・バイト数の描画不可を当てず、5 MB の規則だけが効く。内容を
+            // 読まなかったものは並べる画像が無いので、バイト数の増減だけになる。
             let (old_bytes, new_bytes) = side_bytes(file, old, new);
-            let within = old_bytes <= IMAGE_MAX_BYTES && new_bytes <= IMAGE_MAX_BYTES;
+            let within = !file.content_skipped
+                && old_bytes <= IMAGE_MAX_BYTES
+                && new_bytes <= IMAGE_MAX_BYTES;
             match render::image_kind(file) {
                 Some(kind) if within => json!({
                     "target": "image",
