@@ -149,10 +149,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "castaway"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "compact_str"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "static_assertions",
+ "zmij",
+]
 
 [[package]]
 name = "const-oid"
@@ -716,6 +738,10 @@ name = "kemi-core"
 version = "0.1.7"
 dependencies = [
  "miniz_oxide",
+ "ox_content_allocator",
+ "ox_content_ast",
+ "ox_content_parser",
+ "ox_content_renderer",
  "serde",
  "serde_json",
  "similar",
@@ -898,6 +924,55 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "ox_content_allocator"
+version = "3.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8940397496ed605d09324a25c61d2fe4ead9fb7030a06ba83ca2bd52677521ec"
+dependencies = [
+ "bumpalo",
+]
+
+[[package]]
+name = "ox_content_ast"
+version = "3.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "600b28b3f7cea5377a709bcb1743e18ff7224f6d822d2b3feac0c7c3971e453d"
+dependencies = [
+ "ox_content_allocator",
+]
+
+[[package]]
+name = "ox_content_parser"
+version = "3.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de34c8d3faaa083a23da05790c6b731e9f50e67ba711deae89fba455a4bf1e7e"
+dependencies = [
+ "compact_str",
+ "memchr",
+ "ox_content_allocator",
+ "ox_content_ast",
+ "rustc-hash",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
+name = "ox_content_renderer"
+version = "3.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81a3e5597188dee24936623637ef0c94e518519b61e5fb819905c843252a043e"
+dependencies = [
+ "compact_str",
+ "memchr",
+ "ox_content_allocator",
+ "ox_content_ast",
+ "rustc-hash",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+]
 
 [[package]]
 name = "parking_lot"
@@ -1088,6 +1163,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1178,6 +1259,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -1292,6 +1374,12 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "syn"
