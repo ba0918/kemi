@@ -229,6 +229,16 @@ fn images_outside_the_repo_or_without_an_image_extension_or_unreadable_get_a_fra
 }
 
 #[test]
+fn a_fragment_is_a_link_as_an_href_and_a_frame_as_an_image_source() {
+    let rendered = render_new("[a](#x) ![b](#x)\n");
+
+    let html = &rendered.html;
+    assert!(html.contains("<a href=\"#x\""), "{html}");
+    assert!(!html.contains("<img"), "{html}");
+    assert_eq!(html.matches("kb-img-frame").count(), 1, "{html}");
+}
+
+#[test]
 fn relative_image_matching_a_review_file_refers_to_that_file_and_side() {
     let mut input = input(None, Some("![n](img/new.png)\n"));
     input.review_paths = review_paths();
