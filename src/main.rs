@@ -610,12 +610,25 @@ fn choose_session(store: &SessionStore) -> String {
         Err(error) => fail(&error.to_string()),
     };
     if sessions.is_empty() {
-        fail("no resumable session");
+        fail(&no_resumable_reason(store));
     }
     if !std::io::stdin().is_terminal() {
-        list_sessions(&sessions);
+        list_sessions(store, &sessions);
     }
     pick_session(&sessions)
+}
+
+/// 復元できるセッションが 1 つも無い理由（R-SESSION）。読めない版のセッションしか
+/// 無いときは、1 つも保留していない場合と同じ案内で終わらせない。
+fn no_resumable_reason(store: &SessionStore) -> String {
+    if store.has_unreadable_version() {
+        format!(
+            "no resumable session: {} holds sessions saved in a format version this kemi cannot read",
+            store.dir().display()
+        )
+    } else {
+        "no resumable session".to_string()
+    }
 }
 
 /// 端末の選択画面。Esc と Ctrl+C では何も変えず終了コード 130（R-SESSION）。
@@ -638,9 +651,9 @@ fn pick_session(sessions: &[SessionSummary]) -> String {
 }
 
 /// 復元できるセッションの一覧を stdout に出す（R-SESSION）。0 件なら理由を出して 2。
-fn list_sessions(sessions: &[SessionSummary]) -> ! {
+fn list_sessions(store: &SessionStore, sessions: &[SessionSummary]) -> ! {
     if sessions.is_empty() {
-        fail("no resumable session");
+        fail(&no_resumable_reason(store));
     }
     use std::io::Write;
     let stdout = std::io::stdout();
