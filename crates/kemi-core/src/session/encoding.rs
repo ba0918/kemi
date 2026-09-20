@@ -78,11 +78,19 @@ pub(crate) fn decode_session(bytes: &[u8]) -> Result<(u8, &[u8]), DecodeError> {
     Ok((version, &rest[..length]))
 }
 
-/// 写しのメタデータと内容のレコードを、`<id>.payload` の中身（展開後）にする。
-pub(crate) fn encode_copy_body(meta: &[u8], contents: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + meta.len() + contents.len());
+/// `<id>.payload` の中身（展開後）の先頭に、写しのメタデータを書く。内容のレコードは
+/// この後ろへ続けて書く。書き出しは 1 つのバッファで組み立て、写しを二重に持たない。
+pub(crate) fn push_copy_meta(out: &mut Vec<u8>, meta: &[u8]) {
+    out.reserve(4 + meta.len());
     out.extend_from_slice(&(meta.len() as u32).to_le_bytes());
     out.extend_from_slice(meta);
+}
+
+/// 写しのメタデータと内容のレコードを 1 つのバイト列にする。
+#[cfg(test)]
+pub(crate) fn encode_copy_body(meta: &[u8], contents: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_copy_meta(&mut out, meta);
     out.extend_from_slice(contents);
     out
 }
@@ -136,15 +144,22 @@ pub(crate) fn gunzip(data: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> 
     Ok(out)
 }
 
-/// 内容を 1 つのバイナリレコードにする。長さ前置で、非 UTF-8 のバイト列もそのまま往復する。
-pub(crate) fn encode_contents(contents: &BTreeMap<String, FileContent>) -> Vec<u8> {
-    let mut out = Vec::new();
+/// 内容を 1 つのバイナリレコードにして `out` の末尾へ書く。長さ前置で、非 UTF-8 の
+/// バイト列もそのまま往復する。
+pub(crate) fn encode_contents_into(out: &mut Vec<u8>, contents: &BTreeMap<String, FileContent>) {
     out.extend_from_slice(&(contents.len() as u32).to_le_bytes());
     for (id, content) in contents {
-        push_bytes(&mut out, id.as_bytes());
-        push_side(&mut out, content.old.as_deref());
-        push_side(&mut out, content.new.as_deref());
+        push_bytes(out, id.as_bytes());
+        push_side(out, content.old.as_deref());
+        push_side(out, content.new.as_deref());
     }
+}
+
+/// 内容のレコードだけを 1 つのバイト列にする。
+#[cfg(test)]
+pub(crate) fn encode_contents(contents: &BTreeMap<String, FileContent>) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_contents_into(&mut out, contents);
     out
 }
 

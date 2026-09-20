@@ -581,10 +581,10 @@ pub(crate) fn encode_copy(copy: &SessionCopy) -> Result<Vec<u8>, String> {
             .collect(),
     };
     let meta = serde_json::to_vec(&meta).map_err(|error| error.to_string())?;
-    Ok(encoding::encode_copy_body(
-        &meta,
-        &encoding::encode_contents(&copy.contents),
-    ))
+    let mut body = Vec::new();
+    encoding::push_copy_meta(&mut body, &meta);
+    encoding::encode_contents_into(&mut body, &copy.contents);
+    Ok(body)
 }
 
 /// `encode_copy` の逆。
