@@ -2113,14 +2113,15 @@ fn resume_listing_ignores_port_bind_and_no_open() {
 #[test]
 fn resume_without_an_id_tells_unreadable_version_sessions_apart_from_having_none() {
     let dir = TempDir::new();
+    // 2 回の起動で同じ保存領域を使う。案内には保存領域のパスが入りうるので、別々の
+    // 保存領域にすると、パスが違うというだけで 2 つの案内が食い違ってしまう。
+    let state = TempDir::new();
 
     // セッションを 1 つも保留していない場合。
-    let empty = TempDir::new();
-    let none = run_with_state(&dir.path, &["--resume"], &empty.path);
+    let none = run_with_state(&dir.path, &["--resume"], &state.path);
 
     // 読めない版（版 1）の `<id>.session` だけが残っている場合。版 1 の読み手はもう
     // 無いので、バイト列を直に書く。
-    let state = TempDir::new();
     let sessions = sessions_dir(&state.path);
     std::fs::create_dir_all(&sessions).unwrap();
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
