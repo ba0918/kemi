@@ -393,8 +393,7 @@ impl OpenSession {
             self.copy = CopyState::Unusable("the review copy is larger than 20 MB".to_string());
             return self.persist_without_copy();
         }
-        self.copy = CopyState::Ready(copy);
-        self.persist_with_copy(&compressed)
+        self.persist_with_copy(copy, &compressed)
     }
 
     pub(crate) fn mark_unresumable_at(
@@ -442,11 +441,17 @@ impl OpenSession {
     /// 写しを保存する。`<id>.payload` を書いてから `<id>.session` を書く。途中で
     /// 止まっても、残るのはどの `<id>.session` からも「使える」と指されていない
     /// `<id>.payload` だけになる（R-SESSION の書く順序）。
-    fn persist_with_copy(&mut self, payload: &[u8]) -> Result<(), SessionError> {
+    ///
+    /// 写しを「使える」にするのも `<id>.payload` を置けてからにする。書けなかったのに
+    /// 「使える」と覚えると、次に状態を書いたとき写しの無い `<id>.session` が
+    /// 「使える」と主張してしまう。
+    fn persist_with_copy(&mut self, copy: SessionCopy, payload: &[u8]) -> Result<(), SessionError> {
         if self.deleted {
+            self.copy = CopyState::Ready(copy);
             return Ok(());
         }
         write_atomic(&self.dir, &payload_path(&self.dir, &self.info.id), payload)?;
+        self.copy = CopyState::Ready(copy);
         self.write_session()?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
@@ -1037,6 +1042,27 @@ mod tests {
         }
 
         assert_eq!(std::fs::read(&payload).unwrap(), b"not a gzip");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_copy_that_cannot_be_written_does_not_become_resumable() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let mut open = store.create(info(id, 100)).unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        // 写しのファイルを置けなくする（同じ名前のディレクトリがあると rename が
+        // 失敗する）。ディスクが一杯のときと同じ経路になる。
+        std::fs::create_dir_all(scratch.dir().join(format!("{id}.payload"))).unwrap();
+
+        assert!(open.save_copy_with_limit(copy(), 300, COPY_LIMIT).is_err());
+
+        // 写しを置けていないので「使える」にしない。この後に状態を書いても、
+        // 「使える」と書いた `<id>.session` は残らない（R-SESSION の不変条件）。
+        assert!(!open.is_resumable());
+        open.save_state_at(state_with_comment(), 400).unwrap();
+        assert!(store.list().unwrap().is_empty());
     }
 
     #[test]
