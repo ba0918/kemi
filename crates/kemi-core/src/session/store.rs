@@ -10,6 +10,7 @@
 //! 接尾辞で孤児を見分けるので、書き込み中のものが候補に見えてしまう。
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -238,6 +239,23 @@ impl SessionStore {
         }
         summaries.sort_by(|left, right| (right.updated, &right.id).cmp(&(left.updated, &left.id)));
         Ok(summaries)
+    }
+
+    /// 読めない版の `<id>.session` があるか（R-SESSION）。復元できるセッションが
+    /// 1 つも無いとき、その理由が「読めない版しか無い」ことかを見分けるために使う。
+    /// 版は先頭の固定長だけで分かるので、読み手の無い版のファイルを丸ごと読まない。
+    pub fn has_unreadable_version(&self) -> bool {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            name.ends_with(".session")
+                && read_version(&entry.path()).is_some_and(|version| version != encoding::VERSION)
+        })
     }
 
     /// セッションのファイルを消す。
@@ -653,6 +671,14 @@ fn prune_orphan_locks(dir: &Path, min_age: Duration) {
 
 fn read_updated(path: &Path) -> Option<u128> {
     Some(read_meta(path).ok()?.summary().0.updated)
+}
+
+/// `<id>.session` の先頭だけを読んで版を返す。開けないファイルと、セッションの
+/// 形をしていないファイルは、版が分からないものとして扱う。
+fn read_version(path: &Path) -> Option<u8> {
+    let mut head = [0u8; encoding::HEAD_LEN];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    encoding::decode_version(&head).ok()
 }
 
 /// `<id>.session` を読む。写しは別のファイルなので、ここで読むのは情報と状態だけ
@@ -1124,6 +1150,40 @@ mod tests {
             store.read(id),
             Err(SessionError::UnsupportedVersion { version: 99, .. })
         ));
+    }
+
+    #[test]
+    fn only_sessions_of_an_unreadable_version_are_reported() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+
+        // セッションを 1 つも保留していない（ディレクトリが無い）。
+        assert!(!store.has_unreadable_version());
+
+        // 今の版のセッションは読めるので、報告の対象にしない。
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+        drop(open);
+        assert!(!store.has_unreadable_version());
+
+        // 版 1 は読み手が無い。一覧には出ないが、あることは分かる。
+        let old = "01HF7YAT00BBBBBBBBBBBBBBBB";
+        write_atomic(
+            &scratch.dir(),
+            &scratch.dir().join(format!("{old}.session")),
+            &encoding::encode_session(1, b"{}"),
+        )
+        .unwrap();
+
+        assert!(store.has_unreadable_version());
+        assert!(store
+            .list()
+            .unwrap()
+            .iter()
+            .all(|summary| summary.id != old));
     }
 
     #[test]

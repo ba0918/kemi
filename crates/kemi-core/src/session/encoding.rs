@@ -52,7 +52,13 @@ pub(crate) fn encode_session(version: u8, meta: &[u8]) -> Vec<u8> {
 }
 
 /// 先頭の固定長（目印・版・meta の長さ）。
-const HEAD_LEN: usize = MAGIC.len() + 1 + 4;
+pub(crate) const HEAD_LEN: usize = MAGIC.len() + 1 + 4;
+
+/// 先頭の固定長から版だけを取り出す。meta を読まないので、読み手の無い版の
+/// 大きなファイルを丸ごとメモリに載せずに版を確かめられる。
+pub(crate) fn decode_version(head: &[u8]) -> Result<u8, DecodeError> {
+    decode_head(head).map(|(version, _)| version)
+}
 
 /// 先頭の固定長から版と meta の長さを取り出す。
 fn decode_head(head: &[u8]) -> Result<(u8, usize), DecodeError> {
