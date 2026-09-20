@@ -29,9 +29,9 @@ use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
 use self::comments::comment_api;
-use self::file::file;
+use self::file::file_api;
 use self::rendered::{render_file, repository_image, review_image};
-use self::submit::submit;
+use self::submit::submit_api;
 use crate::session::{comment_json, persist, start_freeze, Session};
 use crate::units::{self, Unavailable};
 use crate::{stop_with_error, AppState, Event, ServerError};
@@ -41,7 +41,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/", get(index))
         .route("/s/{token}/assets/{*path}", get(asset))
         .route("/s/{token}/api/review", get(review))
-        .route("/s/{token}/api/file/{id}", get(file))
+        .route("/s/{token}/api/file/{id}", get(file_api))
         .route("/s/{token}/api/origin/{id}", get(origin))
         .route("/s/{token}/api/render/{id}", get(render_file))
         .route("/s/{token}/api/image/review/{id}/{side}", get(review_image))
@@ -52,7 +52,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
         .route("/s/{token}/api/state", post(state_api))
-        .route("/s/{token}/api/submit", post(submit))
+        .route("/s/{token}/api/submit", post(submit_api))
         .route("/s/{token}/api/events", get(events))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, guard))

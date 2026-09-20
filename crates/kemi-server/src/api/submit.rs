@@ -20,7 +20,7 @@ pub(super) struct SubmitRequest {
     verdict: String,
 }
 
-pub(super) async fn submit(
+pub(super) async fn submit_api(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
     Json(request): Json<SubmitRequest>,

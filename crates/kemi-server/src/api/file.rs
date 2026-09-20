@@ -29,7 +29,7 @@ struct Highlighted {
 /// 1 回の展開要求で返す行数の上限。巨大な折りたたみを一度に読まないため。
 const EXPAND_LIMIT: usize = 5_000;
 
-pub(super) async fn file(
+pub(super) async fn file_api(
     State(state): State<Arc<AppState>>,
     Path((_token, id)): Path<(String, String)>,
     Query(query): Query<ExpandQuery>,
