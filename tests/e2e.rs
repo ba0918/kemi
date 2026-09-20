@@ -1968,6 +1968,31 @@ fn resume_of_an_unfinished_session_exits_2_with_the_reason() {
 }
 
 #[test]
+fn resume_of_a_session_without_its_copy_file_exits_2_and_is_not_listed() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    craft_session(
+        &state.path,
+        id,
+        SessionMode::Worktree,
+        "Working tree changes",
+    );
+    std::fs::remove_file(sessions_dir(&state.path).join(format!("{id}.payload"))).unwrap();
+
+    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+
+    // 端末でない `--resume` の一覧にも出ない。
+    let listed = run_with_state(&dir.path, &["--resume"], &state.path);
+    assert_eq!(listed.status.code(), Some(2));
+    assert!(listed.stdout.is_empty());
+}
+
+#[test]
 fn resume_of_an_unreadable_session_exits_2_with_the_reason() {
     let dir = TempDir::new();
     let state = TempDir::new();

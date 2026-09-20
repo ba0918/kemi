@@ -9,6 +9,7 @@
 //! 一時ファイルの名前は `.session` でも `.payload` でも終わらせない。掃除は名前の
 //! 接尾辞で孤児を見分けるので、書き込み中のものが候補に見えてしまう。
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -198,16 +199,26 @@ impl SessionStore {
                 })
             }
         };
-        let mut summaries = Vec::new();
+        let mut ids = Vec::new();
+        let mut payloads = BTreeSet::new();
         for entry in entries.flatten() {
-            let Some(id) = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.strip_suffix(".session"))
-                .map(str::to_string)
-            else {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
                 continue;
             };
+            if let Some(id) = name.strip_suffix(".session") {
+                ids.push(id.to_string());
+            } else if let Some(id) = name.strip_suffix(".payload") {
+                payloads.insert(id.to_string());
+            }
+        }
+        let mut summaries = Vec::new();
+        for id in ids {
+            // 写しの状態が「使える」と書いてあっても `<id>.payload` が無ければ復元
+            // できない（R-SESSION）。有無はディレクトリの一覧だけで決める。
+            if !payloads.contains(&id) {
+                continue;
+            }
             let Ok(meta) = read_meta(&self.path(&id)) else {
                 continue;
             };
@@ -927,6 +938,26 @@ mod tests {
         assert!(matches!(
             store.open(&id),
             Err(SessionError::NotReady { .. })
+        ));
+    }
+
+    #[test]
+    fn session_without_its_copy_file_is_not_listed_and_cannot_be_opened() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+        std::fs::remove_file(scratch.dir().join(format!("{id}.payload"))).unwrap();
+
+        assert!(store.list().unwrap().is_empty());
+        assert!(matches!(
+            store.open(&id),
+            Err(SessionError::Unusable { .. })
         ));
     }
 
