@@ -1670,6 +1670,25 @@ fn session_files(state: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// `sessions/` に残っているセッションのファイル。セッション 1 つは `<id>.session` と
+/// `<id>.payload` の 2 つなので、片方だけ残っていないことも見られるように両方を数える。
+fn session_dir_files(state: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(sessions_dir(state))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|extension| extension == "session" || extension == "payload")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
 async fn wait_for_session(state: &Path) -> PathBuf {
     for _ in 0..500 {
         if let Some(path) = session_files(state).first() {
@@ -1897,7 +1916,7 @@ async fn interrupt_without_state_or_copy_leaves_no_session() {
         !stderr.contains("resume with"),
         "no resumable session yet: {stderr}"
     );
-    assert!(session_files(&state.path).is_empty());
+    assert!(session_dir_files(&state.path).is_empty());
 }
 
 #[test]
@@ -1965,6 +1984,31 @@ fn resume_of_an_unfinished_session_exits_2_with_the_reason() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.is_empty(), "the reason must reach stderr");
+}
+
+#[test]
+fn resume_of_a_session_without_its_copy_file_exits_2_and_is_not_listed() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    craft_session(
+        &state.path,
+        id,
+        SessionMode::Worktree,
+        "Working tree changes",
+    );
+    std::fs::remove_file(sessions_dir(&state.path).join(format!("{id}.payload"))).unwrap();
+
+    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+
+    // 端末でない `--resume` の一覧にも出ない。
+    let listed = run_with_state(&dir.path, &["--resume"], &state.path);
+    assert_eq!(listed.status.code(), Some(2));
+    assert!(listed.stdout.is_empty());
 }
 
 #[test]
@@ -2396,5 +2440,5 @@ async fn resume_submit_uses_the_original_workspace_for_the_result() {
     assert_eq!(result.status.code(), Some(0));
     let from_file: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(from_file["approval"], document["approval"]);
-    assert!(session_files(&state.path).is_empty());
+    assert!(session_dir_files(&state.path).is_empty());
 }

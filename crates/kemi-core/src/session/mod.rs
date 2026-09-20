@@ -3,9 +3,12 @@
 //! 未 submit のレビューを、当時の差分の写しと状態（コメント・見た・折りたたみ・解決）
 //! と一緒にディスクへ残し、`kemi --resume` で続きから開けるようにする。
 //!
-//! - 形式は版つきの 1 ファイル（`crates/kemi-core/src/session/encoding.rs`）。
-//! - 状態は変更のたびに一時ファイルから rename で差し替える（`store.rs`）。
-//! - 写しの内容は gzip で圧縮し、1 セッション 20 MB を超えたら捨てて復元不可にする。
+//! - 1 セッションは 2 つのファイル。`<id>.session` がセッションの情報と状態、
+//!   `<id>.payload` が写し（凍結したレビューのメタデータと変更ファイルの内容）
+//!   （`crates/kemi-core/src/session/encoding.rs`）。
+//! - 状態は変更のたびに一時ファイルから rename で差し替える。書くのは `<id>.session`
+//!   だけで、写しのファイルには触らない（`store.rs`）。
+//! - 写しは丸ごと gzip で圧縮し、`<id>.payload` が 20 MB を超えたら捨てて復元不可にする。
 //! - 起動中のレビューはロックを取り、`--resume` の二重起動を防ぐ。
 
 mod encoding;
@@ -28,9 +31,6 @@ use crate::domain::review::{
     Approval, Comment, FileEntry, Group, GroupBy, ReviewMeta, Side, Status, Suggestion,
 };
 use crate::source::FileContent;
-
-/// 保存形式の版。読めない版は復元せず、理由を出して終了コード 2 にする。
-pub const FORMAT: u32 = 1;
 
 /// コミット範囲の端を完全な sha に解決する（R-SESSION）。起動時に 1 度だけ呼ぶ。
 pub fn resolve_range(repo: &Path, from: &str, to: &str) -> Result<(String, String), SessionError> {
@@ -153,9 +153,10 @@ impl SessionSummary {
 
 // ---- 保存形式の DTO。ドメイン型に serde を付けず、形式の変更をここに閉じる。 ----
 
+/// `<id>.session` の中身。セッションの情報と状態だけを持ち、凍結したレビューの
+/// メタデータは `<id>.payload` にある（R-SESSION）。
 #[derive(Serialize, Deserialize)]
 struct MetaDto {
-    format: u32,
     info: InfoDto,
     state: StateDto,
     copy: CopyMetaDto,
@@ -196,18 +197,20 @@ struct StateDto {
     last_comment: u32,
 }
 
+/// 写しの状態だけ。「使える」写しの中身は `<id>.payload` にある。
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum CopyMetaDto {
     Pending,
-    Unusable {
-        reason: String,
-    },
-    Ready {
-        startup_unit: Option<String>,
-        units: Vec<UnitDto>,
-        payload_len: u64,
-    },
+    Unusable { reason: String },
+    Ready,
+}
+
+/// `<id>.payload` の前半（JSON）。凍結したレビューのメタデータ。
+#[derive(Serialize, Deserialize)]
+struct CopyDto {
+    startup_unit: Option<String>,
+    units: Vec<UnitDto>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,8 +252,6 @@ struct FileDto {
     focus: bool,
     note: String,
     noise: bool,
-    /// 古い写しには無い（既定 false）。
-    #[serde(default)]
     content_skipped: bool,
 }
 
@@ -279,43 +280,23 @@ struct CommentDto {
     suggestion: Option<String>,
 }
 
-/// payload を読む前の写しの情報。内容は store が payload から組み立てる。
+/// `<id>.session` が書いている写しの状態。中身は store が `<id>.payload` から読む。
 pub(crate) enum CopyMeta {
     Pending,
     Unusable(String),
-    Ready {
-        startup_unit: Option<GroupBy>,
-        units: Vec<FrozenUnit>,
-    },
+    Ready,
 }
 
 impl MetaDto {
-    pub(crate) fn from_parts(
-        info: &SessionInfo,
-        state: &SessionState,
-        copy: &CopyState,
-        payload_len: u64,
-    ) -> Self {
+    pub(crate) fn from_parts(info: &SessionInfo, state: &SessionState, copy: &CopyState) -> Self {
         let copy = match copy {
             CopyState::Pending => CopyMetaDto::Pending,
             CopyState::Unusable(reason) => CopyMetaDto::Unusable {
                 reason: reason.clone(),
             },
-            CopyState::Ready(copy) => CopyMetaDto::Ready {
-                startup_unit: copy.startup_unit.map(GroupBy::as_str).map(str::to_string),
-                units: copy
-                    .units
-                    .iter()
-                    .map(|frozen| UnitDto {
-                        unit: frozen.unit.map(GroupBy::as_str).map(str::to_string),
-                        review: ReviewDto::from(&frozen.review),
-                    })
-                    .collect(),
-                payload_len,
-            },
+            CopyState::Ready(_) => CopyMetaDto::Ready,
         };
         MetaDto {
-            format: FORMAT,
             info: InfoDto {
                 id: info.id.clone(),
                 created: info.created,
@@ -347,22 +328,7 @@ impl MetaDto {
         let copy = match self.copy {
             CopyMetaDto::Pending => CopyMeta::Pending,
             CopyMetaDto::Unusable { reason } => CopyMeta::Unusable(reason),
-            CopyMetaDto::Ready {
-                startup_unit,
-                units,
-                ..
-            } => CopyMeta::Ready {
-                startup_unit: parse_unit(startup_unit)?,
-                units: units
-                    .into_iter()
-                    .map(|unit| {
-                        Ok(FrozenUnit {
-                            unit: parse_unit(unit.unit)?,
-                            review: unit.review.into_parts()?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?,
-            },
+            CopyMetaDto::Ready => CopyMeta::Ready,
         };
         Ok((info, state, copy))
     }
@@ -601,6 +567,47 @@ impl FileDto {
     }
 }
 
+/// 写しを `<id>.payload` の中身（圧縮前）にする。
+pub(crate) fn encode_copy(copy: &SessionCopy) -> Result<Vec<u8>, String> {
+    let meta = CopyDto {
+        startup_unit: copy.startup_unit.map(GroupBy::as_str).map(str::to_string),
+        units: copy
+            .units
+            .iter()
+            .map(|frozen| UnitDto {
+                unit: frozen.unit.map(GroupBy::as_str).map(str::to_string),
+                review: ReviewDto::from(&frozen.review),
+            })
+            .collect(),
+    };
+    let meta = serde_json::to_vec(&meta).map_err(|error| error.to_string())?;
+    let mut body = Vec::new();
+    encoding::push_copy_meta(&mut body, &meta);
+    encoding::encode_contents_into(&mut body, &copy.contents);
+    Ok(body)
+}
+
+/// `encode_copy` の逆。
+pub(crate) fn decode_copy(bytes: &[u8]) -> Result<SessionCopy, String> {
+    let (meta, contents) = encoding::decode_copy_body(bytes).map_err(|error| error.to_string())?;
+    let meta: CopyDto = serde_json::from_slice(meta).map_err(|error| error.to_string())?;
+    let contents = encoding::decode_contents(contents).map_err(|error| error.to_string())?;
+    Ok(SessionCopy {
+        startup_unit: parse_unit(meta.startup_unit)?,
+        units: meta
+            .units
+            .into_iter()
+            .map(|unit| {
+                Ok(FrozenUnit {
+                    unit: parse_unit(unit.unit)?,
+                    review: unit.review.into_parts()?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        contents,
+    })
+}
+
 fn parse_unit(unit: Option<String>) -> Result<Option<GroupBy>, String> {
     match unit.as_deref() {
         None => Ok(None),
@@ -627,6 +634,6 @@ impl MetaDto {
     }
 
     pub(crate) fn is_resumable(&self) -> bool {
-        matches!(self.copy, CopyMetaDto::Ready { .. })
+        matches!(self.copy, CopyMetaDto::Ready)
     }
 }
