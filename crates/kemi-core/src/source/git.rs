@@ -1427,6 +1427,9 @@ mod tests {
         assert_eq!(old, Some(png(1)));
     }
 
+    // symlink を作るので unix だけ。Windows では作成に権限が要り、CI のランナーでは
+    // そもそもコンパイルできない（`std::os::unix`）。
+    #[cfg(unix)]
     #[test]
     fn relative_images_that_are_symlinks_too_large_or_missing_are_not_served() {
         let repo = image_repo();
