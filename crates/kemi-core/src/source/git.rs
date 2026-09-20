@@ -1517,6 +1517,12 @@ mod tests {
         assert!(!is_plain_repository_path("C:x.png"));
     }
 
+    // ファイルの側を作れるのは unix だけ。Windows では `C:x.png` が「C ドライブの
+    // 現在位置からの相対」を意味し、この名前のファイルをリポジトリの中に置けない。
+    // 受け口が拒むこと自体は、上の `is_plain_repository_path` の判定と
+    // `relative_image_paths_that_are_not_plain_repository_paths_are_refused_without_an_error`
+    // が両方の OS で確かめる。
+    #[cfg(unix)]
     #[test]
     fn relative_image_paths_with_a_drive_prefix_are_refused_even_when_such_files_exist() {
         let repo = image_repo();
