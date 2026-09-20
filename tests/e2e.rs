@@ -2111,6 +2111,39 @@ fn resume_listing_ignores_port_bind_and_no_open() {
 }
 
 #[test]
+fn resume_without_an_id_tells_unreadable_version_sessions_apart_from_having_none() {
+    let dir = TempDir::new();
+    // 2 回の起動で同じ保存領域を使う。案内には保存領域のパスが入りうるので、別々の
+    // 保存領域にすると、パスが違うというだけで 2 つの案内が食い違ってしまう。
+    let state = TempDir::new();
+
+    // セッションを 1 つも保留していない場合。
+    let none = run_with_state(&dir.path, &["--resume"], &state.path);
+
+    // 読めない版（版 1）の `<id>.session` だけが残っている場合。版 1 の読み手はもう
+    // 無いので、バイト列を直に書く。
+    let sessions = sessions_dir(&state.path);
+    std::fs::create_dir_all(&sessions).unwrap();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut old = b"kemi-session\n".to_vec();
+    old.push(1);
+    old.extend_from_slice(&2u32.to_le_bytes());
+    old.extend_from_slice(b"{}");
+    std::fs::write(sessions.join(format!("{id}.session")), &old).unwrap();
+
+    let output = run_with_state(&dir.path, &["--resume"], &state.path);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    // 文言は契約にしないが、1 つも保留していない場合と同じ案内で終わってはいけない。
+    assert_ne!(
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&none.stderr),
+        "unreadable-version sessions must not end like having no session at all"
+    );
+}
+
+#[test]
 fn resume_without_sessions_exits_2_with_empty_stdout() {
     let dir = TempDir::new();
     let state = TempDir::new();
