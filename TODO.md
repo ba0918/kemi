@@ -1,6 +1,6 @@
 # 残課題
 
-最終更新: 2026-09-20（v0.1.8 の後、判断待ちを仕様に落として更新）
+最終更新: 2026-09-20（api の子モジュールへの分割の後に更新）
 
 ## 記録のみの指摘（修正要求ではない。詳細はローカルの `.agents/artifacts/reviews/*.json`）
 
@@ -43,6 +43,16 @@ kemi v1 と UI 改訂（`kemi-v1.json`、`kemi-ui-fix.json`）:
   テストにしかない
 - README の `### Exposing kemi to other devices` に残る本文が狭い画面の説明で、スマホの挙動が
   LAN 公開の節を読まないと見つからない
+
+api の子モジュールへの分割（`api-split-2.json`）:
+
+- 由来のエンドポイント一式（`OriginQuery` / `origin` / `unknown_origin` / `origin_json`、約 78 行）は、
+  他から参照されず子へ出せる条件を満たすが、小さいので親に残した
+- `content::normalize(&String::from_utf8_lossy(..))` が `api/file.rs` と `api/rendered.rs` の
+  `side_text` に同形で 2 つある
+- ハイライトの `capable` / `forced` / `enabled` の決め方と JSON が、`api/file.rs` と
+  `api/rendered.rs` に同形で 2 つある
+- `source_content(..).await?.ok_or_else(file_not_found)?` が 3 ファイルに合わせて 6 か所ある
 
 ## アイデア（まだ仕様にしていない）
 
