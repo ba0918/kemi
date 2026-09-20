@@ -1,17 +1,21 @@
 //! セッションファイルの保存・読み出し・掃除・ロック（R-SESSION）。
 //!
-//! 書き込みは一時ファイルから rename する原子的な差し替え。状態の変更のたびに全体を
-//! 書き直すが、写しの payload は gzip 済みのバイト列をそのまま使い回す。
+//! 1 セッションは `<id>.session`（情報と状態）と `<id>.payload`（写し）の 2 つ。
+//! どちらの書き込みも一時ファイルから rename する原子的な差し替え。2 つを同時に
+//! 差し替える方法は無いので、書く順序で不変条件を保つ。写しを保存するときは
+//! `<id>.payload` を先に書き、写しを捨てるときとセッションを消すときは
+//! `<id>.session` を先にする。
+//!
+//! 一時ファイルの名前は `.session` でも `.payload` でも終わらせない。掃除は名前の
+//! 接尾辞で孤児を見分けるので、書き込み中のものが候補に見えてしまう。
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use super::encoding;
 use super::{CopyMeta, CopyState, MetaDto, SessionCopy, SessionInfo, SessionState, SessionSummary};
-use crate::source::FileContent;
 
-/// 写しの上限（圧縮後のバイト数）。超えた写しは捨てて復元不可にする。
+/// 写しの上限（`<id>.payload` 全体のバイト数）。超えた写しは捨てて復元不可にする。
 pub const COPY_LIMIT: u64 = 20 * 1024 * 1024;
 /// 全ワークスペース合計で残すセッション数。
 pub const KEEP_SESSIONS: usize = 100;
@@ -135,13 +139,13 @@ impl SessionStore {
     pub fn open(&self, id: &str) -> Result<OpenSession, SessionError> {
         checked_id(id)?;
         let lock = SessionLock::acquire(&self.dir, id)?;
-        let (meta, payload) = self.read_raw(id)?;
+        let meta = self.read_meta_of(id)?;
         let path = self.path(id);
         let (info, state, copy) = meta.into_parts().map_err(|reason| SessionError::Corrupt {
             path: path.clone(),
             reason,
         })?;
-        let copy = match copy {
+        let (payload, copy) = match copy {
             CopyMeta::Pending => return Err(SessionError::NotReady { id: id.to_string() }),
             CopyMeta::Unusable(reason) => {
                 return Err(SessionError::Unusable {
@@ -149,20 +153,9 @@ impl SessionStore {
                     reason,
                 })
             }
-            CopyMeta::Ready {
-                startup_unit,
-                units,
-            } => {
-                let raw = payload.as_deref().ok_or_else(|| SessionError::Corrupt {
-                    path: path.clone(),
-                    reason: "the copy is missing".to_string(),
-                })?;
-                let contents = decode_contents(&path, raw)?;
-                CopyState::Ready(SessionCopy {
-                    startup_unit,
-                    units,
-                    contents,
-                })
+            CopyMeta::Ready => {
+                let (payload, copy) = self.read_copy(id)?;
+                (Some(payload), CopyState::Ready(copy))
             }
         };
         Ok(OpenSession {
@@ -179,7 +172,7 @@ impl SessionStore {
     /// 保存済みのセッションを、ロックを取らずに読む。
     pub fn read(&self, id: &str) -> Result<StoredSession, SessionError> {
         checked_id(id)?;
-        let (meta, payload) = self.read_raw(id)?;
+        let meta = self.read_meta_of(id)?;
         let path = self.path(id);
         let (info, state, copy) = meta.into_parts().map_err(|reason| SessionError::Corrupt {
             path: path.clone(),
@@ -188,20 +181,12 @@ impl SessionStore {
         let copy = match copy {
             CopyMeta::Pending => CopyState::Pending,
             CopyMeta::Unusable(reason) => CopyState::Unusable(reason),
-            CopyMeta::Ready {
-                startup_unit,
-                units,
-            } => {
-                let raw = payload.as_deref().ok_or_else(|| SessionError::Corrupt {
-                    path: path.clone(),
-                    reason: "the copy is missing".to_string(),
-                })?;
-                CopyState::Ready(SessionCopy {
-                    startup_unit,
-                    units,
-                    contents: decode_contents(&path, raw)?,
-                })
-            }
+            CopyMeta::Ready => match self.read_copy(id) {
+                Ok((_, copy)) => CopyState::Ready(copy),
+                // 写しのファイルが無いセッションは「使えない」として読む（R-SESSION）。
+                Err(SessionError::Unusable { reason, .. }) => CopyState::Unusable(reason),
+                Err(error) => return Err(error),
+            },
         };
         Ok(StoredSession { info, state, copy })
     }
@@ -252,44 +237,56 @@ impl SessionStore {
     /// セッションのファイルを消す。
     pub fn delete(&self, id: &str) -> Result<(), SessionError> {
         checked_id(id)?;
-        let path = self.path(id);
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(SessionError::Io { path, source }),
-        }
+        remove_if_present(&self.path(id))
     }
 
     fn path(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("{id}.session"))
+        session_path(&self.dir, id)
     }
 
-    fn read_raw(&self, id: &str) -> Result<(MetaDto, Option<Vec<u8>>), SessionError> {
-        let path = self.path(id);
-        let bytes = std::fs::read(&path).map_err(|source| match source.kind() {
-            std::io::ErrorKind::NotFound => SessionError::NotFound { id: id.to_string() },
+    fn payload_path(&self, id: &str) -> PathBuf {
+        payload_path(&self.dir, id)
+    }
+
+    fn read_meta_of(&self, id: &str) -> Result<MetaDto, SessionError> {
+        match read_meta(&self.path(id)) {
+            Err(SessionError::NotFound { .. }) => {
+                Err(SessionError::NotFound { id: id.to_string() })
+            }
+            other => other,
+        }
+    }
+
+    /// `<id>.payload` を読み、gzip のバイト列と写しを返す。無いときは「使えない」。
+    fn read_copy(&self, id: &str) -> Result<(Vec<u8>, SessionCopy), SessionError> {
+        let path = self.payload_path(id);
+        let payload = std::fs::read(&path).map_err(|source| match source.kind() {
+            std::io::ErrorKind::NotFound => SessionError::Unusable {
+                id: id.to_string(),
+                reason: "its copy file is missing".to_string(),
+            },
             _ => SessionError::Io {
                 path: path.clone(),
                 source,
             },
         })?;
-        let envelope = encoding::decode_file(&bytes).map_err(|error| SessionError::Corrupt {
+        let corrupt = |reason: String| SessionError::Corrupt {
             path: path.clone(),
-            reason: error.to_string(),
-        })?;
-        if envelope.version != encoding::VERSION {
-            return Err(SessionError::UnsupportedVersion {
-                path,
-                version: envelope.version,
-            });
-        }
-        let meta: MetaDto =
-            serde_json::from_slice(envelope.meta).map_err(|error| SessionError::Corrupt {
-                path: path.clone(),
-                reason: error.to_string(),
-            })?;
-        Ok((meta, envelope.payload.map(<[u8]>::to_vec)))
+            reason,
+        };
+        let body = encoding::gunzip(&payload, encoding::DECOMPRESS_LIMIT)
+            .map_err(|error| corrupt(error.to_string()))?;
+        let copy = super::decode_copy(&body).map_err(corrupt)?;
+        Ok((payload, copy))
     }
+}
+
+fn session_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.session"))
+}
+
+fn payload_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.payload"))
 }
 
 /// 公開の入口で id を検証する（R-SESSION）。ULID でない id は存在しない id と同じ
@@ -300,22 +297,6 @@ fn checked_id(id: &str) -> Result<&str, SessionError> {
     } else {
         Err(SessionError::NotFound { id: id.to_string() })
     }
-}
-
-fn decode_contents(
-    path: &Path,
-    payload: &[u8],
-) -> Result<std::collections::BTreeMap<String, FileContent>, SessionError> {
-    let inflated = encoding::gunzip(payload, encoding::DECOMPRESS_LIMIT).map_err(|error| {
-        SessionError::Corrupt {
-            path: path.to_path_buf(),
-            reason: error.to_string(),
-        }
-    })?;
-    encoding::decode_contents(&inflated).map_err(|error| SessionError::Corrupt {
-        path: path.to_path_buf(),
-        reason: error.to_string(),
-    })
 }
 
 /// 開いているセッション。ロックを保持し、状態か写しが変わるたびに書き直す。
@@ -398,8 +379,8 @@ impl OpenSession {
         now: u128,
         limit: u64,
     ) -> Result<(), SessionError> {
-        let raw = encoding::encode_contents(&copy.contents);
-        let compressed = encoding::gzip(&raw);
+        let body = super::encode_copy(&copy).map_err(|reason| SessionError::Encode { reason })?;
+        let compressed = encoding::gzip(&body);
         if compressed.len() as u64 > limit {
             self.copy = CopyState::Unusable("the review copy is larger than 20 MB".to_string());
             self.payload = None;
@@ -423,16 +404,11 @@ impl OpenSession {
     }
 
     fn path(&self) -> PathBuf {
-        self.dir.join(format!("{}.session", self.info.id))
+        session_path(&self.dir, &self.info.id)
     }
 
     fn remove_file(&self) -> Result<(), SessionError> {
-        let path = self.path();
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(SessionError::Io { path, source }),
-        }
+        remove_if_present(&self.path())
     }
 
     fn persist(&mut self) -> Result<(), SessionError> {
@@ -444,16 +420,17 @@ impl OpenSession {
         if self.state.is_empty() && self.payload.is_none() {
             return self.remove_file();
         }
-        let payload_len = self
-            .payload
-            .as_ref()
-            .map_or(0, |payload| payload.len() as u64);
-        let meta = MetaDto::from_parts(&self.info, &self.state, &self.copy, payload_len);
+        // 写しを保存する経路は `<id>.payload` を先に書く。途中で止まっても、残るのは
+        // どの `<id>.session` からも「使える」と指されていない写しだけになる（R-SESSION）。
+        if let Some(payload) = &self.payload {
+            write_atomic(&self.dir, &payload_path(&self.dir, &self.info.id), payload)?;
+        }
+        let meta = MetaDto::from_parts(&self.info, &self.state, &self.copy);
         let meta = serde_json::to_vec(&meta).map_err(|error| SessionError::Encode {
             reason: error.to_string(),
         })?;
-        let bytes = encoding::encode_file(encoding::VERSION, &meta, self.payload.as_deref());
-        write_atomic(&self.dir, &self.info.id, &bytes)?;
+        let bytes = encoding::encode_session(encoding::VERSION, &meta);
+        write_atomic(&self.dir, &self.path(), &bytes)?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
     }
@@ -500,12 +477,14 @@ impl Drop for SessionLock {
     }
 }
 
-fn write_atomic(dir: &Path, id: &str, bytes: &[u8]) -> Result<(), SessionError> {
+/// 一時ファイルへ書いてから rename する。一時ファイルの名前は、掃除が見る接尾辞
+/// （`.session` と `.payload`）で終わらせない。
+fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
     create_private_dir(dir)?;
-    let temporary = dir.join(format!(".{id}.tmp"));
-    let path = dir.join(format!("{id}.session"));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let temporary = dir.join(format!(".{name}.tmp"));
     let written =
-        write_private_file(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, &path));
+        write_private_file(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, path));
     if let Err(source) = written {
         let _ = std::fs::remove_file(&temporary);
         return Err(SessionError::Io {
@@ -514,6 +493,18 @@ fn write_atomic(dir: &Path, id: &str, bytes: &[u8]) -> Result<(), SessionError> 
         });
     }
     Ok(())
+}
+
+/// あれば消す。無いのは成功と同じに扱う。
+fn remove_if_present(path: &Path) -> Result<(), SessionError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(SessionError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// 上限を超えた分を最終更新の古い順に消す。ロック中のセッションは消さず、件数とバイト数にも
@@ -603,10 +594,10 @@ fn read_updated(path: &Path) -> Option<u128> {
     Some(read_meta(path).ok()?.summary().0.updated)
 }
 
-/// meta だけを読む。payload はファイルの後ろにまとまっているので、先頭の固定長から
-/// meta の長さを知ってそこまでで読むのをやめる（一覧と掃除は payload を使わない）。
+/// `<id>.session` を読む。写しは別のファイルなので、ここで読むのは情報と状態だけ
+/// （一覧と掃除は写しを読まない）。
 fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
-    let mut file = std::fs::File::open(path).map_err(|source| match source.kind() {
+    let bytes = std::fs::read(path).map_err(|source| match source.kind() {
         std::io::ErrorKind::NotFound => SessionError::NotFound {
             id: path
                 .file_stem()
@@ -623,31 +614,15 @@ fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
         path: path.to_path_buf(),
         reason,
     };
-    let mut head = [0u8; encoding::HEAD_LEN];
-    file.read_exact(&mut head)
-        .map_err(|error| corrupt(error.to_string()))?;
-    let (version, length) =
-        encoding::decode_head(&head).map_err(|error| corrupt(error.to_string()))?;
+    let (version, meta) =
+        encoding::decode_session(&bytes).map_err(|error| corrupt(error.to_string()))?;
     if version != encoding::VERSION {
         return Err(SessionError::UnsupportedVersion {
             path: path.to_path_buf(),
             version,
         });
     }
-    // 長さはファイルの中の値なので、壊れたファイルで巨大な確保を試みないように
-    // 実際の大きさで頭打ちにする（`decode_file` の境界検査に当たる）。
-    let rest = file
-        .metadata()
-        .map_err(|error| corrupt(error.to_string()))?
-        .len()
-        .saturating_sub(encoding::HEAD_LEN as u64);
-    if length as u64 > rest {
-        return Err(corrupt("metadata is cut off".to_string()));
-    }
-    let mut meta = vec![0u8; length];
-    file.read_exact(&mut meta)
-        .map_err(|error| corrupt(error.to_string()))?;
-    serde_json::from_slice(&meta).map_err(|error| corrupt(error.to_string()))
+    serde_json::from_slice(meta).map_err(|error| corrupt(error.to_string()))
 }
 
 fn is_locked(dir: &Path, id: &str) -> bool {
@@ -898,6 +873,35 @@ mod tests {
         assert_eq!(opened.state(), &state_with_comment());
         assert_eq!(opened.copy(), &CopyState::Ready(copy()));
         assert!(opened.is_resumable());
+        assert!(scratch.dir().join(format!("{id}.session")).exists());
+        assert!(scratch.dir().join(format!("{id}.payload")).exists());
+    }
+
+    #[test]
+    fn session_file_holds_no_frozen_review_paths() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        // 状態のどのコメントも指していないパスだけを写しに入れる。
+        let mut only_in_the_copy = copy();
+        only_in_the_copy.units[0].review.groups[0].files[0].path =
+            "src/needle_marker.rs".to_string();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.save_copy_with_limit(only_in_the_copy, 300, COPY_LIMIT)
+            .unwrap();
+        let id = open.id().to_string();
+        drop(open);
+
+        let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
+
+        assert!(
+            !bytes
+                .windows(b"needle_marker".len())
+                .any(|window| window == b"needle_marker"),
+            "the frozen review paths must not be in the session file"
+        );
     }
 
     #[test]
@@ -930,15 +934,12 @@ mod tests {
         let id = open.id().to_string();
         drop(open);
 
-        let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
-        let envelope = encoding::decode_file(&bytes).unwrap();
-        let inflated =
-            encoding::gunzip(envelope.payload.unwrap(), encoding::DECOMPRESS_LIMIT).unwrap();
+        let bytes = std::fs::read(scratch.dir().join(format!("{id}.payload"))).unwrap();
+        // 写しのファイルは全体が 1 つの gzip で、目印も版も持たない。
+        assert_eq!(&bytes[..3], &[0x1f, 0x8b, 0x08]);
+        let inflated = encoding::gunzip(&bytes, encoding::DECOMPRESS_LIMIT).unwrap();
 
-        assert_eq!(
-            encoding::decode_contents(&inflated).unwrap(),
-            copy().contents
-        );
+        assert_eq!(super::super::decode_copy(&inflated).unwrap(), copy());
     }
 
     #[test]
@@ -954,7 +955,11 @@ mod tests {
             "big".to_string(),
             content(None, Some(&incompressible(1024))),
         );
-        open.save_copy_with_limit(oversized, 200, 128).unwrap();
+        // 上限は `<id>.payload` 全体で判定する（R-SESSION）。変更ファイルの内容だけで
+        // ちょうど収まる上限を渡し、凍結したレビューのメタデータの分で超えさせる。
+        let contents_only = encoding::gzip(&encoding::encode_contents(&oversized.contents)).len();
+        open.save_copy_with_limit(oversized, 200, contents_only as u64)
+            .unwrap();
         let id = open.id().to_string();
         assert!(matches!(open.copy(), CopyState::Unusable(_)));
         drop(open);
@@ -985,7 +990,12 @@ mod tests {
         let store = SessionStore::new(scratch.dir());
         std::fs::create_dir_all(scratch.dir()).unwrap();
         let id = "01HF7YAT00BBBBBBBBBBBBBBBB";
-        write_atomic(&scratch.dir(), id, &encoding::encode_file(99, b"{}", None)).unwrap();
+        write_atomic(
+            &scratch.dir(),
+            &scratch.dir().join(format!("{id}.session")),
+            &encoding::encode_session(99, b"{}"),
+        )
+        .unwrap();
 
         assert!(matches!(
             store.read(id),
@@ -1033,7 +1043,7 @@ mod tests {
             .unwrap();
         open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
         let id = open.id().to_string();
-        let temporary = scratch.dir().join(format!(".{id}.tmp"));
+        let temporary = scratch.dir().join(format!(".{id}.session.tmp"));
         std::fs::write(&temporary, b"part of the next write").unwrap();
 
         let stored = store.read(&id).unwrap();
@@ -1306,13 +1316,16 @@ mod tests {
             .permissions()
             .mode()
             & 0o777;
-        let file_mode = std::fs::metadata(scratch.dir().join(format!("{id}.session")))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode_of = |name: String| {
+            std::fs::metadata(scratch.dir().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
 
         assert_eq!(dir_mode, 0o700);
-        assert_eq!(file_mode, 0o600);
+        assert_eq!(mode_of(format!("{id}.session")), 0o600);
+        assert_eq!(mode_of(format!("{id}.payload")), 0o600);
     }
 }

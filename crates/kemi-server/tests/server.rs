@@ -2471,6 +2471,9 @@ async fn session_copy_over_the_limit_is_unresumable() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(store.list().unwrap().is_empty());
+    // 上限の判定は `<id>.payload` 全体で行い、超える写しはディスクに書かない
+    // （R-SESSION）。
+    assert!(!dir.join(format!("{id}.payload")).exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

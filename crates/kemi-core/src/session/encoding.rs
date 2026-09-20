@@ -1,10 +1,17 @@
-//! セッションファイルの符号化（R-SESSION）。外側は版つきのヘッダ、内容は 1 つの gzip。
+//! セッションの 2 つのファイルの符号化（R-SESSION）。
+//!
+//! `<id>.session` は版つきのヘッダと meta（JSON）だけ。
 //!
 //! ```text
-//! "kemi-session\n" (13 バイト) | 版 (u8) | meta の長さ (u32 LE) | meta (JSON) | payload (gzip)
+//! "kemi-session\n" (13 バイト) | 版 (u8) | meta の長さ (u32 LE) | meta (JSON)
 //! ```
 //!
-//! payload は内容のバイナリレコードを gzip で包んだもの。meta は人が読める形に残す。
+//! `<id>.payload` は写しをひとまとまりの gzip にしたもの。目印も版も付けない
+//! （読み手は `<id>.session` の版を確かめてからでないと見に行かない）。展開すると:
+//!
+//! ```text
+//! 写しのメタデータの長さ (u32 LE) | 写しのメタデータ (JSON) | 内容のバイナリレコード
+//! ```
 
 use std::collections::BTreeMap;
 
@@ -12,8 +19,8 @@ use crate::source::FileContent;
 
 /// ファイル先頭の目印。読めないファイルを黙ってセッションにしない。
 pub(crate) const MAGIC: &[u8] = b"kemi-session\n";
-/// 保存形式の版。
-pub(crate) const VERSION: u8 = 1;
+/// セッション形式の版。
+pub(crate) const VERSION: u8 = 2;
 /// 展開後の写しの上限。壊れたファイルが巨大なメモリを取らないように。
 pub(crate) const DECOMPRESS_LIMIT: usize = 1024 * 1024 * 1024;
 
@@ -34,25 +41,21 @@ impl std::fmt::Display for DecodeError {
     }
 }
 
-/// 版・meta・payload を 1 つのファイルにする。payload は gzip 済みのバイト列。
-pub(crate) fn encode_file(version: u8, meta: &[u8], payload: Option<&[u8]>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(MAGIC.len() + 5 + meta.len() + payload.map_or(0, <[u8]>::len));
+/// 版と meta を `<id>.session` のバイト列にする。
+pub(crate) fn encode_session(version: u8, meta: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEAD_LEN + meta.len());
     out.extend_from_slice(MAGIC);
     out.push(version);
     out.extend_from_slice(&(meta.len() as u32).to_le_bytes());
     out.extend_from_slice(meta);
-    if let Some(payload) = payload {
-        out.extend_from_slice(payload);
-    }
     out
 }
 
-/// 先頭の固定長（目印・版・meta の長さ）。ここまで読めば meta の長さが分かる。
-pub(crate) const HEAD_LEN: usize = MAGIC.len() + 1 + 4;
+/// 先頭の固定長（目印・版・meta の長さ）。
+const HEAD_LEN: usize = MAGIC.len() + 1 + 4;
 
-/// 先頭の固定長から版と meta の長さを取り出す。payload を読まずに meta だけ欲しい
-/// 読み手（一覧と掃除）のために、`decode_file` と同じ並びを先頭だけで読む。
-pub(crate) fn decode_head(head: &[u8]) -> Result<(u8, usize), DecodeError> {
+/// 先頭の固定長から版と meta の長さを取り出す。
+fn decode_head(head: &[u8]) -> Result<(u8, usize), DecodeError> {
     let rest = head.strip_prefix(MAGIC).ok_or(DecodeError::NotASession)?;
     let (&version, rest) = rest
         .split_first()
@@ -64,28 +67,37 @@ pub(crate) fn decode_head(head: &[u8]) -> Result<(u8, usize), DecodeError> {
     Ok((version, length))
 }
 
-/// ファイルを版・meta・payload（gzip のまま）に分けたもの。
-#[derive(Debug)]
-pub(crate) struct Envelope<'a> {
-    pub version: u8,
-    pub meta: &'a [u8],
-    pub payload: Option<&'a [u8]>,
-}
-
-/// ファイルを版・meta・payload（gzip のまま）に分ける。
-pub(crate) fn decode_file(bytes: &[u8]) -> Result<Envelope<'_>, DecodeError> {
+/// `<id>.session` のバイト列を版と meta に分ける。長さを持つので、途中で切れた
+/// 書き込みをセッションとして読まない。
+pub(crate) fn decode_session(bytes: &[u8]) -> Result<(u8, &[u8]), DecodeError> {
     let (version, length) = decode_head(bytes)?;
     let rest = &bytes[HEAD_LEN..];
     if rest.len() < length {
         return Err(DecodeError::Corrupt("metadata is cut off"));
     }
-    let meta = &rest[..length];
-    let payload = &rest[length..];
-    Ok(Envelope {
-        version,
-        meta,
-        payload: (!payload.is_empty()).then_some(payload),
-    })
+    Ok((version, &rest[..length]))
+}
+
+/// 写しのメタデータと内容のレコードを、`<id>.payload` の中身（展開後）にする。
+pub(crate) fn encode_copy_body(meta: &[u8], contents: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + meta.len() + contents.len());
+    out.extend_from_slice(&(meta.len() as u32).to_le_bytes());
+    out.extend_from_slice(meta);
+    out.extend_from_slice(contents);
+    out
+}
+
+/// `encode_copy_body` の逆。
+pub(crate) fn decode_copy_body(bytes: &[u8]) -> Result<(&[u8], &[u8]), DecodeError> {
+    if bytes.len() < 4 {
+        return Err(DecodeError::Corrupt("no copy metadata length"));
+    }
+    let length = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes")) as usize;
+    let rest = &bytes[4..];
+    if rest.len() < length {
+        return Err(DecodeError::Corrupt("copy metadata is cut off"));
+    }
+    Ok((&rest[..length], &rest[length..]))
 }
 
 /// gzip のメンバー 1 つに包む。mtime は残さない。
@@ -312,40 +324,40 @@ mod tests {
     }
 
     #[test]
-    fn file_envelope_roundtrips() {
-        let encoded = encode_file(7, b"{\"a\":1}", Some(b"\x1f\x8bpayload"));
+    fn session_file_roundtrips_the_version_and_metadata() {
+        let encoded = encode_session(7, b"{\"a\":1}");
 
-        let envelope = decode_file(&encoded).unwrap();
+        let (version, meta) = decode_session(&encoded).unwrap();
 
-        assert_eq!(envelope.version, 7);
-        assert_eq!(envelope.meta, b"{\"a\":1}");
-        assert_eq!(envelope.payload, Some(b"\x1f\x8bpayload".as_slice()));
+        assert_eq!(version, 7);
+        assert_eq!(meta, b"{\"a\":1}");
     }
 
     #[test]
-    fn file_envelope_without_payload_roundtrips() {
-        let encoded = encode_file(VERSION, b"{}", None);
-
-        let envelope = decode_file(&encoded).unwrap();
-
-        assert_eq!(envelope.meta, b"{}");
-        assert_eq!(envelope.payload, None);
+    fn session_file_rejects_foreign_and_cut_off_bytes() {
+        assert_eq!(decode_session(b"{}").unwrap_err(), DecodeError::NotASession);
+        assert!(decode_session(b"kemi-session\n").is_err());
+        assert!(decode_session(b"kemi-session\n\x01\x05").is_err());
+        // 長さより短いところで切れた書き込みは、セッションとして読まない。
+        let encoded = encode_session(VERSION, b"{\"a\":1}");
+        assert!(decode_session(&encoded[..encoded.len() - 1]).is_err());
     }
 
     #[test]
-    fn file_envelope_rejects_foreign_and_cut_off_bytes() {
-        assert_eq!(decode_file(b"{}").unwrap_err(), DecodeError::NotASession);
-        assert!(decode_file(b"kemi-session\n").is_err());
-        assert!(decode_file(b"kemi-session\n\x01\x05").is_err());
+    fn copy_body_roundtrips_metadata_and_contents() {
+        let encoded = encode_copy_body(b"{\"units\":[]}", b"\x00\x01\xff");
+
+        let (meta, contents) = decode_copy_body(&encoded).unwrap();
+
+        assert_eq!(meta, b"{\"units\":[]}");
+        assert_eq!(contents, b"\x00\x01\xff");
     }
+
     #[test]
-    fn head_gives_the_version_and_metadata_length_without_the_payload() {
-        let meta = br#"{"format":1}"#;
-        let bytes = encode_file(VERSION, meta, Some(&vec![3u8; 64 * 1024]));
+    fn copy_body_rejects_a_cut_off_record() {
+        let encoded = encode_copy_body(b"{\"units\":[]}", b"");
 
-        let (version, length) = decode_head(&bytes[..HEAD_LEN]).unwrap();
-
-        assert_eq!(version, VERSION);
-        assert_eq!(length, meta.len());
+        assert!(decode_copy_body(&encoded[..encoded.len() - 1]).is_err());
+        assert!(decode_copy_body(b"\x01\x02").is_err());
     }
 }
