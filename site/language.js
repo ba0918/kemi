@@ -100,7 +100,6 @@ const messages = {
   }
 };
 
-const languageKey = 'kemi-site-language';
 function showLanguage(language) {
   const copy = messages[language];
   document.documentElement.lang = language;
@@ -116,17 +115,11 @@ function showLanguage(language) {
     button.setAttribute('aria-pressed', String(button.dataset.language === language));
   });
 }
-let initialLanguage = 'en';
-try {
-  const saved = localStorage.getItem(languageKey);
-  if (saved === 'ja' || saved === 'en') initialLanguage = saved;
-} catch { /* 保存を許可しないブラウザでも言語切替は使える。 */ }
-showLanguage(initialLanguage);
+showLanguage(siteLanguage.read('kemi-site-language'));
 document.querySelectorAll('[data-language]').forEach(button => {
   button.addEventListener('click', () => {
     const language = button.dataset.language;
     showLanguage(language);
-    try { localStorage.setItem(languageKey, language); }
-    catch { /* 保存できない場合も現在の選択は適用済み。 */ }
+    siteLanguage.save(language);
   });
 });
