@@ -163,6 +163,10 @@ function handleKey(event) {
   }
 }
 
+/** 渡す前にすること。`--live` のレビューでだけ、ページの見方を読み込んだ後に入れる。 */
+/** @type {() => Promise<void>} */
+let beforeHand = async () => {};
+
 async function boot() {
   // サーバはつながる前の通知を送り直さないので、先に通知につながってから中身を読む（読んだ後、
   // つながる前に起きたことを取りこぼさない）。読んだ中身を描き終えるまでに届いた通知は、
@@ -213,8 +217,9 @@ async function boot() {
     }
     // ページの見方は `--live` のレビューでだけ読み込む（R-VERIFY）。modulepreload にも載せない。
     if (state.review?.live) {
-      const { startLive } = await import("./features/live.js");
+      const { startLive, captureBeforeHand } = await import("./features/live.js");
       startLive(state.review.live);
+      beforeHand = captureBeforeHand;
     }
   } catch (error) {
     failed = true;
@@ -294,6 +299,7 @@ bindActions({
   setThreadFolded,
   setResolved: (comment, resolved) => void setResolved(comment, resolved),
   applyRenderedView,
+  beforeHand: () => beforeHand(),
   closeDrawer,
   closeEditor,
   collapseAll,

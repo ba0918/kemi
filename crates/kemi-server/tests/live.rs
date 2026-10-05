@@ -549,35 +549,6 @@ async fn a_snapshot_of_an_unknown_kind_is_refused() {
     assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
-#[tokio::test]
-async fn handing_to_the_agent_asks_the_page_for_a_snapshot() {
-    let (authority, _dev) = start_dev_server().await;
-    let running = start_review(&authority).await;
-    let mut events = reqwest::get(format!("{}api/events", running.review))
-        .await
-        .unwrap();
-    post_review(
-        &running,
-        "api/message",
-        serde_json::json!({ "body": "look" }),
-    )
-    .await;
-
-    let handed = post_review(&running, "api/hand", serde_json::json!({})).await;
-    assert_eq!(handed.status(), StatusCode::OK);
-
-    let mut buffer = String::new();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !buffer.contains("event: handed") {
-        let chunk = tokio::time::timeout_at(deadline, events.chunk())
-            .await
-            .expect("no handed event")
-            .unwrap()
-            .expect("the event stream ended");
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-    }
-}
-
 // ---- モック（live-compare.md の R-PAGE-MOCK） ----
 
 #[tokio::test]

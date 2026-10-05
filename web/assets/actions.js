@@ -29,6 +29,7 @@
  *   setThreadFolded: (id: string, folded: boolean) => void,
  *   setResolved: (comment: any, resolved: boolean) => void,
  *   applyRenderedView: (entry: import("./state.js").Entry) => Promise<void>,
+ *   beforeHand: () => Promise<void>,
  *   closeDrawer: () => void,
  *   collapseAll: () => void,
  *   closeEditor: () => void,

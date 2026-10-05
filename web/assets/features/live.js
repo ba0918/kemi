@@ -169,8 +169,6 @@ export function startLive(info) {
   shell.recordButton.addEventListener("click", () => void capture("manual"));
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
-  // エージェントに渡すたびに、表示中のページのスナップショットを取る（R-PAGE-SNAPSHOT）。
-  api.onServerEvent("handed", () => void capture("handed"));
   new ResizeObserver(() => layoutFrames()).observe(shell.stage);
 
   shell.liveFrame.src = live.origin + live.page;
@@ -339,6 +337,15 @@ function takeStartSnapshot() {
 }
 
 /**
+ * エージェントに渡す前に、渡す画面で表示中のページのスナップショットを取る
+ * （R-PAGE-SNAPSHOT）。渡した後に取ると、渡されたエージェントがもうページを変えていることが
+ * ある。取れなくても渡すのは止めない（取れなかったことは画面に出る）。
+ */
+export async function captureBeforeHand() {
+  await capture("handed");
+}
+
+/**
  * 表示中のページのスナップショットを取り、預ける。2 MB を超えるものは取らず、そのことを
  * 出す。比べる相手は 1 つ前のまま（R-PAGE-SNAPSHOT）。
  * @param {"start" | "handed" | "manual"} kind
@@ -346,6 +353,11 @@ function takeStartSnapshot() {
 async function capture(kind) {
   const frame = shell?.liveFrame.contentWindow;
   if (!frame || !live.reachable) {
+    // 開始時のものは、つながったときに取り直す。
+    if (kind !== "start") {
+      live.refNotice = "Not recorded: the page is not loaded";
+      render();
+    }
     return;
   }
   const id = nextCapture++;

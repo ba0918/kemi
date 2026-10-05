@@ -130,6 +130,22 @@ async function post(url, path, body) {
   return JSON.parse(text);
 }
 
+/**
+ * 画面の「Hand to agent」で渡す。ボタンはエージェントが kemi wait を呼んだレビューにだけ出るので、
+ * 先に待たせておき、渡して返るのを待つ。
+ */
+async function handInThePage(kemi, dir, state) {
+  const waiting = new Promise((done, fail) => {
+    const child = spawn(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: environment(state), stdio: ['ignore', 'pipe', 'pipe'] });
+    child.on('error', fail);
+    child.on('exit', (code) => done(code));
+  });
+  const button = `(${visible('#rail-hand')} ? document.querySelector('#rail-hand') : ${visible('#btn-hand')} ? document.querySelector('#btn-hand') : null)`;
+  await waitFor(`${button} !== null && !${button}.disabled`);
+  await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
+  assert.equal(await waiting, 0, 'kemi wait returns what was handed');
+}
+
 async function stop(kemi) {
   kemi.child.kill('SIGINT');
   return kemi.exited;
@@ -506,7 +522,7 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     console.log('PASS スナップショットを持つ 2 つのページがツリーに表示幅と並び、押すとそのページ・その幅に移る');
 
     await post(kemi.url, 'api/message', { body: 'please look' });
-    await post(kemi.url, 'api/hand', {});
+    await handInThePage(kemi, repository, state);
     await waitFor(showsSnapshot('Handed 1'));
     console.log('PASS エージェントに渡すと表示中のページのスナップショットを取り、それが既定の比べる相手になる');
   } finally {
@@ -556,7 +572,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await post(kemi.url, 'api/message', { body: 'before the mock' });
-    await post(kemi.url, 'api/hand', {});
+    await handInThePage(kemi, repository, state);
     await waitFor(showsSnapshot('Handed 1'));
 
     for (const [path, reason] of [[`../${basename(outside)}`, 'outside'], ['mocks/notes.txt', '.html or .htm']]) {
