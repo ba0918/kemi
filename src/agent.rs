@@ -70,10 +70,11 @@ pub fn run(command: Command, sessions: Option<PathBuf>, endpoints: Option<PathBu
             };
             let body = serde_json::json!({ "timeout_ms": timeout.map(|seconds| seconds.saturating_mul(1000)) });
             match post(&endpoint, "wait", body.to_string().as_bytes()) {
-                Ok((200, answer)) => match acknowledge(&endpoint, &answer) {
-                    Ok(()) => print_events(&id, &answer),
-                    Err(message) => failed(&message),
-                },
+                Ok((200, answer)) => {
+                    finish_wait(&id, &answer, &mut std::io::stdout().lock(), || {
+                        acknowledge(&endpoint, &answer)
+                    })
+                }
                 Ok((_, answer)) => refused(&answer),
                 Err(message) => failed(&message),
             }
@@ -122,10 +123,28 @@ fn find(id: &str, sessions: Option<PathBuf>, endpoints: Option<PathBuf>) -> Resu
     }
 }
 
-/// 応答を受け取りきったことをレビューに知らせる。知らせるまで、レビューは起きたことを
-/// 消さずに持ち、途中で終わった `kemi wait` の分は次の `kemi wait` が受け取る。知らせが
-/// 届かなければ何も出さずに終わり、起きたことは次の `kemi wait` に残る。時間切れと、
-/// submit を含む応答（レビューは止まり始めている）では知らせない。
+/// 起きたことを stdout に出し終えてから、受け取ったことをレビューに知らせる。知らせるまで、
+/// レビューは起きたことを消さずに持ち、出せずに終わった `kemi wait` の分は次の `kemi wait` が
+/// 受け取る。出し終えた後に知らせが届かなくても（知らせる前に submit されると、レビューは
+/// もうつなぎを受けない）、出したものは失われていないので、出したものに合った終了コードで
+/// 終わる。知らせを先にすると、その submit で起きたことが誰にも渡らずに消える。
+fn finish_wait(
+    id: &str,
+    answer: &serde_json::Value,
+    out: &mut dyn Write,
+    acknowledge: impl FnOnce() -> Result<(), String>,
+) -> i32 {
+    let code = match print_events(id, answer, out) {
+        Ok(code) => code,
+        Err(error) => return failed(&format!("cannot print the events: {error}")),
+    };
+    // 知らせが届かなかったら、次の `kemi wait` が同じ起きたことをもう一度受け取ることがある。
+    let _ = acknowledge();
+    code
+}
+
+/// 受け取りの知らせ。時間切れと、submit を含む応答（レビューは止まり始めている）では
+/// 知らせない。
 fn acknowledge(endpoint: &Endpoint, answer: &serde_json::Value) -> Result<(), String> {
     let submitted = answer
         .get("events")
@@ -141,9 +160,9 @@ fn acknowledge(endpoint: &Endpoint, answer: &serde_json::Value) -> Result<(), St
     }
 }
 
-fn print_events(id: &str, answer: &serde_json::Value) -> i32 {
+fn print_events(id: &str, answer: &serde_json::Value, out: &mut dyn Write) -> std::io::Result<i32> {
     if answer.get("timeout").and_then(serde_json::Value::as_bool) == Some(true) {
-        return 3;
+        return Ok(3);
     }
     let events = answer.get("events").cloned().unwrap_or_default();
     // submit が入っていれば、終了コードは submit と同じ（承認 0 / 変更要求 1）。
@@ -154,11 +173,13 @@ fn print_events(id: &str, answer: &serde_json::Value) -> i32 {
             .and_then(|event| event["result"]["verdict"].as_str())
             .map(str::to_string)
     });
-    print_json(&serde_json::json!({ "kemi": 2, "review": id, "events": events }));
-    match verdict.as_deref() {
+    let printed = serde_json::json!({ "kemi": 2, "review": id, "events": events });
+    writeln!(out, "{printed}")?;
+    out.flush()?;
+    Ok(match verdict.as_deref() {
         Some("changes_requested") => 1,
         _ => 0,
-    }
+    })
 }
 
 fn print_json(value: &serde_json::Value) {
@@ -263,6 +284,58 @@ fn dechunk(mut rest: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn handed_answer() -> serde_json::Value {
+        serde_json::json!({
+            "events": [{ "type": "handed", "comments": [], "replies": [], "messages": [] }],
+            "through": 1
+        })
+    }
+
+    /// 受け取りの知らせが届かない（submit でレビューが止まり始め、つなげない）ときも、
+    /// 受け取った起きたことは出して、それに合った終了コードで終わる。
+    #[test]
+    fn events_are_printed_even_if_the_review_stopped_before_the_acknowledgement() {
+        let answer = handed_answer();
+        let mut out = Vec::new();
+
+        let code = finish_wait("01K5", &answer, &mut out, || {
+            Err("cannot reach the review".to_string())
+        });
+
+        assert_eq!(code, 0);
+        let printed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(
+            printed,
+            serde_json::json!({ "kemi": 2, "review": "01K5", "events": answer["events"] })
+        );
+    }
+
+    struct ClosedStdout;
+
+    impl Write for ClosedStdout {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    /// 出せなかった起きたことは受け取ったと知らせず、次の `kemi wait` に残す。
+    #[test]
+    fn events_that_could_not_be_printed_are_not_acknowledged() {
+        let mut acknowledged = false;
+
+        let code = finish_wait("01K5", &handed_answer(), &mut ClosedStdout, || {
+            acknowledged = true;
+            Ok(())
+        });
+
+        assert_eq!(code, 2);
+        assert!(!acknowledged);
+    }
 
     #[test]
     fn a_chunked_answer_is_put_back_together() {
