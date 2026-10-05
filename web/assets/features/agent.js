@@ -46,8 +46,17 @@ export function applyMessage(message) {
  * （コメントの増減は更新バッジに任せる）。
  */
 export async function resyncAgent() {
+  const comments = state.allComments;
+  const messages = state.messages;
+  const agent = state.agent;
   try {
     const review = await api.getReview(false, state.unit);
+    // 読んでいる間に通知か書いた応答を取り込んでいたら、読んだものはそれより古いことがある。
+    // 古いもので上書きすると、届いた返信や発言が消え、状態が戻るので、読み直す。
+    if (state.allComments !== comments || state.messages !== messages || state.agent !== agent) {
+      await resyncAgent();
+      return;
+    }
     const fresh = new Map((review.comments || []).map((/** @type {any} */ comment) => [comment.id, comment]));
     updateComments((comments) => comments.map((comment) => fresh.get(comment.id) || comment));
     state.messages = review.messages || [];
