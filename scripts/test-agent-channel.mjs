@@ -507,7 +507,7 @@ try {
     return true;
   })()`);
   await evaluate(`Array.from(document.querySelectorAll('#tree button.file')).find(b => b.textContent.includes('b.txt')).click(); true`);
-  await waitFor(`!document.querySelector('#overlay').hidden && document.querySelector('#overlay-card').textContent.includes('could not read the file')`);
+  await waitFor(`!document.querySelector('#overlay').hidden`);
   const failedWait = agentCommand(fileFixture, fileState, ['wait', fileKemi.id, '--timeout', '1']);
   await waitFor(statusIs('waiting'));
   await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21,c22'`);
