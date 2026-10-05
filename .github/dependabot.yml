@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # 公開直後の版は、乗っ取られた版が取り下げられるまで待ってから提案させる。
+    cooldown:
+      default-days: 7
+    # release.yml は dist の生成物で、actions の固定は dist-workspace.toml の
+    # github-action-commits が正典。ここで書き換えると dist plan が「生成物が古い」で落ちる。
+    exclude-paths:
+      - .github/workflows/release.yml
