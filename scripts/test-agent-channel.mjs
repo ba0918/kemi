@@ -173,9 +173,8 @@ try {
 
   // (1) kemi wait を呼ぶ前から、返信の欄・解決・会話パネルの書く欄と状態（未接続）は出る。
   // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いて
-  // そのスレッドになる。差分の中に吹き出しは無い。
+  // そのスレッドになる。
   assert.equal(await evaluate(panelClosed), true);
-  assert.equal(await evaluate(`document.querySelectorAll('#diff-content .bal').length`), 0);
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);

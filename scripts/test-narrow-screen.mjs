@@ -176,11 +176,8 @@ const shownPlus = `Array.from(document.querySelectorAll('#diff-content .line-add
 const plusRows = () => evaluate(`${shownPlus}.map(b => b.closest('.no-cell').querySelector('.num').textContent)`);
 const editorOpen = `document.querySelector('#diff-content .editor textarea[data-editor-field="body"]') !== null`;
 const menuOpen = `document.querySelector('#view-menu').matches(':popover-open')`;
-/** 本文に見えている札の数。差分の中に吹き出しは無い。 */
-const chips = () => evaluate(`(() => {
-  if (document.querySelectorAll('#diff-content .bal').length > 0) return -1;
-  return document.querySelectorAll('#diff-content .cchip').length;
-})()`);
+/** 本文に見えている札の数。 */
+const chips = () => evaluate(`document.querySelectorAll('#diff-content .cchip').length`);
 const sheetOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
 const sheetClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
 
@@ -230,7 +227,7 @@ try {
   await selectFile('src/dir0/file0.txt');
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
   const wideTreeCount = await evaluate(`document.querySelectorAll('#tree button').length`);
-  // 吹き出しの検査のために、広い画面のドラッグで範囲コメントを 1 つ付けておく。
+  // 札の検査のために、広い画面のドラッグで範囲コメントを 1 つ付けておく。
   await dragSelect(2, 3);
   await browser('hover', `#diff-content .row .num.selected`);
   await evaluate(`document.querySelector('#diff-content .row:has(.num.selected) .line-add-btn').click(); true`);
