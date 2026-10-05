@@ -1263,7 +1263,7 @@ function renderedBlockFor(blocks, comment) {
 }
 
 /**
- * 描画表示でのコメントの置き場（R-RENDER）。`byBlock` はブロックの添字ごとの吹き出し、`top` は
+ * 描画表示でのコメントの置き場（R-RENDER）。`byBlock` はブロックの添字ごとの札、`top` は
  * 文書の先頭に出すもの、`floating` はファイル全体のコメント。
  * @param {RenderedBlock[]} blocks
  * @param {any[]} comments
@@ -1294,8 +1294,8 @@ export function placeRenderedComments(blocks, comments) {
 }
 
 /**
- * 描画表示で止まる場所（R-NAV）。変更の印の付いたブロックと、コメントの吹き出しの位置。
- * 文書の先頭の吹き出しは -1。昇順。
+ * 描画表示で止まる場所（R-NAV）。変更の印の付いたブロックと、コメントの札の位置。
+ * 文書の先頭の札は -1。昇順。
  * @param {RenderedBlock[]} blocks
  * @param {any[]} comments
  * @returns {number[]}
@@ -1539,20 +1539,6 @@ export function effectiveDisplay(settings) {
     return { mode: "unified", wrap: settings.narrowWrap };
   }
   return { mode: settings.mode, wrap: settings.wrap };
-}
-
-/**
- * 狭い画面で、そのコメントの吹き出し（畳んだ札を含む）を出すか。「Comments」で隠して
- * いる間は、会話パネルから移ったそのコメントだけを出す（R-NARROW）。広い画面では常に出す。
- * @param {{ narrow: boolean, narrowComments: boolean, narrowOnlyComment: string | null }} settings
- * @param {string} id
- * @returns {boolean}
- */
-export function balloonShown(settings, id) {
-  if (!settings.narrow) {
-    return true;
-  }
-  return settings.narrowComments || settings.narrowOnlyComment === id;
 }
 
 /** @typedef {{ called: boolean, status: string, unhanded: number }} AgentState */

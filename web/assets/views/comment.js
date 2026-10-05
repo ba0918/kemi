@@ -1,22 +1,16 @@
 // @ts-check
-// コメントの札と吹き出し、コメントを書く欄。
+// コメントの札と、コメントを書く欄（新しく書く・編集する）。
 
 import { actions } from "../actions.js";
 import { button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { saveDraft } from "../storage.js";
-import {
-  authorLabel,
-  commentLabel,
-  draftKey,
-  firstLine,
-  suggestionAllowed,
-} from "../model.js";
+import { commentLabel, draftKey, suggestionAllowed, threadChip } from "../model.js";
 
 /** @typedef {import("../state.js").Editor} Editor */
 
 /**
- * 編集中ならエディタ、そうでなければコメント（札か吹き出し）。
+ * 編集中ならエディタ、そうでなければコメントの札。
  * @param {any} comment
  * @returns {HTMLElement}
  */
@@ -25,170 +19,49 @@ export function renderCommentOrEditor(comment) {
   if (editor && editor.editId === comment.id) {
     return renderEditor(editor);
   }
-  return renderComment(comment);
+  return renderChip(comment);
 }
 
 /**
- * コメントを、既定では本文の 1 行目を見せる札に畳んで出し、押すと吹き出しで本文をすべて
- * 見せる。付けた直後のコメントは開いて出し、別のファイルへ移って戻っても開いたままに
- * する（addComment が開いた状態として覚える）。開閉はページを開いている間だけ覚える。
+ * コメントの 1 行の札（R-VIEW）。本文の 1 行目と返信の数を示し、押すと会話パネルでその
+ * スレッドを開く。差分の中で本文を広げる吹き出しは持たない。畳んだスレッド（解決したものを
+ * 含む）の札は場所と 1 行目だけに縮める（R-AGENT-HAND）。作成者は出さない。
  * @param {any} comment
  * @returns {HTMLElement}
  */
-function renderComment(comment) {
-  const where = commentLabel(comment);
-  const open = state.commentOpen.get(comment.id) === true;
-  if (!open) {
-    const chip = button(`cchip${comment.outdated ? " outdated" : ""}`);
-    // 札と吹き出しの「畳む」は同じ鍵を持ち、開閉の後もフォーカスが行き来する。
-    chip.dataset.focusKey = `comment:${comment.id}`;
-    chip.title = comment.body;
-    chip.append(
-      document.createTextNode("💬"),
-      textEl("span", "where", where),
-      textEl("span", "tx", firstLine(comment.body)),
-    );
+function renderChip(comment) {
+  const chip = threadChip(comment, state.conversation.read, state.conversation.folded);
+  const classes = ["cchip"];
+  if (comment.outdated) {
+    classes.push("outdated");
+  }
+  if (chip.folded) {
+    classes.push("folded");
+  }
+  const element = button(classes.join(" "));
+  element.dataset.focusKey = `comment:${comment.id}`;
+  element.dataset.id = comment.id;
+  element.title = comment.body;
+  element.append(
+    document.createTextNode("💬"),
+    textEl("span", "where", commentLabel(comment)),
+    textEl("span", "tx", chip.first),
+  );
+  if (!chip.folded) {
     if (comment.suggestion) {
-      chip.append(textEl("span", "badge-suggest", "Suggestion"));
+      element.append(textEl("span", "badge-suggest", "Suggestion"));
     }
-    const replies = comment.replies ? comment.replies.length : 0;
-    if (replies > 0) {
-      chip.append(textEl("span", "reply-count", replies === 1 ? "1 reply" : `${replies} replies`));
+    if (chip.replies > 0) {
+      element.append(
+        textEl("span", "reply-count", chip.replies === 1 ? "1 reply" : `${chip.replies} replies`),
+      );
     }
-    if (comment.resolved) {
-      chip.append(textEl("span", "t-resolved-mark", "Resolved"));
-    }
-    chip.addEventListener("click", () => actions.setCommentOpen(comment.id, true));
-    return chip;
   }
-  const balloon = el("div", `bal${comment.outdated ? " outdated" : ""}`);
-  const head = el("div", "bh");
-  head.append(textEl("span", "where", where));
-  if (comment.suggestion) {
-    head.append(textEl("span", "badge-suggest", "Suggestion"));
+  if (chip.resolved) {
+    element.append(textEl("span", "t-resolved-mark", "Resolved"));
   }
-  if (comment.outdated) {
-    head.append(textEl("span", "t-outdated-mark", "Outdated comment"));
-  }
-  if (comment.resolved) {
-    head.append(textEl("span", "t-resolved-mark", "Resolved"));
-  }
-  const acts = el("span", "acts");
-  const talking = !state.submitted;
-  if (talking) {
-    // 解決は人間だけが付ける（R-AGENT-HAND）。
-    const resolve = button("");
-    resolve.textContent = comment.resolved ? "Reopen" : "Resolve";
-    resolve.dataset.focusKey = `resolve:${comment.id}`;
-    resolve.addEventListener("click", () => actions.setResolved(comment, !comment.resolved));
-    acts.append(resolve);
-  }
-  if (!state.submitted) {
-    const edit = button("");
-    edit.textContent = "Edit";
-    edit.addEventListener("click", () => actions.openCommentEditor(comment));
-    const remove = button("");
-    remove.textContent = "Delete";
-    remove.addEventListener("click", () => actions.confirmDeleteComment(comment));
-    acts.append(edit, remove);
-  }
-  const fold = button("");
-  fold.textContent = "Fold";
-  fold.dataset.focusKey = `comment:${comment.id}`;
-  fold.addEventListener("click", () => actions.setCommentOpen(comment.id, false));
-  acts.append(fold);
-  head.append(acts);
-  balloon.append(head, textEl("p", "t-body", comment.body));
-
-  if (comment.suggestion) {
-    const box = el("div", "t-suggestion");
-    box.append(textEl("div", "sug-head", "Suggested change"));
-    const pre = el("pre");
-    pre.textContent =
-      comment.suggestion.replacement === ""
-        ? "(line deletion)"
-        : comment.suggestion.replacement;
-    box.append(pre);
-    balloon.append(box);
-    balloon.append(
-      textEl(
-        "div",
-        "t-note",
-        "This suggestion is sent to the agent as JSON together with the comment (the agent applies it).",
-      ),
-    );
-  }
-  if (comment.outdated) {
-    balloon.append(
-      textEl(
-        "div",
-        "t-outdated",
-        "Outdated comment — the file changed after this comment (line numbers are as of creation)",
-      ),
-    );
-  }
-  const replies = comment.replies || [];
-  if (replies.length > 0) {
-    balloon.append(renderThread(replies));
-  }
-  if (talking) {
-    balloon.append(renderReplyBox(comment));
-  }
-  return balloon;
-}
-
-/**
- * スレッドの返信。書いた人（人間かエージェントか）を添えて作成順に並べる。
- * @param {any[]} replies
- * @returns {HTMLElement}
- */
-function renderThread(replies) {
-  const thread = el("ol", "thread");
-  for (const reply of replies) {
-    const item = el("li", "reply");
-    item.dataset.author = reply.author;
-    item.append(
-      textEl("span", "reply-author", authorLabel(reply.author)),
-      textEl("p", "reply-body", reply.body),
-    );
-    thread.append(item);
-  }
-  return thread;
-}
-
-/**
- * スレッドに返信を書く欄。書きかけは描き直し（通知での取り込みやスクロール）で消えない
- * よう、ページの状態に置く。
- * @param {any} comment
- * @returns {HTMLFormElement}
- */
-function renderReplyBox(comment) {
-  const form = /** @type {HTMLFormElement} */ (el("form", "reply-box"));
-  const body = document.createElement("textarea");
-  body.rows = 1;
-  body.placeholder = "Reply (Cmd/Ctrl+Enter to send)";
-  body.dataset.editorField = `reply-${comment.id}`;
-  body.value = state.replyDrafts.get(comment.id) ?? "";
-  body.addEventListener("input", () => {
-    state.replyDrafts.set(comment.id, body.value);
-  });
-  body.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      form.requestSubmit();
-    }
-  });
-  const send = /** @type {HTMLButtonElement} */ (el("button", "btn"));
-  send.type = "submit";
-  send.textContent = "Reply";
-  form.append(body, send);
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (body.value.trim() !== "") {
-      actions.replyTo(comment, body.value);
-    }
-  });
-  return form;
+  element.addEventListener("click", () => actions.openThread(comment.id));
+  return element;
 }
 
 /**

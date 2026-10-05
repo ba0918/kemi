@@ -42,7 +42,6 @@
  *   openFileWideEditor: () => void,
  *   openBlockEditor: (index: number) => void,
  *   selectIndex: (index: number, options?: { scrollTop?: boolean }) => Promise<void>,
- *   setCommentOpen: (id: string, open: boolean) => void,
  *   setRendered: (entry: import("./state.js").Entry, rendered: boolean) => void,
  *   showCollapsed: (entry: import("./state.js").Entry) => void,
  *   startSelection: (side: "old" | "new", number: number) => void,

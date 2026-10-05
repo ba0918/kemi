@@ -65,7 +65,7 @@ function markRowsOffDefaultHeight() {
  */
 export function remeasure() {
   // 利用者の操作で行の高さが変わったら、送った先を画面の同じ位置に置き直すのをやめる。
-  // 置き直すと、その先より上で開いたエディタや吹き出しの高さだけスクロール位置が送られ、
+  // 置き直すと、その先より上で開いたエディタや札の高さだけスクロール位置が送られ、
   // いま触った行が画面の外へ動く。
   state.landing = null;
   state.measureNext = true;
@@ -79,7 +79,7 @@ export function remeasure() {
 function markStaleRows() {
   state.measureNext = true;
   markRowsOffDefaultHeight();
-  // 吹き出しの分だけ高い行は、高さを引き継げなかったときも測り直させる。
+  // 札の分だけ高い行は、高さを引き継げなかったときも測り直させる。
   state.threads.byLine.forEach((_threads, index) => {
     state.staleRows.add(index);
   });
@@ -263,7 +263,7 @@ export function renderDiff() {
   }
 }
 
-/** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ吹き出しで出す。 */
+/** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ札で出す。 */
 export function renderFloating() {
   const focus = captureEditorFocus(dom.floating);
   const focusKey = focusKeyWithin(dom.floating);
@@ -279,7 +279,7 @@ export function renderFloating() {
     dom.floating.append(renderEditor(wideEditor));
   }
   for (const comment of floating) {
-    const row = el("div", "bal-row floating");
+    const row = el("div", "chip-row floating");
     row.append(renderCommentOrEditor(comment));
     dom.floating.append(row);
   }
@@ -380,7 +380,7 @@ export function recomputeDisplay(anchor = captureAnchor()) {
   const fileId = entry ? entry.file.id : null;
   // 高さを引き継げるのは、同じファイルを作り直すときだけ。行の見分けはファイルの中の
   // 位置と種類だけで決まるので、別のファイルへ移ったときに引き継ぐと、そのファイルに
-  // 無いコメントの吹き出しの高さが同じ位置の行に付いてしまう。
+  // 無いコメントの札の高さが同じ位置の行に付いてしまう。
   const sameFile = fileId !== null && fileId === state.displayFileId;
   const previous = sameFile ? state.display : [];
   const previousHeights = sameFile ? state.heights : [];

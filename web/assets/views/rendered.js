@@ -1,6 +1,6 @@
 // @ts-check
 // 描画表示（R-RENDER）: 描画した文書、ブロックにホバーかタップすると出る `+`、ブロックの
-// 直下の吹き出しと入力欄、読み込めなかった画像の枠。
+// 直下の札と入力欄、読み込めなかった画像の枠。
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
@@ -158,7 +158,7 @@ function editorFor(index) {
 }
 
 /**
- * ブロックの直下に吹き出しを置く入れ物。表の行と、リストの項目は、その入れ物の中に
+ * ブロックの直下に札を置く入れ物。表の行と、リストの項目は、その入れ物の中に
  * 収まる要素で包む。
  * @param {HTMLElement} element
  * @returns {HTMLElement}

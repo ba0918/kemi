@@ -175,8 +175,13 @@ const shownPlus = `Array.from(document.querySelectorAll('#diff-content .line-add
 const plusRows = () => evaluate(`${shownPlus}.map(b => b.closest('.no-cell').querySelector('.num').textContent)`);
 const editorOpen = `document.querySelector('#diff-content .editor textarea[data-editor-field="body"]') !== null`;
 const menuOpen = `document.querySelector('#view-menu').matches(':popover-open')`;
-/** 本文に見えている吹き出し（開いたもの）と畳んだ札の数。 */
-const balloons = () => evaluate(`JSON.stringify({ open: document.querySelectorAll('#diff-content .bal').length, chips: document.querySelectorAll('#diff-content .cchip').length })`).then(JSON.parse);
+/** 本文に見えている札の数。差分の中に吹き出しは無い。 */
+const chips = () => evaluate(`(() => {
+  if (document.querySelectorAll('#diff-content .bal').length > 0) return -1;
+  return document.querySelectorAll('#diff-content .cchip').length;
+})()`);
+const sheetOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
+const sheetClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
 
 /** 「…」のメニューを開いて Comments を切り替え、メニューを閉じる。切り替え後の押された状態を返す。 */
 async function toggleComments() {
@@ -312,24 +317,29 @@ try {
   assert.ok(clipped.lastRight <= 1, `the tail should be visible: ${JSON.stringify(clipped)}`);
   console.log('PASS 390px のファイルヘッダは 2 行で、長いパスは先頭が省略記号で切れる');
 
-  // (5) 吹き出しの左端が本文の左端と一致し、画像が上下に並ぶ。
+  // (5) 札と入力欄の左端が本文の左端と一致し、画像が上下に並ぶ。
   await browser('click', '#btn-tree');
   await waitFor(drawerOpen);
   await selectFile('src/dir0/file0.txt');
-  // 再読込で札に畳まれているので、押して吹き出しにしてから測る。開いたままにしておく。
-  await waitFor(`${drawerClosed} && ${notLoading} && document.querySelector('#diff-content .bal-row .cchip') !== null`);
-  await evaluate(`document.querySelector('#diff-content .bal-row .cchip').click(); true`);
-  await waitFor(`document.querySelector('#diff-content .bal') !== null`);
-  const balloonBox = await rect('#diff-content .bal');
+  await waitFor(`${drawerClosed} && ${notLoading} && document.querySelector('#diff-content .chip-row .cchip') !== null`);
   const contentBox = await rect('#diff-content');
-  assert.equal(Math.round(balloonBox.left), Math.round(contentBox.left));
-  assert.ok(balloonBox.width <= 390, `balloon should fit: ${balloonBox.width}`);
+  const chipBox = await rect('#diff-content .chip-row .cchip');
+  assert.equal(Math.round(chipBox.left), Math.round(contentBox.left));
+  assert.ok(chipBox.right <= 390, `the chip should fit: ${JSON.stringify(chipBox)}`);
+  await tap(newNumber(2));
+  await tap(`${shownPlus}[0]`);
+  await waitFor(editorOpen);
+  const editorBox = await rect('#diff-content .editor');
+  assert.equal(Math.round(editorBox.left), Math.round(contentBox.left));
+  assert.ok(editorBox.right <= 390, `the editor should fit: ${JSON.stringify(editorBox)}`);
+  await browser('press', 'Escape');
+  await waitFor(`!(${editorOpen})`);
   await browser('click', '#btn-tree');
   await waitFor(drawerOpen);
   await selectFile('art/photo.png');
   await waitFor(`${drawerClosed} && document.querySelectorAll('#rendered-doc .kb-image').length === 2`);
   assert.equal(await evaluate(`getComputedStyle(document.querySelector('#rendered-doc .kb-images')).flexDirection`), 'column');
-  console.log('PASS 390px の吹き出しは本文の左端から始まり、画像は上下に並ぶ');
+  console.log('PASS 390px の札と入力欄は本文の左端から始まり、画像は上下に並ぶ');
 
   // (6) n でファイルをまたいでも引き出しは開かない。
   await browser('click', '#btn-tree');
@@ -523,18 +533,23 @@ try {
   assert.deepEqual(await plusRows(), []);
   console.log('PASS 390px では押し下げとホバーで選択が始まらない');
 
-  // (19) 390px で付けたコメントは開かず畳んだ札で出て、「…」の「Comments」で札ごと消え、
-  //      行番号の欄のコメント色の線は残る。
+  // (19) 390px で付けたコメントは札で出て、札を押すと会話パネルのシートでそのスレッドが開き、
+  //      「…」の「Comments」で札が消え、行番号の欄のコメント色の線は残る。
   await tap(newNumber(6));
   await tap(`${shownPlus}[0]`);
   await waitFor(editorOpen);
   await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'narrow comment');
   await evaluate(`document.querySelector('#diff-content .editor button[type="submit"]').click(); true`);
   await waitFor(`document.querySelector('#comment-count').textContent === '2' && !(${editorOpen})`);
-  // (5) で開いた広い画面のコメントは開いたまま、いま付けたものは畳んだ札。
-  assert.deepEqual(await balloons(), { open: 1, chips: 1 });
-  assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.cchip') !== null`), true, 'the new comment should be a folded chip at its line');
-  assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.bal') !== null`), false, 'the new comment should not open');
+  // 広い画面で付けたコメントと、いま付けたものの札。
+  assert.equal(await chips(), 2);
+  assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.cchip') !== null`), true, 'the new comment should be a chip at its line');
+  await tap(`${newNumber(6)}.closest('.row-block').querySelector('.cchip')`);
+  await waitFor(`${sheetOpen} && !document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('narrow comment')`);
+  const threadSheet = await rect('#conversation');
+  assert.deepEqual([threadSheet.left, threadSheet.top, threadSheet.width, threadSheet.height].map(Math.round), [0, 0, 390, 844]);
+  await browser('click', '#cv-close');
+  await waitFor(sheetClosed);
   await browser('click', '#btn-more');
   await waitFor(menuOpen);
   assert.equal(await evaluate(`document.querySelector('#menu-comments').textContent.trim()`), 'Comments');
@@ -542,7 +557,7 @@ try {
   await browser('press', 'Escape');
   await waitFor(`!(${menuOpen})`);
   assert.equal(await toggleComments(), 'false');
-  assert.deepEqual(await balloons(), { open: 0, chips: 0 });
+  assert.equal(await chips(), 0);
   // 隠している間も、線は行番号の欄の左端（行の 1 つ目の欄）に付いたまま。
   const numberCell = await evaluate(`(() => {
     const row = ${newNumber(6)}.closest('.row');
@@ -550,35 +565,23 @@ try {
   })()`).then(JSON.parse);
   assert.equal(numberCell.commented, true, JSON.stringify(numberCell));
   assert.notEqual(numberCell.shadow, 'none', `the line-number cell should carry the comment line: ${JSON.stringify(numberCell)}`);
-  console.log('PASS 390px で付けたコメントは畳んだ札で出て開かず、Comments で札が消えて行番号の欄の線は残る');
+  console.log('PASS 390px で付けたコメントは札で出て、押すとシートでスレッドが開き、Comments で札が消えて行番号の欄の線は残る');
 
-  // (20) 会話パネルのシートの一覧からスレッドを開き、その行へ移ると、隠している間でも
-  //      そのコメントだけ吹き出しを開いて見せ、畳むと消える。出している間なら畳むと札に戻る。
-  const chooseFromList = async () => {
-    await browser('click', '#btn-comments');
-    await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
-    await evaluate(`Array.from(document.querySelectorAll('#cv-items .cv-card')).find(b => b.querySelector('.cv-first')?.textContent === 'narrow comment').click(); true`);
-    await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('narrow comment')`);
-    await browser('click', '#cv-thread-head .cv-go');
-    await waitFor(`document.querySelector('#conversation').dataset.open === 'false' && ${notLoading} && ${newNumber(6)}.closest('.row-block').querySelector('.bal') !== null`);
-  };
-  // 札と吹き出しの「畳む」は同じ鍵を持つ。
-  const foldChosen = async () => {
-    await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.bal [data-focus-key^="comment:"]').click(); true`);
-    await waitFor(`${newNumber(6)}.closest('.row-block').querySelector('.bal') === null`);
-  };
-  await chooseFromList();
-  assert.deepEqual(await balloons(), { open: 1, chips: 0 });
-  await foldChosen();
-  assert.deepEqual(await balloons(), { open: 0, chips: 0 });
+  // (20) 札を隠している間も、会話パネルのシートの一覧からスレッドを開いてその行へ移れる。
+  //      戻すと札が出る。
+  await browser('click', '#btn-comments');
+  await waitFor(sheetOpen);
+  // シートは最後に開いていたスレッド（(19) で開いたもの）のまま開く。一覧へ戻ってから選ぶ。
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  await evaluate(`Array.from(document.querySelectorAll('#cv-items .cv-card')).find(b => b.querySelector('.cv-first')?.textContent === 'narrow comment').click(); true`);
+  await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('narrow comment')`);
+  await browser('click', '#cv-thread-head .cv-go');
+  await waitFor(`${sheetClosed} && ${notLoading} && ${newNumber(6)} !== undefined`);
+  assert.equal(await chips(), 0);
   assert.equal(await toggleComments(), 'true');
-  assert.deepEqual(await balloons(), { open: 1, chips: 1 });
-  await chooseFromList();
-  assert.deepEqual(await balloons(), { open: 2, chips: 0 });
-  await foldChosen();
-  assert.deepEqual(await balloons(), { open: 1, chips: 1 });
-  assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.cchip') !== null`), true, 'the folded comment should go back to a chip');
-  console.log('PASS シートのスレッドから移ると隠している間でもそのコメントだけ開き、畳むと消えるか札に戻る');
+  assert.equal(await chips(), 2);
+  console.log('PASS 札を隠している間もシートのスレッドからその行へ移れ、戻すと札が出る');
 
   // (16) 390px の描画表示では、ブロックのタップで `+` が出る。
   await browser('click', '#btn-tree');

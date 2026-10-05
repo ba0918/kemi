@@ -13,8 +13,9 @@ import {
   state,
 } from "../state.js";
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
-import { onResize } from "./display.js";
+import { onResize, remeasureAndRender } from "./display.js";
 import { jumpToEntry } from "./files.js";
+import { refreshRendered } from "./rendered.js";
 import { openCommentEditor } from "./comments.js";
 import { postMessage, replyTo } from "./agent.js";
 import { switchUnit } from "./units.js";
@@ -107,6 +108,9 @@ export function setConversationFilter(filter) {
 export function setThreadFolded(id, folded) {
   state.conversation.folded.set(id, folded);
   renderConversation();
+  // 札の形が変わり、行の高さも変わるので測り直させる。
+  remeasureAndRender();
+  refreshRendered();
 }
 
 /**
@@ -144,10 +148,7 @@ export async function goToComment(comment, unit) {
     comment.start_line === null || comment.start_line === undefined
       ? null
       : Number(comment.start_line);
-  state.commentOpen.set(comment.id, true);
   if (state.narrow) {
-    // 狭い画面で Comments を隠していても、選んだこのコメントだけは開いて見せる（R-NARROW）。
-    state.narrowOnlyComment = comment.id;
     closeSheet();
   }
   /** @param {Entry[]} entries */

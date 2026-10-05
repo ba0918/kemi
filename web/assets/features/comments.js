@@ -1,5 +1,5 @@
 // @ts-check
-// 行の選択、コメントの入力欄の開閉、コメントの追加・編集・削除、吹き出しの開閉。
+// 行の選択、コメントの入力欄の開閉、コメントの追加・編集・削除。
 
 import * as api from "../api.js";
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
@@ -89,7 +89,7 @@ export function tapLine(side, number) {
 }
 
 /**
- * 狭い画面で、行番号以外を押すと選択を解除する（R-NARROW）。`+`、入力欄、吹き出しの中と
+ * 狭い画面で、行番号以外を押すと選択を解除する（R-NARROW）。`+`、入力欄、札と
  * 描画表示は除く。入力欄が開いている間は、その範囲を示す選択を残す。
  * @param {MouseEvent} event
  */
@@ -99,7 +99,7 @@ export function clearTapSelection(event) {
     !state.narrow ||
     !state.selection ||
     state.editor ||
-    target.closest(".num, .line-add-btn, .editor, .bal, .cchip, #rendered-doc")
+    target.closest(".num, .line-add-btn, .editor, .cchip, #rendered-doc")
   ) {
     return;
   }
@@ -216,21 +216,6 @@ export function closeEditor() {
 }
 
 /**
- * コメントの吹き出しの開閉。行の高さが変わるので、次の描画で測り直させる。
- * @param {string} id
- * @param {boolean} open
- */
-export function setCommentOpen(id, open) {
-  state.commentOpen.set(id, open);
-  if (!open && state.narrowOnlyComment === id) {
-    // 一覧から選んで 1 件だけ出していた吹き出しは、畳むと札に戻る（隠している間なら消える。R-NARROW）。
-    state.narrowOnlyComment = null;
-  }
-  remeasureAndRender();
-  refreshRendered();
-}
-
-/**
  * 表示とキャッシュのコメントを差し替える。行の高さは測り直すが、見ている位置は動かさない
  * （見ている位置より上で伸びた分は測り直しが打ち消す）。
  * @param {(comments: any[]) => any[]} change
@@ -261,10 +246,6 @@ export async function addComment(payload) {
     const comment = await api.postComment(payload);
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
-    if (!state.narrow) {
-      // 付けた直後は開いて出す（R-VIEW）。狭い画面ではこれを適用しない（R-NARROW）。
-      state.commentOpen.set(comment.id, true);
-    }
     refreshCommentBadges(before);
     renderHeader();
     renderConversation();

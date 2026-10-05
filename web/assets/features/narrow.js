@@ -1,6 +1,6 @@
 // @ts-check
 // 狭い画面（R-NARROW）: 幅がしきい値をまたいだときの切り替え、ファイルツリーの引き出しの
-// 開閉、吹き出しの出し入れ。幅そのものは app.js の matchMedia が見て、ここへは真偽値だけが
+// 開閉、札の出し入れ。幅そのものは app.js の matchMedia が見て、ここへは真偽値だけが
 // 届く。
 
 import { dom } from "../dom.js";
@@ -28,7 +28,6 @@ export function applyNarrow(narrow) {
   }
   const anchor = captureAnchor();
   state.narrow = narrow;
-  state.narrowOnlyComment = null;
   closeDrawer();
   // 狭い画面のシートは閉じ、広い画面では覚えている会話パネルの開閉に戻る。
   closeSheet();
@@ -43,12 +42,10 @@ export function applyNarrow(narrow) {
 }
 
 /**
- * 狭い画面の吹き出しを札ごと隠す・戻す切り替え。隠すときも戻すときも 1 件だけの印は捨て、
- * 行の高さが変わるので測り直させる。
+ * 狭い画面の札を隠す・戻す切り替え。行の高さが変わるので測り直させる。
  */
 export function toggleComments() {
   state.narrowComments = !state.narrowComments;
-  state.narrowOnlyComment = null;
   renderHeader();
   remeasureAndRender();
   refreshRendered();

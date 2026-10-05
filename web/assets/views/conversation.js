@@ -296,6 +296,15 @@ function renderThread(comment, options) {
         ),
       );
     }
+    if (comment.outdated) {
+      opening.append(
+        textEl(
+          "div",
+          "t-outdated",
+          "Outdated comment — the file changed after this comment (line numbers are as of creation)",
+        ),
+      );
+    }
     dom.cvThreadBody.append(opening);
     for (const reply of comment.replies || []) {
       dom.cvThreadBody.append(post(reply.author, reply.body, "cv-reply-post", reply.id));

@@ -7,7 +7,7 @@ import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { conversationShown, state } from "../state.js";
 import { addMessage, replaceComment } from "../model.js";
-import { setCommentOpen, updateComments } from "./comments.js";
+import { updateComments } from "./comments.js";
 import { renderConversation } from "../views/conversation.js";
 import { showOverlay, showToast } from "../views/overlay.js";
 
@@ -140,7 +140,7 @@ export async function replyTo(comment, body) {
 }
 
 /**
- * 解決と、その取り消し。解決したスレッドは畳む（開き直せる。R-AGENT-HAND）。
+ * 解決と、その取り消し。解決したスレッドは畳み、取り消すと開く（開き直せる。R-AGENT-HAND）。
  * @param {any} comment
  * @param {boolean} resolved
  */
@@ -150,9 +150,6 @@ export async function setResolved(comment, resolved) {
     // 畳みの上書きを捨て、解決したら畳み、解決を取り消したら開く既定に戻す。
     state.conversation.folded.delete(comment.id);
     applyThread(updated);
-    if (resolved) {
-      setCommentOpen(comment.id, false);
-    }
   } catch (error) {
     showOverlay("could not change the resolution", String(error));
   }

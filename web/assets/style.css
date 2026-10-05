@@ -1406,92 +1406,37 @@ ul.files ul {
 
 /* ---------- インラインコメント ---------- */
 
-/* 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める（R-VIEW）。 */
-.bal-row {
+/* 札は範囲の最後の行の直下で、コードの列の位置から始める（R-VIEW）。 */
+.chip-row {
   position: relative;
-  padding: 4px 16px 8px calc(8.4em + 1px);
+  padding: 4px 16px 6px calc(8.4em + 1px);
   font-family: var(--sans);
   font-size: 13.5px;
   white-space: normal;
   line-height: 1.6;
 }
 
-.bal-row.mode-split.side-old {
+.chip-row.mode-split.side-old {
   padding-left: calc(4.8em + 1px);
 }
 
-.bal-row.mode-split.side-new {
+.chip-row.mode-split.side-new {
   padding-left: calc(50% + 4.8em);
 }
 
-.bal-row.floating {
+.chip-row.floating {
   padding: 4px 0;
 }
 
-.bal {
-  position: relative;
-  max-width: 72ch;
-  background: var(--note-bg);
-  border: 1px solid var(--note-line);
-  border-radius: 8px;
-  padding: 7px 12px 8px;
-  color: var(--ink);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--note-line) 40%, transparent);
-}
-
-/* 尾で対象の行を指す。 */
-.bal::before {
-  content: "";
-  position: absolute;
-  top: -7px;
-  left: 18px;
-  width: 12px;
-  height: 12px;
-  background: var(--note-bg);
-  border-left: 1px solid var(--note-line);
-  border-top: 1px solid var(--note-line);
-  transform: rotate(45deg);
-}
-
-.bal-row.floating .bal::before {
-  display: none;
-}
-
-.bal .bh {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--note-ink);
-}
-
-.bal .bh .where,
 .cchip .where {
   font-family: var(--mono);
 }
 
-.bal .bh .acts {
-  margin-left: auto;
-  display: flex;
-  gap: 10px;
-}
-
-.bal .bh .acts button {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--note-ink);
-  font-size: 12px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.bal.outdated,
 .cchip.outdated {
   border-style: dashed;
 }
 
-/* 既定の 1 行の札。本文の 1 行目を見せ、収まらなければ省略記号で切る。 */
+/* 1 行の札。本文の 1 行目を見せ、収まらなければ省略記号で切る。押すと会話パネルでスレッドを開く。 */
 .cchip {
   display: inline-flex;
   align-items: center;
@@ -1514,6 +1459,18 @@ ul.files ul {
   text-overflow: ellipsis;
 }
 
+/* 畳んだスレッドの札。場所と 1 行目だけに縮め、目立たせない。 */
+.cchip.folded {
+  height: 20px;
+  max-width: 48ch;
+  background: var(--panel);
+  font-size: 11.5px;
+}
+
+.cchip.folded .tx {
+  color: var(--ink-2);
+}
+
 .badge-suggest {
   flex: 0 0 auto;
   font-size: 11px;
@@ -1530,14 +1487,6 @@ ul.files ul {
   border: 1px dashed var(--line);
   border-radius: 999px;
   padding: 0 6px;
-}
-
-.t-body {
-  margin: 4px 0 0;
-  color: var(--ink);
-  white-space: pre-wrap;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
 }
 
 /* 範囲の行には、行番号の欄の左端にコメントの色の線を付ける。 */
@@ -2053,10 +2002,6 @@ ul.files ul {
   margin-bottom: 6px;
 }
 
-.kb-notes .bal::before {
-  display: none;
-}
-
 .kb-note-row > td {
   border: 0;
   padding: 0;
@@ -2186,48 +2131,6 @@ ul.files ul {
 
 .hand-count {
   font-weight: 600;
-}
-
-/* スレッド。返信は書いた人を添えて作成順に並べ、エージェントの返信は藍の線で見分ける。 */
-.thread {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  border-top: 1px solid var(--note-line);
-}
-
-.reply {
-  padding: 6px 0 0 8px;
-  border-left: 2px solid transparent;
-  margin-top: 6px;
-}
-
-.reply[data-author="agent"] {
-  border-left: 2px solid var(--accent);
-  padding-left: 8px;
-}
-
-.reply-author {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--ink-2);
-}
-
-.reply[data-author="agent"] .reply-author {
-  color: var(--accent);
-}
-
-.reply-body {
-  margin: 2px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.reply-box {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 8px;
 }
 
 .reply-count,
@@ -2590,8 +2493,7 @@ ul.files ul {
   background: var(--bg);
 }
 
-.cv-form textarea,
-.reply-box textarea {
+.cv-form textarea {
   width: 100%;
   padding: 5px 7px;
   border: 1px solid var(--line);
@@ -2941,8 +2843,8 @@ ul.files ul {
     display: inline-flex;
   }
 
-  /* 吹き出しと入力欄は、行の位置からインデントせず本文の幅いっぱいから始める。 */
-  #diff-content .bal-row {
+  /* 札と入力欄は、行の位置からインデントせず本文の幅いっぱいから始める。 */
+  #diff-content .chip-row {
     padding-left: 0;
     padding-right: 8px;
   }

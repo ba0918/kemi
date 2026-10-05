@@ -41,7 +41,7 @@ const waitFor = async (code) => {
       status: document.querySelector('#agent-status')?.dataset.status,
       conversation: document.querySelector('#conversation')?.dataset.open,
       thread: !document.querySelector('#cv-thread')?.hidden,
-      replies: document.querySelectorAll('.reply').length,
+      replies: document.querySelectorAll('#cv-thread-body .cv-post').length,
       modal: document.querySelector('#modal-body')?.textContent,
     })`).catch(() => 'no snapshot');
     throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
@@ -134,6 +134,8 @@ const shown = (selector) => `(() => { const e = document.querySelector(${JSON.st
 const statusIs = (status) => `document.querySelector('#agent-status').dataset.status === ${JSON.stringify(status)}`;
 const panelOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
 const panelClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
+const chipC1 = `document.querySelector('#diff-content .cchip[data-id="c1"]')`;
+const threadOpen = (text) => `!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment')?.textContent.includes(${JSON.stringify(text)})`;
 const agentMessage = (text) => `Array.from(document.querySelectorAll('#cv-items .cv-msg[data-author="agent"]')).some(m => m.textContent.includes(${JSON.stringify(text)}))`;
 
 const fixture = await makeFixture();
@@ -168,18 +170,26 @@ try {
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
 
   // (1) kemi wait を呼ぶ前から、返信の欄・解決・会話パネルの書く欄と状態（未接続）は出る。
-  // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、上部の入口で開く。
+  // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いて
+  // そのスレッドになる。差分の中に吹き出しは無い。
   assert.equal(await evaluate(panelClosed), true);
-  await browser('click', '#btn-comments');
-  await waitFor(panelOpen);
+  assert.equal(await evaluate(`document.querySelectorAll('#diff-content .bal').length`), 0);
+  await evaluate(`${chipC1}.click(); true`);
+  await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);
   assert.equal(await evaluate(statusIs('unconnected')), true);
   assert.equal(await evaluate(shown('#btn-hand')), false);
-  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
-  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
-  assert.equal(await evaluate(shown('#diff-content .bal [data-focus-key="resolve:c1"]')), true);
+  assert.equal(await evaluate(shown('#cv-reply-text')), true);
+  assert.equal(await evaluate(shown('#cv-thread-head .cv-resolve')), true);
+  // 解決すると札は解決済みの印つきで 1 行に縮み、取り消すと戻る。
+  await browser('click', '#cv-thread-head .cv-resolve');
+  await waitFor(`${chipC1}?.classList.contains('folded') && ${chipC1}.querySelector('.t-resolved-mark') !== null`);
+  await browser('click', '#cv-thread-head .cv-resolve');
+  await waitFor(`${chipC1} !== null && !${chipC1}.classList.contains('folded') && ${chipC1}.querySelector('.t-resolved-mark') === null`);
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
   assert.equal(await evaluate(shown('#cv-message')), true);
-  console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」だけが無い');
+  console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」だけが無い。札を押すとパネルでスレッドが開き、解決できる');
 
   // (1a) 会話パネルの幅は左の縁を掴んで変えられ、開閉と幅は読み込み直しても残る。
   const widthBefore = await evaluate(`document.querySelector('#conversation').getBoundingClientRect().width`);
@@ -229,9 +239,6 @@ try {
   const loadingWaited = await loadingWait;
   assert.equal(loadingWaited.code, 3, `the wait should time out: ${JSON.stringify(loadingWaited)}`);
   await waitFor(statusIs('working'));
-  // 読み込み直しで閉じた、3 行目のコメントを開き直す（(3) が使う）。
-  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
-  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
   console.log('PASS ページの起動中に kemi wait と kemi reply の発言が来ても、待機中と「Hand to agent」と発言が出る');
 
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
@@ -244,8 +251,9 @@ try {
   assert.equal(await evaluate(shown('#btn-hand')), true);
   console.log('PASS kemi wait を待たせると待機中、返った後は作業中に変わり、渡すが出る');
 
-  // (3) kemi reply の返信がスレッドに出て、スクロール位置が変わらない（コメントは (1) で開いた）。
-  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
+  // (3) kemi reply の返信が開いたスレッドに出て、差分のスクロール位置が変わらない。
+  await evaluate(`${chipC1}.click(); true`);
+  await waitFor(threadOpen('rename this line'));
   await evaluate(`document.querySelector('#diff-viewport').scrollTop = 30; true`);
   await waitFor(`document.querySelector('#diff-viewport').scrollTop === 30`);
   const before = await evaluate(`document.querySelector('#diff-viewport').scrollTop`);
@@ -258,9 +266,11 @@ try {
   assert.equal(replied.code, 0, replied.stderr);
   const { ids } = JSON.parse(replied.stdout);
   assert.equal(ids.length, 2);
-  await waitFor(`Array.from(document.querySelectorAll('#diff-content .reply[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
+  await waitFor(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
   const after = await evaluate(`document.querySelector('#diff-viewport').scrollTop`);
   assert.equal(after, before, 'the scroll position must not move');
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
   console.log('PASS kemi reply の返信がスレッドに出て、スクロール位置が変わらない');
 
   // (4) kemi reply の発言が会話パネルに出る。

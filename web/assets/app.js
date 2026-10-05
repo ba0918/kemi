@@ -47,7 +47,6 @@ import {
   openCommentEditor,
   openEditorAt,
   openFileWideEditor,
-  setCommentOpen,
   startSelection,
   tapLine,
 } from "./features/comments.js";
@@ -292,7 +291,6 @@ bindActions({
   openBlockEditor,
   openFileWideEditor,
   selectIndex,
-  setCommentOpen,
   setRendered,
   showCollapsed,
   startSelection,

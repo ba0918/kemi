@@ -1,7 +1,7 @@
 // @ts-check
 // ページの状態と、その状態から決まる読み。ここは api も要素も触らない。
 
-import { balloonShown, collapseDefault, effectiveDisplay, seenProgress } from "./model.js";
+import { collapseDefault, effectiveDisplay, seenProgress } from "./model.js";
 
 /** @typedef {import("./model.js").RenderedBlock} RenderedBlock */
 /** @typedef {{ url: string, size: number }} ImageSide */
@@ -73,7 +73,6 @@ export const THEME_LABELS = {
  *   narrow: boolean,
  *   narrowWrap: boolean,
  *   narrowComments: boolean,
- *   narrowOnlyComment: string | null,
  *   drawerOpen: boolean,
  *   horizontal: import("./model.js").HorizontalState,
  *   horizontalMeasurePending: boolean,
@@ -110,7 +109,6 @@ export const THEME_LABELS = {
  *   groupOpen: Map<string, boolean>,
  *   dirOpen: Map<string, boolean>,
  *   groupHeaderOpen: Map<string, boolean>,
- *   commentOpen: Map<string, boolean>,
  *   commented: Set<number>,
  *   loading: boolean,
  *   navigating: boolean,
@@ -177,11 +175,8 @@ export const state = {
   // 開いている間だけ覚え、localStorage には入れない。
   narrow: false,
   narrowWrap: true,
-  // 狭い画面の吹き出し。narrowComments が真なら畳んだ札で出す（既定）。「Comments」の
-  // 切り替え（ページを開いている間だけ覚える）で札ごと隠し、隠している間は会話パネルから
-  // 移ったそのコメントだけの印で出す。
+  // 狭い画面の札。「Comments」の切り替え（ページを開いている間だけ覚える）で札を隠す。
   narrowComments: true,
-  narrowOnlyComment: null,
   drawerOpen: false,
   horizontal: { entry: null, width: 0, left: 0 },
   horizontalMeasurePending: false,
@@ -218,7 +213,6 @@ export const state = {
   groupOpen: new Map(),
   dirOpen: new Map(),
   groupHeaderOpen: new Map(),
-  commentOpen: new Map(),
   commented: new Set(),
   loading: false,
   navigating: false,
@@ -271,14 +265,17 @@ export function displayWrap() {
 }
 
 /**
- * 吹き出し（畳んだ札を含む）を描くコメントだけに絞る。狭い画面で「Comments」で隠して
- * いる間は描かない（R-NARROW）。編集中のコメントは、入力欄が消えないよう常に描く。
+ * 札を描くコメントだけに絞る。狭い画面で「Comments」で隠している間は描かない（R-NARROW）。
+ * 編集中のコメントは、入力欄が消えないよう常に描く。
  * @param {any[]} comments
  * @returns {any[]}
  */
 export function shownComments(comments) {
+  if (!state.narrow || state.narrowComments) {
+    return comments;
+  }
   const editing = state.editor ? state.editor.editId : undefined;
-  return comments.filter((comment) => comment.id === editing || balloonShown(state, comment.id));
+  return comments.filter((comment) => comment.id === editing);
 }
 
 /**
