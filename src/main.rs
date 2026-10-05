@@ -675,8 +675,14 @@ async fn run_review(
         None => {
             // 待っている kemi wait があれば、保留で終わる理由を返し終えるまで待つ。無ければ
             // 今までどおりすぐ終わる（R-AGENT-CLI）。
-            if control.suspend() {
-                let _ = tokio::time::timeout(SUSPEND_GRACE, serving).await;
+            let finished = control.suspend()
+                && tokio::time::timeout(SUSPEND_GRACE, &mut serving)
+                    .await
+                    .is_ok();
+            if !finished {
+                // サーバの状態がセッションを握ったままだと、下の drop でロックを解放できない。
+                serving.abort();
+                let _ = serving.await;
             }
             print_resume_hint(stored_session.as_deref());
             drop(stored_session);

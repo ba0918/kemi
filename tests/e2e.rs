@@ -1917,6 +1917,28 @@ async fn interrupt_leaves_a_session_and_prints_the_resume_line() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn interrupt_releases_the_session_lock_file() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_session(&state.path).await);
+
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(
+        !sessions_dir(&state.path)
+            .join(format!("{id}.lock"))
+            .exists(),
+        "the lock file must not be left behind"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn sigterm_leaves_a_session_and_prints_the_resume_line() {
     let dir = TempDir::new();
     worktree_fixture(&dir);

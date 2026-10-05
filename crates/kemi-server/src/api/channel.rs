@@ -92,18 +92,19 @@ pub(crate) fn notify_agent_state(state: &AppState) {
 }
 
 /// 作業中のまま時間がたって応答なしになったことを、ページへ知らせる（R-AGENT-STATE）。
-/// 状態は時刻だけでも変わるので、要求を待たずに見に行く。
+/// 状態は時刻だけでも変わるので、要求を待たずに見に行く。サーバの状態は弱い参照で持つ。
+/// 保留ではサーバを止めずにプロセスを終えるので、ここが状態を握るとセッションのロックが
+/// 解放されない。
 pub(crate) fn start_status_ticker(state: &Arc<AppState>) {
-    let state = state.clone();
+    let weak = Arc::downgrade(state);
+    let mut last = agent_json(state)["status"].clone();
     tokio::spawn(async move {
-        let mut shutdown = state.shutdown.subscribe();
-        let mut last = agent_json(&state)["status"].clone();
         loop {
-            tokio::select! {
-                () = tokio::time::sleep(STATUS_TICK) => {}
-                _ = shutdown.changed() => return,
-            }
-            if *shutdown.borrow() {
+            tokio::time::sleep(STATUS_TICK).await;
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+            if *state.shutdown.borrow() {
                 return;
             }
             let agent = agent_json(&state);
