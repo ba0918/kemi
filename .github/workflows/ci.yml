@@ -90,8 +90,9 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
+          version: "0.12.19"
           enable-cache: false
       - name: Skill format
-        run: uvx --from skills-ref==0.1.1 agentskills validate ./skills/kemi
+        run: scripts/check-skill-format.sh
       - name: Skill frontmatter
         run: scripts/check-skill-frontmatter.sh

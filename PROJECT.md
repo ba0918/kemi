@@ -59,7 +59,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Build | `cargo build --release` |
 | Test | `cargo test` / `node --test web` |
 | Lint | `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo fmt --all --check` / `npx tsc -p web --noEmit` |
-| スキルの形式 | `agentskills validate ./skills/kemi` |
+| スキルの形式 | `scripts/check-skill-format.sh`（uv が要る。skills-ref はハッシュ付きの `scripts/skills-ref-requirements.txt` から入れる） |
 | スキルの frontmatter（ASCII だけ・項目は 3 つ） | `scripts/check-skill-frontmatter.sh` |
 | ドメインの純粋さ | `scripts/check-domain-purity.sh` |
 | Run locally | `cargo run -- --worktree` |
