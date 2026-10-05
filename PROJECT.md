@@ -16,6 +16,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 
 | Path | 内容 |
 |---|---|
+| `docs/README.md` | 文書の入口。各ディレクトリの役割といまの文書 |
 | `docs/spec/kemi.md` | 承認済みの仕様。契約（CLI、JSON、性能条件）の正典 |
 | `CONTEXT.md` | 用語集。二通りに読める語の読みの正典 |
 | `src/main.rs` | CLI と配線、stdout / stderr、終了コード |
