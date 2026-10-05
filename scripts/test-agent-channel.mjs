@@ -14,7 +14,8 @@
 // 「This file」の絞り込みが選んだファイルに合わせて変わる、
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
 // 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
-// 読み直しても読み込み直しても「消えたコミット」と示される。
+// 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
+// 別のファイルを選んでも届いた印が出ない。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -432,5 +433,39 @@ try {
 } finally {
   rangeKemi.child.kill('SIGTERM');
   await rangeKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (8) 「This file」で絞り込んだ一覧の上のほうを見ているまま別のファイルを選んでも、何も届いて
+// いないので、届いたことを示す印は出ない（R-AGENT-HAND）。前のファイルのスレッドより後に付いた
+// スレッドが、選んだファイルにある場合。
+const fileFixture = await makeFixture();
+const fileState = await mkdtemp(join(tmpdir(), 'kemi-agent-file-state-'));
+const fileKemi = await startKemi(fileFixture, fileState);
+try {
+  const files = (await (await fetch(new URL('api/review', fileKemi.url))).json()).groups[0].files;
+  const fileIdOf = (path) => files.find((file) => file.path === path).id;
+  for (let index = 0; index < 20; index += 1) {
+    await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('a.txt'), side: 'new', start_line: 3, end_line: 3, body: `note ${index + 1}` });
+  }
+  await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 1, end_line: 1, body: 'about b' });
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', fileKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await selectFile('a.txt');
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
+  await browser('click', '#cv-filter button[data-filter="file"]');
+  const list = `document.querySelector('#cv-items')`;
+  await waitFor(`${list}.querySelectorAll('.cv-card').length === 20 && ${list}.scrollHeight > ${list}.clientHeight + 100`);
+  await evaluate(`${list}.scrollTop = 0; true`);
+  await waitFor(`${list}.scrollTop === 0`);
+  await selectFile('b.txt');
+  await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21'`);
+  assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
+  console.log('PASS 「This file」で上のほうを見たまま別のファイルを選んでも、届いた印は出ない');
+} finally {
+  fileKemi.child.kill('SIGTERM');
+  await fileKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

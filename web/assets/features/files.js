@@ -166,6 +166,7 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
     !options.scrollTop && state.current && state.current.file.id === entry.file.id
       ? captureAnchor()
       : null;
+  const switched = state.current?.file.id !== entry.file.id;
   state.current = entry;
   state.landing = null;
   const id = entry.file.id;
@@ -237,7 +238,12 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   renderFloating();
   renderDiff();
   // 会話パネルの「This file」の絞り込みと、開いたスレッドの対象の行は表示中のファイルで決まる。
-  renderConversation();
+  // 別のファイルへ移ると「This file」の一覧は入れ替わるので、絞り込みを変えたときと同じく
+  // 一番下から見せる。前のファイルの並びと比べると、何も届いていないのに届いた印が出る。
+  renderConversation({
+    toEnd:
+      switched && state.conversation.filter === "file" && state.conversation.thread === null,
+  });
   // 描画表示で見るファイルは、取得して出してから移り先へ送る（R-RENDER）。
   await actions.applyRenderedView(entry);
   if (generation !== state.selectGeneration) {
