@@ -49,7 +49,7 @@ const waitFor = async (code, timeout = 15000) => {
   try {
     await browser('wait', '--timeout', String(timeout), '--fn', code);
   } catch (error) {
-    const snapshot = await evaluate(`JSON.stringify({ url: location.href, text: document.body?.innerText.slice(0, 400) })`).catch(() => 'no snapshot');
+    const snapshot = await evaluate(`JSON.stringify({ url: location.href, view: document.body?.dataset.liveView, side: document.querySelector('#live-stage')?.dataset.side, compare: document.querySelector('#live-stage')?.dataset.compare, text: document.body?.innerText.slice(0, 400) })`).catch(() => 'no snapshot');
     throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
   }
 };
@@ -105,9 +105,10 @@ async function startKemi(dir, state, args) {
   const started = await new Promise((done, fail) => {
     child.stderr.on('data', (chunk) => {
       stderr += chunk;
-      const url = stderr.match(/^kemi: (http:\/\/\S+)/m);
-      const review = stderr.match(/^kemi: review (\S+)/m);
-      const live = stderr.match(/^kemi: live (\S+)/m);
+      // 行が途中で切れて届くことがあるので、改行まで届いた行だけを読む。
+      const url = stderr.match(/^kemi: (http:\/\/\S+)\n/m);
+      const review = stderr.match(/^kemi: review (\S+)\n/m);
+      const live = stderr.match(/^kemi: live (\S+)\n/m);
       if (url && review && (live || !isLive)) done({ url: url[1], id: review[1], live: live?.[1] });
     });
     child.on('error', fail);
@@ -254,6 +255,8 @@ async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
 
     await browser('set', 'viewport', '390', '800');
     await waitFor(`${visible('.lv-side')} && ${visible('#live-stage .lv-pane[data-side="live"]')} && !${visible('#live-stage .lv-pane[data-side="ref"]')}`);
+    // 幅をまたいだ直後は帯の並びが動くので、落ち着いてから押す。
+    await new Promise((done) => setTimeout(done, 500));
     await browser('click', '.lv-side button[data-side="ref"]');
     await waitFor(`${visible('#live-stage .lv-pane[data-side="ref"]')} && !${visible('#live-stage .lv-pane[data-side="live"]')}`);
     await browser('click', '.lv-side button[data-side="live"]');
