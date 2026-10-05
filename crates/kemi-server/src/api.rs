@@ -2,6 +2,7 @@
 //!
 //! 内部 API の JSON 形は D7 として、この階層（`api` と子モジュール）で決める。
 
+mod channel;
 mod comments;
 mod file;
 mod rendered;
@@ -28,11 +29,12 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
+use self::channel::{agent_json, hand_api, message_api};
 use self::comments::comment_api;
 use self::file::file_api;
 use self::rendered::{render_file, repository_image, review_image};
 use self::submit::submit_api;
-use crate::session::{Session, comment_json, persist, start_freeze};
+use crate::session::{Session, comment_json, message_json, persist, start_freeze};
 use crate::units::{self, Unavailable};
 use crate::{AppState, Event, Notice, ServerError, stop_with_error};
 
@@ -51,6 +53,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/s/{token}/api/unit", post(unit_api))
         .route("/s/{token}/api/comment", post(comment_api))
+        .route("/s/{token}/api/message", post(message_api))
+        .route("/s/{token}/api/hand", post(hand_api))
         .route("/s/{token}/api/state", post(state_api))
         .route("/s/{token}/api/submit", post(submit_api))
         .route("/s/{token}/api/events", get(events))
@@ -290,7 +294,7 @@ async fn review(
         state.review.write().expect("review lock poisoned").startup = startup;
         units::refresh_other(&state).await;
     }
-    let body = {
+    let mut body = {
         let review = state.review.read().expect("review lock poisoned");
         let (shown, meta) = review.meta(unit).map_err(|reason| match reason {
             Unavailable::NoSuchUnit => ApiError::not_found("no such unit"),
@@ -302,6 +306,7 @@ async fn review(
         body["units"] = review.units_json();
         body
     };
+    body["agent"] = agent_json(&state);
     // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
     units::start_if_waiting(&state);
     // 応答を返した後に、写しの凍結を裏で始める（R-SESSION）。
@@ -346,6 +351,7 @@ fn review_json(review: &ReviewMeta, session: &Session) -> Value {
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "comments": session.comments.iter().map(comment_json).collect::<Vec<_>>(),
+        "messages": session.messages.iter().map(message_json).collect::<Vec<_>>(),
     })
 }
 
@@ -537,14 +543,19 @@ async fn events(
     let stream = BroadcastStream::new(receiver)
         .take_until(stop)
         .filter_map(|event| async move {
-            match event {
-                Ok(Event::Update) => Some(Ok::<_, Infallible>(
-                    SseEvent::default().event("update").data("{}"),
-                )),
-                Ok(Event::Unit) => Some(Ok(SseEvent::default().event("unit").data("{}"))),
-                // 取りこぼした通知は、更新があったものとして知らせる。
-                Err(_) => Some(Ok(SseEvent::default().event("update").data("{}"))),
-            }
+            let (name, data) = match event {
+                Ok(Event::Update) => ("update", "{}".to_string()),
+                Ok(Event::Unit) => ("unit", "{}".to_string()),
+                Ok(Event::Thread(comment)) => ("thread", comment.to_string()),
+                Ok(Event::Message(message)) => ("message", message.to_string()),
+                Ok(Event::Agent(agent)) => ("agent", agent.to_string()),
+                // 取りこぼした通知は、どれだったか分からない。ページは更新があったもの
+                // として扱い、スレッドと発言とエージェントの状態を取り直す。
+                Err(_) => ("lagged", "{}".to_string()),
+            };
+            Some(Ok::<_, Infallible>(
+                SseEvent::default().event(name).data(data),
+            ))
         });
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

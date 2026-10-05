@@ -172,12 +172,27 @@ pub struct ServeParams {
 }
 
 /// SSE でページへ知らせること。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Event {
     /// 新側の供給元が変わった（R-LIVE の更新バッジ）。
     Update,
     /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。
     Unit,
+    /// スレッドに返信が増えた。中身はそのコメントの JSON。
+    Thread(serde_json::Value),
+    /// 発言が増えた。中身はその発言の JSON。
+    Message(serde_json::Value),
+    /// エージェントの状態か未渡しの件数が変わった（R-AGENT-STATE）。
+    Agent(serde_json::Value),
+}
+
+/// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
+/// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
+pub(crate) struct AgentRuntime {
+    /// `kemi wait` が待っているか。
+    pub waiting: bool,
+    /// 最後に `kemi wait` が返った（または切れた）か `kemi reply` が来た時刻（ミリ秒）。
+    pub last_activity: u128,
 }
 
 /// submit の同時受理を 1 つに絞るための状態。
@@ -203,6 +218,7 @@ pub(crate) struct AppState {
     /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
     pub persist: Mutex<()>,
     pub events: broadcast::Sender<Event>,
+    pub agent: Mutex<AgentRuntime>,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
     pub shutdown: shutdown_watch::Sender<bool>,
     pub stop: Mutex<Option<Stop>>,
@@ -250,7 +266,8 @@ pub async fn serve(
         .as_ref()
         .map(|sink| sink.initial_state())
         .unwrap_or_default();
-    let (events, _) = broadcast::channel(16);
+    // エージェントの返信は短い間に続けて届くことがあるので、取りこぼしにくい長さにする。
+    let (events, _) = broadcast::channel(256);
     let (shutdown, _) = shutdown_watch::channel(false);
 
     let state = Arc::new(AppState {
@@ -267,6 +284,10 @@ pub async fn serve(
         session: Mutex::new(Session::from_state(initial_state)),
         persist: Mutex::new(()),
         events,
+        agent: Mutex::new(AgentRuntime {
+            waiting: false,
+            last_activity: kemi_core::session::now_millis(),
+        }),
         shutdown,
         stop: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),

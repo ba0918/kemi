@@ -9,9 +9,10 @@ use kemi_core::domain::review::{Author, Comment, LineRange, Reply, Side, Suggest
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::channel::notify_agent_state;
 use super::{ApiError, file_not_found, find_file, parse_side, side_lines, source_content};
 use crate::session::{comment_json, persist};
-use crate::{AppState, Notice};
+use crate::{AppState, Event, Notice};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
@@ -87,8 +88,10 @@ pub(super) async fn comment_api(
             comment.body = body;
             comment.suggestion = suggestion.map(|replacement| Suggestion { replacement });
             let value = comment_json(comment);
+            session.channel.note_comment(&id);
             drop(session);
             persist(&state);
+            notify_agent_state(&state);
             Ok(Json(value))
         }
         CommentRequest::Delete { id } => {
@@ -100,8 +103,10 @@ pub(super) async fn comment_api(
                 .ok_or_else(comment_not_found)?;
             // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
             session.comments.remove(index);
+            session.channel.note_comment(&id);
             drop(session);
             persist(&state);
+            notify_agent_state(&state);
             Ok(Json(json!({ "id": id, "deleted": true })))
         }
         CommentRequest::Reply { id, body } => {
@@ -117,11 +122,14 @@ pub(super) async fn comment_api(
                 author: Author::Reviewer,
                 body,
             };
+            session.channel.note_reply(&id, &reply.id);
             let comment = &mut session.comments[index];
             comment.replies.push(reply);
             let value = comment_json(comment);
             drop(session);
             persist(&state);
+            let _ = state.events.send(Event::Thread(value.clone()));
+            notify_agent_state(&state);
             Ok(Json(value))
         }
         CommentRequest::Resolve { id, resolved } => {
@@ -196,9 +204,11 @@ async fn add_comment(
         content_hash,
         suggestion: suggestion.map(|replacement| Suggestion { replacement }),
     };
+    session.channel.note_comment(&comment.id);
     session.comments.push(comment.clone());
     drop(session);
     persist(state);
+    notify_agent_state(state);
 
     state.notices.notify(Notice::CommentAdded {
         path: comment.path.clone(),

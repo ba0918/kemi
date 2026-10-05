@@ -3168,3 +3168,259 @@ async fn adding_a_comment_reports_its_path_side_and_lines() {
         ]
     );
 }
+
+// ---- R-AGENT-HAND（ページ側の API: 渡す・返信・解決・発言と、その通知） ----
+
+use kemi_core::domain::agent::{AgentEvent, Handed, HandedComment};
+
+impl TestServer {
+    async fn with_recording_session() -> (Self, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        let server =
+            TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+        (server, sink)
+    }
+
+    async fn add_comment_with_body(&self, line: u32, body: &str) -> Value {
+        let response = self
+            .comment(json!({
+                "op": "add", "file_id": "f1", "side": "new",
+                "start_line": line, "end_line": line, "body": body
+            }))
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+
+    async fn hand(&self) -> Value {
+        let response = self.post("api/hand", json!({})).await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+}
+
+/// 保存された状態にたまっている、まだ受け取られていない「渡した」の 1 回分ずつ。
+fn saved_handed(sink: &RecordingSink) -> Vec<Handed> {
+    sink.last_state()
+        .channel
+        .events
+        .into_iter()
+        .map(|event| match event {
+            AgentEvent::Handed(handed) => handed,
+        })
+        .collect()
+}
+
+fn changes(handed: &Handed) -> Vec<(&'static str, String, Option<String>)> {
+    handed
+        .comments
+        .iter()
+        .map(|change| match change {
+            HandedComment::Added(comment) => {
+                ("added", comment.id.clone(), Some(comment.body.clone()))
+            }
+            HandedComment::Edited(comment) => {
+                ("edited", comment.id.clone(), Some(comment.body.clone()))
+            }
+            HandedComment::Deleted(id) => ("deleted", id.clone(), None),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn hand_puts_two_written_comments_into_one_handed() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server.add_comment_with_body(12, "second").await;
+
+    server.hand().await;
+
+    let handed = saved_handed(&sink);
+    assert_eq!(handed.len(), 1);
+    assert_eq!(
+        changes(&handed[0]),
+        vec![
+            ("added", "c1".to_string(), Some("first".to_string())),
+            ("added", "c2".to_string(), Some("second".to_string())),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn writing_without_handing_stores_nothing_for_the_agent() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server
+        .post("api/message", json!({"body": "look at the tests"}))
+        .await;
+
+    assert!(sink.last_state().channel.events.is_empty());
+}
+
+#[tokio::test]
+async fn a_comment_edited_after_handing_is_handed_again_as_edited() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first wording").await;
+    server.hand().await;
+    server
+        .comment(json!({"op": "edit", "id": "c1", "body": "second wording"}))
+        .await;
+
+    server.hand().await;
+
+    let handed = saved_handed(&sink);
+    assert_eq!(
+        changes(&handed[1]),
+        vec![(
+            "edited",
+            "c1".to_string(),
+            Some("second wording".to_string())
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_comment_is_handed_by_its_id_only() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server.hand().await;
+    server.comment(json!({"op": "delete", "id": "c1"})).await;
+
+    server.hand().await;
+
+    assert_eq!(
+        changes(&saved_handed(&sink)[1]),
+        vec![("deleted", "c1".to_string(), None)]
+    );
+}
+
+#[tokio::test]
+async fn a_reviewer_reply_and_message_are_handed_with_their_author() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "and the caller"}))
+        .await;
+    let message: Value = server
+        .post("api/message", json!({"body": "start with the tests"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(message["author"], "reviewer");
+
+    server.hand().await;
+
+    let handed = &saved_handed(&sink)[0];
+    assert_eq!(handed.replies[0].comment_id, "c1");
+    assert_eq!(handed.replies[0].reply.body, "and the caller");
+    assert_eq!(handed.messages[0].body, "start with the tests");
+}
+
+#[tokio::test]
+async fn resolving_changes_only_through_the_page_and_is_kept() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+
+    let resolved: Value = server
+        .comment(json!({"op": "resolve", "id": "c1", "resolved": true}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resolved["resolved"], true);
+    assert!(sink.last_state().comments[0].resolved);
+}
+
+/// SSE を開き、`event: <name>` の行の後の data を 1 つ読む。
+async fn next_sse_event(response: &mut reqwest::Response, name: &str) -> Value {
+    let needle = format!("event: {name}\ndata: ");
+    let mut buffer = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(start) = buffer.find(&needle) {
+            let rest = &buffer[start + needle.len()..];
+            if let Some(end) = rest.find('\n') {
+                return serde_json::from_str(&rest[..end]).unwrap();
+            }
+        }
+        let chunk = tokio::time::timeout_at(deadline, response.chunk())
+            .await
+            .unwrap_or_else(|_| panic!("no {name} event in {buffer:?}"))
+            .unwrap()
+            .expect("the event stream ended");
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+    }
+}
+
+#[tokio::test]
+async fn writing_a_message_is_notified_over_sse() {
+    let (server, _sink) = TestServer::with_recording_session().await;
+    let mut events = server.get("api/events").await;
+
+    server
+        .post("api/message", json!({"body": "start with the tests"}))
+        .await;
+
+    let notified = next_sse_event(&mut events, "message").await;
+    assert_eq!(notified["body"], "start with the tests");
+    assert_eq!(notified["author"], "reviewer");
+}
+
+#[tokio::test]
+async fn writing_a_reply_is_notified_over_sse_with_its_thread() {
+    let (server, _sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    let mut events = server.get("api/events").await;
+
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "and the caller"}))
+        .await;
+
+    let notified = next_sse_event(&mut events, "thread").await;
+    assert_eq!(notified["id"], "c1");
+    assert_eq!(notified["replies"][0]["body"], "and the caller");
+}
+
+#[tokio::test]
+async fn the_first_load_carries_replies_messages_and_the_agent_state() {
+    use kemi_core::domain::review::{Author, Message, Reply};
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    let mut saved = sink.last_state();
+    saved.comments[0].replies.push(Reply {
+        id: "r1".to_string(),
+        author: Author::Agent,
+        body: "renamed it".to_string(),
+    });
+    saved.messages.push(Message {
+        id: "m1".to_string(),
+        author: Author::Agent,
+        body: "done for now".to_string(),
+    });
+    saved.channel.called = true;
+    // 復元した画面でも、kemi wait が呼ばれたことと未渡しが分かる。
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), restored).await;
+
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+
+    assert_eq!(review["comments"][0]["replies"][0]["author"], "agent");
+    assert_eq!(review["messages"][0]["body"], "done for now");
+    assert_eq!(review["agent"]["called"], true);
+    assert_eq!(review["agent"]["status"], "working");
+    assert_eq!(review["agent"]["unhanded"], 1);
+}
+
+#[tokio::test]
+async fn a_review_where_kemi_wait_was_never_called_is_unconnected() {
+    let (server, _sink) = TestServer::with_recording_session().await;
+
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+
+    assert_eq!(review["agent"]["called"], false);
+    assert_eq!(review["agent"]["status"], "unconnected");
+    assert_eq!(review["messages"], json!([]));
+}
