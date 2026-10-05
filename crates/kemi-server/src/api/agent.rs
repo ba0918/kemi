@@ -4,8 +4,11 @@
 //! `Origin` と `Host` の検証とは受理の規則が逆（ここは `Origin` を持たない要求だけを
 //! 受ける）なので、同じ `Router` に混ぜると片方の検証を緩めることになる。
 //!
-//! - `POST /a/<token>/wait`: 前の wait が返した後に起きたことを返す。無ければ待つ
-//!   （long-poll）。時間切れはサーバが決め、空で `{"timeout": true}` を返す。
+//! - `POST /a/<token>/wait`: 前の wait が受け取った後に起きたことを返す。無ければ待つ
+//!   （long-poll）。時間切れはサーバが決め、空で `{"timeout": true}` を返す。応答の
+//!   `through` は、返した起きたことが何件目までか。
+//! - `POST /a/<token>/received`: `kemi wait` が応答を受け取りきったことの知らせ
+//!   （`{"through": n}`）。保存した起きたことは、これを受けて初めて外す。
 //! - `POST /a/<token>/reply`: 返信と発言を書く。1 件でも誤りがあれば 1 件も書かない。
 
 use std::convert::Infallible;
@@ -36,6 +39,7 @@ pub(crate) fn agent_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/a/{token}/wait", post(wait_api))
         .route("/a/{token}/reply", post(reply_api))
+        .route("/a/{token}/received", post(received_api))
         // 書き込みの上限は件数と本文ごとの大きさ（R-AGENT-WRITE）で、要求全体の大きさでは
         // ない。上限の中の書き込みをまとめると既定の 2 MB を超えるので、本文の大きさでは
         // 断らない。ここに届くのはトークンを持つ同じマシンの要求だけ（R-AGENT-LINK）。
@@ -106,8 +110,8 @@ struct WaitRequest {
 
 /// 今返せるもの。
 enum Ready {
-    /// 返す起きたことと、そのうち保存された（「渡した」の）件数。
-    Events(Vec<Value>, usize),
+    /// 返す起きたことと、そのうち保存されたもの（「渡した」）が何件目までか。
+    Events(Vec<Value>, u64),
     /// レビューが submit 以外で終わった。理由つき。
     Stopped(String),
     Nothing,
@@ -144,7 +148,7 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         // 確かめる前に通知を受ける用意をして、確かめた直後の通知を取りこぼさない。
         notified.as_mut().enable();
         match ready(&state) {
-            Ready::Events(events, count) => return deliver(state.clone(), events, count, guard),
+            Ready::Events(events, through) => return deliver(events, through, guard),
             Ready::Stopped(reason) => return stopped(&reason),
             Ready::Nothing => {}
         }
@@ -164,7 +168,7 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
             () = timed_out => {
                 // 時間切れと同時に届いたものは、空で返さずに返す。
                 return match ready(&state) {
-                    Ready::Events(events, count) => deliver(state.clone(), events, count, guard),
+                    Ready::Events(events, through) => deliver(events, through, guard),
                     Ready::Stopped(reason) => stopped(&reason),
                     Ready::Nothing => Json(json!({ "timeout": true })).into_response(),
                 };
@@ -202,20 +206,21 @@ fn mark_called(state: &AppState) {
 }
 
 fn ready(state: &AppState) -> Ready {
-    let mut events: Vec<Value> = {
+    let (mut events, through): (Vec<Value>, u64) = {
         let session = state.session.lock().expect("session poisoned");
-        session
+        let events: Vec<Value> = session
             .channel
             .events
             .iter()
             .map(agent_event_json)
-            .collect()
+            .collect();
+        let through = session.received + events.len() as u64;
+        (events, through)
     };
-    let count = events.len();
     match &*state.stop.lock().expect("stop poisoned") {
         Some(Stop::Submitted(document)) => {
             events.push(json!({ "type": "submitted", "result": document }));
-            return Ready::Events(events, count);
+            return Ready::Events(events, through);
         }
         Some(Stop::Failed(message)) => {
             return Ready::Stopped(format!("the review stopped with an error: {message}"));
@@ -230,7 +235,7 @@ fn ready(state: &AppState) -> Ready {
     if events.is_empty() {
         Ready::Nothing
     } else {
-        Ready::Events(events, count)
+        Ready::Events(events, through)
     }
 }
 
@@ -242,19 +247,13 @@ fn stopped(reason: &str) -> Response {
         .into_response()
 }
 
-/// 起きたことを返す。保存した起きたことを外すのは本文を書き終えた後にする。返す途中で
-/// 接続が切れたら本文は捨てられ、外さないので、次の wait がもう一度受け取る。
-fn deliver(state: Arc<AppState>, events: Vec<Value>, count: usize, guard: WaitGuard) -> Response {
-    let bytes = Bytes::from(json!({ "events": events }).to_string());
+/// 起きたことを返す。ここでは保存した起きたことを外さない。本文を書き終えても相手が
+/// 受け取りきったとは限らない（途中で切れた `kemi wait` は何も出さずに終わる）ので、外すのは
+/// 受け取りの知らせ（[`received_api`]）を受けてから。知らせが来なければ次の wait が
+/// もう一度受け取る。待ちの印は本文を書き終えた後に外す。
+fn deliver(events: Vec<Value>, through: u64, guard: WaitGuard) -> Response {
+    let bytes = Bytes::from(json!({ "events": events, "through": through }).to_string());
     let delivered = futures_util::stream::once(async move {
-        {
-            let mut session = state.session.lock().expect("session poisoned");
-            let events = &mut session.channel.events;
-            events.drain(..count.min(events.len()));
-        }
-        if count > 0 {
-            persist(&state);
-        }
         drop(guard);
     })
     .filter_map(|()| async { None::<Result<Bytes, Infallible>> });
@@ -266,6 +265,36 @@ fn deliver(state: Arc<AppState>, events: Vec<Value>, count: usize, guard: WaitGu
         header::HeaderValue::from_static("application/json"),
     );
     response
+}
+
+#[derive(Debug, Deserialize)]
+struct ReceivedRequest {
+    through: u64,
+}
+
+/// `kemi wait` が応答を受け取りきった。その応答で返した起きたことまでを外して保存する。
+/// 前に外した分は数えないので、同じ知らせが重なっても、遅れて届いても二度は外さない。
+async fn received_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let request: ReceivedRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return ApiError::bad_request(format!("invalid request: {error}")).into_response();
+        }
+    };
+    let removed = {
+        let mut session = state.session.lock().expect("session poisoned");
+        let pending = request.through.saturating_sub(session.received);
+        let removed = usize::try_from(pending)
+            .unwrap_or(usize::MAX)
+            .min(session.channel.events.len());
+        session.channel.events.drain(..removed);
+        session.received += removed as u64;
+        removed
+    };
+    if removed > 0 {
+        persist(&state);
+    }
+    Json(json!({})).into_response()
 }
 
 #[derive(Debug, Deserialize)]

@@ -3500,11 +3500,7 @@ impl AgentServer {
 
     /// `kemi wait` と同じ要求を出す。応答の (状態コード, JSON)。
     async fn wait(&self, timeout_ms: Option<u64>) -> (u16, Value) {
-        let response = self
-            .agent_post("wait", json!({ "timeout_ms": timeout_ms }))
-            .await;
-        let status = response.status().as_u16();
-        (status, response.json().await.unwrap())
+        wait_like_the_cli(self.agent_port, self.agent_token.clone(), timeout_ms).await
     }
 
     async fn reply(&self, writes: Value) -> (u16, Value) {
@@ -3527,6 +3523,30 @@ impl AgentServer {
         }
         panic!("the agent status never became {expected}");
     }
+}
+
+/// `kemi wait` と同じに、待って、起きたことを受け取りきったら受け取りを知らせる。
+/// 応答の (状態コード, JSON)。
+async fn wait_like_the_cli(port: u16, token: String, timeout_ms: Option<u64>) -> (u16, Value) {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("http://127.0.0.1:{port}/a/{token}/wait"))
+        .json(&json!({ "timeout_ms": timeout_ms }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let answer: Value = response.json().await.unwrap();
+    if let Some(through) = answer.get("through") {
+        let received = client
+            .post(format!("http://127.0.0.1:{port}/a/{token}/received"))
+            .json(&json!({ "through": through }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(received.status(), 200);
+    }
+    (status, answer)
 }
 
 /// 応答の「渡した」の 1 回分ずつ。時間切れの応答では空。
@@ -3744,24 +3764,15 @@ async fn a_hand_racing_the_timeout_is_returned_by_the_next_wait() {
             .page
             .add_comment_with_body(11, &format!("round {round}"))
             .await;
-        let waiting = {
-            let url = server.agent_url(&server.agent_token, "wait");
-            tokio::spawn(async move {
-                reqwest::Client::new()
-                    .post(url)
-                    .json(&json!({ "timeout_ms": 40 }))
-                    .send()
-                    .await
-                    .unwrap()
-                    .json::<Value>()
-                    .await
-                    .unwrap()
-            })
-        };
+        let waiting = tokio::spawn(wait_like_the_cli(
+            server.agent_port,
+            server.agent_token.clone(),
+            Some(40),
+        ));
         // 時間切れの前後に散らして渡す。
         tokio::time::sleep(Duration::from_millis(30 + u64::from(round) * 3)).await;
         server.page.hand().await;
-        let first = waiting.await.unwrap();
+        let (_, first) = waiting.await.unwrap();
 
         let mut seen = handed_events(&first).len();
         if seen == 0 {
@@ -4074,4 +4085,24 @@ async fn a_reply_arriving_after_the_submit_is_not_reported_as_written_when_missi
         status != 200 || in_result,
         "the reply succeeded ({status}) but is missing from the result: {document}"
     );
+}
+
+#[tokio::test]
+async fn events_answered_to_a_wait_that_never_finished_are_returned_by_the_next_wait() {
+    use tokio::io::AsyncWriteExt;
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    server.page.hand().await;
+    // 応答を受け取りきる前に終わった kemi wait（強制終了など）。
+    let body = r#"{"timeout_ms":null}"#;
+    let mut interrupted = agent_request_head(&server, "wait", body.len()).await;
+    interrupted.write_all(body.as_bytes()).await.unwrap();
+    assert_eq!(response_status(&mut interrupted).await, 200);
+    drop(interrupted);
+    assert_eq!(saved_handed(&server.sink).len(), 1);
+
+    let (status, answer) = server.wait(Some(2_000)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(handed_events(&answer).len(), 1, "{answer}");
 }

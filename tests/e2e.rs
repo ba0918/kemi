@@ -2713,6 +2713,23 @@ async fn wait_returns_the_comment_handed_while_it_waited() {
 }
 
 #[tokio::test]
+async fn what_one_wait_returned_is_not_returned_by_the_next_wait() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.add_comment(1, "rename this").await;
+    kemi.hand().await;
+    let first = run_agent(&dir.path, &state.path, &["wait", &id], "");
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+
+    let second = run_agent(&dir.path, &state.path, &["wait", &id, "--timeout", "1"], "");
+
+    assert_eq!(second.status.code(), Some(3), "{second:?}");
+    assert!(second.stdout.is_empty());
+    kemi.kill();
+}
+
+#[tokio::test]
 async fn reply_writes_a_reply_and_a_message_that_reach_the_submit() {
     let dir = TempDir::new();
     let state = TempDir::new();

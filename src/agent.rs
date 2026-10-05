@@ -1,8 +1,8 @@
 //! `kemi wait` と `kemi reply`（agent-channel.md の R-AGENT-CLI）。
 //!
 //! 動いているレビューの `<id>.endpoint` からエージェント用の API のポートとトークンを読み、
-//! ループバックへ平文の HTTP/1.1 の要求を 1 つ送る。送るのはこの 1 種類だけなので、HTTP
-//! クライアントのクレートは足さない。
+//! ループバックへ平文の HTTP/1.1 の要求を送る（`kemi wait` は待つ要求と受け取りの知らせの 2 つ）。
+//! 送るのはこの形だけなので、HTTP クライアントのクレートは足さない。
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
@@ -70,7 +70,10 @@ pub fn run(command: Command, sessions: Option<PathBuf>, endpoints: Option<PathBu
             };
             let body = serde_json::json!({ "timeout_ms": timeout.map(|seconds| seconds * 1000) });
             match post(&endpoint, "wait", body.to_string().as_bytes()) {
-                Ok((200, answer)) => print_events(&id, &answer),
+                Ok((200, answer)) => match acknowledge(&endpoint, &answer) {
+                    Ok(()) => print_events(&id, &answer),
+                    Err(message) => failed(&message),
+                },
                 Ok((_, answer)) => refused(&answer),
                 Err(message) => failed(&message),
             }
@@ -119,6 +122,25 @@ fn find(id: &str, sessions: Option<PathBuf>, endpoints: Option<PathBuf>) -> Resu
     }
 }
 
+/// 応答を受け取りきったことをレビューに知らせる。知らせるまで、レビューは起きたことを
+/// 消さずに持ち、途中で終わった `kemi wait` の分は次の `kemi wait` が受け取る。知らせが
+/// 届かなければ何も出さずに終わり、起きたことは次の `kemi wait` に残る。時間切れと、
+/// submit を含む応答（レビューは止まり始めている）では知らせない。
+fn acknowledge(endpoint: &Endpoint, answer: &serde_json::Value) -> Result<(), String> {
+    let submitted = answer
+        .get("events")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|events| events.iter().any(|event| event["type"] == "submitted"));
+    let Some(through) = answer.get("through").filter(|_| !submitted) else {
+        return Ok(());
+    };
+    let body = serde_json::json!({ "through": through });
+    match post(endpoint, "received", body.to_string().as_bytes())? {
+        (200, _) => Ok(()),
+        (_, answer) => Err(reason(&answer).to_string()),
+    }
+}
+
 fn print_events(id: &str, answer: &serde_json::Value) -> i32 {
     if answer.get("timeout").and_then(serde_json::Value::as_bool) == Some(true) {
         return 3;
@@ -146,11 +168,15 @@ fn print_json(value: &serde_json::Value) {
 }
 
 fn refused(answer: &serde_json::Value) -> i32 {
-    let reason = answer
+    failed(reason(answer))
+}
+
+/// 断られた応答の理由。
+fn reason(answer: &serde_json::Value) -> &str {
+    answer
         .get("error")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("the review refused the request");
-    failed(reason)
+        .unwrap_or("the review refused the request")
 }
 
 fn failed(message: &str) -> i32 {

@@ -25,6 +25,10 @@ pub struct Session {
     pub last_reply: u32,
     pub last_message: u32,
     pub channel: Channel,
+    /// `channel.events` からこれまでに外した起きたことの数。`kemi wait` の受け取りの
+    /// 知らせ（何件目まで受け取ったか）を、重なっても二度外さないための起点。メモリだけに
+    /// 置き、復元では 0 から数え直す（それより前の知らせは止まったサーバへのもので届かない）。
+    pub received: u64,
 }
 
 impl Session {
@@ -49,6 +53,7 @@ impl Session {
             last_reply: state.last_reply.max(from_replies),
             last_message: state.last_message.max(from_messages),
             channel: state.channel,
+            received: 0,
         }
     }
 
