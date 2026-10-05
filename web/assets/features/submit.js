@@ -4,9 +4,10 @@
 import * as api from "../api.js";
 import { el, textEl } from "../dom.js";
 import { state, unitLabel } from "../state.js";
-import { countLabel, submitSummary } from "../model.js";
+import { countLabel, submitSummary, unhandedNotice } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
+import { renderAgent } from "../views/chat.js";
 import { renderSubmitButtons } from "../views/header.js";
 import { openModal, showCompletion, showOverlay } from "../views/overlay.js";
 
@@ -36,6 +37,13 @@ export function openConfirm(verdict) {
   const body = [list];
   if (summary.unseen > 0) {
     body.push(textEl("p", "warn", `${countLabel(summary.unseen, "file")} not seen yet.`));
+  }
+  // まだエージェントに渡していないものが残っていても submit は止めない（R-AGENT-HAND）。
+  const unhanded = unhandedNotice(state.agent);
+  if (unhanded) {
+    const notice = textEl("p", "warn", unhanded);
+    notice.id = "unhanded-notice";
+    body.push(notice);
   }
   body.push(
     textEl(
@@ -67,6 +75,7 @@ async function submitReview(verdict) {
     state.selection = null;
     state.editor = null;
     renderSubmitButtons();
+    renderAgent();
     renderDiff();
     renderFloating();
     renderFileHeader();

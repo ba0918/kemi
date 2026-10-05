@@ -1,12 +1,14 @@
 //! セッション状態（R-SERVE）とセッションへの保存（R-SESSION）。
-//! コメント、見た、折りたたみ、解決をメモリに持ち、変更のたびに保存先へも書く。
+//! コメント、見た、折りたたみ、解決、返信、発言、往復の続きをメモリに持ち、変更のたびに
+//! 保存先へも書く。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use kemi_core::domain::review::Comment;
+use kemi_core::domain::agent::{AgentEvent, Channel, HandedComment};
+use kemi_core::domain::review::{Comment, Message, Reply};
 use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
 use serde_json::json;
@@ -19,29 +21,67 @@ pub struct Session {
     pub seen: BTreeSet<String>,
     pub collapsed: BTreeMap<String, bool>,
     pub last_comment: u32,
+    pub messages: Vec<Message>,
+    pub last_reply: u32,
+    pub last_message: u32,
+    pub channel: Channel,
+    /// `channel.events` からこれまでに外した起きたことの数。`kemi wait` の受け取りの
+    /// 知らせ（何件目まで受け取ったか）を、重なっても二度外さないための起点。メモリだけに
+    /// 置き、復元では 0 から数え直す（それより前の知らせは止まったサーバへのもので届かない）。
+    pub received: u64,
 }
 
 impl Session {
-    /// 保存された状態から読み戻す。コメントの id は再利用しないので、採番は保存した
-    /// 最終番号と、残っているコメントの番号の大きい方から続ける。
+    /// 保存された状態から読み戻す。コメント・返信・発言の id は再利用しないので、採番は
+    /// 保存した最終番号と、残っているものの番号の大きい方から続ける。
     pub fn from_state(state: SessionState) -> Self {
-        let from_comments = state
-            .comments
-            .iter()
-            .filter_map(|comment| comment.id.strip_prefix('c'))
-            .filter_map(|number| number.parse::<u32>().ok())
-            .max()
-            .unwrap_or(0);
+        let from_comments = highest_number(state.comments.iter().map(|comment| &comment.id), 'c');
+        let from_replies = highest_number(
+            state
+                .comments
+                .iter()
+                .flat_map(|comment| comment.replies.iter().map(|reply| &reply.id)),
+            'r',
+        );
+        let from_messages = highest_number(state.messages.iter().map(|message| &message.id), 'm');
         Session {
             comments: state.comments,
             seen: state.seen,
             collapsed: state.collapsed,
             last_comment: state.last_comment.max(from_comments),
+            messages: state.messages,
+            last_reply: state.last_reply.max(from_replies),
+            last_message: state.last_message.max(from_messages),
+            channel: state.channel,
+            received: 0,
+        }
+    }
+
+    /// 保存する状態の写し。
+    pub(crate) fn snapshot(&self) -> SessionState {
+        SessionState {
+            comments: self.comments.clone(),
+            seen: self.seen.clone(),
+            collapsed: self.collapsed.clone(),
+            last_comment: self.last_comment,
+            messages: self.messages.clone(),
+            last_reply: self.last_reply,
+            last_message: self.last_message,
+            channel: self.channel.clone(),
         }
     }
 }
 
-/// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。
+/// `c12` のような id の番号の最大。
+fn highest_number<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u32 {
+    ids.filter_map(|id| id.strip_prefix(prefix))
+        .filter_map(|number| number.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+/// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。`page` は
+/// `--live` のページへのコメントだけが持つので、ここでは常に `null`。
 pub fn comment_json(comment: &Comment) -> serde_json::Value {
     json!({
         "id": comment.id,
@@ -53,7 +93,8 @@ pub fn comment_json(comment: &Comment) -> serde_json::Value {
         "end_line": comment.end_line,
         "quote": comment.quote,
         "body": comment.body,
-        "replies": comment.replies,
+        "page": null,
+        "replies": comment.replies.iter().map(reply_json).collect::<Vec<_>>(),
         "resolved": comment.resolved,
         "outdated": comment.outdated,
         "suggestion": comment
@@ -61,6 +102,52 @@ pub fn comment_json(comment: &Comment) -> serde_json::Value {
             .as_ref()
             .map(|suggestion| json!({ "replacement": suggestion.replacement })),
     })
+}
+
+/// R-SUBMIT の契約に合わせた返信の JSON。案（`variants`・`chosen`・`applied`）は
+/// `--live` のレビューでだけ持つので、ここでは常に空。
+pub fn reply_json(reply: &Reply) -> serde_json::Value {
+    json!({
+        "id": reply.id,
+        "author": reply.author.as_str(),
+        "body": reply.body,
+        "variants": [],
+        "chosen": null,
+        "applied": null,
+    })
+}
+
+/// R-SUBMIT の契約に合わせた発言の JSON。
+pub fn message_json(message: &Message) -> serde_json::Value {
+    json!({
+        "id": message.id,
+        "author": message.author.as_str(),
+        "body": message.body,
+    })
+}
+
+/// `kemi wait` が返す起きたこと 1 つ（R-AGENT-EVENTS）。コメント・返信・発言の形は
+/// submit の結果と同じ。削除したコメントは id だけを持つ。
+pub fn agent_event_json(event: &AgentEvent) -> serde_json::Value {
+    match event {
+        AgentEvent::Handed(handed) => json!({
+            "type": "handed",
+            "comments": handed.comments.iter().map(|change| match change {
+                HandedComment::Added(comment) => {
+                    json!({ "change": "added", "comment": comment_json(comment) })
+                }
+                HandedComment::Edited(comment) => {
+                    json!({ "change": "edited", "comment": comment_json(comment) })
+                }
+                HandedComment::Deleted(id) => json!({ "change": "deleted", "comment": { "id": id } }),
+            }).collect::<Vec<_>>(),
+            "replies": handed.replies.iter().map(|handed| json!({
+                "comment_id": handed.comment_id,
+                "reply": reply_json(&handed.reply),
+            })).collect::<Vec<_>>(),
+            "messages": handed.messages.iter().map(message_json).collect::<Vec<_>>(),
+        }),
+    }
 }
 
 /// 今の状態を保存先へ書く。失敗は警告だけで、レビューは終わらせない（R-SESSION）。
@@ -72,15 +159,7 @@ pub(crate) fn persist(state: &AppState) {
     // する。呼び出し側はセッション mutex を離してから来るので、ロックは persist →
     // session の一方向に保たれる。
     let _persist = state.persist.lock().expect("persist poisoned");
-    let snapshot = {
-        let session = state.session.lock().expect("session poisoned");
-        SessionState {
-            comments: session.comments.clone(),
-            seen: session.seen.clone(),
-            collapsed: session.collapsed.clone(),
-            last_comment: session.last_comment,
-        }
-    };
+    let snapshot = state.session.lock().expect("session poisoned").snapshot();
     if let Err(error) = sink.save_state(snapshot) {
         state.notices.notify(Notice::SessionNotSaved(error));
     }

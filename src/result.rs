@@ -29,6 +29,28 @@ pub fn sessions_dir(
     state_root(xdg_state_home, home, local_app_data).map(|root| root.join("sessions"))
 }
 
+/// `<id>.endpoint` の置き場所（R-AGENT-LINK）。unix ではセッションと同じ。Windows では
+/// `XDG_STATE_HOME` に関わらず `%LOCALAPPDATA%\kemi\sessions\` に置き、ユーザーごとの
+/// フォルダの既定の権限で持ち主だけにする。
+pub fn endpoint_dir(
+    xdg_state_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+    local_app_data: Option<&OsStr>,
+) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let _ = (xdg_state_home, home);
+        let app_data = Path::new(local_app_data?);
+        app_data
+            .is_absolute()
+            .then(|| app_data.join("kemi").join("sessions"))
+    }
+    #[cfg(not(windows))]
+    {
+        sessions_dir(xdg_state_home, home, local_app_data)
+    }
+}
+
 /// kemi の状態の根（`.../kemi/`）。結果ファイルとセッションがこの下に並ぶ。
 fn state_root(
     xdg_state_home: Option<&OsStr>,
@@ -358,6 +380,41 @@ mod tests {
             Some(PathBuf::from("/home/user/.local/state/kemi/sessions"))
         );
         assert_eq!(sessions_dir(None, None, None), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn endpoint_dir_is_the_sessions_dir_on_unix() {
+        let home = Some(OsStr::new("/home/user"));
+
+        assert_eq!(
+            endpoint_dir(Some(OsStr::new("/state")), home, None),
+            sessions_dir(Some(OsStr::new("/state")), home, None)
+        );
+        assert_eq!(
+            endpoint_dir(None, home, None),
+            Some(PathBuf::from("/home/user/.local/state/kemi/sessions"))
+        );
+        assert_eq!(endpoint_dir(None, None, None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn endpoint_dir_is_under_local_app_data_even_with_xdg_on_windows() {
+        let app_data = Some(OsStr::new(r"C:\Users\user\AppData\Local"));
+
+        assert_eq!(
+            endpoint_dir(Some(OsStr::new(r"D:\state")), None, app_data),
+            Some(PathBuf::from(r"C:\Users\user\AppData\Local\kemi\sessions"))
+        );
+        assert_eq!(
+            endpoint_dir(Some(OsStr::new(r"D:\state")), None, None),
+            None
+        );
+        assert_eq!(
+            endpoint_dir(None, None, Some(OsStr::new(r"AppData\Local"))),
+            None
+        );
     }
 
     #[cfg(windows)]

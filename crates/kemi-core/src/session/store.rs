@@ -254,8 +254,16 @@ impl SessionStore {
                 return false;
             };
             name.ends_with(".session")
-                && read_version(&entry.path()).is_some_and(|version| version != encoding::VERSION)
+                && read_version(&entry.path())
+                    .is_some_and(|version| !encoding::is_readable(version))
         })
+    }
+
+    /// そのセッションのレビューが今動いているか（ロックが生きているか）。`<id>.endpoint` が
+    /// 強制終了で残っていても、ロックが死んでいれば無いものとして扱うために使う
+    /// （R-AGENT-LINK）。
+    pub fn is_running(&self, id: &str) -> bool {
+        checked_id(id).is_ok() && is_locked(&self.dir, id)
     }
 
     /// セッションのファイルを消す。
@@ -263,7 +271,8 @@ impl SessionStore {
         checked_id(id)?;
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         remove_if_present(&self.path(id))?;
-        remove_if_present(&self.payload_path(id))
+        remove_if_present(&self.payload_path(id))?;
+        remove_if_present(&super::endpoint_path(&self.dir, id))
     }
 
     fn path(&self, id: &str) -> PathBuf {
@@ -320,7 +329,7 @@ fn payload_path(dir: &Path, id: &str) -> PathBuf {
 
 /// 公開の入口で id を検証する（R-SESSION）。ULID でない id は存在しない id と同じ
 /// 理由にし、保存領域の外へパスを組み立てない。
-fn checked_id(id: &str) -> Result<&str, SessionError> {
+pub(crate) fn checked_id(id: &str) -> Result<&str, SessionError> {
     if super::is_valid_id(id) {
         Ok(id)
     } else {
@@ -389,7 +398,8 @@ impl OpenSession {
         self.deleted = true;
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         self.remove_file()?;
-        self.remove_payload_file()
+        self.remove_payload_file()?;
+        remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))
     }
 
     pub(crate) fn save_state_at(
@@ -542,7 +552,7 @@ impl Drop for SessionLock {
 
 /// 一時ファイルへ書いてから rename する。一時ファイルの名前は、掃除が見る接尾辞
 /// （`.session` と `.payload`）で終わらせない。
-fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
+pub(crate) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
     create_private_dir(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let temporary = dir.join(format!(".{name}.tmp"));
@@ -559,7 +569,7 @@ fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionErro
 }
 
 /// あれば消す。無いのは成功と同じに扱う。
-fn remove_if_present(path: &Path) -> Result<(), SessionError> {
+pub(crate) fn remove_if_present(path: &Path) -> Result<(), SessionError> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -581,6 +591,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
     // `<id>.session` の中身は読まない（R-SESSION）。
     let mut sessions: BTreeMap<String, u64> = BTreeMap::new();
     let mut payloads: BTreeMap<String, u64> = BTreeMap::new();
+    let mut endpoints: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -591,7 +602,14 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
             sessions.insert(id.to_string(), size);
         } else if let Some(id) = name.strip_suffix(".payload") {
             payloads.insert(id.to_string(), size);
+        } else if let Some(id) = name.strip_suffix(".endpoint") {
+            endpoints.push(id.to_string());
         }
+    }
+    // 動いていないレビューのつなぎ先は、強制終了で残ったもの。消したセッションのものも
+    // 含め、ロックの生死だけで片付ける（R-AGENT-LINK）。
+    for id in endpoints.iter().filter(|id| !is_locked(dir, id)) {
+        let _ = std::fs::remove_file(super::endpoint_path(dir, id));
     }
     // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
     prune_orphan_locks(dir, Duration::from_secs(60));
@@ -711,13 +729,13 @@ fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
     };
     let (version, meta) =
         encoding::decode_session(&bytes).map_err(|error| corrupt(error.to_string()))?;
-    if version != encoding::VERSION {
+    if !encoding::is_readable(version) {
         return Err(SessionError::UnsupportedVersion {
             path: path.to_path_buf(),
             version,
         });
     }
-    serde_json::from_slice(meta).map_err(|error| corrupt(error.to_string()))
+    MetaDto::decode(version, meta).map_err(corrupt)
 }
 
 fn is_locked(dir: &Path, id: &str) -> bool {
@@ -816,7 +834,10 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::domain::review::{GroupBy, ReviewMeta, Side, Suggestion};
+    use crate::domain::agent::{
+        AgentEvent, Channel, Handed, HandedComment, HandedReply, ReplyRef, Unhanded,
+    };
+    use crate::domain::review::{Author, GroupBy, Message, Reply, ReviewMeta, Side, Suggestion};
     use crate::session::{FrozenUnit, SessionMode};
     use crate::source::FileContent;
 
@@ -871,7 +892,11 @@ mod tests {
             end_line: Some(2),
             quote: vec!["one".to_string(), "two".to_string()],
             body: "please change".to_string(),
-            replies: vec!["done".to_string()],
+            replies: vec![Reply {
+                id: "r1".to_string(),
+                author: Author::Reviewer,
+                body: "done".to_string(),
+            }],
             resolved: true,
             outdated: false,
             content_hash: "hash".to_string(),
@@ -887,6 +912,8 @@ mod tests {
             seen: ["f1".to_string()].into_iter().collect(),
             collapsed: [("f1".to_string(), true)].into_iter().collect(),
             last_comment: 1,
+            last_reply: 1,
+            ..SessionState::default()
         }
     }
 
@@ -1614,5 +1641,267 @@ mod tests {
         assert_eq!(dir_mode, 0o700);
         assert_eq!(mode_of(format!("{id}.session")), 0o600);
         assert_eq!(mode_of(format!("{id}.payload")), 0o600);
+    }
+    fn reply(id: &str, author: Author, body: &str) -> Reply {
+        Reply {
+            id: id.to_string(),
+            author,
+            body: body.to_string(),
+        }
+    }
+
+    /// エージェントとの往復の続きまで持った状態。
+    fn state_with_agent_channel() -> SessionState {
+        let mut state = state_with_comment();
+        state.comments[0].replies = vec![
+            reply("r1", Author::Reviewer, "why this name?"),
+            reply("r2", Author::Agent, "it follows the module"),
+        ];
+        state.messages = vec![Message {
+            id: "m1".to_string(),
+            author: Author::Agent,
+            body: "started on the review".to_string(),
+        }];
+        state.last_reply = 2;
+        state.last_message = 1;
+        let mut edited = comment();
+        edited.body = "edited body".to_string();
+        state.channel = Channel {
+            called: true,
+            handed_comments: vec!["c1".to_string()],
+            unhanded: Unhanded {
+                comments: vec!["c1".to_string()],
+                replies: vec![ReplyRef {
+                    comment_id: "c1".to_string(),
+                    reply_id: "r1".to_string(),
+                }],
+                messages: vec!["m1".to_string()],
+            },
+            events: vec![AgentEvent::Handed(Handed {
+                comments: vec![
+                    HandedComment::Added(comment()),
+                    HandedComment::Edited(edited),
+                    HandedComment::Deleted("c7".to_string()),
+                ],
+                replies: vec![HandedReply {
+                    comment_id: "c1".to_string(),
+                    reply: reply("r1", Author::Reviewer, "why this name?"),
+                }],
+                messages: vec![Message {
+                    id: "m2".to_string(),
+                    author: Author::Reviewer,
+                    body: "look at the tests first".to_string(),
+                }],
+            })],
+        };
+        state
+    }
+
+    #[test]
+    fn session_roundtrips_replies_messages_and_the_agent_channel() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_agent_channel(), 200).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+
+        let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
+        assert_eq!(encoding::decode_version(&bytes).unwrap(), 3);
+        assert_eq!(store.read(&id).unwrap().state, state_with_agent_channel());
+    }
+
+    /// セッション形式の版 2 の kemi が書いた `<id>.session`（返信は文字列の並び、
+    /// 写しは「使える」）。版 3 の読み手を足す前の `encode_session(2, …)` で作った。
+    const VERSION_2_SESSION: &[u8] = b"kemi-session\n\x02\x6b\x03\x00\x00\
+        {\"info\":{\"id\":\"01HF7YAT00CCCCCCCCCCCCCCCC\",\"created\":1700000000000,\
+        \"updated\":1700000002000,\"workspace\":\"/tmp/workspace\",\"workspace_key\":\"00000000000000aa\",\
+        \"mode\":{\"kind\":\"worktree\"},\"title\":\"Working tree changes\",\"total_files\":2},\
+        \"state\":{\"comments\":[{\"id\":\"c1\",\"file_id\":\"f1\",\"group_id\":\"all\",\
+        \"group_title\":\"final\",\"path\":\"src/a.rs\",\"side\":\"new\",\"start_line\":1,\
+        \"end_line\":2,\"quote\":[\"one\",\"two\"],\"body\":\"please change\",\"replies\":[\"first\",\
+        \"second\"],\"resolved\":true,\"outdated\":false,\"content_hash\":\"hash\",\
+        \"suggestion\":\"replaced\"},{\"id\":\"c2\",\"file_id\":\"f1\",\"group_id\":\"all\",\
+        \"group_title\":\"final\",\"path\":\"src/a.rs\",\"side\":\"new\",\"start_line\":1,\
+        \"end_line\":2,\"quote\":[\"one\",\"two\"],\"body\":\"please change\",\"replies\":[\"third\"],\
+        \"resolved\":false,\"outdated\":false,\"content_hash\":\"hash\",\"suggestion\":null}],\
+        \"seen\":[\"f1\"],\"collapsed\":{\"f1\":true},\"last_comment\":2},\"copy\":{\"state\":\"ready\"}}";
+
+    const VERSION_2_ID: &str = "01HF7YAT00CCCCCCCCCCCCCCCC";
+
+    fn place_version_2_session(scratch: &Scratch) {
+        std::fs::create_dir_all(scratch.dir()).unwrap();
+        std::fs::write(
+            scratch.dir().join(format!("{VERSION_2_ID}.session")),
+            VERSION_2_SESSION,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn version_2_session_reads_its_string_replies_as_reviewer_replies() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        place_version_2_session(&scratch);
+
+        let state = store.read(VERSION_2_ID).unwrap().state;
+
+        // 版 2 の画面からは返信を書けず、API で書けたのも画面の側（人間）だけだった。
+        // id は読むときに、コメントの順・返信の順に振る。
+        assert_eq!(
+            state.comments[0].replies,
+            vec![
+                reply("r1", Author::Reviewer, "first"),
+                reply("r2", Author::Reviewer, "second"),
+            ]
+        );
+        assert_eq!(
+            state.comments[1].replies,
+            vec![reply("r3", Author::Reviewer, "third")]
+        );
+        assert_eq!(state.last_reply, 3);
+        assert!(state.comments[0].resolved);
+        assert_eq!(state.last_comment, 2);
+        // 版 2 に無い項目は空として読む。
+        assert!(state.messages.is_empty());
+        assert_eq!(state.last_message, 0);
+        assert_eq!(state.channel, Channel::default());
+    }
+
+    #[test]
+    fn version_2_session_is_listed_and_resumable() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        place_version_2_session(&scratch);
+        // 写しのファイルは版を持たないので、今の書き方で置いてよい。
+        let payload = encoding::gzip(&super::super::encode_copy(&copy()).unwrap());
+        std::fs::write(
+            scratch.dir().join(format!("{VERSION_2_ID}.payload")),
+            payload,
+        )
+        .unwrap();
+
+        let listed: Vec<String> = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|summary| summary.id)
+            .collect();
+
+        assert_eq!(listed, vec![VERSION_2_ID.to_string()]);
+        assert!(!store.has_unreadable_version());
+        let opened = store.open(VERSION_2_ID).unwrap();
+        assert_eq!(opened.copy(), &CopyState::Ready(copy()));
+        assert_eq!(opened.state().comments.len(), 2);
+    }
+
+    #[test]
+    fn session_of_a_version_without_a_reader_is_unsupported_and_reported() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        std::fs::create_dir_all(scratch.dir()).unwrap();
+        let id = "01HF7YAT00BBBBBBBBBBBBBBBB";
+        std::fs::write(
+            scratch.dir().join(format!("{id}.session")),
+            encoding::encode_session(99, b"{}"),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            store.read(id),
+            Err(SessionError::UnsupportedVersion { version: 99, .. })
+        ));
+        assert!(store.has_unreadable_version());
+    }
+
+    #[test]
+    fn endpoint_roundtrips_and_is_owner_only() {
+        use crate::session::{Endpoint, read_endpoint, write_endpoint};
+        let scratch = Scratch::new();
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let endpoint = Endpoint {
+            port: 41234,
+            token: "secret".to_string(),
+        };
+
+        write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
+
+        assert_eq!(read_endpoint(&scratch.dir(), id).unwrap(), Some(endpoint));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(crate::session::endpoint_path(&scratch.dir(), id))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        assert_eq!(
+            read_endpoint(&scratch.dir(), "01HF7YAT00BBBBBBBBBBBBBBBB").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn endpoint_is_removed_with_the_session() {
+        use crate::session::{Endpoint, endpoint_path, write_endpoint};
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+        let id = open.id().to_string();
+        let endpoint = Endpoint {
+            port: 1,
+            token: "t".to_string(),
+        };
+        write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
+
+        open.delete().unwrap();
+
+        assert!(!endpoint_path(&scratch.dir(), &id).exists());
+        drop(open);
+        write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
+        store.delete(&id).unwrap();
+        assert!(!endpoint_path(&scratch.dir(), &id).exists());
+    }
+
+    #[test]
+    fn a_running_session_is_told_apart_from_a_dead_one() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let open = store.create(info(id, 100)).unwrap();
+
+        assert!(store.is_running(id));
+        drop(open);
+        assert!(!store.is_running(id));
+        assert!(!store.is_running("not-an-id"));
+    }
+
+    #[test]
+    fn cleanup_removes_an_endpoint_left_by_a_review_that_is_gone() {
+        use crate::session::{Endpoint, endpoint_path, write_endpoint};
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let endpoint = Endpoint {
+            port: 1,
+            token: "t".to_string(),
+        };
+        let stale = "01HF7YAT00BBBBBBBBBBBBBBBB";
+        write_endpoint(&scratch.dir(), stale, &endpoint).unwrap();
+        let mut running = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        write_endpoint(&scratch.dir(), running.id(), &endpoint).unwrap();
+
+        running.save_state_at(state_with_comment(), 200).unwrap();
+
+        assert!(!endpoint_path(&scratch.dir(), stale).exists());
+        assert!(endpoint_path(&scratch.dir(), running.id()).exists());
     }
 }

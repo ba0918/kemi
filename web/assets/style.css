@@ -2263,6 +2263,198 @@ ul.files ul {
   display: inline-flex;
 }
 
+/* ---------- エージェントとの往復（agent-channel.md） ---------- */
+
+/* 状態は点と言葉で、チャット欄の入口に添える。待機中は藍、作業中は付箋の色、応答なしは
+   削除の色で目立たせる。 */
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.agent-status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.agent-status[data-status="waiting"]::before {
+  background: var(--accent);
+}
+
+.agent-status[data-status="working"]::before {
+  background: var(--note-line);
+}
+
+.agent-status[data-status="unresponsive"]::before {
+  background: var(--del-ink);
+}
+
+.agent-status[data-status="unresponsive"] {
+  color: var(--del-ink);
+}
+
+/* 往復の操作の置き場。上部バーの並びを変えないよう、ファイルツリーの下端に重ねる。
+   ツリーはその分だけ下に余白を足し、最後の項目が隠れないようにする。 */
+.agent-dock {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 330px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+.agent-dock .agent-status {
+  margin-right: auto;
+}
+
+.tree {
+  padding-bottom: 110px;
+}
+
+.hand-count {
+  font-weight: 600;
+}
+
+/* チャット欄。広い画面では往復の操作の上に開く箱、狭い画面では下から出すシート。 */
+.chat {
+  position: fixed;
+  left: 12px;
+  bottom: 62px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 36px));
+  max-height: 70vh;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  border-radius: 10px 10px 0 0;
+}
+
+.chat-items {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px;
+}
+
+.chat-item + .chat-item {
+  margin-top: 8px;
+}
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.chat-form textarea,
+.reply-box textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 7px;
+  resize: vertical;
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* スレッド。返信は書いた人を添えて作成順に並べ、エージェントの返信は藍の線で見分ける。 */
+.thread {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--note-line);
+}
+
+.reply {
+  padding: 6px 0 0 8px;
+  border-left: 2px solid transparent;
+  margin-top: 6px;
+}
+
+.reply[data-author="agent"],
+.chat-item[data-author="agent"] {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+
+.reply-author {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.reply[data-author="agent"] .reply-author,
+.chat-item[data-author="agent"] .reply-author {
+  color: var(--accent);
+}
+
+.reply-body {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reply-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.reply-count,
+.t-resolved-mark {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.t-resolved-mark {
+  color: var(--add-ink);
+  border-color: var(--add-ink);
+}
+
 /* ---------- 狭い画面（R-NARROW） ---------- */
 
 /* 狭い画面でだけ使う要素。常に DOM にあり、広い画面では出さない。 */
@@ -2520,6 +2712,35 @@ ul.files ul {
     max-height: none;
     border: 0;
     border-radius: 0;
+  }
+
+  /* エージェントとの往復: 「Hand to agent」は上部バーに置かず、チャット欄の入口には状態の
+     点だけを出す。チャット欄は下から出すシートで、状態の言葉と渡す操作もここに入る。 */
+  .agent-dock {
+    display: none;
+  }
+
+  .tree {
+    padding-bottom: 48px;
+  }
+
+  #btn-chat {
+    order: 4;
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  #btn-chat .agent-status {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .chat {
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: 75vh;
+    border-width: 1px 0 0;
+    border-radius: 12px 12px 0 0;
   }
 
   /* ファイルツリーは左から重ねる引き出し。閉じている間は画面の外で、フォーカスも届かない。

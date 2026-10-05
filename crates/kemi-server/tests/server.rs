@@ -377,6 +377,7 @@ impl TestServer {
             session: None,
             notices: notices.clone(),
             share_address,
+            agent: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -673,7 +674,9 @@ async fn two_clients_share_comments_and_seen_without_an_author_field() {
 
     let document = server.finish().await;
     let comment = &document["comments"][0];
-    assert_eq!(comment["replies"], json!(["2台目から"]));
+    assert_eq!(comment["replies"][0]["body"], "2台目から");
+    // 返信の書いた人は「人間」だけで、どの端末かは区別しない（P5）。
+    assert_eq!(comment["replies"][0]["author"], "reviewer");
     assert!(comment.get("author").is_none(), "{comment}");
 }
 
@@ -812,8 +815,9 @@ async fn submit_schema_follows_contract() {
     assert_eq!(response.status(), 200);
     let document = server.finish().await;
 
-    assert_eq!(document["kemi"], 1);
+    assert_eq!(document["kemi"], 2);
     assert_eq!(document["title"], "テストのレビュー");
+    assert_eq!(document["messages"], json!([]));
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["approval"][0]["identity"], "sha256:abc");
     let comments = document["comments"].as_array().unwrap();
@@ -826,7 +830,18 @@ async fn submit_schema_follows_contract() {
     assert_eq!(comments[0]["start_line"], 11);
     assert_eq!(comments[0]["end_line"], 11);
     assert_eq!(comments[0]["quote"], json!(["new"]));
-    assert_eq!(comments[0]["replies"], json!(["返信1"]));
+    assert_eq!(comments[0]["page"], Value::Null);
+    assert_eq!(
+        comments[0]["replies"],
+        json!([{
+            "id": "r1",
+            "author": "reviewer",
+            "body": "返信1",
+            "variants": [],
+            "chosen": null,
+            "applied": null,
+        }])
+    );
     assert_eq!(comments[0]["resolved"], true);
     assert_eq!(comments[0]["outdated"], false);
     assert_eq!(
@@ -1074,6 +1089,7 @@ impl LiveServer {
             session: None,
             notices: notices.clone(),
             share_address: None,
+            agent: None,
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。
@@ -1849,6 +1865,14 @@ impl TestServer {
         .unwrap()
     }
 
+    async fn submit_document(self) -> Value {
+        let response = self
+            .post("api/submit", json!({"verdict": "approved"}))
+            .await;
+        assert_eq!(response.status(), 200);
+        self.finish().await
+    }
+
     async fn submit_comments(self) -> Vec<Value> {
         let response = self
             .post("api/submit", json!({"verdict": "approved"}))
@@ -2128,6 +2152,7 @@ impl TestServer {
             session,
             notices: notices.clone(),
             share_address: None,
+            agent: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -2174,7 +2199,14 @@ async fn session_state_is_saved_on_every_change() {
 
     let state = sink.last_state();
     assert_eq!(state.comments.len(), 1);
-    assert_eq!(state.comments[0].replies, vec!["reply".to_string()]);
+    assert_eq!(
+        state.comments[0].replies,
+        vec![kemi_core::domain::review::Reply {
+            id: "r1".to_string(),
+            author: kemi_core::domain::review::Author::Reviewer,
+            body: "reply".to_string(),
+        }]
+    );
     assert!(state.comments[0].resolved);
     assert!(state.seen.contains("f1"));
     assert_eq!(state.collapsed.get("f1"), Some(&true));
@@ -2313,6 +2345,7 @@ async fn session_copy_waits_for_both_units() {
         session: Some(sink.clone()),
         notices: Arc::new(RecordingNotices::default()),
         share_address: None,
+        agent: None,
     };
     tokio::spawn(serve(listener, params));
 
@@ -2588,7 +2621,11 @@ async fn session_initial_state_is_restored() {
         end_line: Some(1),
         quote: vec!["x".to_string()],
         body: "復元されたコメント".to_string(),
-        replies: vec!["返信".to_string()],
+        replies: vec![kemi_core::domain::review::Reply {
+            id: "r1".to_string(),
+            author: kemi_core::domain::review::Author::Reviewer,
+            body: "返信".to_string(),
+        }],
         resolved: true,
         outdated: false,
         content_hash: "hash".to_string(),
@@ -2600,6 +2637,8 @@ async fn session_initial_state_is_restored() {
         seen: ["f1".to_string()].into_iter().collect(),
         collapsed: [("f1".to_string(), true)].into_iter().collect(),
         last_comment: 7,
+        last_reply: 1,
+        ..SessionState::default()
     });
     let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink).await;
 
@@ -2610,6 +2649,75 @@ async fn session_initial_state_is_restored() {
     assert_eq!(review["comments"][0]["resolved"], true);
     assert_eq!(file["seen"], true);
     assert_eq!(file["collapsed"], true);
+}
+
+#[tokio::test]
+async fn session_restored_replies_continue_their_numbering() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    server.add_new_side_comment().await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "first"}))
+        .await;
+    let mut saved = sink.last_state();
+    // 返信を消しても、復元した後の返信は消した番号を使わない。
+    saved.comments[0].replies.clear();
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server =
+        TestServer::start_with_session(Arc::new(FakeSource::new()), restored.clone()).await;
+
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "second"}))
+        .await;
+
+    assert_eq!(restored.last_state().comments[0].replies[0].id, "r2");
+}
+
+#[tokio::test]
+async fn submit_lists_reviewer_and_agent_replies_in_creation_order_with_messages() {
+    use kemi_core::domain::review::{Author, Message, Reply};
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    server.add_new_side_comment().await;
+    // エージェントの書き込みはまだ経路が無いので、保存された状態に直接置いて復元する。
+    let mut saved = sink.last_state();
+    saved.comments[0].replies.push(Reply {
+        id: "r1".to_string(),
+        author: Author::Agent,
+        body: "renamed it".to_string(),
+    });
+    saved.last_reply = 1;
+    saved.messages.push(Message {
+        id: "m1".to_string(),
+        author: Author::Agent,
+        body: "all comments are addressed".to_string(),
+    });
+    saved.last_message = 1;
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), restored).await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "thanks"}))
+        .await;
+
+    let document = server.submit_document().await;
+
+    let replies = &document["comments"][0]["replies"];
+    assert_eq!(replies[0]["id"], "r1");
+    assert_eq!(replies[0]["author"], "agent");
+    assert_ne!(replies[1]["id"], replies[0]["id"]);
+    assert_eq!(replies[1]["author"], "reviewer");
+    assert_eq!(replies[1]["body"], "thanks");
+    for reply in replies.as_array().unwrap() {
+        assert_eq!(reply["variants"], json!([]));
+        assert_eq!(reply["chosen"], Value::Null);
+        assert_eq!(reply["applied"], Value::Null);
+    }
+    assert_eq!(
+        document["messages"],
+        json!([{"id": "m1", "author": "agent", "body": "all comments are addressed"}])
+    );
 }
 
 // ---- R-RENDER（描画のエンドポイントと api/file の描画表示の情報） ----
@@ -3063,4 +3171,948 @@ async fn adding_a_comment_reports_its_path_side_and_lines() {
             ("src/a.rs".to_string(), Side::New, None),
         ]
     );
+}
+
+// ---- R-AGENT-HAND（ページ側の API: 渡す・返信・解決・発言と、その通知） ----
+
+use kemi_core::domain::agent::{AgentEvent, Handed, HandedComment};
+
+impl TestServer {
+    async fn with_recording_session() -> (Self, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        let server =
+            TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+        (server, sink)
+    }
+
+    async fn add_comment_with_body(&self, line: u32, body: &str) -> Value {
+        let response = self
+            .comment(json!({
+                "op": "add", "file_id": "f1", "side": "new",
+                "start_line": line, "end_line": line, "body": body
+            }))
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+
+    async fn hand(&self) -> Value {
+        let response = self.post("api/hand", json!({})).await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+}
+
+/// 保存された状態にたまっている、まだ受け取られていない「渡した」の 1 回分ずつ。
+fn saved_handed(sink: &RecordingSink) -> Vec<Handed> {
+    sink.last_state()
+        .channel
+        .events
+        .into_iter()
+        .map(|event| match event {
+            AgentEvent::Handed(handed) => handed,
+        })
+        .collect()
+}
+
+fn changes(handed: &Handed) -> Vec<(&'static str, String, Option<String>)> {
+    handed
+        .comments
+        .iter()
+        .map(|change| match change {
+            HandedComment::Added(comment) => {
+                ("added", comment.id.clone(), Some(comment.body.clone()))
+            }
+            HandedComment::Edited(comment) => {
+                ("edited", comment.id.clone(), Some(comment.body.clone()))
+            }
+            HandedComment::Deleted(id) => ("deleted", id.clone(), None),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn hand_puts_two_written_comments_into_one_handed() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server.add_comment_with_body(12, "second").await;
+
+    server.hand().await;
+
+    let handed = saved_handed(&sink);
+    assert_eq!(handed.len(), 1);
+    assert_eq!(
+        changes(&handed[0]),
+        vec![
+            ("added", "c1".to_string(), Some("first".to_string())),
+            ("added", "c2".to_string(), Some("second".to_string())),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn writing_without_handing_stores_nothing_for_the_agent() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server
+        .post("api/message", json!({"body": "look at the tests"}))
+        .await;
+
+    assert!(sink.last_state().channel.events.is_empty());
+}
+
+#[tokio::test]
+async fn a_comment_edited_after_handing_is_handed_again_as_edited() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first wording").await;
+    server.hand().await;
+    server
+        .comment(json!({"op": "edit", "id": "c1", "body": "second wording"}))
+        .await;
+
+    server.hand().await;
+
+    let handed = saved_handed(&sink);
+    assert_eq!(
+        changes(&handed[1]),
+        vec![(
+            "edited",
+            "c1".to_string(),
+            Some("second wording".to_string())
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_comment_is_handed_by_its_id_only() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server.hand().await;
+    server.comment(json!({"op": "delete", "id": "c1"})).await;
+
+    server.hand().await;
+
+    assert_eq!(
+        changes(&saved_handed(&sink)[1]),
+        vec![("deleted", "c1".to_string(), None)]
+    );
+}
+
+#[tokio::test]
+async fn a_reviewer_reply_and_message_are_handed_with_their_author() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "and the caller"}))
+        .await;
+    let message: Value = server
+        .post("api/message", json!({"body": "start with the tests"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(message["author"], "reviewer");
+
+    server.hand().await;
+
+    let handed = &saved_handed(&sink)[0];
+    assert_eq!(handed.replies[0].comment_id, "c1");
+    assert_eq!(handed.replies[0].reply.body, "and the caller");
+    assert_eq!(handed.messages[0].body, "start with the tests");
+}
+
+#[tokio::test]
+async fn resolving_changes_only_through_the_page_and_is_kept() {
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+
+    let resolved: Value = server
+        .comment(json!({"op": "resolve", "id": "c1", "resolved": true}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resolved["resolved"], true);
+    assert!(sink.last_state().comments[0].resolved);
+}
+
+/// SSE を開き、`event: <name>` の行の後の data を 1 つ読む。
+async fn next_sse_event(response: &mut reqwest::Response, name: &str) -> Value {
+    let needle = format!("event: {name}\ndata: ");
+    let mut buffer = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(start) = buffer.find(&needle) {
+            let rest = &buffer[start + needle.len()..];
+            if let Some(end) = rest.find('\n') {
+                return serde_json::from_str(&rest[..end]).unwrap();
+            }
+        }
+        let chunk = tokio::time::timeout_at(deadline, response.chunk())
+            .await
+            .unwrap_or_else(|_| panic!("no {name} event in {buffer:?}"))
+            .unwrap()
+            .expect("the event stream ended");
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+    }
+}
+
+#[tokio::test]
+async fn writing_a_message_is_notified_over_sse() {
+    let (server, _sink) = TestServer::with_recording_session().await;
+    let mut events = server.get("api/events").await;
+
+    server
+        .post("api/message", json!({"body": "start with the tests"}))
+        .await;
+
+    let notified = next_sse_event(&mut events, "message").await;
+    assert_eq!(notified["body"], "start with the tests");
+    assert_eq!(notified["author"], "reviewer");
+}
+
+#[tokio::test]
+async fn writing_a_reply_is_notified_over_sse_with_its_thread() {
+    let (server, _sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    let mut events = server.get("api/events").await;
+
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "and the caller"}))
+        .await;
+
+    let notified = next_sse_event(&mut events, "thread").await;
+    assert_eq!(notified["id"], "c1");
+    assert_eq!(notified["replies"][0]["body"], "and the caller");
+}
+
+#[tokio::test]
+async fn the_first_load_carries_replies_messages_and_the_agent_state() {
+    use kemi_core::domain::review::{Author, Message, Reply};
+    let (server, sink) = TestServer::with_recording_session().await;
+    server.add_comment_with_body(11, "first").await;
+    let mut saved = sink.last_state();
+    saved.comments[0].replies.push(Reply {
+        id: "r1".to_string(),
+        author: Author::Agent,
+        body: "renamed it".to_string(),
+    });
+    saved.messages.push(Message {
+        id: "m1".to_string(),
+        author: Author::Agent,
+        body: "done for now".to_string(),
+    });
+    saved.channel.called = true;
+    // 復元した画面でも、kemi wait が呼ばれたことと未渡しが分かる。
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), restored).await;
+
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+
+    assert_eq!(review["comments"][0]["replies"][0]["author"], "agent");
+    assert_eq!(review["messages"][0]["body"], "done for now");
+    assert_eq!(review["agent"]["called"], true);
+    assert_eq!(review["agent"]["status"], "working");
+    assert_eq!(review["agent"]["unhanded"], 1);
+}
+
+#[tokio::test]
+async fn a_review_where_kemi_wait_was_never_called_is_unconnected() {
+    let (server, _sink) = TestServer::with_recording_session().await;
+
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+
+    assert_eq!(review["agent"]["called"], false);
+    assert_eq!(review["agent"]["status"], "unconnected");
+    assert_eq!(review["messages"], json!([]));
+}
+
+// ---- R-AGENT-CLI / R-AGENT-WRITE / R-AGENT-STATE / R-AGENT-LINK（エージェント用の API） ----
+
+use kemi_server::{AgentParams, bind_agent_listener};
+
+/// エージェント用のリスナーも立てたサーバ。
+struct AgentServer {
+    page: TestServer,
+    agent_port: u16,
+    agent_token: String,
+    sink: Arc<RecordingSink>,
+}
+
+impl AgentServer {
+    async fn start() -> Self {
+        AgentServer::start_with(Arc::new(FakeSource::new()), Ipv4Addr::LOCALHOST).await
+    }
+
+    async fn start_with(source: Arc<dyn ReviewSource>, bind: Ipv4Addr) -> Self {
+        let sink = Arc::new(RecordingSink::default());
+        let listener = TcpListener::bind((bind, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
+        let origin = url.split("/s/").next().unwrap().to_string();
+        let agent_listener = bind_agent_listener().await.unwrap();
+        let agent_port = agent_listener.local_addr().unwrap().port();
+        let notices = Arc::new(RecordingNotices::default());
+        let params = ServeParams {
+            source,
+            assets: Arc::new(FakeAssets),
+            token: "test-token".to_string(),
+            results: None,
+            session: Some(sink.clone()),
+            notices: notices.clone(),
+            share_address: None,
+            agent: Some(AgentParams {
+                listener: agent_listener,
+                token: "agent-secret".to_string(),
+                control: kemi_server::ServeControl::new(),
+            }),
+        };
+        let task = tokio::spawn(serve(listener, params));
+        AgentServer {
+            page: TestServer {
+                url,
+                origin,
+                port,
+                source: Arc::new(FakeSource::new()),
+                notices,
+                task,
+            },
+            agent_port,
+            agent_token: "agent-secret".to_string(),
+            sink,
+        }
+    }
+
+    fn agent_url(&self, token: &str, action: &str) -> String {
+        format!("http://127.0.0.1:{}/a/{token}/{action}", self.agent_port)
+    }
+
+    async fn agent_post(&self, action: &str, body: Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(self.agent_url(&self.agent_token, action))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// `kemi wait` と同じ要求を出す。応答の (状態コード, JSON)。
+    async fn wait(&self, timeout_ms: Option<u64>) -> (u16, Value) {
+        wait_like_the_cli(self.agent_port, self.agent_token.clone(), timeout_ms).await
+    }
+
+    async fn reply(&self, writes: Value) -> (u16, Value) {
+        let response = self.agent_post("reply", json!({ "writes": writes })).await;
+        let status = response.status().as_u16();
+        (status, response.json().await.unwrap())
+    }
+
+    async fn agent_status(&self) -> String {
+        let review: Value = self.page.get("api/review").await.json().await.unwrap();
+        review["agent"]["status"].as_str().unwrap().to_string()
+    }
+
+    async fn wait_until_status(&self, expected: &str) {
+        for _ in 0..200 {
+            if self.agent_status().await == expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the agent status never became {expected}");
+    }
+}
+
+/// `kemi wait` と同じに、待って、起きたことを受け取りきったら受け取りを知らせる。
+/// 応答の (状態コード, JSON)。
+async fn wait_like_the_cli(port: u16, token: String, timeout_ms: Option<u64>) -> (u16, Value) {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("http://127.0.0.1:{port}/a/{token}/wait"))
+        .json(&json!({ "timeout_ms": timeout_ms }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let answer: Value = response.json().await.unwrap();
+    if let Some(through) = answer.get("through") {
+        let received = client
+            .post(format!("http://127.0.0.1:{port}/a/{token}/received"))
+            .json(&json!({ "through": through }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(received.status(), 200);
+    }
+    (status, answer)
+}
+
+/// 応答の「渡した」の 1 回分ずつ。時間切れの応答では空。
+fn handed_events(answer: &Value) -> Vec<&Value> {
+    answer["events"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|event| event["type"] == "handed")
+        .collect()
+}
+
+#[tokio::test]
+async fn a_waiting_request_returns_when_the_reviewer_hands() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    let waiting = {
+        let url = server.agent_url(&server.agent_token, "wait");
+        tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .json(&json!({ "timeout_ms": null }))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        })
+    };
+    server.wait_until_status("waiting").await;
+
+    server.page.hand().await;
+
+    let answer = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    let handed = handed_events(&answer);
+    assert_eq!(handed.len(), 1);
+    assert_eq!(handed[0]["comments"][0]["change"], "added");
+    assert_eq!(handed[0]["comments"][0]["comment"]["body"], "first");
+}
+
+#[tokio::test]
+async fn a_request_returns_at_once_when_something_already_happened() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    server.page.hand().await;
+    server
+        .page
+        .comment(json!({"op": "delete", "id": "c1"}))
+        .await;
+    server.page.hand().await;
+
+    let (status, answer) = server.wait(Some(5_000)).await;
+
+    assert_eq!(status, 200);
+    let handed = handed_events(&answer);
+    assert_eq!(handed.len(), 2);
+    assert_eq!(
+        handed[1]["comments"][0],
+        json!({ "change": "deleted", "comment": { "id": "c1" } })
+    );
+}
+
+#[tokio::test]
+async fn received_events_are_not_returned_again() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    server.page.hand().await;
+    let (_, first) = server.wait(Some(5_000)).await;
+    assert_eq!(handed_events(&first).len(), 1);
+
+    let (status, second) = server.wait(Some(100)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(second["timeout"], true);
+    for _ in 0..100 {
+        if server.sink.last_state().channel.events.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the received events are still stored");
+}
+
+#[tokio::test]
+async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
+    let server = AgentServer::start().await;
+    let waiting = {
+        let url = server.agent_url(&server.agent_token, "wait");
+        tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .json(&json!({ "timeout_ms": null }))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        })
+    };
+    server.wait_until_status("waiting").await;
+
+    let response = server
+        .page
+        .post("api/submit", json!({"verdict": "changes_requested"}))
+        .await;
+    assert_eq!(response.status(), 200);
+
+    let answer = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    let events = answer["events"].as_array().unwrap();
+    let submitted = events.last().unwrap();
+    assert_eq!(submitted["type"], "submitted");
+    assert_eq!(submitted["result"]["verdict"], "changes_requested");
+    assert_eq!(submitted["result"]["kemi"], 2);
+    let document = server.page.finish().await;
+    assert_eq!(document["verdict"], "changes_requested");
+}
+
+#[tokio::test]
+async fn a_second_concurrent_wait_is_refused() {
+    let server = AgentServer::start().await;
+    let _first = {
+        let url = server.agent_url(&server.agent_token, "wait");
+        tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .json(&json!({ "timeout_ms": null }))
+                .send()
+                .await
+        })
+    };
+    server.wait_until_status("waiting").await;
+
+    let (status, _) = server.wait(Some(100)).await;
+
+    assert_eq!(status, 409);
+}
+
+/// 起動時は読めるが、取り直しの読み取りで失敗する入力。
+struct FailingRefreshSource {
+    inner: FakeSource,
+    fail: AtomicBool,
+}
+
+impl ReviewSource for FailingRefreshSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(SourceError::Git("disk went away".to_string()));
+        }
+        self.inner.review()
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(file_id)
+    }
+}
+
+#[tokio::test]
+async fn a_runtime_error_ends_the_waiting_request_with_its_reason_and_serve_returns() {
+    let source = Arc::new(FailingRefreshSource {
+        inner: FakeSource::new(),
+        fail: AtomicBool::new(false),
+    });
+    let server = AgentServer::start_with(source.clone(), Ipv4Addr::LOCALHOST).await;
+    let waiting = {
+        let url = server.agent_url(&server.agent_token, "wait");
+        tokio::spawn(async move {
+            let response = reqwest::Client::new()
+                .post(url)
+                .json(&json!({ "timeout_ms": null }))
+                .send()
+                .await
+                .unwrap();
+            (
+                response.status().as_u16(),
+                response.json::<Value>().await.unwrap(),
+            )
+        })
+    };
+    server.wait_until_status("waiting").await;
+    source.fail.store(true, Ordering::SeqCst);
+
+    let _ = server.page.get("api/review?refresh=1").await;
+
+    let (status, answer) = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status, 503);
+    assert!(
+        answer["error"].as_str().unwrap().contains("disk went away"),
+        "{answer}"
+    );
+    let outcome = tokio::time::timeout(Duration::from_secs(5), server.page.task)
+        .await
+        .expect("serve did not return")
+        .unwrap();
+    assert!(outcome.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hand_racing_the_timeout_is_returned_by_the_next_wait() {
+    let server = AgentServer::start().await;
+    for round in 0..8u32 {
+        server
+            .page
+            .add_comment_with_body(11, &format!("round {round}"))
+            .await;
+        let waiting = tokio::spawn(wait_like_the_cli(
+            server.agent_port,
+            server.agent_token.clone(),
+            Some(40),
+        ));
+        // 時間切れの前後に散らして渡す。
+        tokio::time::sleep(Duration::from_millis(30 + u64::from(round) * 3)).await;
+        server.page.hand().await;
+        let (_, first) = waiting.await.unwrap();
+
+        let mut seen = handed_events(&first).len();
+        if seen == 0 {
+            assert_eq!(first["timeout"], true);
+            let (_, next) = server.wait(Some(5_000)).await;
+            seen = handed_events(&next).len();
+        }
+
+        assert_eq!(seen, 1, "round {round}");
+    }
+}
+
+fn agent_reply(comment_id: &str, body: &str) -> Value {
+    json!({ "type": "reply", "comment_id": comment_id, "body": body })
+}
+
+#[tokio::test]
+async fn reply_writes_replies_and_messages_as_the_agent_and_returns_their_ids() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+
+    let (status, answer) = server
+        .reply(json!([
+            agent_reply("c1", "renamed it"),
+            { "type": "message", "body": "done for now" },
+        ]))
+        .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(answer["ids"].as_array().map(Vec::len), Some(2), "{answer}");
+    let state = server.sink.last_state();
+    // 書いた順の id が、書いた返信と発言のものになる。
+    assert_eq!(answer["ids"][0], state.comments[0].replies[0].id.as_str());
+    assert_eq!(answer["ids"][1], state.messages[0].id.as_str());
+    assert_eq!(state.comments[0].replies[0].body, "renamed it");
+    assert_eq!(
+        state.comments[0].replies[0].author,
+        kemi_core::domain::review::Author::Agent
+    );
+    assert_eq!(
+        state.messages[0].author,
+        kemi_core::domain::review::Author::Agent
+    );
+    // エージェントの書き込みは渡す対象ではない。
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["agent"]["unhanded"], 1);
+}
+
+/// 書き込みが 1 件も残っていないこと。
+async fn assert_nothing_written(server: &AgentServer) {
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"][0]["replies"], json!([]));
+    assert_eq!(review["messages"], json!([]));
+}
+
+#[tokio::test]
+async fn a_write_to_a_missing_comment_writes_nothing() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+
+    let (status, answer) = server
+        .reply(json!([agent_reply("c1", "ok"), agent_reply("c9", "lost")]))
+        .await;
+
+    assert_eq!(status, 400);
+    assert!(
+        answer["error"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty()),
+        "{answer}"
+    );
+    assert_nothing_written(&server).await;
+}
+
+#[tokio::test]
+async fn a_body_over_64_kb_writes_nothing() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+
+    let (status, _) = server
+        .reply(json!([
+            { "type": "message", "body": "fine" },
+            agent_reply("c1", &"x".repeat(64 * 1024 + 1)),
+        ]))
+        .await;
+
+    assert_eq!(status, 400);
+    assert_nothing_written(&server).await;
+}
+
+#[tokio::test]
+async fn the_fifty_first_agent_reply_on_a_comment_writes_nothing() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    let fifty: Vec<Value> = (0..50)
+        .map(|n| agent_reply("c1", &format!("{n}")))
+        .collect();
+    let (status, _) = server.reply(Value::Array(fifty)).await;
+    assert_eq!(status, 200);
+
+    let (status, _) = server
+        .reply(json!([{ "type": "message", "body": "fine" }, agent_reply("c1", "one more")]))
+        .await;
+
+    assert_eq!(status, 400);
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(
+        review["comments"][0]["replies"].as_array().unwrap().len(),
+        50
+    );
+    assert_eq!(review["messages"], json!([]));
+}
+
+#[tokio::test]
+async fn the_two_hundred_first_agent_message_writes_nothing() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    let many: Vec<Value> = (0..200)
+        .map(|n| json!({ "type": "message", "body": format!("{n}") }))
+        .collect();
+    let (status, _) = server.reply(Value::Array(many)).await;
+    assert_eq!(status, 200);
+
+    let (status, _) = server
+        .reply(json!([agent_reply("c1", "fine"), { "type": "message", "body": "one more" }]))
+        .await;
+
+    assert_eq!(status, 400);
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"][0]["replies"], json!([]));
+    assert_eq!(review["messages"].as_array().unwrap().len(), 200);
+}
+
+#[tokio::test]
+async fn a_write_with_variants_is_a_shape_error_outside_a_live_review() {
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    let mut with_variants = agent_reply("c1", "two ideas");
+    with_variants["variants"] = json!([{ "label": "A", "replace": [], "css": "" }]);
+
+    let (status, _) = server.reply(json!([with_variants])).await;
+
+    assert_eq!(status, 400);
+    assert_nothing_written(&server).await;
+}
+
+#[tokio::test]
+async fn an_agent_request_with_an_origin_is_forbidden() {
+    let server = AgentServer::start().await;
+
+    let response = reqwest::Client::new()
+        .post(server.agent_url(&server.agent_token, "reply"))
+        .header("Origin", "http://127.0.0.1:3000")
+        .json(&json!({ "writes": [{ "type": "message", "body": "x" }] }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    assert_nothing_written_without_comments(&server).await;
+}
+
+async fn assert_nothing_written_without_comments(server: &AgentServer) {
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["messages"], json!([]));
+}
+
+#[tokio::test]
+async fn an_agent_request_with_a_wrong_token_is_refused() {
+    let server = AgentServer::start().await;
+
+    let response = reqwest::Client::new()
+        .post(server.agent_url("test-token", "reply"))
+        .json(&json!({ "writes": [{ "type": "message", "body": "x" }] }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+    assert_nothing_written_without_comments(&server).await;
+}
+
+#[tokio::test]
+async fn the_agent_listener_stays_on_loopback_when_the_page_listens_on_all_interfaces() {
+    let listener = bind_agent_listener().await.unwrap();
+
+    assert_eq!(
+        listener.local_addr().unwrap().ip(),
+        std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
+    );
+    let server = AgentServer::start_with(Arc::new(FakeSource::new()), Ipv4Addr::UNSPECIFIED).await;
+    let (status, _) = server.wait(Some(10)).await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn the_status_goes_from_unconnected_to_waiting_to_working() {
+    let server = AgentServer::start().await;
+    let mut events = server.page.get("api/events").await;
+    assert_eq!(server.agent_status().await, "unconnected");
+
+    let waiting = {
+        let url = server.agent_url(&server.agent_token, "wait");
+        tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .json(&json!({ "timeout_ms": 300 }))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        })
+    };
+    let notified = next_sse_event(&mut events, "agent").await;
+    assert_eq!(notified["status"], "waiting");
+    assert_eq!(notified["called"], true);
+    assert_eq!(server.agent_status().await, "waiting");
+
+    waiting.await.unwrap();
+
+    let notified = next_sse_event(&mut events, "agent").await;
+    assert_eq!(notified["status"], "working");
+    assert_eq!(server.agent_status().await, "working");
+    assert!(server.sink.last_state().channel.called);
+}
+
+#[tokio::test]
+async fn a_dropped_wait_connection_turns_the_status_to_working() {
+    use tokio::io::AsyncWriteExt;
+    let server = AgentServer::start().await;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.agent_port))
+        .await
+        .unwrap();
+    let body = r#"{"timeout_ms":null}"#;
+    let request = format!(
+        "POST /a/{}/wait HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        server.agent_token,
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    server.wait_until_status("waiting").await;
+
+    drop(stream);
+
+    server.wait_until_status("working").await;
+}
+
+#[tokio::test]
+async fn a_large_batch_within_the_limits_is_written_whatever_its_size() {
+    let server = AgentServer::start().await;
+    // 1 件ずつは上限の中でも、まとめると 2 MB を超える書き込み。
+    let many: Vec<Value> = (0..40)
+        .map(|_| json!({ "type": "message", "body": "x".repeat(60 * 1024) }))
+        .collect();
+
+    let (status, answer) = server.reply(Value::Array(many)).await;
+
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["ids"].as_array().unwrap().len(), 40);
+}
+
+/// エージェント用の API に要求の頭だけを送り、本文はまだ送らない接続。
+async fn agent_request_head(
+    server: &AgentServer,
+    action: &str,
+    body_len: usize,
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.agent_port))
+        .await
+        .unwrap();
+    let head = format!(
+        "POST /a/{}/{action} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {body_len}\r\nConnection: close\r\n\r\n",
+        server.agent_token,
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream
+}
+
+/// 接続が閉じるまで読んだ応答の状態コード。閉じないまま止まったら、待ち続けずに失敗させる。
+async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
+    use tokio::io::AsyncReadExt;
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("the agent API never closed the connection")
+        .unwrap();
+    let text = String::from_utf8_lossy(&response);
+    text.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+#[tokio::test]
+async fn a_reply_arriving_after_the_submit_is_not_reported_as_written_when_missing_from_the_result()
+{
+    use tokio::io::AsyncWriteExt;
+    let server = AgentServer::start().await;
+    let body = json!({ "writes": [{ "type": "message", "body": "late" }] }).to_string();
+    let mut late = agent_request_head(&server, "reply", body.len()).await;
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        server
+            .page
+            .post("api/submit", json!({"verdict": "approved"})),
+    )
+    .await
+    .expect("the submit never answered");
+    assert_eq!(response.status(), 200);
+    late.write_all(body.as_bytes()).await.unwrap();
+    let status = response_status(&mut late).await;
+
+    let document = server.page.finish().await;
+    let in_result = document["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["body"] == "late");
+    assert!(
+        status != 200 || in_result,
+        "the reply succeeded ({status}) but is missing from the result: {document}"
+    );
+}
+
+#[tokio::test]
+async fn events_answered_to_a_wait_that_never_finished_are_returned_by_the_next_wait() {
+    use tokio::io::AsyncWriteExt;
+    let server = AgentServer::start().await;
+    server.page.add_comment_with_body(11, "first").await;
+    server.page.hand().await;
+    // 応答を受け取りきる前に終わった kemi wait（強制終了など）。
+    let body = r#"{"timeout_ms":null}"#;
+    let mut interrupted = agent_request_head(&server, "wait", body.len()).await;
+    interrupted.write_all(body.as_bytes()).await.unwrap();
+    assert_eq!(response_status(&mut interrupted).await, 200);
+    drop(interrupted);
+    assert_eq!(saved_handed(&server.sink).len(), 1);
+
+    let (status, answer) = server.wait(Some(2_000)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(handed_events(&answer).len(), 1, "{answer}");
 }

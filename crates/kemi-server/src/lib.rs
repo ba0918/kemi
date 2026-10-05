@@ -11,7 +11,7 @@ mod units;
 mod watch;
 
 use std::borrow::Cow;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, RwLock};
 
 use kemi_core::domain::review::Side;
@@ -59,10 +59,12 @@ pub enum ServeOutcome {
     Submitted(serde_json::Value),
 }
 
-/// サーバを止めた理由。submit か、レビュー中の実行時エラーか。
+/// サーバを止めた理由。submit か、レビュー中の実行時エラーか、保留か。
 pub(crate) enum Stop {
     Submitted(serde_json::Value),
     Failed(String),
+    /// 待っている `kemi wait` に保留を知らせるために止めた（[`ServeControl::suspend`]）。
+    Suspended,
 }
 
 /// 結果ファイルを残せなかった理由（R-RESULT）。完了画面には Display の文を出す。
@@ -169,15 +171,83 @@ pub struct ServeParams {
     /// LAN に案内する共有アドレス。`--bind 0.0.0.0` のときだけ意味を持ち、
     /// 特定できなければ `None`（R-SERVE）。URL と警告は起動側が組み立てる。
     pub share_address: Option<Ipv4Addr>,
+    /// エージェント用の API（agent-channel.md）。セッションの無いレビューでは `None`。
+    pub agent: Option<AgentParams>,
+}
+
+/// エージェント用の API の待ち受け（R-AGENT-LINK）。
+pub struct AgentParams {
+    /// [`bind_agent_listener`] で立てたリスナー。
+    pub listener: TcpListener,
+    /// ページのトークンとは別の秘密。`<id>.endpoint` にだけ書く。
+    pub token: String,
+    /// 保留を待っている `kemi wait` に知らせる入口。起動側が持つ。
+    pub control: ServeControl,
+}
+
+/// 起動側からサーバへの入口。保留（SIGINT / SIGTERM）は submit や実行時エラーと違って
+/// サーバの中を通らず、起動側が serve の future を捨てて終わるので、待っている
+/// `kemi wait` に理由を返すにはここから知らせる（R-AGENT-CLI）。
+#[derive(Clone, Default)]
+pub struct ServeControl {
+    state: Arc<std::sync::OnceLock<std::sync::Weak<AppState>>>,
+}
+
+impl ServeControl {
+    pub fn new() -> Self {
+        ServeControl::default()
+    }
+
+    /// 保留で終わることを、待っている `kemi wait` に知らせてサーバを止め始める。待っている
+    /// ものが無ければ何もせず false を返し、起動側は今までどおりすぐ終わってよい。true の
+    /// ときは、serve が返る（理由を返し終えて接続が閉じる）のを待ってから終わる。
+    pub fn suspend(&self) -> bool {
+        let Some(state) = self.state.get().and_then(std::sync::Weak::upgrade) else {
+            return false;
+        };
+        if !state.agent.lock().expect("agent poisoned").waiting {
+            return false;
+        }
+        {
+            let mut stop = state.stop.lock().expect("stop poisoned");
+            if stop.is_none() {
+                *stop = Some(Stop::Suspended);
+            }
+        }
+        let _ = state.shutdown.send(true);
+        true
+    }
+}
+
+/// エージェント用のリスナーを立てる。`--bind` に関わらず `127.0.0.1` で待つので、
+/// LAN からは届かず、`--bind` が具体アドレスでも同じマシンの `kemi wait` は届く
+/// （R-AGENT-LINK）。
+pub async fn bind_agent_listener() -> std::io::Result<TcpListener> {
+    TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await
 }
 
 /// SSE でページへ知らせること。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Event {
     /// 新側の供給元が変わった（R-LIVE の更新バッジ）。
     Update,
     /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。
     Unit,
+    /// スレッドに返信が増えた。中身はそのコメントの JSON。
+    Thread(serde_json::Value),
+    /// 発言が増えた。中身はその発言の JSON。
+    Message(serde_json::Value),
+    /// エージェントの状態か未渡しの件数が変わった（R-AGENT-STATE）。
+    Agent(serde_json::Value),
+}
+
+/// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
+/// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
+pub(crate) struct AgentRuntime {
+    /// `kemi wait` が待っているか。
+    pub waiting: bool,
+    /// 最後に `kemi wait` が返った（または切れた）か `kemi reply` が来た時刻（ミリ秒）。
+    pub last_activity: u128,
 }
 
 /// submit の同時受理を 1 つに絞るための状態。
@@ -203,6 +273,11 @@ pub(crate) struct AppState {
     /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
     pub persist: Mutex<()>,
     pub events: broadcast::Sender<Event>,
+    pub agent: Mutex<AgentRuntime>,
+    /// エージェント用の API のトークン。無ければその API を立てない。
+    pub agent_token: Option<String>,
+    /// 待っている `kemi wait` を起こす（渡したとき）。
+    pub wake: tokio::sync::Notify,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
     pub shutdown: shutdown_watch::Sender<bool>,
     pub stop: Mutex<Option<Stop>>,
@@ -220,6 +295,21 @@ pub(crate) fn stop_with_error(state: &AppState, message: impl Into<String>) {
         }
     }
     let _ = state.shutdown.send(true);
+}
+
+/// 停止の合図（R-SUBMIT）を待つ future。
+fn stopping(state: &AppState) -> impl std::future::Future<Output = ()> + use<> {
+    let mut receiver = state.shutdown.subscribe();
+    async move {
+        loop {
+            if *receiver.borrow() {
+                break;
+            }
+            if receiver.changed().await.is_err() {
+                break;
+            }
+        }
+    }
 }
 
 pub async fn serve(
@@ -250,7 +340,8 @@ pub async fn serve(
         .as_ref()
         .map(|sink| sink.initial_state())
         .unwrap_or_default();
-    let (events, _) = broadcast::channel(16);
+    // エージェントの返信は短い間に続けて届くことがあるので、取りこぼしにくい長さにする。
+    let (events, _) = broadcast::channel(256);
     let (shutdown, _) = shutdown_watch::channel(false);
 
     let state = Arc::new(AppState {
@@ -267,35 +358,44 @@ pub async fn serve(
         session: Mutex::new(Session::from_state(initial_state)),
         persist: Mutex::new(()),
         events,
+        agent: Mutex::new(AgentRuntime {
+            waiting: false,
+            last_activity: kemi_core::session::now_millis(),
+        }),
+        agent_token: params.agent.as_ref().map(|agent| agent.token.clone()),
+        wake: tokio::sync::Notify::new(),
         shutdown,
         stop: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),
         freeze_started: std::sync::atomic::AtomicBool::new(false),
     });
 
+    if let Some(agent) = &params.agent {
+        let _ = agent.control.state.set(Arc::downgrade(&state));
+    }
     watch::start(state.source.watch_paths(), state.events.clone());
 
     let app = api::router(state.clone());
-    let mut shutdown_receiver = state.shutdown.subscribe();
-    let shutdown = async move {
-        loop {
-            if *shutdown_receiver.borrow() {
-                break;
-            }
-            if shutdown_receiver.changed().await.is_err() {
-                break;
-            }
+    let page = axum::serve(listener, app).with_graceful_shutdown(stopping(&state));
+    match params.agent {
+        Some(agent) => {
+            api::start_status_ticker(&state);
+            let agent_app = api::agent_router(state.clone())
+                .into_make_service_with_connect_info::<SocketAddr>();
+            let agent =
+                axum::serve(agent.listener, agent_app).with_graceful_shutdown(stopping(&state));
+            // graceful shutdown は処理中の接続が閉じるまで待つ。待っている kemi wait は
+            // submit の結果を返し終えてから閉じる（R-AGENT-CLI）。
+            tokio::try_join!(page.into_future(), agent.into_future()).map_err(ServerError::Io)?;
         }
-    };
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await
-        .map_err(ServerError::Io)?;
+        None => page.await.map_err(ServerError::Io)?,
+    }
 
     let stop = state.stop.lock().expect("stop poisoned").take();
     match stop {
         Some(Stop::Submitted(document)) => Ok(ServeOutcome::Submitted(document)),
         Some(Stop::Failed(message)) => Err(ServerError::Stopped(message)),
+        Some(Stop::Suspended) => Err(ServerError::Stopped("the review was suspended".to_string())),
         None => Err(ServerError::Stopped(
             "server stopped without a submit".to_string(),
         )),

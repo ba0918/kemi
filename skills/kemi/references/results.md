@@ -4,7 +4,7 @@
 
 ```json
 {
-  "kemi": 1,
+  "kemi": 2,
   "title": "Review",
   "verdict": "approved",
   "approval": [{"path": "src/a.rs", "identity": "sha256:..."}],
@@ -19,16 +19,30 @@
       "end_line": 14,
       "quote": ["the line text when the comment was written"],
       "body": "the comment",
-      "replies": [],
+      "page": null,
+      "replies": [
+        {
+          "id": "r1",
+          "author": "reviewer",
+          "body": "a reply in the thread",
+          "variants": [],
+          "chosen": null,
+          "applied": null
+        }
+      ],
       "resolved": false,
       "outdated": false,
       "suggestion": {"replacement": "the replacement text"}
     }
-  ]
+  ],
+  "messages": [{"id": "m1", "author": "reviewer", "body": "a note on the whole review"}]
 }
 ```
 
-- `kemi` is the version of this contract, `1` today. Read it before trusting the shape.
+- `kemi` is the version of this contract, `2` today. Read it before trusting the shape, and do
+  not read a version you do not know by guessing. Version `1` results (written by kemi before
+  replies and messages existed) have `replies` as plain strings and no `page` or `messages`;
+  `kemi --result` prints such a stored result unchanged.
 - `verdict` is `approved` or `changes_requested`, and agrees with the exit code.
 - On `approved` the person accepts the bytes named in `approval`. Before acting on the approval,
   compute each `identity` again and compare. If a file changed after the review began, say so
@@ -47,8 +61,13 @@
   the comment was sitting on left the range. kemi does not renumber a comment, so do not trust
   the line numbers of an outdated one: locate the place by `quote`, and ask the person when it
   cannot be found.
-- `replies` and `resolved` are always `[]` and `false` today; they are in the contract so they
-  can be filled later.
+- `replies` is the thread under the comment, in creation order, and `[]` when there is none.
+  `author` is `reviewer` (the person) or `agent` (you, through `kemi reply`). `variants`,
+  `chosen`, and `applied` are `[]`, `null`, and `null` outside a review of a running page.
+- `resolved` is `true` when the person closed the thread. Only the person resolves.
+- `page` is `null` outside a review of a running page.
+- `messages` are notes on the whole review rather than on one comment, in creation order, with
+  the same `author` values; `[]` when there are none.
 - `comments` come in creation order. `approval` is returned exactly as it was given, and is `[]`
   when none was.
 

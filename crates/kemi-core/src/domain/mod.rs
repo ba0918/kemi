@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod comment;
 pub mod content;
 pub mod diff;

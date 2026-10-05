@@ -47,6 +47,11 @@ export const THEME_LABELS = {
 
 /** @type {{
  *   review: any,
+ *   messages: any[],
+ *   agent: import("./model.js").AgentState,
+ *   chatOpen: boolean,
+ *   replyDrafts: Map<string, string>,
+ *   chatDraft: string,
  *   entries: Entry[],
  *   visible: Entry[],
  *   current: Entry|null,
@@ -132,6 +137,13 @@ export const THEME_LABELS = {
  * }} */
 export const state = {
   review: null,
+  // エージェントとの往復（agent-channel.md）。発言、状態と未渡しの件数（サーバが数える）、
+  // チャット欄の開閉、書きかけの返信と発言（描き直しで消さないため。ページの間だけ）。
+  messages: [],
+  agent: { called: false, status: "unconnected", unhanded: 0 },
+  chatOpen: false,
+  replyDrafts: new Map(),
+  chatDraft: "",
   entries: [],
   visible: [],
   current: null,

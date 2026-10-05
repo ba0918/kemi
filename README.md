@@ -56,6 +56,8 @@ kemi --from main --digest            # print the review map and exit
 kemi --result                        # print the last submitted result here and exit
 kemi --resume                        # pick an interrupted review (terminal only)
 kemi --resume <id>                   # continue that review, from any directory
+kemi wait <id> [--timeout <seconds>] # (agent) wait for what the reviewer hands over
+kemi reply <id> < writes.json        # (agent) answer in the page
 ```
 
 A commit range has two ways to group the same changes, and the page switches
@@ -102,6 +104,39 @@ kemi prints the JSON below to stdout and exits with 0
 130 (interrupted before submit). An interrupted review is kept as a session,
 so nothing you wrote on the page is lost; `kemi --resume` picks it up again
 when its frozen copy completed within the size limit (see [Sessions](#sessions)).
+
+### Talking with an agent before the submit
+
+When kemi keeps a session for the review, stderr also prints
+`kemi: review <id>` after the URL (and after the line naming where results are
+saved). An agent can then hold a conversation with you while the review is
+open:
+
+- `kemi wait <id> [--timeout <seconds>]` waits until you press **Hand to
+  agent** (or submit) and prints everything handed over since its previous
+  call as one JSON document: `{"kemi": 2, "review": "<id>", "events": [...]}`.
+  A `handed` event lists comments as `added`, `edited`, or `deleted` (id
+  only), new replies, and new messages; a `submitted` event carries the
+  result JSON. Exit codes: 0 (events; an approval if submitted), 1 (submitted
+  with changes requested), 2 (no running review — read a submitted one with
+  `kemi --result` — or the review stopped, or another `kemi wait` is
+  waiting), 3 (`--timeout` passed, stdout empty).
+- `kemi reply <id>` reads `{"writes": [{"type": "reply", "comment_id": "c1",
+  "body": "…"}, {"type": "message", "body": "…"}]}` from stdin and prints
+  `{"ids": [...]}`. Either all writes are stored or none: a missing comment,
+  a body over 64 KB, more than 50 agent replies on one comment, or more than
+  200 agent messages exits with 2. Agents cannot open or resolve comments.
+
+What you write is not sent as you type: **Hand to agent** delivers every
+change since the last hand-over at once. Threads (reply, resolve), the chat,
+and the agent status (not connected, waiting, working, not responding) are
+there in every review; only the **Hand to agent** button waits until
+`kemi wait` has been called once in that review. The agent API listens on
+`127.0.0.1` whatever `--bind` says, accepts only
+requests without an `Origin` carrying its own token, and the token is kept in
+`<id>.endpoint` next to the session (owner-only; on Windows under
+`%LOCALAPPDATA%\kemi\sessions\`), never on the page or stderr. A
+subcommand name comes first; open a manifest named `wait` as `kemi ./wait`.
 
 ### Rendered view
 
@@ -300,7 +335,7 @@ The JSON printed at the end:
 
 ```json
 {
-  "kemi": 1,
+  "kemi": 2,
   "title": "Review",
   "verdict": "approved",
   "approval": [{ "path": "src/a.rs", "identity": "sha256:…" }],
@@ -315,15 +350,29 @@ The JSON printed at the end:
       "end_line": 14,
       "quote": ["the line text when the comment was written"],
       "body": "the comment",
-      "replies": [],
+      "page": null,
+      "replies": [
+        {
+          "id": "r1",
+          "author": "reviewer",
+          "body": "a reply in the thread",
+          "variants": [],
+          "chosen": null,
+          "applied": null
+        }
+      ],
       "resolved": false,
       "outdated": false,
       "suggestion": { "replacement": "the replacement text" }
     }
-  ]
+  ],
+  "messages": [{ "id": "m1", "author": "reviewer", "body": "a note on the whole review" }]
 }
 ```
 
+- `kemi` is the contract version, `2`. Version `1` results (from kemi before
+  replies and messages) are printed unchanged by `kemi --result`; do not read
+  a version you do not know by guessing.
 - `side` is `new` or `old`. File-wide comments are `new` with `start_line` and
   `end_line` `null`, and `quote` `[]`.
 - `suggestion` is `null` when the comment carries no suggestion, and always
@@ -331,6 +380,10 @@ The JSON printed at the end:
   lines should be deleted.
 - `outdated` is `true` when the file changed after the comment was written.
   kemi never moves a comment to a new line number.
+- `replies` are in creation order. `author` is `reviewer` or `agent`;
+  `variants`, `chosen`, and `applied` are `[]`, `null`, `null` outside a
+  review of a running page, and so is `page`.
+- `messages` are notes on the whole review, in creation order.
 - `comments` are in creation order.
 
 ## Digest

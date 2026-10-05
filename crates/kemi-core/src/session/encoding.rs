@@ -19,8 +19,13 @@ use crate::source::FileContent;
 
 /// ファイル先頭の目印。読めないファイルを黙ってセッションにしない。
 pub(crate) const MAGIC: &[u8] = b"kemi-session\n";
-/// セッション形式の版。
-pub(crate) const VERSION: u8 = 2;
+/// 書くときのセッション形式の版。
+pub(crate) const VERSION: u8 = 3;
+
+/// 読み手のあるセッション形式の版か。版 2 は返信の形を直して読む（`MetaDto::decode`）。
+pub(crate) fn is_readable(version: u8) -> bool {
+    matches!(version, 2 | 3)
+}
 /// 展開後の写しの上限。壊れたファイルが巨大なメモリを取らないように。
 pub(crate) const DECOMPRESS_LIMIT: usize = 1024 * 1024 * 1024;
 

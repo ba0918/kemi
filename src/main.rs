@@ -1,5 +1,6 @@
 //! kemi の CLI（R-INPUT-6, R-SUBMIT）。stdout は submit の JSON だけに使う。
 
+mod agent;
 mod local_time;
 mod notice;
 mod result;
@@ -18,8 +19,9 @@ use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
 use kemi_server::{
-    Asset, Assets, ResultSaveError, ResultSink, ServeOutcome, ServeParams, SessionSink,
-    detect_share_address, exposure_warning, serve, session_host, session_url,
+    AgentParams, Asset, Assets, ResultSaveError, ResultSink, ServeControl, ServeOutcome,
+    ServeParams, SessionSink, bind_agent_listener, detect_share_address, exposure_warning, serve,
+    session_host, session_url,
 };
 use tokio::net::TcpListener;
 
@@ -30,6 +32,8 @@ kemi: usage:
   kemi --worktree                          review uncommitted changes
   kemi --staged                            review staged changes
   kemi --result [--any | --workspace <path>]  print the JSON of the latest submitted result
+  kemi wait <id> [--timeout <seconds>]    wait for what the reviewer hands over (agent)
+  kemi reply <id>                          write replies and messages from stdin JSON (agent)
 
 common flags:
   --focus <path>     focus layer JSON (relative to --base)
@@ -231,6 +235,79 @@ fn sessions_dir() -> Option<PathBuf> {
         std::env::var_os("HOME").as_deref(),
         std::env::var_os("LOCALAPPDATA").as_deref(),
     )
+}
+
+/// `<id>.endpoint` の置き場所（R-AGENT-LINK）。
+fn endpoints_dir() -> Option<PathBuf> {
+    result::endpoint_dir(
+        std::env::var_os("XDG_STATE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+        std::env::var_os("LOCALAPPDATA").as_deref(),
+    )
+}
+
+/// 書いた `<id>.endpoint`。submit・保留・実行時エラーのどれで終わるときも消す
+/// （R-AGENT-LINK）。終わり方はどれも `process::exit` で Drop が走らないので、明示して消す。
+struct EndpointFile {
+    dir: PathBuf,
+    id: String,
+}
+
+impl EndpointFile {
+    fn remove(&self) {
+        if let Err(error) = kemi_core::session::remove_endpoint(&self.dir, &self.id) {
+            eprintln!("kemi: cannot remove the agent endpoint: {error}");
+        }
+    }
+}
+
+/// エージェント用の API を立て、`<id>.endpoint` を書き、`kemi: review <id>` を出す
+/// （R-AGENT-CLI）。往復はセッションの id と置き場所に頼るので、セッションのあるレビュー
+/// だけ。立てられない・書けないときは警告だけで、今どおり submit だけでやりとりする。
+async fn start_agent_channel(
+    stored_session: Option<&session::StoredSession>,
+    control: &ServeControl,
+) -> Option<(AgentParams, EndpointFile)> {
+    let id = stored_session?.info().id;
+    let listener = match bind_agent_listener().await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("kemi: cannot listen for kemi wait and kemi reply: {error}");
+            return None;
+        }
+    };
+    let token = random_token();
+    let port = match listener.local_addr() {
+        Ok(address) => address.port(),
+        Err(error) => {
+            eprintln!("kemi: cannot listen for kemi wait and kemi reply: {error}");
+            return None;
+        }
+    };
+    let Some(dir) = endpoints_dir() else {
+        eprintln!(
+            "kemi: cannot determine where to write the agent endpoint ({})",
+            results_unset_reason()
+        );
+        return None;
+    };
+    let endpoint = kemi_core::session::Endpoint {
+        port,
+        token: token.clone(),
+    };
+    if let Err(error) = kemi_core::session::write_endpoint(&dir, &id, &endpoint) {
+        eprintln!("kemi: cannot write the agent endpoint: {error}");
+        return None;
+    }
+    eprintln!("kemi: review {id}");
+    Some((
+        AgentParams {
+            listener,
+            token,
+            control: control.clone(),
+        },
+        EndpointFile { dir, id },
+    ))
 }
 
 /// 起動時の入力から、セッションに記録する情報を組み立てる。コミット範囲は完全な sha に
@@ -471,6 +548,9 @@ fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
     }
 }
 
+/// 保留で待っている kemi wait に理由を返すのに待つ上限。返し終えればすぐ終わる。
+const SUSPEND_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// サーブして、submit・保留・実行時エラーのどれかで終わる。
 async fn run_review(
     cli: &Cli,
@@ -523,6 +603,16 @@ async fn run_review(
             results_unset_reason()
         ),
     }
+    let control = ServeControl::new();
+    let (agent, endpoint) = match start_agent_channel(stored_session.as_deref(), &control).await {
+        Some((agent, endpoint)) => (Some(agent), Some(endpoint)),
+        None => (None, None),
+    };
+    let remove_endpoint = || {
+        if let Some(endpoint) = &endpoint {
+            endpoint.remove();
+        }
+    };
     if !cli.no_open {
         // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
         let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
@@ -542,18 +632,27 @@ async fn run_review(
             .map(|session| session as Arc<dyn SessionSink>),
         notices: Arc::new(notice::StderrNotices),
         share_address,
+        agent,
     };
+    // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
+    // シグナルを受けても捨てない。
+    let mut serving = tokio::spawn(serve(listener, params));
     #[cfg(unix)]
     let outcome = tokio::select! {
-        outcome = serve(listener, params) => Some(outcome),
+        outcome = &mut serving => Some(outcome),
         _ = signals.0.recv() => None,
         _ = signals.1.recv() => None,
     };
     #[cfg(not(unix))]
     let outcome = tokio::select! {
-        outcome = serve(listener, params) => Some(outcome),
+        outcome = &mut serving => Some(outcome),
         _ = tokio::signal::ctrl_c() => None,
     };
+    let outcome = outcome.map(|joined| match joined {
+        Ok(outcome) => outcome,
+        Err(error) => fail(&format!("the server stopped unexpectedly: {error}")),
+    });
+    remove_endpoint();
 
     match outcome {
         Some(Ok(ServeOutcome::Submitted(document))) => {
@@ -574,6 +673,17 @@ async fn run_review(
             fail(&error.to_string());
         }
         None => {
+            // 待っている kemi wait があれば、保留で終わる理由を返し終えるまで待つ。無ければ
+            // 今までどおりすぐ終わる（R-AGENT-CLI）。
+            let finished = control.suspend()
+                && tokio::time::timeout(SUSPEND_GRACE, &mut serving)
+                    .await
+                    .is_ok();
+            if !finished {
+                // サーバの状態がセッションを握ったままだと、下の drop でロックを解放できない。
+                serving.abort();
+                let _ = serving.await;
+            }
             print_resume_hint(stored_session.as_deref());
             drop(stored_session);
             std::process::exit(130);
@@ -671,7 +781,26 @@ fn list_sessions(store: &SessionStore, sessions: &[SessionSummary]) -> ! {
 
 #[tokio::main]
 async fn main() {
-    let cli = match parse_args(std::env::args().skip(1).collect()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // 最初の引数が wait / reply ならサブコマンド。その名前の manifest は ./wait と書く
+    // （R-AGENT-CLI）。
+    if let Some(name @ ("wait" | "reply")) = args.first().map(String::as_str) {
+        let command = match agent::parse(name, &args[1..]) {
+            Ok(command) => command,
+            Err(message) => {
+                eprintln!("kemi: {message}");
+                eprintln!("{}", agent::USAGE);
+                std::process::exit(2);
+            }
+        };
+        let code = tokio::task::spawn_blocking(move || {
+            agent::run(command, sessions_dir(), endpoints_dir())
+        })
+        .await
+        .unwrap_or_else(|error| fail(&format!("kemi {name} stopped unexpectedly: {error}")));
+        std::process::exit(code);
+    }
+    let cli = match parse_args(args) {
         Ok(cli) => cli,
         Err(message) => fail(&message),
     };

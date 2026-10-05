@@ -20,6 +20,11 @@
 /**
  * @typedef {{
  *   addComment: (payload: any) => void,
+ *   closeChat: () => void,
+ *   handToAgent: () => void,
+ *   postMessage: (body: string) => void,
+ *   replyTo: (comment: any, body: string) => void,
+ *   setResolved: (comment: any, resolved: boolean) => void,
  *   applyRenderedView: (entry: import("./state.js").Entry) => Promise<void>,
  *   closeCommentList: () => void,
  *   closeDrawer: () => void,

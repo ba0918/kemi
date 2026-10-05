@@ -42,7 +42,8 @@ identifier and output paths. A tool that yields while the process keeps running 
 process ending.
 
 Read the `kemi: <url>` line from stderr and send the URL to the user in a progress message.
-stderr also reports the result storage directory. Explain the groups, what needs judgment,
+stderr also reports the result storage directory, followed by `kemi: review <id>` when the
+review can hold a conversation (see below). Explain the groups, what needs judgment,
 any assumptions, and that **Approve** or **Request changes** submits the review.
 
 Wait for the same process to exit using the execution environment's normal process lifecycle.
@@ -78,6 +79,17 @@ name; that path yields no review JSON. The review stays as a session when it has
 copy to keep, so report the resume command if stderr printed one and the user may want to
 continue.
 
+## Talk with the person before the submit
+
+When stderr printed `kemi: review <id>`, the person can hand you comments, replies, and notes
+while the review is still open, and you can answer in the page. Run `kemi wait <id>` in the
+background; it returns what the person handed over (or the submit) as JSON. Address it, answer
+with `kemi reply <id>` (JSON on stdin), and wait again until the submit arrives. Keep waiting for
+the main `kemi` process as well: its exit code and stdout stay the result of the review. Read
+[the conversation reference](references/conversation.md) for the commands, the JSON, the exit
+codes, and the limits. Without the review line, or if you never call `kemi wait`, the review
+is submit-only as before.
+
 ## Resume an interrupted review
 
 When a run ends without a submit and the user still wants that review, continue it instead
@@ -105,7 +117,9 @@ error (exit `2`), and `--digest` / `--result` never create sessions.
 
 ## Handle the result
 
-Check the JSON contract version (`kemi: 1`) and that `verdict` agrees with the exit code.
+Check the JSON contract version (`kemi: 2`) and that `verdict` agrees with the exit code. Do
+not guess at a version you do not know; a result written before version 2 is printed by
+`kemi --result` exactly as it was stored.
 Read comments on both approval and requests for changes. Before using an approval, compare
 its identities with the current bytes. Before applying a suggestion, compare its `quote`
 with the file; locate outdated comments by their text rather than trusting old line numbers.

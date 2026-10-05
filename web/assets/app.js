@@ -59,6 +59,21 @@ import {
   toggleCommentList,
 } from "./features/comment-list.js";
 import { openConfirm } from "./features/submit.js";
+import {
+  applyAgent,
+  applyMessage,
+  closeChat,
+  endComposition,
+  handToAgent,
+  postMessage,
+  receiveMissed,
+  receiveThread,
+  replyTo,
+  setResolved,
+  startComposition,
+  toggleChat,
+} from "./features/agent.js";
+import { renderAgent } from "./views/chat.js";
 import { renderNotice } from "./views/file-header.js";
 import { renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
@@ -86,6 +101,10 @@ function handleKey(event) {
     }
     if (!dom.commentList.hidden) {
       closeCommentList();
+      return;
+    }
+    if (state.chatOpen) {
+      closeChat();
       return;
     }
     if (state.drawerOpen) {
@@ -137,21 +156,61 @@ function handleKey(event) {
 }
 
 async function boot() {
-  applyReview(await api.getReview(false), true);
-  renderHeader();
-  renderTree();
-  if (state.visible.length > 0) {
-    await selectIndex(0, { scrollTop: true });
-  } else {
-    renderNotice();
-  }
-  api.subscribeEvents(
-    () => {
+  // サーバはつながる前の通知を送り直さないので、先に通知につながってから中身を読む（読んだ後、
+  // つながる前に起きたことを取りこぼさない）。読んだ中身を描き終えるまでに届いた通知は、
+  // 描き終えてから届いた順に取り込む（先に取り込むと、読んだ中身で上書きされる）。
+  /** @type {(() => void)[] | null} */
+  let held = [];
+  // 起動に失敗したページには通知を取り込まない（溜め続けもしない）。
+  let failed = false;
+  /**
+   * @template {any[]} A
+   * @param {(...args: A) => void} handler
+   * @returns {(...args: A) => void}
+   */
+  const afterBoot = (handler) => (...args) => {
+    if (failed) {
+      return;
+    }
+    if (held) {
+      held.push(() => handler(...args));
+    } else {
+      handler(...args);
+    }
+  };
+  await api.subscribeEvents(
+    afterBoot(() => {
       state.updateAvailable = true;
       renderUpdateBadge();
+    }),
+    afterBoot(() => void onUnitEvent()),
+    {
+      onThread: afterBoot(receiveThread),
+      onMessage: afterBoot(applyMessage),
+      onAgent: afterBoot(applyAgent),
+      onMissed: afterBoot(receiveMissed),
     },
-    () => void onUnitEvent(),
   );
+  try {
+    applyReview(await api.getReview(false), true);
+    renderHeader();
+    renderAgent();
+    renderTree();
+    if (state.visible.length > 0) {
+      await selectIndex(0, { scrollTop: true });
+    } else {
+      renderNotice();
+    }
+  } catch (error) {
+    failed = true;
+    held = null;
+    throw error;
+  }
+  const tasks = held;
+  held = null;
+  for (const task of tasks) {
+    task();
+  }
 }
 
 // 幅を見るのはここだけ。CSS の狭い画面のメディアクエリと同じ文字列（R-NARROW）。
@@ -159,6 +218,8 @@ const narrowQuery = window.matchMedia("(max-width: 719.98px)");
 state.narrow = narrowQuery.matches;
 narrowQuery.addEventListener("change", (event) => applyNarrow(event.matches));
 document.addEventListener("keydown", handleKey);
+document.addEventListener("compositionstart", startComposition);
+document.addEventListener("compositionend", endComposition);
 dom.btnTree.addEventListener("click", toggleDrawer);
 dom.drawerScrim.addEventListener("click", closeDrawer);
 dom.menuWrap.addEventListener("click", () => setWrap(!displayWrap()));
@@ -176,6 +237,9 @@ dom.chipSort.addEventListener("click", toggleSortBySize);
 dom.btnTheme.addEventListener("click", stepTheme);
 dom.notes.addEventListener("beforetoggle", placeNotes);
 dom.updateBadge.addEventListener("click", () => void refresh());
+dom.btnHand.addEventListener("click", () => void handToAgent());
+dom.btnChat.addEventListener("click", toggleChat);
+dom.btnDockChat.addEventListener("click", toggleChat);
 dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
 dom.modalCancel.addEventListener("click", closeModal);
@@ -196,6 +260,11 @@ window
 
 bindActions({
   addComment,
+  closeChat,
+  handToAgent: () => void handToAgent(),
+  postMessage: (body) => void postMessage(body),
+  replyTo: (comment, body) => void replyTo(comment, body),
+  setResolved: (comment, resolved) => void setResolved(comment, resolved),
   applyRenderedView,
   closeCommentList,
   closeDrawer,
