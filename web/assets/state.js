@@ -319,6 +319,31 @@ export function commentsOf(entry) {
 }
 
 /**
+ * コメントの付いたファイル。表示中の単位のほか、読んである単位からも探す（グループ id は
+ * 単位をまたいで重ならない）。見つからなければ null（消えたコミットや、まだ読んでいない単位）。
+ * @param {any} comment
+ * @returns {Entry | null}
+ */
+export function entryOfComment(comment) {
+  /** @param {Entry[]} entries */
+  const find = (entries) =>
+    entries.find(
+      (entry) => entry.group.id === comment.group_id && entry.file.path === comment.path,
+    ) ?? null;
+  const here = find(state.entries);
+  if (here) {
+    return here;
+  }
+  for (const review of state.reviews.values()) {
+    const found = find(flatten(review));
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+/**
  * 表示中のファイルを描画表示で見たいか。切り替えていなければ `api/file` の既定に従う。
  * @param {Entry} entry
  * @returns {boolean}

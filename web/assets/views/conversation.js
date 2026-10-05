@@ -6,7 +6,16 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, textEl } from "../dom.js";
-import { commitGroups, conversationShown, currentEntry, state, unitLabel } from "../state.js";
+import {
+  commitGroups,
+  conversationShown,
+  currentEntry,
+  entryOfComment,
+  fileCacheKey,
+  isShowingFile,
+  state,
+  unitLabel,
+} from "../state.js";
 import {
   agentStatusLabel,
   authorLabel,
@@ -361,8 +370,9 @@ function renderThread(comment, options) {
 }
 
 /**
- * 開いたスレッドの上に見せる対象の行。表示中のファイルのコメントなら、読んである行から
- * 対象の行の前後を添える。そうでなければ、コメントが覚えている対象の行（quote）だけ。
+ * 開いたスレッドの上に見せる対象の行。そのファイルの行を読んであれば（表示中のファイルか、
+ * スレッドを開いたときに読んだファイル）、対象の行の前後を添える。そうでなければ（読んでいる
+ * 途中、outdated、消えたコミット）、コメントが覚えている対象の行（quote）だけ。
  * @param {any} comment
  * @returns {{ text: string, tone: string, hit: boolean }[]}
  */
@@ -372,31 +382,29 @@ function targetLines(comment) {
   }
   const start = Number(comment.start_line);
   const end = Number(comment.end_line ?? comment.start_line);
-  const entry = currentEntry();
-  const showing =
-    entry !== null &&
-    entry.group.id === comment.group_id &&
-    entry.file.path === comment.path &&
-    !comment.outdated;
-  if (showing) {
-    /** @type {{ text: string, tone: string, hit: boolean }[]} */
-    const lines = [];
-    for (const row of state.rows) {
-      const line = comment.side === "new" ? row.new : row.old;
-      if (!line) {
-        continue;
-      }
-      const number = Number(line.number);
-      if (number < start - CONTEXT_LINES || number > end + CONTEXT_LINES) {
-        continue;
-      }
-      const changed = row.kind !== "equal";
-      const tone = !changed ? "" : comment.side === "new" ? "add" : "del";
-      lines.push({ text: line.text, tone, hit: number >= start && number <= end });
+  const entry = comment.outdated ? null : entryOfComment(comment);
+  const rows = !entry
+    ? []
+    : isShowingFile(entry.file.id)
+      ? state.rows
+      : (state.cache.get(fileCacheKey(entry))?.rows ?? []);
+  /** @type {{ text: string, tone: string, hit: boolean }[]} */
+  const lines = [];
+  for (const row of rows) {
+    const line = comment.side === "new" ? row.new : row.old;
+    if (!line) {
+      continue;
     }
-    if (lines.length > 0) {
-      return lines;
+    const number = Number(line.number);
+    if (number < start - CONTEXT_LINES || number > end + CONTEXT_LINES) {
+      continue;
     }
+    const changed = row.kind !== "equal";
+    const tone = !changed ? "" : comment.side === "new" ? "add" : "del";
+    lines.push({ text: line.text, tone, hit: number >= start && number <= end });
+  }
+  if (lines.length > 0) {
+    return lines;
   }
   return (comment.quote || []).map((/** @type {string} */ text) => ({ text, tone: "", hit: true }));
 }

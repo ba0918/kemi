@@ -15,7 +15,8 @@
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
 // 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
 // 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
-// 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない。
+// 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない、まだ読んで
+// いないファイルのスレッドを開いても対象の行の前後が見える。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -465,7 +466,23 @@ try {
   assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
   console.log('PASS 「This file」で上のほうを見たまま別のファイルを選んでも、届いた印は出ない');
 
-  // (9) 別のファイルを読めなかった後に、エージェントの状態が変わって描き直しても、届いた印は
+  // (9) まだ読んでいないファイルのスレッドを開いても、対象の行の前後が見える（R-VIEW）。
+  // b.txt の 3 行目にスレッドを足して読み込み直し、a.txt を表示したまま一覧から開く。
+  await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 3, end_line: 3, body: 'about line 3 of b' });
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  await selectFile('a.txt');
+  await evaluate(`${list}.querySelector('.cv-card[data-id="c22"]').click(); true`);
+  await waitFor(threadOpen('about line 3 of b'));
+  const contextLines = `Array.from(document.querySelectorAll('#cv-thread-body .cv-context .cv-line'))`;
+  await waitFor(`${contextLines}.some(l => l.textContent === 'line 2') && ${contextLines}.some(l => l.textContent === 'line 4')`);
+  assert.deepEqual(await evaluate(`${contextLines}.filter(l => l.classList.contains('hit')).map(l => l.textContent)`), ['line 3']);
+  assert.equal(await evaluate(`document.querySelector('#file-header .path')?.textContent`), 'a.txt', 'the shown file stays');
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  console.log('PASS まだ読んでいないファイルのスレッドを開いても、対象の行の前後が見える');
+
+  // (10) 別のファイルを読めなかった後に、エージェントの状態が変わって描き直しても、届いた印は
   // 出ない。読み込み直して b.txt をまだ読んでいない状態にし、b.txt の行データの取得を失敗させる。
   await browser('reload');
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
@@ -485,7 +502,7 @@ try {
   await waitFor(`!document.querySelector('#overlay').hidden && document.querySelector('#overlay-card').textContent.includes('could not read the file')`);
   const failedWait = agentCommand(fileFixture, fileState, ['wait', fileKemi.id, '--timeout', '1']);
   await waitFor(statusIs('waiting'));
-  await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21'`);
+  await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21,c22'`);
   assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
   const failedWaited = await failedWait;
   assert.equal(failedWaited.code, 3, `the wait should time out: ${JSON.stringify(failedWaited)}`);

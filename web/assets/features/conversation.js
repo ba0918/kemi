@@ -10,6 +10,8 @@ import {
   CONVERSATION_MIN_WIDTH,
   conversationShown,
   currentEntry,
+  entryOfComment,
+  fileCacheKey,
   state,
 } from "../state.js";
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
@@ -109,6 +111,46 @@ export function openThread(id) {
   // 札の新着の印が消える。
   remeasureAndRender();
   refreshRendered();
+  if (comment) {
+    void loadThreadLines(comment);
+  }
+}
+
+/**
+ * 開いたスレッドの対象の行の前後を見せるため、表示中でないファイルのスレッドなら、そのファイルの
+ * 行を読んでキャッシュに入れる（R-VIEW）。読めなければ、覚えている対象の行（quote）のまま。
+ * @param {any} comment
+ */
+async function loadThreadLines(comment) {
+  const entry = comment.outdated ? null : entryOfComment(comment);
+  if (!entry || comment.start_line === null || comment.start_line === undefined) {
+    return;
+  }
+  const key = fileCacheKey(entry);
+  if (state.cache.has(key)) {
+    return;
+  }
+  const reviews = state.reviews;
+  /** @type {any} */
+  let data;
+  try {
+    data = await api.getFile(entry.file.id, null, {
+      dark: state.dark,
+      highlight: state.highlightOverrides.get(entry.file.id),
+    });
+  } catch {
+    return;
+  }
+  // 読み直し（テーマや更新）で消えたキャッシュへ、古い行を戻さない。表示中のファイルとして
+  // 先に読み終えていれば、そちらを残す。
+  if (reviews !== state.reviews || fileCacheKey(entry) !== key || state.cache.has(key)) {
+    return;
+  }
+  const rows = data.rows || [];
+  state.cache.set(key, { ...data, rows, collapsedRows: rows });
+  if (state.conversation.thread === comment.id) {
+    renderConversation();
+  }
 }
 
 /** 届いたことを示す印を押した。見えている並びを一番下へ送る。 */
@@ -186,6 +228,11 @@ export async function loadCommitGroups() {
   }
   if (reviews === state.reviews) {
     renderConversation();
+    // 開いているコミットごとのスレッドのファイルは、ここで初めて分かることがある。
+    const comment = state.allComments.find((candidate) => candidate.id === state.conversation.thread);
+    if (comment) {
+      void loadThreadLines(comment);
+    }
   }
 }
 
