@@ -144,6 +144,11 @@
     if (tag === 'script' || tag === 'noscript' || (tag === 'meta' && /refresh/i.test(original.getAttribute('http-equiv') ?? ''))) {
       return null;
     }
+    // ページの referrer の指定を写すと、スナップショットの中の外部の画像へトークンの URL を
+    // 送ることがある（レビュー画面の no-referrer より優先されるため）。
+    if (tag === 'meta' && (original.getAttribute('name') ?? '').toLowerCase() === 'referrer') {
+      return null;
+    }
     if (tag === 'link') {
       const rel = (original.getAttribute('rel') ?? '').toLowerCase().split(/\s+/);
       const sheet = /** @type {HTMLLinkElement} */ (original).sheet;

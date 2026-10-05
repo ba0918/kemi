@@ -154,6 +154,7 @@ export function buildShell() {
   const refFrame = /** @type {HTMLIFrameElement} */ (el("iframe", "lv-frame"));
   refFrame.title = "Snapshot";
   refFrame.setAttribute("sandbox", "");
+  refFrame.referrerPolicy = "no-referrer";
   refFrame.hidden = true;
   const refEmpty = el("div", "lv-empty");
   const refEmptyText = textEl("p", "", "");
@@ -161,10 +162,12 @@ export function buildShell() {
   refRecordButton.textContent = "Record now";
   refEmpty.append(refEmptyText, refRecordButton);
   // モックのスクリプトは動かすが、allow-same-origin を付けないので不透明なオリジンで動き、
-  // レビュー画面にも kemi の API にも届かない（R-PAGE-MOCK）。
+  // レビュー画面にも kemi の API にも届かない（R-PAGE-MOCK）。referrer も送らない。送ると
+  // document.referrer からトークンの URL が読める。
   const refMockFrame = /** @type {HTMLIFrameElement} */ (el("iframe", "lv-frame"));
   refMockFrame.title = "Mock";
   refMockFrame.setAttribute("sandbox", "allow-scripts");
+  refMockFrame.referrerPolicy = "no-referrer";
   refMockFrame.hidden = true;
   ref.box.append(refFrame, refMockFrame, refEmpty);
   const live = pane("live", "Now");

@@ -17,7 +17,7 @@
 //   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
 //   渡すと取る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
-//   戻る。JS のモックが描かれ、トークンが得られず API に断られる。モックだけがあるページがツリーに出る。
+//   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 // - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -544,8 +544,8 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     document.body.style.background = 'rgb(0, 0, 200)';
     document.getElementById('drawn').textContent = 'drawn by the mock';
     const tryRead = (read) => { try { return String(read()); } catch { return 'blocked'; } };
-    const report = { mockReport: true, href: location.href, cookie: tryRead(() => document.cookie), parent: tryRead(() => parent.document.title) };
-    report.sawToken = [report.href, report.cookie, report.parent].some((text) => text.includes(${JSON.stringify(token)}));
+    const report = { mockReport: true, href: location.href, referrer: document.referrer, cookie: tryRead(() => document.cookie), parent: tryRead(() => parent.document.title) };
+    report.sawToken = [report.href, report.referrer, report.cookie, report.parent].some((text) => text.includes(${JSON.stringify(token)}));
     fetch(${JSON.stringify(`${kemi.url}api/message`)}, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ body: 'written by the mock' }) })
       .catch(() => {})
       .finally(() => parent.postMessage(report, '*'));

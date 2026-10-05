@@ -16,7 +16,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -271,6 +271,11 @@ async fn index(
     Path(_token): Path<String>,
 ) -> Result<Response, ApiError> {
     let mut response = serve_asset(&state, "index.html")?;
+    // 枠に出すモックやスナップショットへ、トークンの URL を referrer として渡さない（R-PAGE-MOCK）。
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
     // トークンの URL を開いた人にだけ、中継のポートを通す cookie を入れる（R-PAGE-PROXY）。
     if let Some(live) = &state.live {
         response
