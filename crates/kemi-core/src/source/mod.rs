@@ -259,7 +259,7 @@ impl PlanStore {
             .flat_map(|plan| plan.files.iter())
             .filter_map(|file| match &file.new {
                 SideRef::Disk(path) => Some(path.clone()),
-                _ => None,
+                SideRef::Absent | SideRef::Inline(_) | SideRef::Git { .. } => None,
             })
             .collect()
     }

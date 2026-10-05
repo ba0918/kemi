@@ -113,6 +113,10 @@ pub(super) fn flatten(nodes: &[Node<'_>], context: &ImageContext<'_>) -> Inline 
     inline
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "ox_content の構文木（外部の enum）。ここで扱わないノードは描かないのが意図"
+)]
 fn walk(
     nodes: &[Node<'_>],
     stack: &mut Vec<usize>,

@@ -1,5 +1,10 @@
 //! HTTP / SSE サーバの契約テスト（R-SERVE, R-SUBMIT, R-COMMENT）。
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "#[test] の外の補助関数も、失敗をそのままテストの失敗として見せる"
+)]
+
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;

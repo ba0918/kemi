@@ -2,6 +2,7 @@
 name = "kemi"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "A local review tool that shows changes in a browser and returns comments as JSON"
 repository = "https://github.com/ba0918/kemi"
@@ -13,7 +14,24 @@ resolver = "3"
 [workspace.package]
 version = "0.1.9"
 edition = "2024"
+rust-version = "1.98"
 license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+undocumented_unsafe_blocks = "warn"
+wildcard_enum_match_arm = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+
+[lints]
+workspace = true
 
 [dependencies]
 kemi-core = { path = "crates/kemi-core" }

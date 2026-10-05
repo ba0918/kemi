@@ -284,6 +284,10 @@ impl SessionStore {
     }
 
     /// `<id>.payload` を読んで写しに戻す。ファイルが無いときは「使えない」。
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "std::io::ErrorKind は non_exhaustive で、列挙しきれない"
+    )]
     fn read_copy(&self, id: &str) -> Result<SessionCopy, SessionError> {
         let path = self.payload_path(id);
         let payload = std::fs::read(&path).map_err(|source| match source.kind() {
@@ -683,6 +687,10 @@ fn read_version(path: &Path) -> Option<u8> {
 
 /// `<id>.session` を読む。写しは別のファイルなので、ここで読むのは情報と状態だけ
 /// （一覧と掃除は写しを読まない）。
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "std::io::ErrorKind は non_exhaustive で、列挙しきれない"
+)]
 fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
     let bytes = std::fs::read(path).map_err(|source| match source.kind() {
         std::io::ErrorKind::NotFound => SessionError::NotFound {

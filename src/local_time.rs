@@ -3,6 +3,11 @@
 //! 時刻の整形に新しい依存は足さない。unix は `localtime_r`、Windows は
 //! `FileTimeToLocalFileTime` を使い、失敗したときは UTC で出す。
 
+#![expect(
+    unsafe_code,
+    reason = "OS のローカル時刻変換を FFI で呼ぶ。新しい依存を足さないため"
+)]
+
 /// 一覧に出すローカル時刻。millis は UNIX エポックからのミリ秒。
 pub fn format_local(millis: u128) -> String {
     let seconds = (millis / 1000) as i64;
@@ -68,10 +73,13 @@ fn local_parts(seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
     }
     let mut tm = std::mem::MaybeUninit::<Tm>::uninit();
+    // SAFETY: `seconds` は生きている i64 への参照で、`tm` は `Tm` の大きさの書き込み先。
+    // `localtime_r` はどちらも呼び出しの間しか使わない。
     let result = unsafe { localtime_r(&seconds, tm.as_mut_ptr()) };
     if result.is_null() {
         return None;
     }
+    // SAFETY: `localtime_r` が null 以外を返したので、`tm` は全項目が書き込まれている。
     let tm = unsafe { tm.assume_init() };
     Some((
         tm.tm_year + 1900,
@@ -123,7 +131,9 @@ fn local_parts(millis_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         second: 0,
         milliseconds: 0,
     };
+    // SAFETY: 入力と出力はどちらも初期化済みの `#[repr(C)]` の値への参照で、呼び出しの間生きている。
     let local_ok = unsafe { FileTimeToLocalFileTime(&utc, &mut local) };
+    // SAFETY: 同上。`local` は失敗時もゼロで初期化済みなので、読んでも未定義にならない。
     let parts_ok = unsafe { FileTimeToSystemTime(&local, &mut parts) };
     if local_ok == 0 || parts_ok == 0 {
         return None;

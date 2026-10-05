@@ -47,7 +47,9 @@ impl StoredSession {
             kemi_core::session::CopyState::Ready(copy) => {
                 Some(FrozenSource::new(open.info(), copy))
             }
-            _ => None,
+            kemi_core::session::CopyState::Pending | kemi_core::session::CopyState::Unusable(_) => {
+                None
+            }
         }
     }
 }

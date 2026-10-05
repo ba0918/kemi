@@ -1,5 +1,8 @@
 //! 配る資産（R-WS）。release ではバイナリに埋め込み、debug ではディスクから読む。
 
+#![forbid(unsafe_code)]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+
 use std::borrow::Cow;
 
 use rust_embed::RustEmbed;

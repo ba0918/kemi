@@ -268,6 +268,10 @@ impl<'c, 'a> Collector<'c, 'a> {
         });
     }
 
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "ox_content の構文木（外部の enum）。ここで扱わないノードは描かないのが意図"
+    )]
     fn collect(&mut self, nodes: &'a [Node<'a>]) {
         for node in nodes {
             match node {
@@ -373,6 +377,10 @@ impl<'w> Writer<'w> {
         }
     }
 
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "ox_content の構文木（外部の enum）。ここで扱わないノードは描かないのが意図"
+    )]
     fn write_nodes(&mut self, nodes: &[Node<'_>], walk: &mut Walk<'_, '_, '_>) {
         for node in nodes {
             match node {
@@ -548,6 +556,10 @@ impl<'w> Writer<'w> {
         )
     }
 
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "ox_content の構文木（外部の enum）。ここで扱わないノードは描かないのが意図"
+    )]
     fn write_block(
         &mut self,
         doc: &SideDoc<'_>,
@@ -560,7 +572,14 @@ impl<'w> Writer<'w> {
                 Node::Paragraph(_) | Node::Heading(_) => {
                     let (open, close) = match info.kind {
                         Kind::Heading(depth) => (format!("<h{depth}"), format!("</h{depth}>\n")),
-                        _ => ("<p".to_string(), "</p>\n".to_string()),
+                        Kind::Paragraph
+                        | Kind::Code
+                        | Kind::Html
+                        | Kind::Rule
+                        | Kind::FootnoteDefinition
+                        | Kind::TableRow { .. }
+                        | Kind::ListItem
+                        | Kind::FrontMatter => ("<p".to_string(), "</p>\n".to_string()),
                     };
                     let attributes = self.attributes(doc, info, mark, "");
                     self.out.push_str(&open);
@@ -639,6 +658,10 @@ impl<'w> Writer<'w> {
 
     /// 属性を持たない（ブロックに数えない）ブロックの書き出し。脚注の定義や、段落を
     /// 持たないリスト項目の中身がこれになる。
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "ox_content の構文木（外部の enum）。ここで扱わないノードは描かないのが意図"
+    )]
     fn write_plain_block(&mut self, node: &Node<'_>, walk: &mut Walk<'_, '_, '_>) {
         let (kind, inline) = match node {
             Node::Paragraph(paragraph) => (

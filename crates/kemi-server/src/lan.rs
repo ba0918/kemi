@@ -10,7 +10,7 @@ pub fn detect_share_address() -> Option<Ipv4Addr> {
     socket.connect((Ipv4Addr::new(192, 0, 2, 1), 80)).ok()?;
     match socket.local_addr().ok()? {
         SocketAddr::V4(address) if !address.ip().is_unspecified() => Some(*address.ip()),
-        _ => None,
+        SocketAddr::V4(_) | SocketAddr::V6(_) => None,
     }
 }
 

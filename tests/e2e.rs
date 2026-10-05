@@ -1,5 +1,10 @@
 //! バイナリを起動する e2e（CLI、exit code、stdout の JSON、live stderr）。
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "#[test] の外の補助関数も、失敗をそのままテストの失敗として見せる"
+)]
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
@@ -1676,6 +1681,7 @@ fn session_files(state: &Path) -> Vec<PathBuf> {
 
 /// `sessions/` に残っているセッションのファイル。セッション 1 つは `<id>.session` と
 /// `<id>.payload` の 2 つなので、片方だけ残っていないことも見られるように両方を数える。
+#[cfg(unix)]
 fn session_dir_files(state: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(sessions_dir(state))
         .map(|entries| {

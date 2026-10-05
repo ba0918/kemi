@@ -69,7 +69,7 @@ pub fn image_kind(file: &FileEntry) -> Option<ImageKind> {
     match target_of_file(file)? {
         Target::Image { svg: true } => Some(ImageKind::Svg),
         Target::Image { svg: false } if file.binary => Some(ImageKind::Raster),
-        _ => None,
+        Target::Image { .. } | Target::Markdown | Target::Table { .. } => None,
     }
 }
 

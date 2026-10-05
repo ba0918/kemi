@@ -138,14 +138,16 @@ impl GitSource {
         let files = self.build_entries(&entries, &attributes, "worktree", |entry| {
             let old = match entry.status {
                 Status::Add => SideRef::Absent,
-                _ => SideRef::Git {
+                Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
                     repo: self.repo.clone(),
                     spec: git_spec("HEAD:", entry.old_path.as_deref().unwrap_or(&entry.path)),
                 },
             };
             let new = match entry.status {
                 Status::Delete => SideRef::Absent,
-                _ => SideRef::Disk(self.repo.join(&entry.path)),
+                Status::Add | Status::Rename | Status::Modify => {
+                    SideRef::Disk(self.repo.join(&entry.path))
+                }
             };
             (old, new)
         });
@@ -175,14 +177,14 @@ impl GitSource {
         let files = self.build_entries(&entries, &attributes, "staged", |entry| {
             let old = match entry.status {
                 Status::Add => SideRef::Absent,
-                _ => SideRef::Git {
+                Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
                     repo: self.repo.clone(),
                     spec: git_spec("HEAD:", entry.old_path.as_deref().unwrap_or(&entry.path)),
                 },
             };
             let new = match entry.status {
                 Status::Delete => SideRef::Absent,
-                _ => SideRef::Git {
+                Status::Add | Status::Rename | Status::Modify => SideRef::Git {
                     repo: self.repo.clone(),
                     spec: git_spec(":", &entry.path),
                 },
@@ -227,7 +229,7 @@ impl GitSource {
             let files = self.build_entries(&entries, &attributes, sha, |entry| {
                 let old = match entry.status {
                     Status::Add => SideRef::Absent,
-                    _ => SideRef::Git {
+                    Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
                         repo: self.repo.clone(),
                         spec: git_spec(
                             &format!("{sha}^:"),
@@ -237,7 +239,7 @@ impl GitSource {
                 };
                 let new = match entry.status {
                     Status::Delete => SideRef::Absent,
-                    _ => SideRef::Git {
+                    Status::Add | Status::Rename | Status::Modify => SideRef::Git {
                         repo: self.repo.clone(),
                         spec: git_spec(&format!("{sha}:"), &entry.path),
                     },
@@ -281,7 +283,7 @@ impl GitSource {
         let files = self.build_entries(&entries, &attributes, "all", |entry| {
             let old = match entry.status {
                 Status::Add => SideRef::Absent,
-                _ => SideRef::Git {
+                Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
                     repo: self.repo.clone(),
                     spec: git_spec(
                         &format!("{merge_base}:"),
@@ -291,7 +293,7 @@ impl GitSource {
             };
             let new = match entry.status {
                 Status::Delete => SideRef::Absent,
-                _ => SideRef::Git {
+                Status::Add | Status::Rename | Status::Modify => SideRef::Git {
                     repo: self.repo.clone(),
                     spec: git_spec(&format!("{to_sha}:"), &entry.path),
                 },

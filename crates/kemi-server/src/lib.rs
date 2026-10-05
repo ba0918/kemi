@@ -1,5 +1,7 @@
 //! HTTP / SSE サーバ（R-SERVE, R-SUBMIT, R-LIVE）。
 
+#![forbid(unsafe_code)]
+
 mod api;
 mod highlight;
 mod lan;
