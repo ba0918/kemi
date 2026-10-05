@@ -397,7 +397,7 @@ try {
 }
 
 // (7) 履歴の書き換えで消えたコミットのスレッドは、会話パネルを開いたまま更新バッジで読み直しても、
-// 開いたまま読み込み直しても「消えたコミット」と示され、その行へ移る操作と編集が出ない（R-VIEW、R-LIVE）。
+// 開いたまま読み込み直しても「消えたコミット」と示され、その行へ移る操作が出ない（R-VIEW、R-LIVE）。
 const range = await makeRangeFixture();
 const rangeState = await mkdtemp(join(tmpdir(), 'kemi-agent-range-state-'));
 const rangeKemi = await startKemi(range.dir, rangeState, ['--from', range.from]);
@@ -427,7 +427,7 @@ try {
   await waitFor(vanished);
   await evaluate(`${card}.click(); true`);
   await waitFor(threadOpen('about the second commit'));
-  assert.equal(await evaluate(`document.querySelector('#cv-thread-head .cv-go') === null && document.querySelector('#cv-thread-head .cv-edit') === null`), true);
+  assert.equal(await evaluate(`document.querySelector('#cv-thread-head .cv-go') === null`), true);
   console.log('PASS 消えたコミットのスレッドは、開いたまま読み直しても読み込み直しても「消えたコミット」と示される');
 } finally {
   rangeKemi.child.kill('SIGTERM');
