@@ -78,6 +78,9 @@
 
 - 起動したレビューは stderr に `kemi: review <id>` の 1 行を出す。`<id>` はセッションの
   `id`（[R-SESSION](kemi.md#r-session-セッションの保存と復元)）と同じ。この行は契約とする。
+- セッションを作れなかったレビュー（状態の置き場所が決まらない、書けないなど）は、この行を
+  出さず `<id>.endpoint` も作らない。往復は使えず、エージェントが一度もつながらないレビューと
+  同じになる（[R-AGENT-FLOW](#r-agent-flow-往復の流れ)）。
 - `kemi wait <id> [--timeout <秒>]`:
   - 前の `kemi wait` が返した後に起きたこと（渡された 1 回分、案の選択、submit）を
     すべて、JSON 1 つにして stdout に出して終わる（[R-AGENT-EVENTS](#r-agent-events-wait-が返す-json)）。
@@ -113,6 +116,8 @@
 
 - `kemi --worktree --no-open` の stderr から `kemi: review <id>` を取り出し、その `id` で
   `kemi wait` と `kemi reply` が働く（e2e）。
+- 状態の置き場所を決められない環境（unix で `XDG_STATE_HOME` も `HOME` も無い）で起動すると、
+  stderr に `kemi: review` の行が無く、submit は今どおりできる（e2e）。
 - `kemi wait <id> --timeout 1` が、起きたことが無ければ 1 秒後に stdout 空・終了コード 3 で
   終わる（e2e）。
 - 画面で承認すると、待っていた `kemi wait` が submit の結果を入れた JSON を出して終了
