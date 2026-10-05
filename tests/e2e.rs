@@ -3067,8 +3067,33 @@ fn a_manifest_named_wait_opens_with_a_path() {
 
 // ---- --live（live.md の R-PAGE-MODE と R-PAGE-SESSION） ----
 
-/// 開発サーバの居ないループバックの URL。① の段階では中継しないので、つながらなくてよい。
+/// 開発サーバの居ないループバックの URL。つながらなくても起動して待つ。
 const LIVE_URL: &str = "http://127.0.0.1:9/app";
+
+impl Kemi {
+    /// コードの見方の最初のファイルの id。`--live` の id はパスから決まる。
+    async fn first_file_id(&self) -> String {
+        self.review_json().await["groups"][0]["files"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// コードの見方の最初のファイルの 1 行目に、コメントを付ける。
+    async fn add_live_comment(&self, body: &str) {
+        let file_id = self.first_file_id().await;
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add", "file_id": file_id, "side": "new",
+                    "start_line": 1, "end_line": 1, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+}
 
 #[test]
 fn live_usage_errors_exit_2_in_english() {
@@ -3176,7 +3201,7 @@ async fn live_suspend_and_resume_bring_back_the_comment_and_the_message() {
         Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
     let id = kemi.review_id();
     kemi.wait_serving().await;
-    kemi.add_comment(1, "fix the wording").await;
+    kemi.add_live_comment("fix the wording").await;
     let response = kemi
         .post("api/message", serde_json::json!({ "body": "looks close" }))
         .await;
@@ -3223,7 +3248,7 @@ async fn live_session_with_only_seen_and_collapsed_is_not_kept() {
     let response = kemi
         .post(
             "api/state",
-            serde_json::json!({ "file_id": "f1", "seen": true, "collapsed": true }),
+            serde_json::json!({ "file_id": kemi.first_file_id().await, "seen": true, "collapsed": true }),
         )
         .await;
     assert_eq!(response.status(), 200);
@@ -3246,7 +3271,7 @@ async fn live_session_is_listed_with_live_and_the_page_url() {
         Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
     let id = kemi.review_id();
     kemi.wait_serving().await;
-    kemi.add_comment(1, "keep").await;
+    kemi.add_live_comment("keep").await;
     signal(&kemi.child, "-INT");
     kemi.wait_with_stderr();
 
@@ -3270,7 +3295,7 @@ async fn wait_returns_the_comment_handed_in_a_live_review() {
     let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
     kemi.wait_agent_status("waiting").await;
 
-    kemi.add_comment(1, "rename this").await;
+    kemi.add_live_comment("rename this").await;
     kemi.hand().await;
 
     let (code, stdout, _) = finish_agent(waiting).await;
@@ -3401,7 +3426,7 @@ async fn resume_of_a_live_review_accepts_a_live_port_and_listens_there() {
         Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
     let id = kemi.review_id();
     kemi.wait_serving().await;
-    kemi.add_comment(1, "keep").await;
+    kemi.add_live_comment("keep").await;
     signal(&kemi.child, "-INT");
     kemi.wait_with_stderr();
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3473,7 +3498,7 @@ async fn live_file_review_resumed_after_the_file_is_gone_says_so_and_waits() {
     );
     let id = kemi.review_id();
     kemi.wait_serving().await;
-    kemi.add_comment(1, "keep").await;
+    kemi.add_live_comment("keep").await;
     signal(&kemi.child, "-INT");
     kemi.wait_with_stderr();
     std::fs::remove_file(dir.path.join("page.html")).unwrap();
@@ -3485,5 +3510,69 @@ async fn live_file_review_resumed_after_the_file_is_gone_says_so_and_waits() {
 
     assert_eq!(status, 404);
     assert!(body.contains("kemi cannot read /page.html"), "{body}");
+    resumed.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_resume_keeps_comments_and_seen_marks_on_the_same_files() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    std::fs::write(dir.path.join("0.txt"), "zero\n").unwrap();
+    git(&dir.path, &["add", "0.txt"]);
+    git(&dir.path, &["commit", "-q", "-m", "zero"]);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    let review = kemi.review_json().await;
+    let id_of = |review: &serde_json::Value, path: &str| {
+        review["groups"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["path"] == path)
+            .map(|file| file["id"].as_str().unwrap().to_string())
+            .unwrap()
+    };
+    let a = id_of(&review, "a.txt");
+    kemi.post(
+        "api/comment",
+        serde_json::json!({
+            "op": "add", "file_id": a, "side": "new",
+            "start_line": 2, "end_line": 2, "body": "on a.txt"
+        }),
+    )
+    .await;
+    kemi.post(
+        "api/state",
+        serde_json::json!({ "file_id": a, "seen": true }),
+    )
+    .await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+    // 保留の間に、名前の順で前に来るファイルが変わる。
+    std::fs::write(dir.path.join("0.txt"), "ZERO\n").unwrap();
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let review = resumed.review_json().await;
+    let a = id_of(&review, "a.txt");
+    let zero = id_of(&review, "0.txt");
+    let file = resumed.get_json(&format!("api/file/{a}")).await;
+    let other = resumed.get_json(&format!("api/file/{zero}")).await;
+
+    assert_eq!(file["comments"][0]["body"], "on a.txt", "{file}");
+    assert_eq!(other["comments"].as_array().unwrap().len(), 0, "{other}");
+    let seen = |path: &str| {
+        review["groups"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["path"] == path)
+            .unwrap()["seen"]
+            .clone()
+    };
+    assert_eq!(seen("a.txt"), true);
+    assert_eq!(seen("0.txt"), false);
     resumed.kill();
 }
