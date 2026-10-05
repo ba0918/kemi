@@ -224,8 +224,10 @@
       if (/** @type {HTMLOptionElement} */ (original).selected) copy.setAttribute('selected', '');
       else copy.removeAttribute('selected');
     }
+    // referrerpolicy は要素ごとに文書の no-referrer より優先されるので、写しには残さない。
+    // 残すと、埋め込めなかった外部の画像などへトークンの URL を送ることがある。
     for (const attribute of [...copy.attributes]) {
-      if (/^on/i.test(attribute.name) || /^\s*javascript:/i.test(attribute.value)) {
+      if (/^on/i.test(attribute.name) || /^\s*javascript:/i.test(attribute.value) || attribute.name.toLowerCase() === 'referrerpolicy') {
         copy.removeAttribute(attribute.name);
       }
     }

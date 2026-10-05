@@ -13,6 +13,8 @@
 //   /rich.html    shadow DOM・canvas・SVG・入力欄・onclick（押すと背景が黄色になる、左上 (0, 200) の
 //                 300×100 のボタン）を持つ
 //   /siblings.html  兄弟の並び。`?extra=1` で途中に 1 つ足す
+//   /referrer.html  `?image=<url>` の画像を `referrerpolicy="unsafe-url"` 付きで出す（スナップショットが
+//                 外部の画像へ referrer を送るかの確かめ）
 //   /tall.html    高さ 3000px の色の帯（スクロールをそろえる確かめに使う。#band-<n> で移れる）
 //   /other.html   別のページ（ページの移動に使う）
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
@@ -108,6 +110,14 @@ function siblingsPage(extra) {
 `;
 }
 
+function referrerPage(image) {
+  const src = image.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Referrer</title></head>
+<body><img src="${src}" referrerpolicy="unsafe-url" width="10" height="10" alt=""></body></html>
+`;
+}
+
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
 
 /** WebSocket の受け答え（RFC 6455 の最小）。テキストの送信と、閉じる合図だけを扱う。 */
@@ -160,6 +170,11 @@ export async function startDevServer({ port = 0, dir } = {}) {
     if (url.pathname === '/siblings.html') {
       response.writeHead(200, { 'Content-Type': TYPES['.html'] });
       response.end(siblingsPage(url.searchParams.get('extra') === '1'));
+      return;
+    }
+    if (url.pathname === '/referrer.html') {
+      response.writeHead(200, { 'Content-Type': TYPES['.html'] });
+      response.end(referrerPage(url.searchParams.get('image') ?? ''));
       return;
     }
     const name = url.pathname === '/' ? 'index.html' : normalize(url.pathname.slice(1));

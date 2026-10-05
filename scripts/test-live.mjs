@@ -18,12 +18,14 @@
 //   渡すと取る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
+//   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
 // - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -634,6 +636,49 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
   }
 }
 
+/**
+ * スナップショットの中の外部の画像（R-PAGE-MOCK、R-PAGE-PROXY）: ページが referrerpolicy="unsafe-url" を
+ * 付けていても、画像のサーバにトークンの URL が Referer として届かない。
+ */
+async function snapshotsSendNoTokenToExternalImages(repository) {
+  /** @type {{ referer: string | null }[]} */
+  const received = [];
+  const images = createHttpServer((request, response) => {
+    received.push({ referer: request.headers.referer ?? null });
+    const red = Buffer.alloc(4);
+    red.set([255, 0, 0, 255]);
+    response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+    response.end(encodePng(1, 1, red));
+  });
+  await new Promise((done) => images.listen(0, '127.0.0.1', () => done(undefined)));
+  const address = images.address();
+  // localhost と 127.0.0.1 は別のオリジンなので、中継のページから見て外部の画像になる。
+  const image = `http://localhost:${typeof address === 'object' && address ? address.port : 0}/image.png`;
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}referrer.html?image=${encodeURIComponent(image)}`]);
+  const token = new URL(kemi.url).pathname.split('/')[2];
+  const relay = new URL(kemi.live).origin;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    // 中継のページと写すときの読み込みは中継のオリジンを referrer にする。それ以外がスナップショットの枠から。
+    const deadline = Date.now() + 15000;
+    while (!received.some(({ referer }) => !referer?.startsWith(relay)) && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    assert.ok(received.some(({ referer }) => !referer?.startsWith(relay)), `the snapshot frame loads the image: ${JSON.stringify(received)}`);
+    assert.equal(received.some(({ referer }) => referer?.includes(token)), false, JSON.stringify(received));
+    console.log('PASS スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていても Referer にトークンの URL を受け取らない');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+    images.closeAllConnections();
+    await new Promise((done) => images.close(() => done(undefined)));
+  }
+}
+
 /** 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）。 */
 async function overlayFollowsTheScrollAndTheOpacity(repository) {
   const dev = await startDevServer();
@@ -708,6 +753,7 @@ try {
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
+  await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
