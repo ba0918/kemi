@@ -166,7 +166,7 @@ export function submit(verdict) {
  * @param {() => void} onUpdate 新側の供給元が変わった（更新バッジ）
  * @param {() => void} onUnit もう片方のグループ単位の作成の状態が変わった
  * @param {AgentHandlers} agent 返信・発言・エージェントの状態の通知と、届かなかった通知の取り直し
- * @returns {EventSource}
+ * @returns {Promise<void>} 最初につながった（サーバが通知を送り始めた）とき、またはつながらなかったときに解決する
  */
 export function subscribeEvents(onUpdate, onUnit, agent) {
   const events = new EventSource("api/events");
@@ -189,8 +189,9 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
     agent.onMissed();
   });
   // つながる前（や切れていた間）に届かなかった単位の状態を、つながった時点で読み直す。
-  // 返信・発言・エージェントの状態は、起動の直後の最初の接続では読み直さない（起動で
-  // 読んだばかりで、読み直すとコメントをすべて差し替える）。つなぎ直したときだけ読み直す。
+  // 返信・発言・エージェントの状態は、最初の接続では読み直さない（起動はつながってから
+  // 中身を読むので、取りこぼしは無い。読み直すとコメントをすべて差し替える）。つなぎ直した
+  // ときだけ読み直す。
   let connected = false;
   events.addEventListener("open", () => {
     onUnit();
@@ -199,5 +200,9 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
     }
     connected = true;
   });
-  return events;
+  // サーバは通知の購読を始めてから応答のヘッダを返すので、open の後に起きたことは届く。
+  return new Promise((resolve) => {
+    events.addEventListener("open", () => resolve(), { once: true });
+    events.addEventListener("error", () => resolve(), { once: true });
+  });
 }

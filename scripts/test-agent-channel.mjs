@@ -5,7 +5,7 @@
 //   node scripts/test-agent-channel.mjs <kemi-bin>
 //
 // 確かめること: kemi wait を呼ぶ前から返信の欄・解決・チャット欄の書く欄と未接続の状態が出て、
-// 「Hand to agent」だけが無い、kemi wait を待たせると待機中、返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が
+// 「Hand to agent」だけが無い、ページの起動中に kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が
 // 変わらない、kemi reply の発言がチャット欄に出る、幅 390px でもチャット欄を開いて閉じられる、未渡しを
 // 残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る。
 import assert from 'node:assert/strict';
@@ -140,7 +140,24 @@ try {
   await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 3, end_line: 3, body: 'rename this line' });
   await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 100, end_line: 100, body: 'and this one' });
 
-  await browser('set', 'viewport', '1280', '800');
+  // (1b) で使う、起動の api/review の応答を止める仕掛け。sessionStorage に印があるときの
+  // 読み込みでだけ、最初の 1 回を、サーバが返した後にページへ渡すのを止める。
+  const holdScript = join(state, 'hold-review.js');
+  await writeFile(holdScript, `(() => {
+    if (sessionStorage.getItem('kemi-test-hold-review') !== '1') return;
+    sessionStorage.removeItem('kemi-test-hold-review');
+    const original = window.fetch.bind(window);
+    let held = false;
+    window.fetch = async (input, init) => {
+      const response = await original(input, init);
+      if (!held && String(input).startsWith('api/review')) {
+        held = true;
+        await new Promise((release) => { window.__kemiRelease = release; window.__kemiHeld = true; });
+      }
+      return response;
+    };
+  })();`);
+  await browser('--init-script', holdScript, 'set', 'viewport', '1280', '800');
   await browser('open', kemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
 
@@ -160,6 +177,39 @@ try {
   await browser('click', '#chat .cl-close');
   await waitFor(`document.querySelector('#chat').hidden`);
   console.log('PASS kemi wait を呼ぶ前から返信・解決・チャット欄と未接続の状態が出て、「Hand to agent」だけが無い');
+
+  // (1b) ページが起動のために読んだ中身より後、通知につながるより前に kemi wait が呼ばれ、
+  // kemi reply で発言されても、待機中と「Hand to agent」とその発言が出る。起動の api/review の応答を、サーバが返した後にページへ
+  // 渡すのを止めておき、その間に kemi wait を待たせてから渡す。
+  await evaluate(`sessionStorage.setItem('kemi-test-hold-review', '1'); true`);
+  await browser('reload');
+  await waitFor(`window.__kemiHeld === true`);
+  const loadingWait = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '10']);
+  for (;;) {
+    const current = await (await fetch(new URL('api/review', kemi.url))).json();
+    if (current.agent?.status === 'waiting') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  // 状態はサーバが時々知らせ直すことがあるが、発言は一度しか届かない。
+  const early = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
+    writes: [{ type: 'message', body: 'Looking at it now.' }],
+  }));
+  assert.equal(early.code, 0, early.stderr);
+  await evaluate(`window.__kemiRelease(); true`);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await waitFor(statusIs('waiting'));
+  assert.equal(await evaluate(shown('#btn-hand')), true);
+  await browser('click', '#btn-dock-chat');
+  await waitFor(`Array.from(document.querySelectorAll('#chat .chat-item[data-author="agent"]')).some(m => m.textContent.includes('Looking at it now.'))`);
+  await browser('click', '#chat .cl-close');
+  await waitFor(`document.querySelector('#chat').hidden`);
+  const loadingWaited = await loadingWait;
+  assert.equal(loadingWaited.code, 3, `the wait should time out: ${JSON.stringify(loadingWaited)}`);
+  await waitFor(statusIs('working'));
+  // 読み込み直しで閉じた、3 行目のコメントを開き直す（(3) が使う）。
+  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
+  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
+  console.log('PASS ページの起動中に kemi wait と kemi reply の発言が来ても、待機中と「Hand to agent」と発言が出る');
 
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
   const waiting = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '2']);
@@ -219,7 +269,7 @@ try {
   const result = JSON.parse(stdout);
   assert.deepEqual(result.comments.map((comment) => comment.body), ['rename this line', 'and this one']);
   assert.equal(result.comments[0].replies[0].author, 'agent');
-  assert.equal(result.messages[0].body, 'Both comments are addressed.');
+  assert.deepEqual(result.messages.map((message) => message.body), ['Looking at it now.', 'Both comments are addressed.']);
   console.log('PASS 未渡しを残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る');
 } finally {
   kemi.child.kill('SIGTERM');

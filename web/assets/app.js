@@ -156,6 +156,36 @@ function handleKey(event) {
 }
 
 async function boot() {
+  // サーバはつながる前の通知を送り直さないので、先に通知につながってから中身を読む（読んだ後、
+  // つながる前に起きたことを取りこぼさない）。読んだ中身を描き終えるまでに届いた通知は、
+  // 描き終えてから届いた順に取り込む（先に取り込むと、読んだ中身で上書きされる）。
+  /** @type {(() => void)[] | null} */
+  let held = [];
+  /**
+   * @template {any[]} A
+   * @param {(...args: A) => void} handler
+   * @returns {(...args: A) => void}
+   */
+  const afterBoot = (handler) => (...args) => {
+    if (held) {
+      held.push(() => handler(...args));
+    } else {
+      handler(...args);
+    }
+  };
+  await api.subscribeEvents(
+    afterBoot(() => {
+      state.updateAvailable = true;
+      renderUpdateBadge();
+    }),
+    afterBoot(() => void onUnitEvent()),
+    {
+      onThread: afterBoot(receiveThread),
+      onMessage: afterBoot(applyMessage),
+      onAgent: afterBoot(applyAgent),
+      onMissed: afterBoot(receiveMissed),
+    },
+  );
   applyReview(await api.getReview(false), true);
   renderHeader();
   renderAgent();
@@ -165,19 +195,11 @@ async function boot() {
   } else {
     renderNotice();
   }
-  api.subscribeEvents(
-    () => {
-      state.updateAvailable = true;
-      renderUpdateBadge();
-    },
-    () => void onUnitEvent(),
-    {
-      onThread: receiveThread,
-      onMessage: applyMessage,
-      onAgent: applyAgent,
-      onMissed: receiveMissed,
-    },
-  );
+  const tasks = held;
+  held = null;
+  for (const task of tasks) {
+    task();
+  }
 }
 
 // 幅を見るのはここだけ。CSS の狭い画面のメディアクエリと同じ文字列（R-NARROW）。
