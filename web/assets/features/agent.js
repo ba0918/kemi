@@ -36,8 +36,60 @@ function setAgent(agent) {
  * スレッドが変わった（返信が増えた）コメントを取り込む。
  * @param {any} comment
  */
-export function applyThread(comment) {
+function applyThread(comment) {
   updateComments((comments) => replaceComment(comments, comment));
+}
+
+/** IME で変換している欄。変換していなければ null。 */
+/** @type {EventTarget | null} */
+let composingIn = null;
+/** 変換している間に届いた通知の取り込み。変換が終わってから行う。 */
+/** @type {(() => void)[]} */
+let deferred = [];
+
+/**
+ * 通知を取り込む。取り込みはコメントの欄をすべて作り直し、変換中の入力を途切れさせるので、
+ * 変換している間は終わるまで待つ。変換中の欄がほかの描き直し（スクロールなど）で作り直され、
+ * 変換の終わりが届かないこともあるので、その欄がもう無いかフォーカスを失っていれば待たない。
+ * @param {() => void} task
+ */
+function whenNotComposing(task) {
+  const field = composingIn;
+  if (field instanceof Node && field.isConnected && document.activeElement === field) {
+    deferred.push(task);
+    return;
+  }
+  endComposition();
+  task();
+}
+
+/**
+ * @param {Event} event
+ */
+export function startComposition(event) {
+  composingIn = event.target;
+}
+
+export function endComposition() {
+  composingIn = null;
+  const tasks = deferred;
+  deferred = [];
+  for (const task of tasks) {
+    task();
+  }
+}
+
+/**
+ * 通知で届いた、スレッドが変わったコメント。
+ * @param {any} comment
+ */
+export function receiveThread(comment) {
+  whenNotComposing(() => applyThread(comment));
+}
+
+/** 通知が届かなかったときの読み直し。 */
+export function receiveMissed() {
+  whenNotComposing(() => void resyncAgent());
 }
 
 /**
@@ -57,7 +109,7 @@ export function applyMessage(message) {
  * 通知が届かなかった（取りこぼしたか、つながっていなかった）。スレッド・発言・状態を取り直す
  * （コメントの増減は更新バッジに任せる）。
  */
-export async function resyncAgent() {
+async function resyncAgent() {
   const comments = state.allComments;
   const messages = state.messages;
   const agent = state.agent;

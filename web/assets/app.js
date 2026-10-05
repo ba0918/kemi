@@ -62,13 +62,15 @@ import { openConfirm } from "./features/submit.js";
 import {
   applyAgent,
   applyMessage,
-  applyThread,
   closeChat,
+  endComposition,
   handToAgent,
   postMessage,
+  receiveMissed,
+  receiveThread,
   replyTo,
-  resyncAgent,
   setResolved,
+  startComposition,
   toggleChat,
 } from "./features/agent.js";
 import { renderAgent } from "./views/chat.js";
@@ -170,10 +172,10 @@ async function boot() {
     },
     () => void onUnitEvent(),
     {
-      onThread: applyThread,
+      onThread: receiveThread,
       onMessage: applyMessage,
       onAgent: applyAgent,
-      onMissed: () => void resyncAgent(),
+      onMissed: receiveMissed,
     },
   );
 }
@@ -183,6 +185,8 @@ const narrowQuery = window.matchMedia("(max-width: 719.98px)");
 state.narrow = narrowQuery.matches;
 narrowQuery.addEventListener("change", (event) => applyNarrow(event.matches));
 document.addEventListener("keydown", handleKey);
+document.addEventListener("compositionstart", startComposition);
+document.addEventListener("compositionend", endComposition);
 dom.btnTree.addEventListener("click", toggleDrawer);
 dom.drawerScrim.addEventListener("click", closeDrawer);
 dom.menuWrap.addEventListener("click", () => setWrap(!displayWrap()));
