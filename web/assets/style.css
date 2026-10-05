@@ -1540,6 +1540,11 @@ ul.files ul {
   font-size: 13.5px;
 }
 
+/* 入力欄の表示幅は約 72 文字まで（R-VIEW）。操作の並びも入力欄の右端に揃える。 */
+.editor > * {
+  max-width: 72ch;
+}
+
 .editor textarea {
   width: 100%;
   min-height: 64px;
