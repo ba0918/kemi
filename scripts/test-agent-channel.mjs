@@ -15,7 +15,7 @@
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
 // 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
 // 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
-// 別のファイルを選んでも届いた印が出ない。
+// 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -464,6 +464,32 @@ try {
   await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21'`);
   assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
   console.log('PASS 「This file」で上のほうを見たまま別のファイルを選んでも、届いた印は出ない');
+
+  // (9) 別のファイルを読めなかった後に、エージェントの状態が変わって描き直しても、届いた印は
+  // 出ない。読み込み直して b.txt をまだ読んでいない状態にし、b.txt の行データの取得を失敗させる。
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  await selectFile('a.txt');
+  await browser('click', '#cv-filter button[data-filter="file"]');
+  await waitFor(`${list}.querySelectorAll('.cv-card').length === 20 && ${list}.scrollHeight > ${list}.clientHeight + 100`);
+  await evaluate(`${list}.scrollTop = 0; true`);
+  await waitFor(`${list}.scrollTop === 0`);
+  await evaluate(`(() => {
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => String(input).startsWith(${JSON.stringify(`api/file/${encodeURIComponent(fileIdOf('b.txt'))}`)})
+      ? Promise.reject(new TypeError('Failed to fetch'))
+      : original(input, init);
+    return true;
+  })()`);
+  await evaluate(`Array.from(document.querySelectorAll('#tree button.file')).find(b => b.textContent.includes('b.txt')).click(); true`);
+  await waitFor(`!document.querySelector('#overlay').hidden && document.querySelector('#overlay-card').textContent.includes('could not read the file')`);
+  const failedWait = agentCommand(fileFixture, fileState, ['wait', fileKemi.id, '--timeout', '1']);
+  await waitFor(statusIs('waiting'));
+  await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21'`);
+  assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
+  const failedWaited = await failedWait;
+  assert.equal(failedWaited.code, 3, `the wait should time out: ${JSON.stringify(failedWaited)}`);
+  console.log('PASS 別のファイルを読めなかった後に描き直しても、届いた印は出ない');
 } finally {
   fileKemi.child.kill('SIGTERM');
   await fileKemi.exited;

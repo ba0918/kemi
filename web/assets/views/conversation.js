@@ -91,18 +91,23 @@ export function renderAgentState() {
  * 並びを描き直す。一番下を見ていれば（と、`toEnd` のとき）新しいものが見えるところまで
  * ついていき、上のほうを見ていれば位置を変えずに、届いた数の印を並びの下端に出す
  * （R-AGENT-HAND）。届いたかどうかは、前に描いた並びの最後の通し番号と比べて決める。
+ * 前に描いた並びが別のもの（絞り込み・ファイル・スレッドが違う）なら、比べられないので、
+ * どこから描き直しても一番下から見せる。
  * @param {HTMLElement} list
  * @param {{ toEnd?: boolean }} options
+ * @param {string} drawnFor 何の並びか
  * @param {number[]} seqs 描く並びの各項目の通し番号
  * @param {() => void} fill
  */
-function followScroll(list, options, seqs, fill) {
+function followScroll(list, options, drawnFor, seqs, fill) {
   const newest = Math.max(0, ...seqs);
   const shownNewest = Number(list.dataset.newest ?? newest);
-  const following = Boolean(options.toEnd) || followsNewest(list);
+  const following =
+    Boolean(options.toEnd) || list.dataset.drawnFor !== drawnFor || followsNewest(list);
   const top = list.scrollTop;
   fill();
   list.dataset.newest = String(newest);
+  list.dataset.drawnFor = drawnFor;
   list.after(dom.cvNewer);
   if (following) {
     list.scrollTop = list.scrollHeight;
@@ -137,7 +142,9 @@ function renderList(options) {
     file,
   );
   const context = { range: state.units.length > 0, commitGroups: commitGroups() };
-  followScroll(dom.cvItems, options, items.map((item) => item.seq), () => {
+  // 「This file」の並びは表示中のファイルで入れ替わる。ほかの絞り込みはファイルで変わらない。
+  const drawnFor = JSON.stringify(filter === "file" ? [filter, file] : [filter]);
+  followScroll(dom.cvItems, options, drawnFor, items.map((item) => item.seq), () => {
     dom.cvItems.textContent = "";
     if (items.length === 0) {
       dom.cvItems.append(textEl("li", "cv-empty", "Nothing here yet"));
@@ -290,7 +297,7 @@ function renderThread(comment, options) {
   dom.cvThreadHead.append(acts);
 
   const posts = [comment, ...(comment.replies || [])].map((item) => Number(item.seq) || 0);
-  followScroll(dom.cvThreadBody, options, posts, () => {
+  followScroll(dom.cvThreadBody, options, comment.id, posts, () => {
     dom.cvThreadBody.textContent = "";
     const lines = targetLines(comment);
     if (lines.length > 0) {
