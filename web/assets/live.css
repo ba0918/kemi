@@ -240,22 +240,66 @@ body[data-live-view="code"] .lv-page-only {
   background: var(--star-soft);
 }
 
+/* ---- 重ねて透かす（live-compare.md の R-PAGE-REF） ----
+   比べる相手の枠を見る対象の枠と同じ場所に重ねる。帯の高さをそろえるため、比べる相手の帯は
+   場所を取ったまま見せない。比べる相手は操作を受けず、下の見る対象に届く。 */
+.lv-stage[data-compare="overlay"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lv-stage[data-compare="overlay"] .lv-pane {
+  grid-area: 1 / 1;
+}
+
+.lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] {
+  z-index: 1;
+  pointer-events: none;
+  background: transparent;
+  border-color: transparent;
+}
+
+.lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-bar {
+  visibility: hidden;
+}
+
+.lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-viewport {
+  background: transparent;
+}
+
+.lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-box {
+  opacity: var(--lv-opacity, 0.5);
+}
+
+.lv-opacity {
+  width: 110px;
+}
+
+.lv-opacity[hidden] {
+  display: none;
+}
+
 /* ---- 狭い画面（R-NARROW と同じしきい値）: 1 枚ずつ切り替えて見る ---- */
 @media (max-width: 719.98px) {
+  /* 帯は横に流さず折り返す。横に流すと、押した操作が帯の外へ流れて見えなくなる。 */
   .lv-band {
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    gap: 6px 8px;
+    padding: 6px 8px;
   }
 
-  /* 今どちらを見ているかの切り替えは、横に流れる帯の先頭に置いて常に見せる。 */
+  .lv-widths,
+  .lv-compare,
+  .lv-mock {
+    flex-wrap: wrap;
+  }
+
+  /* 今どちらを見ているかの切り替えは、帯の先頭に置く。 */
   .lv-side {
     display: inline-flex;
     order: -1;
-    flex: none;
   }
 
-  .lv-band > * {
-    flex: none;
+  .lv-spacer {
+    display: none;
   }
 
   .lv-stage {
@@ -263,8 +307,13 @@ body[data-live-view="code"] .lv-page-only {
     padding: 6px;
   }
 
-  .lv-stage[data-side="live"] .lv-pane[data-side="ref"],
-  .lv-stage[data-side="ref"] .lv-pane[data-side="live"] {
+  .lv-stage[data-compare="side"][data-side="live"] .lv-pane[data-side="ref"],
+  .lv-stage[data-compare="side"][data-side="ref"] .lv-pane[data-side="live"] {
+    display: none;
+  }
+
+  /* 重ねて透かすときは 2 枚を重ねるので、どちらを見るかの切り替えは要らない。 */
+  body:has(.lv-stage[data-compare="overlay"]) .lv-side {
     display: none;
   }
 }

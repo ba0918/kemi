@@ -18,6 +18,8 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   compareSlot: HTMLElement,
  *   compareSelect: HTMLSelectElement,
  *   recordButton: HTMLButtonElement,
+ *   modeSeg: HTMLElement,
+ *   opacity: HTMLInputElement,
  *   mockInput: HTMLInputElement,
  *   mockAssign: HTMLButtonElement,
  *   mockRemove: HTMLButtonElement,
@@ -94,6 +96,23 @@ export function buildShell() {
   recordButton.textContent = "Record now";
   recordButton.title = "Take a snapshot of the page as it is now";
   compareSlot.append(compareSelect, recordButton);
+  const modeSeg = el("div", "lv-seg lv-mode");
+  modeSeg.setAttribute("role", "group");
+  modeSeg.setAttribute("aria-label", "How to compare");
+  for (const [mode, label] of [["side", "Side by side"], ["overlay", "Overlay"]]) {
+    const choice = button("");
+    choice.textContent = label;
+    choice.dataset.compare = mode;
+    modeSeg.append(choice);
+  }
+  const opacity = /** @type {HTMLInputElement} */ (el("input", "lv-opacity"));
+  opacity.type = "range";
+  opacity.min = "0";
+  opacity.max = "100";
+  opacity.value = "50";
+  opacity.setAttribute("aria-label", "Opacity of the reference");
+  opacity.title = "Opacity of the reference";
+  compareSlot.append(modeSeg, opacity);
   const mockGroup = el("div", "lv-mock");
   const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
   mockInput.type = "text";
@@ -179,6 +198,8 @@ export function buildShell() {
     compareSlot,
     compareSelect,
     recordButton,
+    modeSeg,
+    opacity,
     mockInput,
     mockAssign,
     mockRemove,

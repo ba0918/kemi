@@ -28,6 +28,20 @@
     }
   });
 
+  // 重ねて透かすときに比べる相手のスクロールをそろえるため、スクロールの位置と中身の高さを
+  // 知らせる（live-compare.md の DC2）。
+  let scrollQueued = false;
+  const reportScroll = () => {
+    if (scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      scrollQueued = false;
+      post({ type: 'scroll', x: scrollX, y: scrollY, height: document.documentElement.scrollHeight });
+    });
+  };
+  window.addEventListener('scroll', reportScroll, { passive: true });
+  window.addEventListener('resize', reportScroll);
+
   // 読み込み終えてから知らせる。知らせを受けたレビュー画面は、すぐ開始時の写しを頼むことがある。
   const announce = () => post({
     type: 'page',
@@ -35,8 +49,12 @@
     reachable: script?.dataset.kemiReachable !== 'false',
     rewrote: (script?.dataset.kemiRewrote ?? '').split(' ').filter(Boolean),
   });
-  if (document.readyState === 'complete') announce();
-  else window.addEventListener('load', announce, { once: true });
+  const ready = () => {
+    announce();
+    reportScroll();
+  };
+  if (document.readyState === 'complete') ready();
+  else window.addEventListener('load', ready, { once: true });
 
   // ---- スナップショット（R-PAGE-SNAPSHOT、形は DL3） ----
   // 今の DOM を写し、スクリプトを除いた 1 つの HTML にする。shadow DOM は宣言的な

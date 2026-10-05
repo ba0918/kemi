@@ -13,6 +13,7 @@
 //   /rich.html    shadow DOM・canvas・SVG・入力欄・onclick（押すと背景が黄色になる、左上 (0, 200) の
 //                 300×100 のボタン）を持つ
 //   /siblings.html  兄弟の並び。`?extra=1` で途中に 1 つ足す
+//   /tall.html    高さ 3000px の色の帯（スクロールをそろえる確かめに使う。#band-<n> で移れる）
 //   /other.html   別のページ（ページの移動に使う）
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
 import { createServer } from 'node:http';
@@ -84,6 +85,13 @@ const PAGES = {
   document.getElementById('field').value = 'typed value';
   document.getElementById('check').checked = true;
 </script>
+</body></html>
+`,
+  'tall.html': `<!doctype html>
+<html><head><meta charset="utf-8"><title>Tall</title>
+<style>body { margin: 0; } .band { height: 300px; font: 24px sans-serif; padding: 12px; box-sizing: border-box; }</style>
+</head><body>
+${Array.from({ length: 10 }, (_, index) => `<div class="band" id="band-${index + 1}" style="background: hsl(${index * 36}, 70%, 70%)">Band ${index + 1}</div>`).join('\n')}
 </body></html>
 `,
   'other.html': `<!doctype html>

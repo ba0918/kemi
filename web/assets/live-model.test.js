@@ -7,6 +7,7 @@ import {
   chooseReference,
   chooseSnapshot,
   fitScale,
+  overlayPlacement,
   liveOrigin,
   pageKey,
   parseWidth,
@@ -116,4 +117,18 @@ test("without a mock, or once it is removed, the snapshot order applies again", 
   assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: undefined }), { type: "snapshot", snapshot: snapshots[1] });
   assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "mock" }), { type: "snapshot", snapshot: snapshots[1] });
   assert.deepEqual(chooseReference({ snapshots: [], mock: null, page: "/", width: 1280, chosen: undefined }), { type: "none" });
+});
+
+test("an overlaid reference is drawn at the full content height and moved by the scroll of the page", () => {
+  assert.deepEqual(
+    overlayPlacement({ scale: 0.5, viewportHeight: 400, scrollX: 0, scrollY: 600, contentHeight: 3000 }),
+    { height: 3000, transform: "translate(0px, -300px) scale(0.5)" },
+  );
+});
+
+test("a short page is still drawn as tall as the pane", () => {
+  assert.deepEqual(
+    overlayPlacement({ scale: 1, viewportHeight: 700, scrollX: 10, scrollY: 0, contentHeight: 300 }),
+    { height: 700, transform: "translate(-10px, 0px) scale(1)" },
+  );
 });

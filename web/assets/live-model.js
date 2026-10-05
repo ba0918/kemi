@@ -173,3 +173,17 @@ export function chooseReference({ snapshots, mock, page, width, chosen }) {
   const snapshot = chooseSnapshot(snapshots, page, width, point);
   return snapshot ? { type: "snapshot", snapshot } : { type: "none" };
 }
+
+/**
+ * 重ねて透かすときの比べる相手の置き方（live-compare.md の DC2）。比べる相手は自分では
+ * スクロールしない（スクリプトを止めた枠、別のオリジンの枠）ので、中身の高さで描き、
+ * 見る対象のスクロールの分だけ外側でずらす。
+ * @param {{ scale: number, viewportHeight: number, scrollX: number, scrollY: number, contentHeight: number }} input
+ * @returns {{ height: number, transform: string }}
+ */
+export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, contentHeight }) {
+  const height = Math.max(viewportHeight / scale, contentHeight);
+  const x = -scrollX * scale;
+  const y = -scrollY * scale;
+  return { height, transform: `translate(${x === 0 ? 0 : x}px, ${y === 0 ? 0 : y}px) scale(${scale})` };
+}

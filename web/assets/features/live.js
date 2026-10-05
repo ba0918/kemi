@@ -13,6 +13,7 @@ import {
   chooseReference,
   fitScale,
   liveOrigin,
+  overlayPlacement,
   pageKey,
   parseWidth,
   snapshotLabel,
@@ -70,6 +71,13 @@ const live = {
   mockShownKey: "",
   /** 読み直す操作を押した。 */
   mockReloadAsked: false,
+  /** 見比べ方。並べるか、重ねて透かすか（live-compare.md の R-PAGE-REF）。 */
+  /** @type {"side" | "overlay"} */
+  compare: "side",
+  /** 重ねた比べる相手の不透明度（0〜100）。 */
+  opacity: 50,
+  /** 見る対象のスクロールの位置と中身の高さ（中継したページが知らせる）。 */
+  scroll: { x: 0, y: 0, height: 0 },
 };
 
 /** @type {import("../views/live.js").LiveShell | null} */
@@ -132,6 +140,21 @@ export function startLive(info) {
     live.chosen.set(live.page, shell.compareSelect.value);
     render();
   });
+  shell.modeSeg.addEventListener("click", (event) => {
+    const mode = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.compare;
+    if (mode === "side" || mode === "overlay") {
+      live.compare = mode;
+      render();
+    }
+  });
+  shell.opacity.addEventListener("input", () => {
+    if (!shell) {
+      return;
+    }
+    live.opacity = Number(shell.opacity.value);
+    shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
+  });
+  shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
   shell.mockAssign.addEventListener("click", () => void assignMock());
   shell.mockInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -250,6 +273,15 @@ function receive(event) {
   }
   if (message.type === "captured") {
     pendingCaptures.get(Number(message.id))?.(message);
+    return;
+  }
+  if (message.type === "scroll") {
+    live.scroll = {
+      x: Number(message.x) || 0,
+      y: Number(message.y) || 0,
+      height: Number(message.height) || 0,
+    };
+    layoutFrames();
     return;
   }
   if (message.type !== "page") {
@@ -376,6 +408,11 @@ function renderBand() {
     choice.setAttribute("aria-pressed", String(choice.dataset.side === live.side));
   }
   shell.stage.dataset.side = live.side;
+  shell.stage.dataset.compare = live.compare;
+  for (const choice of shell.modeSeg.querySelectorAll("button")) {
+    choice.setAttribute("aria-pressed", String(choice.dataset.compare === live.compare));
+  }
+  shell.opacity.hidden = live.compare !== "overlay";
   const mock = live.mocks.get(live.page) ?? null;
   renderCompareOptions(
     shell.compareSelect,
@@ -481,7 +518,7 @@ function showMock(url) {
   if (!shell) {
     return;
   }
-  const key = `${live.page}\n${live.width}\n${url}`;
+  const key = `${live.page}\n${live.width}\n${live.compare}\n${url}`;
   if (key === live.mockShownKey && !live.mockReloadAsked && !shell.refMockFrame.hidden) {
     return;
   }
@@ -526,10 +563,24 @@ function layoutFrames() {
   const viewport = shell.liveViewport.clientWidth > 0 ? shell.liveViewport : shell.refViewport;
   const scale = fitScale(viewport.clientWidth, live.width);
   const height = viewport.clientHeight / scale;
-  for (const target of [shell.liveFrame, shell.refFrame, shell.refMockFrame]) {
+  shell.liveFrame.style.width = `${live.width}px`;
+  shell.liveFrame.style.height = `${height}px`;
+  shell.liveFrame.style.transform = `scale(${scale})`;
+  // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。
+  const placement =
+    live.compare === "overlay"
+      ? overlayPlacement({
+          scale,
+          viewportHeight: viewport.clientHeight,
+          scrollX: live.scroll.x,
+          scrollY: live.scroll.y,
+          contentHeight: live.scroll.height,
+        })
+      : { height, transform: `scale(${scale})` };
+  for (const target of [shell.refFrame, shell.refMockFrame]) {
     target.style.width = `${live.width}px`;
-    target.style.height = `${height}px`;
-    target.style.transform = `scale(${scale})`;
+    target.style.height = `${placement.height}px`;
+    target.style.transform = placement.transform;
   }
   shell.stage.style.setProperty("--lv-scale", String(scale));
   if (live.scale !== scale) {

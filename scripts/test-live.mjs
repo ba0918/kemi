@@ -18,6 +18,7 @@
 //   渡すと取る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが得られず API に断られる。モックだけがあるページがツリーに出る。
+// - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -614,6 +615,70 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
   }
 }
 
+/** 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）。 */
+async function overlayFollowsTheScrollAndTheOpacity(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
+  const opacity = async (value) => {
+    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+    await new Promise((done) => setTimeout(done, 300));
+  };
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`${notRecorded} || ${showsSnapshot('Start')}`);
+    if (await evaluate(`document.querySelector('${refPane}').dataset.reference`) === 'none') {
+      await browser('click', `${refPane} .lv-empty .lv-record`);
+      await waitFor(showsSnapshot('Recorded 1'));
+    }
+    await browser('click', '.lv-mode button[data-compare="overlay"]');
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay' && ${visible('.lv-opacity')}`);
+
+    // 見る対象をスクロールすると、重ねた比べる相手も同じだけ動く。
+    // 別のオリジンの枠の中は、ページ内の目印へ移して（同じ文書のままスクロールさせて）動かす。
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#band-3'; return true; })()`);
+    await waitFor(`/translate\\(0px, -[1-9]/.test(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform)`);
+    await new Promise((done) => setTimeout(done, 500));
+    await opacity(0);
+    const underneath = await shot(`${livePane} .lv-viewport`, shots, 'overlay-0');
+    await opacity(100);
+    const overlaid = await shot(`${livePane} .lv-viewport`, shots, 'overlay-100');
+    const compared = await comparePixels(underneath, overlaid, join(shots, 'overlay-diff.png'));
+    if (compared.different === 0) {
+      console.log('PASS 重ねて透かす表示で、見る対象をスクロールすると比べる相手も同じだけ動く（スクロールした位置で画素まで重なる）');
+    } else {
+      console.log(`CHECK スクロールした位置で、重ねた比べる相手と見る対象の画素が ${compared.different} / ${compared.total}（${(compared.ratio * 100).toFixed(3)}%）違う。差の画像: ${join(shots, 'overlay-diff.png')}（人が確かめる）`);
+    }
+
+    // 見る対象を変えると、透かし具合で見え方が変わる。
+    await writeFile(join(dev.dir, 'tall.html'), (await readFile(join(dev.dir, 'tall.html'), 'utf8')).replaceAll('hsl(', 'hsl(180deg + '));
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = document.querySelector('${livePane} .lv-frame').src; true`);
+    await new Promise((done) => setTimeout(done, 1500));
+    await opacity(0);
+    const live0 = await shot(`${livePane} .lv-viewport`, shots, 'changed-0');
+    await opacity(100);
+    const live100 = await shot(`${livePane} .lv-viewport`, shots, 'changed-100');
+    assert.ok((await comparePixels(live0, live100, join(shots, 'changed-diff.png'))).different > 0, 'the opacity changes what is seen');
+    console.log('PASS 重ねて透かす表示で、透かし具合を変えると比べる相手の見え方が変わる');
+
+    await browser('set', 'viewport', '390', '800');
+    await waitFor(`${visible('.lv-compare-select')} && ${visible('.lv-mode')} && ${visible(`${livePane}`)} && ${visible(`${refPane} .lv-frame:not([hidden])`)}`);
+    await browser('click', '.lv-mode button[data-compare="side"]');
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side' && ${visible('.lv-side')}`);
+    await browser('click', '.lv-mode button[data-compare="overlay"]');
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay' && ${visible(`${refPane} .lv-frame:not([hidden])`)} && ${visible(livePane)}`);
+    console.log('PASS 幅 390px でも、比べる相手の選択と重ねて透かす表示に切り替えられる');
+  } finally {
+    await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -624,6 +689,7 @@ try {
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
+  await overlayFollowsTheScrollAndTheOpacity(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
