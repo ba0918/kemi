@@ -55,8 +55,36 @@ function markMessagesRead() {
   read.messages = Math.max(read.messages, ...state.messages.map((message) => Number(message.seq) || 0));
 }
 
+/** 開いているスレッドのコメント。一覧を見ていれば undefined。 */
+function openedThread() {
+  return state.allComments.find((candidate) => candidate.id === state.conversation.thread);
+}
+
+/**
+ * スレッドを見せたので、届いていた返信を読んだことにする（R-VIEW）。
+ * @param {any} comment
+ */
+function markThreadRead(comment) {
+  state.conversation.read.opened.set(comment.id, threadLastSeq(comment));
+}
+
+/**
+ * スレッドを見せた後の描き直し。札の新着の印を消し、表示中でないファイルなら対象の行の前後を読む。
+ * @param {any} comment
+ */
+function afterThreadShown(comment) {
+  remeasureAndRender();
+  refreshRendered();
+  void loadThreadLines(comment);
+}
+
 export function openConversation() {
   markMessagesRead();
+  // 前に開いていたスレッドのまま開けば、そのスレッドを見せることになる。
+  const comment = openedThread();
+  if (comment) {
+    markThreadRead(comment);
+  }
   if (state.narrow) {
     state.conversation.sheetOpen = true;
   } else {
@@ -65,6 +93,9 @@ export function openConversation() {
   }
   renderConversation({ toEnd: true });
   layoutChanged();
+  if (comment) {
+    afterThreadShown(comment);
+  }
   void loadCommitGroups();
 }
 
@@ -99,20 +130,17 @@ export function closeSheet() {
  */
 export function openThread(id) {
   state.conversation.thread = id;
-  const comment = state.allComments.find((candidate) => candidate.id === id);
-  if (comment) {
-    state.conversation.read.opened.set(id, threadLastSeq(comment));
-  }
-  if (conversationShown()) {
-    renderConversation({ toEnd: true });
-  } else {
+  if (!conversationShown()) {
     openConversation();
+    return;
   }
-  // 札の新着の印が消える。
-  remeasureAndRender();
-  refreshRendered();
+  const comment = openedThread();
   if (comment) {
-    void loadThreadLines(comment);
+    markThreadRead(comment);
+  }
+  renderConversation({ toEnd: true });
+  if (comment) {
+    afterThreadShown(comment);
   }
 }
 
@@ -234,7 +262,7 @@ export async function loadCommitGroups() {
   if (reviews === state.reviews) {
     renderConversation();
     // 開いているコミットごとのスレッドのファイルは、ここで初めて分かることがある。
-    const comment = state.allComments.find((candidate) => candidate.id === state.conversation.thread);
+    const comment = openedThread();
     if (comment) {
       void loadThreadLines(comment);
     }
@@ -354,7 +382,7 @@ export function submitMessage(event) {
  */
 export function submitReply(event) {
   event.preventDefault();
-  const comment = state.allComments.find((candidate) => candidate.id === state.conversation.thread);
+  const comment = openedThread();
   const body = dom.cvReplyText.value;
   if (comment && body.trim() !== "") {
     void replyTo(comment, body);
