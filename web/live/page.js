@@ -56,6 +56,28 @@
   if (document.readyState === 'complete') ready();
   else window.addEventListener('load', ready, { once: true });
 
+  // 読み込み直さずに URL を変えるページ（history.pushState など）でも、移ったことを知らせる。
+  // 知らせないと、レビュー画面は前のページのまま比べる相手を選ぶ。
+  // `#` から後ろだけの変化や、同じ URL への replaceState は知らせない（比べる相手は変わらない）。
+  let announced = location.pathname + location.search;
+  const announceIfMoved = () => {
+    const now = location.pathname + location.search;
+    if (now === announced) return;
+    announced = now;
+    announce();
+  };
+  const pushState = history.pushState;
+  const replaceState = history.replaceState;
+  history.pushState = function (...args) {
+    pushState.apply(this, args);
+    announceIfMoved();
+  };
+  history.replaceState = function (...args) {
+    replaceState.apply(this, args);
+    announceIfMoved();
+  };
+  window.addEventListener('popstate', announceIfMoved);
+
   // ---- スナップショット（R-PAGE-SNAPSHOT、形は DL3） ----
   // 今の DOM を写し、スクリプトを除いた 1 つの HTML にする。shadow DOM は宣言的な
   // shadow root に、canvas は画像に、入力欄の値は属性に移す。読み込んだ CSS と画像は
