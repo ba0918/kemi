@@ -1638,7 +1638,7 @@ export function unhandedNotice(agent) {
  * @param {any} comment
  * @returns {number}
  */
-function threadLastSeq(comment) {
+export function threadLastSeq(comment) {
   return Math.max(
     Number(comment.seq) || 0,
     ...(comment.replies || []).map((/** @type {any} */ reply) => Number(reply.seq) || 0),

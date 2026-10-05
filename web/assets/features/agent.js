@@ -6,7 +6,7 @@
 import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { conversationShown, state } from "../state.js";
-import { addMessage, replaceComment } from "../model.js";
+import { addMessage, replaceComment, threadLastSeq } from "../model.js";
 import { updateComments } from "./comments.js";
 import { renderConversation } from "../views/conversation.js";
 import { showOverlay, showToast } from "../views/overlay.js";
@@ -25,6 +25,10 @@ export function applyAgent(agent) {
  * @param {any} comment
  */
 function applyThread(comment) {
+  // 開いて見ているスレッドに届いた返信は、その場で読んだことにする（新着にしない）。
+  if (conversationShown() && state.conversation.thread === comment.id) {
+    state.conversation.read.opened.set(comment.id, threadLastSeq(comment));
+  }
   updateComments((comments) => replaceComment(comments, comment));
 }
 
@@ -87,6 +91,11 @@ export function receiveMissed() {
 export function applyMessage(message) {
   const before = state.messages;
   state.messages = addMessage(state.messages, message);
+  if (conversationShown()) {
+    // 会話パネルを見ている間に届いた発言は、帯の新着の数に入れない。
+    const read = state.conversation.read;
+    read.messages = Math.max(read.messages, Number(message.seq) || 0);
+  }
   renderConversation();
   if (state.messages !== before && message.author === "agent" && !conversationShown()) {
     showToast("New message from the agent");

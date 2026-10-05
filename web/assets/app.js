@@ -58,9 +58,12 @@ import {
   editFromThread,
   goToComment,
   keepReplyDraft,
+  markLoaded,
+  onConversationScroll,
   openConversation,
   openThread,
   setThreadFolded,
+  showNewest,
   startResize,
   submitMessage,
   submitOnModEnter,
@@ -196,6 +199,7 @@ async function boot() {
   );
   try {
     applyReview(await api.getReview(false), true);
+    markLoaded();
     renderHeader();
     renderConversation({ toEnd: true });
     renderTree();
@@ -251,6 +255,9 @@ dom.cvMessage.addEventListener("keydown", submitOnModEnter);
 dom.cvReply.addEventListener("submit", submitReply);
 dom.cvReplyText.addEventListener("keydown", submitOnModEnter);
 dom.cvReplyText.addEventListener("input", keepReplyDraft);
+dom.cvNewer.addEventListener("click", showNewest);
+dom.cvItems.addEventListener("scroll", onConversationScroll);
+dom.cvThreadBody.addEventListener("scroll", onConversationScroll);
 dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
 dom.modalCancel.addEventListener("click", closeModal);

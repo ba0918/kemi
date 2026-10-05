@@ -24,7 +24,8 @@ export function renderCommentOrEditor(comment) {
 
 /**
  * コメントの 1 行の札（R-VIEW）。本文の 1 行目と返信の数を示し、押すと会話パネルでその
- * スレッドを開く。差分の中で本文を広げる吹き出しは持たない。畳んだスレッド（解決したものを
+ * スレッドを開く。そのスレッドを最後に開いた後に届いたエージェントの返信があれば新着の印を
+ * 付ける。差分の中で本文を広げる吹き出しは持たない。畳んだスレッド（解決したものを
  * 含む）の札は場所と 1 行目だけに縮める（R-AGENT-HAND）。作成者は出さない。
  * @param {any} comment
  * @returns {HTMLElement}
@@ -59,6 +60,10 @@ function renderChip(comment) {
   }
   if (chip.resolved) {
     element.append(textEl("span", "t-resolved-mark", "Resolved"));
+  }
+  if (chip.unread) {
+    element.classList.add("unread");
+    element.append(textEl("span", "unread-mark", "New"));
   }
   element.addEventListener("click", () => actions.openThread(comment.id));
   return element;

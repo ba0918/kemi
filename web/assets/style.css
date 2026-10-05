@@ -2514,6 +2514,32 @@ ul.files ul {
   margin-right: auto;
 }
 
+/* 並びの上のほうを見ている間に届いたことを示す印。並びの下端に重ね、押すと一番下へ送る。 */
+.cv-newer {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  margin: -34px 0 8px;
+  padding: 2px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ai-ink);
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+/* エージェントの返信が、スレッドを最後に開いた後に届いた印。 */
+.unread-mark {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ai-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 /* ---------- 狭い画面（R-NARROW） ---------- */
 
 /* 狭い画面でだけ使う要素。常に DOM にあり、広い画面では出さない。 */

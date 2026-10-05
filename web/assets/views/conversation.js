@@ -15,8 +15,10 @@ import {
   describeComment,
   filterConversation,
   firstLine,
+  followsNewest,
   handShown,
   threadChip,
+  unreadCount,
 } from "../model.js";
 
 /** 開いたスレッドに見せる、対象の行の前後の行数。 */
@@ -76,17 +78,46 @@ export function renderAgentState() {
   dom.btnHand.hidden = !handShown(agent);
   dom.handCount.textContent = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
   dom.btnHand.disabled = state.submitted || agent.unhanded === 0;
+  const unread = unreadCount(state.allComments, state.messages, state.conversation.read);
+  dom.cvUnread.hidden = unread === 0;
+  dom.cvUnread.textContent = String(unread);
+  dom.cvRail.setAttribute(
+    "aria-label",
+    unread > 0 ? `Open the conversation (${unread} new)` : "Open the conversation",
+  );
 }
 
 /**
+ * 並びを描き直す。一番下を見ていれば（と、`toEnd` のとき）新しいものが見えるところまで
+ * ついていき、上のほうを見ていれば位置を変えずに、届いた数の印を並びの下端に出す
+ * （R-AGENT-HAND）。届いたかどうかは、前に描いた並びの最後の通し番号と比べて決める。
  * @param {HTMLElement} list
  * @param {{ toEnd?: boolean }} options
+ * @param {number[]} seqs 描く並びの各項目の通し番号
  * @param {() => void} fill
  */
-function keepScroll(list, options, fill) {
+function followScroll(list, options, seqs, fill) {
+  const newest = Math.max(0, ...seqs);
+  const shownNewest = Number(list.dataset.newest ?? newest);
+  const following = Boolean(options.toEnd) || followsNewest(list);
   const top = list.scrollTop;
   fill();
-  list.scrollTop = options.toEnd ? list.scrollHeight : top;
+  list.dataset.newest = String(newest);
+  list.after(dom.cvNewer);
+  if (following) {
+    list.scrollTop = list.scrollHeight;
+    dom.cvNewer.hidden = true;
+    delete dom.cvNewer.dataset.count;
+    return;
+  }
+  list.scrollTop = top;
+  const arrived = seqs.filter((seq) => seq > shownNewest).length;
+  if (arrived > 0) {
+    const count = Number(dom.cvNewer.dataset.count ?? 0) + arrived;
+    dom.cvNewer.dataset.count = String(count);
+    dom.cvNewer.textContent = `${count} new ↓`;
+    dom.cvNewer.hidden = false;
+  }
 }
 
 /**
@@ -106,7 +137,7 @@ function renderList(options) {
     file,
   );
   const context = { range: state.units.length > 0, commitGroups: commitGroups() };
-  keepScroll(dom.cvItems, options, () => {
+  followScroll(dom.cvItems, options, items.map((item) => item.seq), () => {
     dom.cvItems.textContent = "";
     if (items.length === 0) {
       dom.cvItems.append(textEl("li", "cv-empty", "Nothing here yet"));
@@ -187,6 +218,9 @@ function threadCard(comment, context) {
   if (chip.resolved) {
     head.append(textEl("span", "t-resolved-mark", "Resolved"));
   }
+  if (chip.unread) {
+    head.append(textEl("span", "unread-mark", "New"));
+  }
   if (!chip.folded && chip.replies > 0) {
     head.append(textEl("span", "reply-count", chip.replies === 1 ? "1 reply" : `${chip.replies} replies`));
   }
@@ -255,7 +289,8 @@ function renderThread(comment, options) {
   }
   dom.cvThreadHead.append(acts);
 
-  keepScroll(dom.cvThreadBody, options, () => {
+  const posts = [comment, ...(comment.replies || [])].map((item) => Number(item.seq) || 0);
+  followScroll(dom.cvThreadBody, options, posts, () => {
     dom.cvThreadBody.textContent = "";
     const lines = targetLines(comment);
     if (lines.length > 0) {

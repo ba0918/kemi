@@ -83,6 +83,7 @@ export const dom = {
   cvReply: /** @type {HTMLFormElement} */ (must("#cv-reply")),
   cvReplyText: /** @type {HTMLTextAreaElement} */ (must("#cv-reply-text")),
   cvReplyActions: must("#cv-reply-actions"),
+  cvNewer: /** @type {HTMLButtonElement} */ (must("#cv-newer")),
   btnHand: /** @type {HTMLButtonElement} */ (must("#btn-hand")),
   handCount: must("#hand-count"),
   submitApproved: /** @type {HTMLButtonElement} */ (must("#btn-approve")),

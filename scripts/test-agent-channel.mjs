@@ -7,7 +7,9 @@
 // 確かめること: kemi wait を呼ぶ前から返信の欄・解決・会話パネルの書く欄と未接続の状態が出て、
 // 「Hand to agent」だけが無い、会話パネルの開閉と幅が読み込み直しても残る、ページの起動中に
 // kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、
-// 返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が変わらない、
+// 返った後は作業中に変わり渡すが出る、畳んだまま返信が届くとパネルは開かず札と帯に新着が出て
+// スレッドを開くと消える、一番下を見ているときだけ並びが新しいものについていき、上を見ている
+// ときは届いた印が出て、どちらでも差分のスクロール位置が変わらない、
 // kemi reply の発言が会話パネルに出る、一覧の項目からスレッドを開いて返信を書くとスレッドに出る、
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
 // 出て、submit の JSON にそのコメントが入る。
@@ -251,12 +253,15 @@ try {
   assert.equal(await evaluate(shown('#btn-hand')), true);
   console.log('PASS kemi wait を待たせると待機中、返った後は作業中に変わり、渡すが出る');
 
-  // (3) kemi reply の返信が開いたスレッドに出て、差分のスクロール位置が変わらない。
-  await evaluate(`${chipC1}.click(); true`);
-  await waitFor(threadOpen('rename this line'));
+  // (3) 新着と追従。差分のスクロール位置はどの場合も変わらない（R-LIVE）。
+  // (3a) 会話パネルを畳んだまま kemi reply で返信が届くと、パネルは開かず、札に新着の印が付き、
+  //      畳んだ帯に新着の数（新着のスレッドと、畳んでいる間に届いた発言）が出る。
+  await browser('click', '#cv-close');
+  await waitFor(panelClosed);
   await evaluate(`document.querySelector('#diff-viewport').scrollTop = 30; true`);
   await waitFor(`document.querySelector('#diff-viewport').scrollTop === 30`);
   const before = await evaluate(`document.querySelector('#diff-viewport').scrollTop`);
+  const diffUnmoved = async () => assert.equal(await evaluate(`document.querySelector('#diff-viewport').scrollTop`), before, 'the diff must not move');
   const replied = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
     writes: [
       { type: 'reply', comment_id: 'c1', body: 'Renamed it.' },
@@ -266,12 +271,40 @@ try {
   assert.equal(replied.code, 0, replied.stderr);
   const { ids } = JSON.parse(replied.stdout);
   assert.equal(ids.length, 2);
-  await waitFor(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
-  const after = await evaluate(`document.querySelector('#diff-viewport').scrollTop`);
-  assert.equal(after, before, 'the scroll position must not move');
+  await waitFor(`${chipC1}?.querySelector('.unread-mark') !== null && document.querySelector('#cv-unread').textContent === '2' && !document.querySelector('#cv-unread').hidden`);
+  assert.equal(await evaluate(panelClosed), true, 'the panel must not open by itself');
+  await diffUnmoved();
+  // (3b) 札からスレッドを開くと返信が見え、新着の印が消える。
+  await evaluate(`${chipC1}.click(); true`);
+  await waitFor(`${threadOpen('rename this line')} && Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
+  await waitFor(`${chipC1}?.querySelector('.unread-mark') === null`);
+  await diffUnmoved();
+  console.log('PASS 畳んだまま返信が届くとパネルは開かず札と帯に新着が出て、スレッドを開くと消える');
+  // (3c) 一覧の一番下を見ているときに発言が届くと、並びが新しいものまで進む。
   await browser('click', '#cv-thread-head .cv-back');
   await waitFor(`!document.querySelector('#cv-list').hidden`);
-  console.log('PASS kemi reply の返信がスレッドに出て、スクロール位置が変わらない');
+  const fillers = Array.from({ length: 30 }, (_, index) => `Note ${index + 1} about the review.`);
+  const filled = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
+    writes: fillers.map((body) => ({ type: 'message', body })),
+  }));
+  assert.equal(filled.code, 0, filled.stderr);
+  const atBottom = `(() => { const list = document.querySelector('#cv-items'); return list.scrollHeight > list.clientHeight + 100 && list.scrollHeight - list.scrollTop - list.clientHeight <= 12; })()`;
+  await waitFor(`${agentMessage(fillers.at(-1))} && ${atBottom}`);
+  assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true);
+  await diffUnmoved();
+  // (3d) 上のほうを見ているときに届くと、並びの位置は変わらず、届いたことを示す印が出る。
+  await evaluate(`document.querySelector('#cv-items').scrollTop = 0; true`);
+  await waitFor(`document.querySelector('#cv-items').scrollTop === 0`);
+  const late = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
+    writes: [{ type: 'message', body: 'One more thing.' }],
+  }));
+  assert.equal(late.code, 0, late.stderr);
+  await waitFor(`${agentMessage('One more thing.')} && !document.querySelector('#cv-newer').hidden`);
+  assert.equal(await evaluate(`document.querySelector('#cv-items').scrollTop`), 0, 'the list must stay where it was read');
+  await diffUnmoved();
+  await browser('click', '#cv-newer');
+  await waitFor(`${atBottom} && document.querySelector('#cv-newer').hidden`);
+  console.log('PASS 一番下を見ているときだけ並びが新しいものについていき、上を見ているときは印が出て、差分は動かない');
 
   // (4) kemi reply の発言が会話パネルに出る。
   await waitFor(agentMessage('Both comments are addressed.'));
@@ -313,7 +346,7 @@ try {
   const result = JSON.parse(stdout);
   assert.deepEqual(result.comments.map((comment) => comment.body), ['rename this line', 'and this one']);
   assert.equal(result.comments[0].replies[0].author, 'agent');
-  assert.deepEqual(result.messages.map((message) => message.body), ['Looking at it now.', 'Both comments are addressed.']);
+  assert.deepEqual(result.messages.map((message) => message.body), ['Looking at it now.', 'Both comments are addressed.', ...fillers, 'One more thing.']);
   console.log('PASS 未渡しを残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る');
 } finally {
   kemi.child.kill('SIGTERM');

@@ -13,6 +13,7 @@ import {
   state,
 } from "../state.js";
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
+import { followsNewest, threadLastSeq } from "../model.js";
 import { onResize, remeasureAndRender } from "./display.js";
 import { jumpToEntry } from "./files.js";
 import { refreshRendered } from "./rendered.js";
@@ -33,7 +34,27 @@ function layoutChanged() {
   }
 }
 
+/**
+ * ページを読み込んだ時点の最後の通し番号を覚える。それまでにあったものは新着にしない（R-VIEW）。
+ */
+export function markLoaded() {
+  const seqs = [
+    ...state.allComments.map(threadLastSeq),
+    ...state.messages.map((message) => Number(message.seq) || 0),
+  ];
+  const loaded = Math.max(0, ...seqs);
+  state.conversation.read.loaded = loaded;
+  state.conversation.read.messages = loaded;
+}
+
+/** 会話パネルを見ている間に届いた発言は、帯の新着の数に入れない。 */
+function markMessagesRead() {
+  const read = state.conversation.read;
+  read.messages = Math.max(read.messages, ...state.messages.map((message) => Number(message.seq) || 0));
+}
+
 export function openConversation() {
+  markMessagesRead();
   if (state.narrow) {
     state.conversation.sheetOpen = true;
   } else {
@@ -76,10 +97,39 @@ export function closeSheet() {
  */
 export function openThread(id) {
   state.conversation.thread = id;
+  const comment = state.allComments.find((candidate) => candidate.id === id);
+  if (comment) {
+    state.conversation.read.opened.set(id, threadLastSeq(comment));
+  }
   if (conversationShown()) {
     renderConversation({ toEnd: true });
   } else {
     openConversation();
+  }
+  // 札の新着の印が消える。
+  remeasureAndRender();
+  refreshRendered();
+}
+
+/** 届いたことを示す印を押した。見えている並びを一番下へ送る。 */
+export function showNewest() {
+  const list = dom.cvThread.hidden ? dom.cvItems : dom.cvThreadBody;
+  list.scrollTop = list.scrollHeight;
+  hideNewer();
+}
+
+function hideNewer() {
+  dom.cvNewer.hidden = true;
+  delete dom.cvNewer.dataset.count;
+}
+
+/**
+ * 並びを一番下まで読んだら、届いたことを示す印を消す。
+ * @param {Event} event
+ */
+export function onConversationScroll(event) {
+  if (!dom.cvNewer.hidden && followsNewest(/** @type {HTMLElement} */ (event.target))) {
+    hideNewer();
   }
 }
 
