@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kemi --live 画面モック</title>
+<style>
+/* ===== トークン（docs/design/ui-mock-v2.html と同じ） ===== */
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #f5f6f8; --panel-2: #eceef2;
+  --ink: #1b1f24; --ink-2: #555e6a; --ink-3: #858d99;
+  --line: #d6dae0; --line-soft: #e8ebef;
+  --ai: #3b4ea8; --ai-soft: #e9ecfa; --ai-ink: #ffffff;
+  --add-bg: #e8f7ec; --add-gut: #cdeed6; --add-mark: #a9e5b9; --add-ink: #1a7f37;
+  --del-bg: #fdeceb; --del-gut: #f8d3cf; --del-mark: #f5bdb6; --del-ink: #c62a2a;
+  --note-bg: #fff6d6; --note-line: #e0ac2b; --note-ink: #7a5200;
+  --star: #7b4fd0; --star-soft: #f1eafd;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1216; --panel: #161a20; --panel-2: #1e232b;
+  --ink: #e4e8ee; --ink-2: #9aa3ae; --ink-3: #6b7480;
+  --line: #2c323b; --line-soft: #20252d;
+  --ai: #8b9cf0; --ai-soft: #1d2340; --ai-ink: #0f1216;
+  --add-bg: #11261a; --add-gut: #18351f; --add-mark: #2a5c3a; --add-ink: #4ac26b;
+  --del-bg: #2a1618; --del-gut: #3d1e1f; --del-mark: #6d2d2b; --del-ink: #f0645c;
+  --note-bg: #2b2512; --note-line: #9c7a1f; --note-ink: #e8c060;
+  --star: #b69af5; --star-soft: #261d3d;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.7; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+
+/* ===== 文書の枠 ===== */
+.docnav { position: sticky; top: 0; z-index: 30; background: var(--panel); border-bottom: 1px solid var(--line); padding-inline: 20px; }
+.docnav .in { max-width: 1320px; margin: 0 auto; display: flex; gap: 14px; align-items: center; min-height: 48px; flex-wrap: wrap; }
+.docnav a { color: var(--ink-2); text-decoration: none; font-size: 13.5px; }
+.docnav a:hover { color: var(--ai); }
+.docnav .sp { flex: 1; }
+.docnav button { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; font-size: 13px; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-inline: 20px; padding-block: 12px 80px; }
+section { padding-block: 34px 10px; border-bottom: 1px solid var(--line-soft); }
+h1 { font-size: 26px; margin: 18px 0 6px; }
+h2 { font-size: 21px; margin: 0 0 4px; }
+h3 { font-size: 16px; margin: 22px 0 6px; }
+.lead { color: var(--ink-2); max-width: 80ch; margin: 0 0 10px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; max-width: 96ch; margin: 10px 0 16px; font-size: 14px; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; }
+.tag { display: inline-block; font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+.tag.bug { border-color: var(--del-ink); color: var(--del-ink); }
+.tag.design { border-color: var(--ai); color: var(--ai); }
+.tag.spec { border-color: var(--star); color: var(--star); background: var(--star-soft); }
+.cap { font-size: 13px; color: var(--ink-3); margin: 0 0 6px; }
+.cap b { color: var(--ink); }
+.frame { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+.scroll-x { overflow-x: auto; }
+.shot { display: block; width: 100%; max-width: 1000px; border: 1px solid var(--line); border-radius: 10px; }
+.note-list { margin: 8px 0 0; padding-left: 1.2em; color: var(--ink-2); font-size: 14px; max-width: 96ch; }
+.note-list li { margin: 3px 0; }
+.note-list strong { color: var(--ink); }
+.variant-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.variant-tabs button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 4px 14px; font-size: 13.5px; color: var(--ink-2); }
+.variant-tabs button[aria-pressed="true"] { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); font-weight: 600; }
+.rec { margin-left: 6px; font-size: 11px; color: var(--star); border: 1px solid var(--star); border-radius: 999px; padding: 0 6px; background: var(--star-soft); }
+.toggles { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 10px; font-size: 13px; color: var(--ink-2); }
+.toggles button { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 2px 10px; font-size: 13px; }
+.toggles button[aria-pressed="true"] { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); }
+.pane-variant[hidden] { display: none; }
+
+/* ===== アプリ ===== */
+.app { display: flex; flex-direction: column; width: 1280px; height: 720px; font-size: 15px; line-height: 1.5; position: relative; }
+.k-top { display: flex; align-items: center; gap: 14px; padding: 9px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.k-brand { font-weight: 700; }
+.k-title { font-weight: 600; }
+.k-meta { color: var(--ink-3); font-size: 12.5px; }
+.k-top .sp { flex: 1; }
+.ib { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink-2); font-size: 12.5px; }
+.ib.on { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); }
+.btn { height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); font-size: 13px; white-space: nowrap; }
+.btn.primary { background: var(--ai); border-color: var(--ai); color: var(--ai-ink); font-weight: 600; }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.k-body { display: grid; grid-template-columns: 250px minmax(0, 1fr) var(--pane, 400px); flex: 1; min-height: 0; }
+.app.folded .k-body { --pane: 44px !important; }
+.app.nopane .k-body { grid-template-columns: 250px minmax(0, 1fr); }
+.k-tree { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; font-size: 13px; overflow: hidden; }
+.k-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.g-title { font-weight: 600; padding: 4px 8px; }
+.f { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; padding: 3px 8px 3px 18px; border-radius: 6px; color: var(--ink-2); }
+.f.active { background: var(--ai-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--ai); }
+.f .nm { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st { font-family: var(--mono); font-size: 11.5px; }
+.st .p { color: var(--add-ink); } .st .m { color: var(--del-ink); }
+.cbadge { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--note-ink); background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.cbadge.new { background: var(--ai); border-color: var(--ai); color: var(--ai-ink); }
+.fhead { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 13px; }
+.fhead .sp { flex: 1; }
+
+/* 差分 */
+.dv { font-family: var(--mono); font-size: 13px; line-height: 22px; overflow: hidden; flex: 1; }
+.ln { display: grid; grid-template-columns: 44px 44px 18px 1fr; }
+.ln .n { text-align: right; padding-right: 8px; color: var(--ink-3); background: var(--panel); }
+.ln.add { background: var(--add-bg); } .ln.add .n { background: var(--add-gut); color: var(--add-ink); }
+.ln.del { background: var(--del-bg); } .ln.del .n { background: var(--del-gut); color: var(--del-ink); }
+.ln .s { text-align: center; color: var(--ink-3); }
+.ln.add .s { color: var(--add-ink); } .ln.del .s { color: var(--del-ink); }
+.ln.cmt .n:first-child { box-shadow: inset 3px 0 0 var(--note-line); }
+.ln code { font-size: 13px; white-space: pre; }
+
+/* 差分の中のスレッド（今と同じ吹き出し） */
+.th { margin: 6px 16px 8px 106px; max-width: 640px; border: 1px solid var(--note-line); background: var(--note-bg); border-radius: 8px; padding: 8px 12px; font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+.th-head { display: flex; gap: 10px; font-size: 12px; color: var(--note-ink); }
+.th-head .sp { flex: 1; }
+.th-head a { color: var(--note-ink); text-decoration: underline; }
+.th p { margin: 2px 0; }
+/* 案 A・B: 差分の中は 1 行の札 */
+.stub { margin: 4px 16px 6px 106px; max-width: 640px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--note-line); background: var(--note-bg); border-radius: 999px; padding: 2px 12px; font-family: var(--sans); font-size: 13px; color: var(--note-ink); }
+.stub .who { font-weight: 600; color: var(--ai); }
+.stub .txt { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.stub.sel { outline: 2px solid var(--ai); }
+.stub .newdot { width: 8px; height: 8px; border-radius: 50%; background: var(--ai); }
+
+/* 右の会話パネル */
+.pane { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.p-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.p-head b { font-size: 14px; }
+.p-head .sp { flex: 1; }
+.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #d29922; }
+.status.waiting::before { background: var(--add-ink); }
+.p-tabs { display: flex; border-bottom: 1px solid var(--line); padding-inline: 8px; gap: 2px; }
+.p-tabs button { border: 0; background: none; padding: 6px 10px; font-size: 13px; color: var(--ink-2); border-bottom: 2px solid transparent; }
+.p-tabs button.on { color: var(--ai); border-bottom-color: var(--ai); font-weight: 600; }
+.p-filter { display: flex; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; color: var(--ink-3); }
+.p-filter span { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; background: var(--bg); }
+.p-filter span.on { border-color: var(--ai); color: var(--ai); background: var(--ai-soft); }
+.timeline > * { flex-shrink: 0; }
+.timeline { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+.msg { max-width: 88%; padding: 7px 11px; border-radius: 12px; line-height: 1.45; }
+.msg .who { display: block; font-size: 11.5px; color: var(--ink-3); margin-bottom: 1px; }
+.msg.me { align-self: flex-end; background: var(--ai); color: var(--ai-ink); border-bottom-right-radius: 4px; }
+.msg.me .who { color: var(--ai-ink); opacity: .8; }
+.msg.agent { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.card { background: var(--bg); border: 1px solid var(--note-line); border-radius: 10px; overflow: hidden; }
+.card.sel { box-shadow: 0 0 0 2px var(--ai); }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--note-bg); font-size: 12px; color: var(--note-ink); }
+.card-head .loc { font-family: var(--mono); }
+.card-head .sp { flex: 1; }
+.card-head a { color: var(--note-ink); }
+.card-quote { font-family: var(--mono); font-size: 12px; padding: 3px 10px; background: var(--add-bg); color: var(--ink); border-bottom: 1px solid var(--line-soft); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.card-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.card-body .msg { max-width: 92%; font-size: 13.5px; }
+.card.resolved { border-color: var(--line); opacity: .75; }
+.card.resolved .card-head { background: var(--panel-2); color: var(--ink-3); }
+.card-reply { display: flex; gap: 6px; padding: 0 10px 8px; }
+.card-reply .in { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12.5px; color: var(--ink-3); background: var(--bg); }
+.day { align-self: center; font-size: 11.5px; color: var(--ink-3); }
+.compose { border-top: 1px solid var(--line); padding: 8px 10px; background: var(--bg); }
+.compose .in { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-height: 52px; font-size: 13.5px; color: var(--ink-3); }
+.compose .row { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; align-items: center; }
+.compose .row .hint { flex: 1; font-size: 12px; color: var(--ink-3); }
+.newpill { position: absolute; left: 50%; transform: translateX(-50%); bottom: 112px; background: var(--ai); color: var(--ai-ink); border-radius: 999px; padding: 3px 12px; font-size: 12.5px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+/* 畳んだ縦帯 */
+.rail { display: none; flex-direction: column; align-items: center; gap: 12px; padding-top: 10px; font-size: 12px; color: var(--ink-2); }
+.rail .vt { writing-mode: vertical-rl; letter-spacing: .1em; }
+.rail .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--add-ink); }
+.app.folded .pane > :not(.rail) { display: none; }
+.app.folded .pane .rail { display: flex; }
+
+/* 案 C: 下のドロワー */
+.drawer { position: absolute; left: 250px; right: 0; bottom: 0; height: 300px; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -6px 16px rgba(0,0,0,.08); display: flex; flex-direction: column; }
+.drawer .grip { align-self: center; width: 44px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px 0 2px; }
+.drawer .timeline { flex-direction: column; }
+.app.folded .drawer { height: 40px; }
+.app.folded .drawer > :not(.p-head):not(.grip) { display: none; }
+.bubbles .msg { font-size: 13.5px; }
+.th.chatty { display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+.th.chatty .first { background: var(--note-bg); border-radius: 8px; padding: 6px 10px; }
+
+
+/* ===== 案 A2 ===== */
+.app.wide .k-body { --pane: 640px; }
+.resizer { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; }
+.resizer::after { content: ""; position: absolute; left: 3px; top: 50%; height: 36px; margin-top: -18px; width: 2px; border-radius: 1px; background: var(--line); }
+.rows { flex: 1; overflow: auto; padding: 6px 0; display: flex; flex-direction: column; font-size: 14px; }
+.rows > * { flex-shrink: 0; }
+.row { padding: 6px 14px; line-height: 1.55; }
+.row .who { font-size: 12px; font-weight: 600; color: var(--ai); margin-right: 6px; }
+.row.me .who { color: var(--ink-2); }
+.row .t { font-size: 11px; color: var(--ink-3); }
+.row p { margin: 1px 0 0; }
+.row.me { background: var(--panel-2); }
+.tcard { margin: 6px 12px; background: var(--bg); border: 1px solid var(--note-line); border-radius: 8px; overflow: hidden; cursor: pointer; }
+.tcard.sel { box-shadow: 0 0 0 2px var(--ai); }
+.tcard .card-head { padding: 4px 10px; }
+.tcard .last { padding: 5px 10px; font-size: 13.5px; display: flex; gap: 6px; }
+.tcard .last .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.tcard .more { padding: 0 10px 6px; font-size: 12px; color: var(--ai); }
+.tview-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--note-bg); color: var(--note-ink); font-size: 13px; }
+.tview-head .back { border: 0; background: none; color: var(--ai); font-size: 13px; padding: 0 4px 0 0; }
+.tview-head .loc { font-family: var(--mono); }
+.tview-head .sp { flex: 1; }
+.tview-head a { color: var(--note-ink); }
+.ctx { font-family: var(--mono); font-size: 12px; line-height: 20px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.ctx div { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.ctx .a { background: var(--add-bg); }
+.ctx .d { background: var(--del-bg); }
+.ctx .hit { box-shadow: inset 3px 0 0 var(--note-line); }
+.treply { border-top: 1px solid var(--line); padding: 8px 10px; background: var(--bg); }
+.treply .in { border: 1px solid var(--ai); border-radius: 8px; padding: 6px 10px; min-height: 76px; font-size: 13.5px; color: var(--ink-3); }
+.treply .row2 { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; align-items: center; }
+.treply .row2 .hint { flex: 1; font-size: 12px; color: var(--ink-3); }
+.a2-list, .a2-thread { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.app:not(.thread) .a2-thread, .app.thread .a2-list { display: none; }
+.app.folded .pane .a2-list, .app.folded .pane .a2-thread { display: none; }
+
+/* ページの見方（次の段階）の代わりの絵 */
+.pageview { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: var(--panel-2); }
+.pv { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+.pv .bar { font-size: 12px; color: var(--ink-3); padding: 4px 10px; border-bottom: 1px solid var(--line-soft); }
+.pv .body { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.pv .blk { background: var(--panel-2); border-radius: 6px; height: 28px; }
+.pv .blk.hero { height: 120px; }
+.pv .blk.mark { outline: 2px dashed var(--star); }
+/* ===== --live の見方 ===== */
+.app.live .k-body { grid-template-columns: 260px minmax(0, 1fr) var(--pane, 400px); }
+.app.live.nolist .k-body { grid-template-columns: minmax(0, 1fr) var(--pane, 400px); }
+.app.live.folded .k-body { --pane: 44px !important; }
+.pbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12.5px; flex-wrap: wrap; }
+.pbar .sp { flex: 1; }
+.pbar .lbl { color: var(--ink-3); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: var(--bg); color: var(--ink-2); font-size: 12px; padding: 2px 9px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--ai-soft); color: var(--ai); font-weight: 600; }
+.sel { border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; background: var(--bg); color: var(--ink-2); font-size: 12px; }
+.tools { display: inline-flex; gap: 4px; }
+.tool { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 2px 9px; font-size: 12px; color: var(--ink-2); }
+.tool.on { background: var(--star-soft); border-color: var(--star); color: var(--star); font-weight: 600; }
+.pages { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: var(--panel-2); min-height: 0; overflow: hidden; }
+.pv { background: #fff; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.pv .bar { font-size: 11.5px; color: var(--ink-3); padding: 3px 10px; border-bottom: 1px solid var(--line-soft); background: var(--bg); display: flex; gap: 8px; }
+.pv .bar b { color: var(--ink-2); font-weight: 600; }
+.shop { position: relative; padding: 10px 12px; font-family: var(--sans); color: #222; font-size: 12px; line-height: 1.4; }
+.shop .hd { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; padding-bottom: 6px; }
+.shop .hd .logo { width: 18px; height: 18px; border-radius: 4px; background: #222; }
+.shop .hd .nav { margin-left: auto; font-weight: 400; font-size: 11px; color: #555; display: flex; gap: 10px; }
+.shop .hero { border-radius: 10px; padding: 14px; background: linear-gradient(120deg, #f8d38a, #f59ea0); }
+.shop .hero h4 { margin: 0 0 4px; font-size: 16px; }
+.shop .hero .cta { display: inline-block; margin-top: 8px; background: #3159d6; color: #fff; border-radius: 999px; padding: 4px 12px; font-size: 11px; }
+.shop .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+.shop .card { border: 1px solid #e3e3e3; border-radius: 8px; padding: 6px 8px; }
+.shop .card .p { color: #c62a2a; font-weight: 700; }
+.shop .card .btn2 { display: inline-block; margin-top: 4px; border: 1px solid #bbb; border-radius: 5px; padding: 1px 6px; font-size: 10px; }
+.mk-main { outline: 2px solid #d64545; outline-offset: 1px; }
+.mk-add { outline: 2px solid #1a9a4a; outline-offset: 1px; }
+.mk-shift { outline: 1px dashed #b9a6d9; outline-offset: 1px; }
+.mk-sel { outline: 2px solid var(--star); outline-offset: 2px; }
+.draw { position: absolute; inset: 0; pointer-events: none; }
+.pin { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: var(--star); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+.chlist { padding: 8px; font-size: 12.5px; overflow: hidden; }
+.chlist h5 { margin: 6px 4px 4px; font-size: 12px; color: var(--ink-3); font-weight: 600; display: flex; justify-content: space-between; }
+.ch { display: grid; grid-template-columns: 10px 1fr; gap: 6px; padding: 4px 6px; border-radius: 6px; align-items: start; }
+.ch:hover, .ch.on { background: var(--ai-soft); }
+.ch i { width: 8px; height: 8px; border-radius: 2px; margin-top: 5px; }
+.ch i.m { background: #d64545; } .ch i.a { background: #1a9a4a; } .ch i.s { background: #b9a6d9; }
+.ch .sel2 { font-family: var(--mono); font-size: 11px; color: var(--ink-3); display: block; }
+.ch .vv { font-size: 12px; }
+.ch .vv s { color: var(--del-ink); } .ch .vv b { color: var(--add-ink); font-weight: 600; }
+.locs { margin: 6px 10px; border: 1px dashed var(--star); border-radius: 8px; padding: 6px 8px; background: var(--star-soft); font-size: 12.5px; }
+.locs .row3 { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+.locs .row3 .x { margin-left: auto; color: var(--ink-3); }
+.locs .num { width: 16px; height: 16px; border-radius: 50%; background: var(--star); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex: 0 0 auto; }
+.drawer2 { border-top: 1px solid var(--line); background: var(--bg); height: 190px; display: flex; flex-direction: column; }
+.drawer2 .dh { display: flex; gap: 8px; align-items: center; padding: 5px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
+.drawer2 .chlist { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; overflow: hidden; }
+</style>
+</head>
+<body>
+<nav class="docnav"><div class="in">
+  <b>kemi --live 画面モック</b>
+  <a href="#why">何を決めるか</a>
+  <a href="#variants">案を比べる</a>
+  <a href="#compose">コメントを書く</a>
+  <a href="#narrow">狭い画面</a>
+  <a href="#next">決めたあと</a>
+  <span class="sp"></span>
+  <button type="button" id="theme">テーマを切り替え</button>
+</div></nav>
+<div class="wrap">
+<h1>動いているページの見方（--live）の置き方</h1>
+<p class="lead"><strong>採用: 案 A（ページのツリー版、2026-10-06）。</strong>比べる相手の選択には、モックの割り当てと重ねて透かす表示が入る（<code>docs/spec/live-compare.md</code>）。表示幅の候補は 390・768・1280。モックと仕様が食い違うときは仕様が正しい。</p>
+<p class="lead">仕様（<code>docs/spec/live.md</code>）が「試作で決める」としている、画面の置き方と道具の出し方を決めるモック。決めるのは次の 4 つだけ。中身の約束（同じ幅で並べる、変化に印を付ける、場所は要素・矢印・ペン、など）は仕様のとおり。会話パネルは採用済みの案 A2 をそのまま右に置く。</p>
+
+<section id="why">
+  <h2>何を決めるか <span class="tag design">設計変更</span></h2>
+  <dl class="kv">
+    <dt>1. 変化の一覧</dt><dd>R-PAGE-DIFF の「変化の一覧」（主な変化とずれただけ）をどこに置くか。</dd>
+    <dt>2. 道具</dt><dd>要素・矢印・ペン、表示幅、比べる相手（スナップショット）、「今を記録」の操作をどこに並べるか。</dd>
+    <dt>3. 書く場所</dt><dd>場所を 1 つ以上集めて本文を書くコメントを、どこで書くか（コードの見方は差分の中の入力欄）。</dd>
+    <dt>4. ページとコード</dt><dd>「ページ」と「コード」の 2 つの見方の切り替えをどこに置くか。</dd>
+  </dl>
+  <p class="cap"><b>試作で動かした形</b>（Node の中継とモックのサイト。道具は上の帯、変化の一覧と書く欄は右）</p>
+  <img class="shot" src="ui-mock-live-spike.png" alt="試作の画面。左に前の写し、中央に動いているページ、右に変わったところと指摘とやりとり">
+</section>
+
+<section id="variants">
+  <h2>案を比べる</h2>
+  <p class="lead">同じ内容（値下げで価格の色と文字が変わり、商品が 1 つ増え、下の要素がずれた。要素・矢印・ペンの場所を持つコメントを書いている途中）で比べる。</p>
+  <div class="variant-tabs" role="group" aria-label="置き方の案">
+    <button type="button" data-v="a" aria-pressed="true">案 A: 変化の一覧を左（ツリーの位置）<span class="rec">採用</span></button>
+    <button type="button" data-v="b" aria-pressed="false">案 B: 変化の一覧を会話パネルのタブに</button>
+    <button type="button" data-v="c" aria-pressed="false">案 C: 変化の一覧をページの下に</button>
+  </div>
+  <div class="toggles"><span>会話パネルを</span><button type="button" id="fold" aria-pressed="false">畳む</button></div>
+
+  <div class="pane-variant" data-v="a">
+    <div class="frame scroll-x"><div class="app live" id="app-a"></div></div>
+    <ul class="note-list">
+      <li><strong>形</strong>: 左の列は「ページのツリー」。記録やコメントがあるページ（URL）を並べ、それぞれに表示幅・変化の数・コメントの数を出す。表示中のページを開くと、その下に変化の一覧（主な変化が上、ずれただけは畳む）。ページを押すと動いているページをその URL に移す。コードの見方に切り替えると、今どおりファイルのツリーになる。</li><li><strong>対象が複数のとき</strong>: 1 つのレビューで見るページは、1 つのオリジン（--live の URL）の中の複数の URL × 表示幅。コードの見方のグループとファイルに当たるのが、ページと変化。</li>
+      <li><strong>道具</strong>: ページの上の 1 本の帯にまとめる。左から見方（ページ / コード）、表示幅、比べる相手、今を記録、道具（要素・矢印・ペン・操作）。道具はページの上には浮かせない（RL4 と同じ理由。判断したい周りを隠す）。</li>
+      <li><strong>書く場所</strong>: 会話パネルの書く欄。道具で場所を足すと、書く欄の上に番号つきの場所が並び、そこで外せる。保存すると会話パネルのスレッドになる。</li>
+      <li><strong>良いところ</strong>: コードの見方と同じ並び（左に一覧、中央に本体、右に会話）で迷わない。ページ 2 枚の幅が一番広く取れる案の 1 つ。</li>
+      <li><strong>気になるところ</strong>: 3 列だと 1280px でページ 1 枚が約 300px。表示幅 1280 のページは約 0.25 倍に縮む。一覧と会話パネルは畳める。</li>
+    </ul>
+  </div>
+  <div class="pane-variant" data-v="b" hidden>
+    <div class="frame scroll-x"><div class="app live nolist" id="app-b"></div></div>
+    <ul class="note-list">
+      <li><strong>形</strong>: 左の列を無くし、会話パネルに「会話」「変化」のタブを足す。ページ 2 枚は一番広い。</li>
+      <li><strong>気になるところ</strong>: 変化を見ながら会話を書くときに、タブを行き来する。変化の項目を押してコメントの場所に足す、という流れが 1 画面で見えない。</li>
+    </ul>
+  </div>
+  <div class="pane-variant" data-v="c" hidden>
+    <div class="frame scroll-x"><div class="app live nolist" id="app-c"></div></div>
+    <ul class="note-list">
+      <li><strong>形</strong>: 変化の一覧をページの下の引き出しに置く。横に長い 2 列で並べる。</li>
+      <li><strong>気になるところ</strong>: 縦の高さをページと取り合う。ページは縦に長いことが多く、一番見たいところが下に押される。</li>
+    </ul>
+  </div>
+</section>
+
+<section id="compose">
+  <h2>コメントを書く流れ（案 A）</h2>
+  <ul class="note-list">
+    <li>道具を選ぶと、動いているページの上で要素を選ぶ・矢印を引く・ペンで囲むができる（「操作」に戻すとページを普通に触れる）。</li>
+    <li>場所を足すたびに番号（1, 2, 3 …）がページの上と書く欄の上に出る。× で外しても番号は振り直さない（仕様 R-PAGE-COMMENT）。</li>
+    <li>変化の一覧の項目にも「場所に足す」を置き、変化した要素をそのまま要素の場所にできる。</li>
+    <li>保存すると、ページの上の番号は控えめな印になり、会話パネルのスレッドの札になる（コードの見方の札と同じ）。別の表示幅で付けたものは札に幅を出し、押すとその幅に切り替える。</li>
+  </ul>
+</section>
+
+<section id="narrow">
+  <h2>狭い画面</h2>
+  <p class="lead">仕様（R-PAGE-VIEW）どおり、ページは 1 枚ずつ切り替えて見る。変化の一覧はツリーと同じ引き出しに、会話パネルはシートにしまう。道具の帯は 2 段目に横スクロールで並べる。どの案でもここは同じ。</p>
+</section>
+
+<section id="next">
+  <h2>決めたあと</h2>
+  <ul class="note-list">
+    <li>採った案を <code>docs/design/</code> に置き、<code>live.md</code> の「まだ無い」を埋めてリンクする。</li>
+    <li>表示幅の既定の候補（仕様が「試作で決める」）をここで決める: 390・768・1280 を提案。</li>
+    <li>--live は大きいので、計画を分ける: ①中継と見方とスナップショット ②差分と変化の一覧 ③ページへのコメント ④保留と復元。案（R-PAGE-VARIANT）はその後の (c)。</li>
+  </ul>
+</section>
+</div>
+
+<script>
+const shop = (side) => {
+  const live = side === "live";
+  const price = live ? "¥7,900" : "¥8,900";
+  const extra = live ? `<div class="card mk-add" style="grid-column:1;position:relative"><span class="pin" style="left:-18px;top:-12px">3</span><span style="position:absolute;inset:-8px -14px;border:2px solid #7b4fd0;border-radius:50%;pointer-events:none"></span><b>マフラー</b><div class="p">¥2,900</div><span class="btn2">カートに入れる</span></div>` : "";
+  return `<div class="shop">
+    <div class="hd"><span class="logo"></span>Mock Shop<span class="nav"><span>商品</span><span>カート</span><span>問い合わせ</span></span></div>
+    <div class="hero"><h4>秋の新作コレクション</h4><div>軽くて暖かいアウター</div><span class="cta ${live ? "mk-sel" : ""}">今すぐ見る</span></div>
+    <div class="cards">
+      <div class="card"><b>ウールコート</b><div class="p">¥12,800</div><span class="btn2">カートに入れる</span></div>
+      <div class="card"><b>ダウンベスト</b><div class="p mk-main" style="${live ? "color:#3159d6" : ""}">${price}</div><span class="btn2">カートに入れる</span></div>
+      <div class="card"><b>ニット</b><div class="p">¥6,400</div><span class="btn2">カートに入れる</span></div>
+      ${extra}
+    </div>
+    <div class="card ${live ? "mk-shift" : ""}" style="margin-top:8px;display:flex;gap:10px;align-items:center"><b style="background:#7b4fd0;color:#fff;border-radius:999px;padding:1px 8px">セール ¥4,980</b><span style="margin-left:auto;font-size:10px">メール</span></div>
+    ${live ? `<svg class="draw" viewBox="0 0 300 330" preserveAspectRatio="none"><line x1="250" y1="60" x2="200" y2="95" stroke="#7b4fd0" stroke-width="2"/><polygon points="200,95 210,85 206,96" fill="#7b4fd0"/></svg>
+    <span class="pin" style="left:118px;top:96px">1</span><span class="pin" style="left:252px;top:48px">2</span>` : ""}
+  </div>`;
+};
+const pageTree = () => `<div class="chlist">
+  <h5><span>ページ 3</span><span>localhost:5173</span></h5>
+  <div class="ch on" style="grid-template-columns:10px 1fr auto"><i class="m"></i><span><b>/</b> <span class="sel2" style="display:inline">1280</span></span><span class="cbadge">2</span></div>
+  <div style="margin:0 0 4px 16px;border-left:2px solid var(--line-soft);padding-left:6px">${changes()}</div>
+  <div class="ch" style="grid-template-columns:10px 1fr auto"><i class="s"></i><span><b>/products</b> <span class="sel2" style="display:inline">1280 · 390</span><span class="sel2">ずれただけ 4</span></span><span></span></div>
+  <div class="ch" style="grid-template-columns:10px 1fr auto"><i style="background:var(--line)"></i><span><b>/cart</b> <span class="sel2" style="display:inline">390</span><span class="sel2">変化なし</span></span><span class="cbadge">1</span></div>
+  <div class="ch" style="grid-template-columns:10px 1fr auto;opacity:.7"><i style="background:transparent;border:1px dashed var(--ink-3)"></i><span><b>/about</b><span class="sel2">前の記録なし（今を記録で比べられる）</span></span><span></span></div>
+</div>`;
+const pbar = (withList) => `<div class="pbar">
+  <span class="seg"><button class="on">ページ</button><button>コード</button></span>
+  <span class="lbl">幅</span><span class="seg"><button>390</button><button>768</button><button class="on">1280</button><button>…</button></span>
+  <span class="lbl">比べる相手</span><span class="sel">最後に渡した時点 (10:12) ▾</span><button class="btn sm">今を記録</button>
+  <span class="sp"></span>
+  <span class="tools"><span class="tool">◎ 要素</span><span class="tool on">↗ 矢印</span><span class="tool">✎ ペン</span><span class="tool">✋ 操作</span></span>
+</div>`;
+const pages = `<div class="pages">
+  <div class="pv"><div class="bar"><b>前</b><span>スナップショット 10:12 · / · 1280</span></div>${shop("snap")}</div>
+  <div class="pv"><div class="bar"><b>今</b><span>動いているページ · / · 1280 · ×0.25</span></div>${shop("live")}</div>
+</div>`;
+const changes = (title = true) => `<div class="chlist">
+  ${title ? `<h5><span>変化 5</span><span>主 3 · ずれ 2</span></h5>` : ""}
+  <div class="ch on"><i class="m"></i><span><span class="vv">文字 <s>¥8,900</s> → <b>¥7,900</b></span><span class="sel2">.card:nth-of-type(2) .p</span></span></div>
+  <div class="ch"><i class="m"></i><span><span class="vv">色 <s>#c62a2a</s> → <b>#3159d6</b></span><span class="sel2">.card:nth-of-type(2) .p</span></span></div>
+  <div class="ch"><i class="a"></i><span><span class="vv">増えた: マフラー</span><span class="sel2">.cards > .card:nth-of-type(4)</span></span></div>
+  <h5><span>▸ ずれただけ 2</span><span></span></h5>
+</div>`;
+const compose = `<div class="locs"><div style="font-size:11.5px;color:var(--ink-3)">書いているコメントの場所</div>
+  <div class="row3"><span class="num">1</span>要素 <code>.hero .cta</code> 「今すぐ見る」<span class="x">×</span></div>
+  <div class="row3"><span class="num">2</span>矢印 → <code>.hero h4</code><span class="x">×</span></div>
+  <div class="row3"><span class="num">3</span>ペン · 重なる要素 2<span class="x">×</span></div></div>
+  <div class="compose"><div class="in">1 のボタンを少し小さく。2 の見出しは…（Cmd/Ctrl+Enter で保存）</div><div class="row" style="padding:0;display:flex;gap:6px;justify-content:flex-end;margin-top:6px"><button class="btn sm">取りやめ</button><button class="btn sm primary">Comment</button></div></div>`;
+const pane = (tabs) => `<aside class="pane">
+  <div class="p-head"><b>会話</b><span class="status">Working</span><span class="sp"></span><button class="btn sm">畳む ›</button></div>
+  ${tabs ? `<div class="p-tabs"><button>会話 2</button><button class="on">変化 5</button></div>` + changes(false) + `<div style="flex:1"></div>` : `<div class="rows"><div class="row me"><span class="who">You</span><p>ページの値下げ表示を見て</p></div><div class="row"><span class="who">Agent</span><p>¥7,900 にして色を変えた。マフラーも足した</p></div></div>`}
+  ${compose}
+  <div class="rail"><span class="dot"></span><span class="vt">会話 2</span></div>
+</aside>`;
+const topBar = `<div class="k-top"><span class="k-brand">kemi</span><span class="k-title">localhost:5173/</span><span class="k-meta">live</span><span class="sp"></span><span class="ib on">会話 2</span><button class="btn primary">Approve</button><button class="btn">Request changes</button></div>`;
+document.getElementById("app-a").innerHTML = topBar + `<div class="k-body"><div class="k-tree" style="padding:0">${pageTree()}</div><div class="k-main">${pbar()}${pages}</div>${pane(false)}</div>`;
+document.getElementById("app-b").innerHTML = topBar + `<div class="k-body"><div class="k-main">${pbar()}${pages}</div>${pane(true)}</div>`;
+document.getElementById("app-c").innerHTML = topBar + `<div class="k-body"><div class="k-main">${pbar()}${pages}<div class="drawer2"><div class="dh"><b>変化 5</b><span style="color:var(--ink-3)">主 3 · ずれ 2</span><span class="sp" style="flex:1"></span><button class="btn sm">畳む ⌄</button></div>${changes(false)}</div></div>${pane(false)}</div>`;
+for (const b of document.querySelectorAll(".variant-tabs button")) {
+  b.addEventListener("click", () => {
+    for (const o of document.querySelectorAll(".variant-tabs button")) o.setAttribute("aria-pressed", String(o === b));
+    for (const v of document.querySelectorAll(".pane-variant")) v.hidden = v.dataset.v !== b.dataset.v;
+  });
+}
+const fold = document.getElementById("fold");
+fold.addEventListener("click", () => {
+  const on = fold.getAttribute("aria-pressed") !== "true";
+  fold.setAttribute("aria-pressed", String(on)); fold.textContent = on ? "開く" : "畳む";
+  for (const id of ["app-a", "app-b", "app-c"]) document.getElementById(id).classList.toggle("folded", on);
+});
+document.getElementById("theme").addEventListener("click", () => {
+  const r = document.documentElement; r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
+});
+</script>
+</body>
+</html>
