@@ -20,13 +20,13 @@
 /**
  * @typedef {{
  *   addComment: (payload: any) => void,
- *   closeChat: () => void,
- *   handToAgent: () => void,
- *   postMessage: (body: string) => void,
+ *   closeThread: () => void,
+ *   editFromThread: (comment: any, unit: string | null) => void,
+ *   openThread: (id: string) => void,
  *   replyTo: (comment: any, body: string) => void,
+ *   setThreadFolded: (id: string, folded: boolean) => void,
  *   setResolved: (comment: any, resolved: boolean) => void,
  *   applyRenderedView: (entry: import("./state.js").Entry) => Promise<void>,
- *   closeCommentList: () => void,
  *   closeDrawer: () => void,
  *   collapseAll: () => void,
  *   closeEditor: () => void,

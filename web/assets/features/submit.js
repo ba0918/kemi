@@ -7,7 +7,7 @@ import { state, unitLabel } from "../state.js";
 import { countLabel, submitSummary, unhandedNotice } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
-import { renderAgent } from "../views/chat.js";
+import { renderConversation } from "../views/conversation.js";
 import { renderSubmitButtons } from "../views/header.js";
 import { openModal, showCompletion, showOverlay } from "../views/overlay.js";
 
@@ -75,7 +75,7 @@ async function submitReview(verdict) {
     state.selection = null;
     state.editor = null;
     renderSubmitButtons();
-    renderAgent();
+    renderConversation();
     renderDiff();
     renderFloating();
     renderFileHeader();

@@ -5,7 +5,7 @@ import { balloonShown, collapseDefault, effectiveDisplay, seenProgress } from ".
 
 /** @typedef {import("./model.js").RenderedBlock} RenderedBlock */
 /** @typedef {{ url: string, size: number }} ImageSide */
-import { loadMode, loadTheme } from "./storage.js";
+import { loadConversationOpen, loadConversationWidth, loadMode, loadTheme } from "./storage.js";
 
 /** @typedef {import("./model.js").FileEntry} FileEntry */
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -17,6 +17,11 @@ export const OVERSCAN = 12;
 
 /** 変更間の移動で、止まる場所を画面の上端からこの分だけ下に置く（前の文脈を見せる）。 */
 export const NAV_MARGIN = 48;
+
+/** 会話パネルの既定の幅と、縁を掴んで変えられる幅の範囲（px）。 */
+export const CONVERSATION_WIDTH = 440;
+export const CONVERSATION_MIN_WIDTH = 320;
+export const CONVERSATION_MAX_WIDTH = 960;
 
 /** @type {Record<string, string>} */
 const UNIT_LABELS = { file: "Final state", commit: "Per commit" };
@@ -49,9 +54,16 @@ export const THEME_LABELS = {
  *   review: any,
  *   messages: any[],
  *   agent: import("./model.js").AgentState,
- *   chatOpen: boolean,
+ *   conversation: {
+ *     panelOpen: boolean,
+ *     sheetOpen: boolean,
+ *     width: number,
+ *     filter: import("./model.js").ConversationFilter,
+ *     thread: string | null,
+ *     read: import("./model.js").ReadMarks,
+ *     folded: Map<string, boolean>,
+ *   },
  *   replyDrafts: Map<string, string>,
- *   chatDraft: string,
  *   entries: Entry[],
  *   visible: Entry[],
  *   current: Entry|null,
@@ -138,12 +150,23 @@ export const THEME_LABELS = {
 export const state = {
   review: null,
   // エージェントとの往復（agent-channel.md）。発言、状態と未渡しの件数（サーバが数える）、
-  // チャット欄の開閉、書きかけの返信と発言（描き直しで消さないため。ページの間だけ）。
+  // 書きかけの返信（描き直しで消さないため。ページの間だけ）。
   messages: [],
   agent: { called: false, status: "unconnected", unhanded: 0 },
-  chatOpen: false,
+  // 会話パネル（R-VIEW）。広い画面の開閉と幅は表示の好みとして覚え（R-SERVE）、狭い画面の
+  // シートは覚えずに閉じた状態で始める（R-NARROW）。どちらの開閉も、もう片方を書き換えない。
+  // 開いているスレッド、絞り込み、どこまで読んだか、畳んだスレッドは
+  // ページを開いている間だけ持つ。
+  conversation: {
+    panelOpen: loadConversationOpen(),
+    sheetOpen: false,
+    width: loadConversationWidth() ?? CONVERSATION_WIDTH,
+    filter: "all",
+    thread: null,
+    read: { loaded: 0, opened: new Map(), messages: 0 },
+    folded: new Map(),
+  },
   replyDrafts: new Map(),
-  chatDraft: "",
   entries: [],
   visible: [],
   current: null,
@@ -155,8 +178,8 @@ export const state = {
   narrow: false,
   narrowWrap: true,
   // 狭い画面の吹き出し。narrowComments が真なら畳んだ札で出す（既定）。「Comments」の
-  // 切り替え（ページを開いている間だけ覚える）で札ごと隠し、隠している間はコメント一覧から
-  // 選んだそのコメントだけの印で出す。
+  // 切り替え（ページを開いている間だけ覚える）で札ごと隠し、隠している間は会話パネルから
+  // 移ったそのコメントだけの印で出す。
   narrowComments: true,
   narrowOnlyComment: null,
   drawerOpen: false,
@@ -227,6 +250,11 @@ export const state = {
   renderedStops: [],
   renderedThreads: { byBlock: new Map(), top: [], floating: [] },
 };
+
+/** 会話パネル（狭い画面ではシート）の中身を見せているか。 */
+export function conversationShown() {
+  return state.narrow ? state.conversation.sheetOpen : state.conversation.panelOpen;
+}
 
 export function currentEntry() {
   return state.current;

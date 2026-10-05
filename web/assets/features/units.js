@@ -13,7 +13,7 @@ import { renderTree } from "../views/tree.js";
 
 /**
  * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
- * 最初のコミット）を出す。由来やコメント一覧から移るときは、そのファイルの該当行を出す。
+ * 最初のコミット）を出す。由来や会話パネルのスレッドから移るときは、そのファイルの該当行を出す。
  * 移り先が無ければ（履歴の書き換えで消えたなど）別のファイルへは移らず、切り替えもせず
  * `missing` を呼ぶ。
  * @param {string} unit
@@ -52,7 +52,7 @@ export async function switchUnit(unit, jump) {
     }
   }
   if (jump && jump.find(flatten(review)) < 0) {
-    // 読んだ単位は控えておき、コメント一覧で消えたコミットを見分けられるようにする。
+    // 読んだ単位は控えておき、会話パネルで消えたコミットを見分けられるようにする。
     if (fresh) {
       state.reviews.set(unit, review);
     }

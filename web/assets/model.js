@@ -1008,7 +1008,7 @@ export function commentedLines(display, comments) {
 }
 
 /**
- * コメント一覧の 1 項目の、グループ単位と件名。コミット範囲で、付けたコミットが履歴の
+ * 会話パネルのスレッドの項目の、グループ単位と件名。コミット範囲で、付けたコミットが履歴の
  * 書き換えで消えていれば vanished（「消えたコミット」）。コミットごとの単位をまだ
  * 読んでいない（commitGroups が null）ときは消えたと決めない。
  * @param {any} comment
@@ -1543,7 +1543,7 @@ export function effectiveDisplay(settings) {
 
 /**
  * 狭い画面で、そのコメントの吹き出し（畳んだ札を含む）を出すか。「Comments」で隠して
- * いる間は、コメント一覧から選んだそのコメントだけを出す（R-NARROW）。広い画面では常に出す。
+ * いる間は、会話パネルから移ったそのコメントだけを出す（R-NARROW）。広い画面では常に出す。
  * @param {{ narrow: boolean, narrowComments: boolean, narrowOnlyComment: string | null }} settings
  * @param {string} id
  * @returns {boolean}
@@ -1576,7 +1576,7 @@ export function agentStatusLabel(status) {
 
 /**
  * 「Hand to agent」を出すか。`kemi wait` が一度でも呼ばれたレビューでだけ出す
- * （R-AGENT-STATE）。状態・チャット欄・返信・解決はどのレビューでも出す。
+ * （R-AGENT-STATE）。状態・会話パネル・返信・解決はどのレビューでも出す。
  * @param {AgentState | null} agent
  * @returns {boolean}
  */

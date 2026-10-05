@@ -6,9 +6,10 @@
 // 1 回目の起動: 引き出し、1 列と折返し、折返しの記憶と localStorage、ファイルヘッダの 2 行、
 // 吹き出しの左端と画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
 // 選択・下書き・上端の行、上部バーの 2 段、「…」のメニュー、320px の進捗、title と
-// コメント一覧のシート、広い画面の上部バー、広い画面のドラッグ、狭い画面のタップの選択と
-// 解除の範囲、押し下げとホバーで選択が始まらないこと、吹き出しの既定（畳んだ札）と「…」の
-// Comments で隠すことと一覧からの 1 件だけの表示、描画表示のブロックのタップ。
+// 会話パネルのシート（狭い画面で読み込むと閉じて始まること）、広い画面の上部バー、広い画面の
+// ドラッグ、狭い画面のタップの選択と解除の範囲、押し下げとホバーで選択が始まらないこと、
+// 吹き出しの既定（畳んだ札）と「…」の Comments で隠すことと、シートのスレッドから移った
+// 1 件だけの表示、描画表示のブロックのタップ。
 // 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -231,6 +232,10 @@ try {
   await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'wide range comment');
   await browser('click', '#diff-content .editor button[type="submit"]');
   await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+  // 広い画面で会話パネルを開いておく（開閉は表示の好みとして覚える）。狭い画面のシートは
+  // これに関わらず閉じて始まる。
+  await browser('click', '#btn-comments');
+  await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
 
   // 幅を 390px にすると、再読込なしに狭い画面になる（matchMedia の change が届く）。
   await browser('set', 'viewport', ...NARROW);
@@ -276,6 +281,11 @@ try {
   await waitFor(`document.querySelectorAll('#tree button').length > 0 && document.querySelectorAll('[data-kemi-row]').length > 0`);
   assert.equal(await evaluate(`document.querySelector('#diff-content').dataset.wrap`), 'on');
   console.log('PASS 390px の折返しはページを開いている間だけ覚え、localStorage に入れない');
+  // 広い画面で開いたことを覚えていても、狭い画面で読み込むと会話パネルのシートは閉じて始まる。
+  assert.equal(await evaluate(`localStorage.getItem('kemi-conversation-open')`), '1');
+  assert.equal(await evaluate(`document.querySelector('#conversation').dataset.open`), 'false');
+  assert.equal(await isShown('#conversation'), false);
+  console.log('PASS 390px で読み込むと会話パネルのシートは閉じて始まる');
 
   // (4) ファイルヘッダは 2 行で、長いパスは先頭が省略記号で切れて末尾が見える。
   await browser('click', '#btn-tree');
@@ -385,7 +395,7 @@ try {
   assert.equal(await topRow(), topBefore);
   console.log('PASS 幅をまたぐと引き出しは閉じ、選択と下書きと上端の行は残る');
 
-  // (9) 390px の上部バーは 2 段。1 段目に kemi・title・ツリー・コメント一覧の入口・更新バッジ、
+  // (9) 390px の上部バーは 2 段。1 段目に kemi・title・ツリー・会話パネルの開閉・更新バッジ、
   //     2 段目にグループ単位の切り替え（左端）・見たの進捗・Approve・Request changes。
   await browser('set', 'viewport', ...NARROW);
   await waitFor(narrowApplied);
@@ -433,7 +443,7 @@ try {
   await waitFor(narrowApplied);
   console.log('PASS 320px では見たの進捗が数字だけになり、送信ボタンの文言は変わらない');
 
-  // (12) title のシートとコメント一覧のシートが開いて閉じる。
+  // (12) title のシートと会話パネルのシートが開いて閉じる。
   await browser('click', '#btn-title');
   await waitFor(`document.querySelector('#title-sheet').matches(':popover-open')`);
   const sheetBox = await rect('#title-sheet');
@@ -443,15 +453,15 @@ try {
   await browser('click', '#sheet-close');
   await waitFor(`!document.querySelector('#title-sheet').matches(':popover-open')`);
   await browser('click', '#btn-comments');
-  await waitFor(`!document.querySelector('#comment-list').hidden`);
-  const listBox = await rect('#comment-list');
+  await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
+  const listBox = await rect('#conversation');
   assert.deepEqual([listBox.left, listBox.top, listBox.width, listBox.height].map(Math.round), [0, 0, 390, 844]);
-  await browser('click', '#comment-list .cl-close');
-  await waitFor(`document.querySelector('#comment-list').hidden`);
-  console.log('PASS title のシートとコメント一覧のシートが開いて閉じる');
+  await browser('click', '#cv-close');
+  await waitFor(`document.querySelector('#conversation').dataset.open === 'false'`);
+  console.log('PASS title のシートと会話パネルのシートが開いて閉じる');
 
   // (13) 1280px では、文字ラベルを持つ上部バーの操作がグループ単位・送信・更新バッジ・
-  //      コメント一覧の入口だけで、subtitle と meta が上部に出て、狭い画面専用の操作が見えない。
+  //      会話パネルの開閉（件数つき）だけで、subtitle と meta が上部に出て、狭い画面専用の操作が見えない。
   await browser('set', 'viewport', ...WIDE);
   await waitFor(wideApplied);
   const labelled = await evaluate(`Array.from(document.querySelectorAll('.topbar button')).filter(b => b.textContent.trim() !== '' && getComputedStyle(b).display !== 'none' && b.getClientRects().length > 0).map(b => b.id || b.className)`);
@@ -542,13 +552,15 @@ try {
   assert.notEqual(numberCell.shadow, 'none', `the line-number cell should carry the comment line: ${JSON.stringify(numberCell)}`);
   console.log('PASS 390px で付けたコメントは畳んだ札で出て開かず、Comments で札が消えて行番号の欄の線は残る');
 
-  // (20) コメント一覧のシートから選ぶと、隠している間でもそのコメントだけ吹き出しを開いて
-  //      見せ、畳むと消える。出している間なら畳むと札に戻る。
+  // (20) 会話パネルのシートの一覧からスレッドを開き、その行へ移ると、隠している間でも
+  //      そのコメントだけ吹き出しを開いて見せ、畳むと消える。出している間なら畳むと札に戻る。
   const chooseFromList = async () => {
     await browser('click', '#btn-comments');
-    await waitFor(`!document.querySelector('#comment-list').hidden`);
-    await evaluate(`Array.from(document.querySelectorAll('#comment-list .cl-target')).find(b => b.querySelector('.cl-first').textContent === 'narrow comment').click(); true`);
-    await waitFor(`document.querySelector('#comment-list').hidden && ${notLoading} && ${newNumber(6)}.closest('.row-block').querySelector('.bal') !== null`);
+    await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
+    await evaluate(`Array.from(document.querySelectorAll('#cv-items .cv-card')).find(b => b.querySelector('.cv-first')?.textContent === 'narrow comment').click(); true`);
+    await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('narrow comment')`);
+    await browser('click', '#cv-thread-head .cv-go');
+    await waitFor(`document.querySelector('#conversation').dataset.open === 'false' && ${notLoading} && ${newNumber(6)}.closest('.row-block').querySelector('.bal') !== null`);
   };
   // 札と吹き出しの「畳む」は同じ鍵を持つ。
   const foldChosen = async () => {
@@ -566,7 +578,7 @@ try {
   await foldChosen();
   assert.deepEqual(await balloons(), { open: 1, chips: 1 });
   assert.equal(await evaluate(`${newNumber(6)}.closest('.row-block').querySelector('.cchip') !== null`), true, 'the folded comment should go back to a chip');
-  console.log('PASS コメント一覧から選ぶと隠している間でもそのコメントだけ開き、畳むと消えるか札に戻る');
+  console.log('PASS シートのスレッドから移ると隠している間でもそのコメントだけ開き、畳むと消えるか札に戻る');
 
   // (16) 390px の描画表示では、ブロックのタップで `+` が出る。
   await browser('click', '#btn-tree');

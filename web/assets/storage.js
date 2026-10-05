@@ -50,3 +50,30 @@ export function loadTheme() {
 export function saveTheme(theme) {
   localStorage.setItem("kemi-theme", theme);
 }
+
+/**
+ * 広い画面で会話パネルを開いているか（表示の好み。R-SERVE）。既定は畳んだ帯。
+ * @returns {boolean}
+ */
+export function loadConversationOpen() {
+  return localStorage.getItem("kemi-conversation-open") === "1";
+}
+
+/** @param {boolean} open */
+export function saveConversationOpen(open) {
+  localStorage.setItem("kemi-conversation-open", open ? "1" : "0");
+}
+
+/**
+ * 会話パネルの幅（px）。覚えていなければ null。
+ * @returns {number | null}
+ */
+export function loadConversationWidth() {
+  const width = Number(localStorage.getItem("kemi-conversation-width"));
+  return Number.isFinite(width) && width > 0 ? width : null;
+}
+
+/** @param {number} width */
+export function saveConversationWidth(width) {
+  localStorage.setItem("kemi-conversation-width", String(Math.round(width)));
+}

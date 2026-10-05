@@ -5,7 +5,7 @@
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
 import { displayMode, displayWrap, state, unitLabel } from "../state.js";
-import { metaItems, seenProgress, unitSwitchOrder } from "../model.js";
+import { countLabel, metaItems, seenProgress, unitSwitchOrder } from "../model.js";
 
 export function renderHeader() {
   const review = state.review;
@@ -39,7 +39,10 @@ export function renderHeader() {
   renderUnitSwitch();
   renderProgress();
   dom.commentCount.textContent = String(state.allComments.length);
-  dom.btnComments.setAttribute("aria-label", `Comment list (${state.allComments.length})`);
+  dom.btnComments.setAttribute(
+    "aria-label",
+    `Conversation (${countLabel(state.allComments.length, "comment")})`,
+  );
   dom.btnUnified.setAttribute("aria-pressed", String(displayMode() === "unified"));
   dom.btnSplit.setAttribute("aria-pressed", String(displayMode() === "split"));
   dom.btnWrap.setAttribute("aria-pressed", String(displayWrap()));

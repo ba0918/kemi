@@ -4,10 +4,13 @@
 //
 //   node scripts/test-agent-channel.mjs <kemi-bin>
 //
-// 確かめること: kemi wait を呼ぶ前から返信の欄・解決・チャット欄の書く欄と未接続の状態が出て、
-// 「Hand to agent」だけが無い、ページの起動中に kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が
-// 変わらない、kemi reply の発言がチャット欄に出る、幅 390px でもチャット欄を開いて閉じられる、未渡しを
-// 残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る。
+// 確かめること: kemi wait を呼ぶ前から返信の欄・解決・会話パネルの書く欄と未接続の状態が出て、
+// 「Hand to agent」だけが無い、会話パネルの開閉と幅が読み込み直しても残る、ページの起動中に
+// kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、
+// 返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が変わらない、
+// kemi reply の発言が会話パネルに出る、一覧の項目からスレッドを開いて返信を書くとスレッドに出る、
+// 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
+// 出て、submit の JSON にそのコメントが入る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -36,9 +39,9 @@ const waitFor = async (code) => {
   } catch (error) {
     const snapshot = await evaluate(`JSON.stringify({
       status: document.querySelector('#agent-status')?.dataset.status,
-      dock: document.querySelector('#agent-dock')?.hidden,
+      conversation: document.querySelector('#conversation')?.dataset.open,
+      thread: !document.querySelector('#cv-thread')?.hidden,
       replies: document.querySelectorAll('.reply').length,
-      chat: document.querySelector('#chat')?.hidden,
       modal: document.querySelector('#modal-body')?.textContent,
     })`).catch(() => 'no snapshot');
     throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
@@ -129,6 +132,9 @@ async function post(url, path, body) {
 
 const shown = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e !== null && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none'; })()`;
 const statusIs = (status) => `document.querySelector('#agent-status').dataset.status === ${JSON.stringify(status)}`;
+const panelOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
+const panelClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
+const agentMessage = (text) => `Array.from(document.querySelectorAll('#cv-items .cv-msg[data-author="agent"]')).some(m => m.textContent.includes(${JSON.stringify(text)}))`;
 
 const fixture = await makeFixture();
 const state = await mkdtemp(join(tmpdir(), 'kemi-agent-state-'));
@@ -161,22 +167,42 @@ try {
   await browser('open', kemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
 
-  // (1) kemi wait を呼ぶ前から、返信の欄・解決・チャット欄の書く欄と状態（未接続）は出る。
-  // 「Hand to agent」だけが無い。
+  // (1) kemi wait を呼ぶ前から、返信の欄・解決・会話パネルの書く欄と状態（未接続）は出る。
+  // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、上部の入口で開く。
+  assert.equal(await evaluate(panelClosed), true);
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
   assert.equal(await evaluate(shown('#agent-status')), true);
   assert.equal(await evaluate(statusIs('unconnected')), true);
   assert.equal(await evaluate(shown('#btn-hand')), false);
   await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
   await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
   assert.equal(await evaluate(shown('#diff-content .bal [data-focus-key="resolve:c1"]')), true);
-  assert.equal(await evaluate(shown('#btn-dock-chat')), true);
-  await browser('click', '#btn-dock-chat');
-  await waitFor(`!document.querySelector('#chat').hidden`);
-  assert.equal(await evaluate(shown('#chat .chat-form textarea')), true);
-  assert.equal(await evaluate(shown('#chat .chat-hand')), false);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
-  console.log('PASS kemi wait を呼ぶ前から返信・解決・チャット欄と未接続の状態が出て、「Hand to agent」だけが無い');
+  assert.equal(await evaluate(shown('#cv-message')), true);
+  console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」だけが無い');
+
+  // (1a) 会話パネルの幅は左の縁を掴んで変えられ、開閉と幅は読み込み直しても残る。
+  const widthBefore = await evaluate(`document.querySelector('#conversation').getBoundingClientRect().width`);
+  const edge = await evaluate(`JSON.stringify(document.querySelector('#cv-resizer').getBoundingClientRect())`).then(JSON.parse);
+  const edgeX = Math.round(edge.left + edge.width / 2);
+  const edgeY = Math.round(edge.top + edge.height / 2);
+  await browser('mouse', 'move', String(edgeX), String(edgeY));
+  await browser('mouse', 'down');
+  await browser('mouse', 'move', String(edgeX - 60), String(edgeY));
+  await browser('mouse', 'move', String(edgeX - 120), String(edgeY));
+  await browser('mouse', 'up');
+  await waitFor(`Math.abs(document.querySelector('#conversation').getBoundingClientRect().width - ${widthBefore + 120}) <= 2`);
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  assert.ok(Math.abs(await evaluate(`document.querySelector('#conversation').getBoundingClientRect().width`) - (widthBefore + 120)) <= 2, 'the width should be kept');
+  await browser('click', '#cv-close');
+  await waitFor(panelClosed);
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  assert.equal(await evaluate(panelClosed), true, 'the folded panel should stay folded');
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
+  console.log('PASS 会話パネルの開閉と幅は読み込み直しても残る');
 
   // (1b) ページが起動のために読んだ中身より後、通知につながるより前に kemi wait が呼ばれ、
   // kemi reply で発言されても、待機中と「Hand to agent」とその発言が出る。起動の api/review の応答を、サーバが返した後にページへ
@@ -199,10 +225,7 @@ try {
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
   await waitFor(statusIs('waiting'));
   assert.equal(await evaluate(shown('#btn-hand')), true);
-  await browser('click', '#btn-dock-chat');
-  await waitFor(`Array.from(document.querySelectorAll('#chat .chat-item[data-author="agent"]')).some(m => m.textContent.includes('Looking at it now.'))`);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
+  await waitFor(`${panelOpen} && ${agentMessage('Looking at it now.')}`);
   const loadingWaited = await loadingWait;
   assert.equal(loadingWaited.code, 3, `the wait should time out: ${JSON.stringify(loadingWaited)}`);
   await waitFor(statusIs('working'));
@@ -240,29 +263,40 @@ try {
   assert.equal(after, before, 'the scroll position must not move');
   console.log('PASS kemi reply の返信がスレッドに出て、スクロール位置が変わらない');
 
-  // (4) kemi reply の発言がチャット欄に出る。
-  await browser('click', '#btn-dock-chat');
-  await waitFor(`Array.from(document.querySelectorAll('#chat .chat-item[data-author="agent"]')).some(m => m.textContent.includes('Both comments are addressed.'))`);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
-  console.log('PASS kemi reply の発言がチャット欄に出る');
+  // (4) kemi reply の発言が会話パネルに出る。
+  await waitFor(agentMessage('Both comments are addressed.'));
+  console.log('PASS kemi reply の発言が会話パネルに出る');
 
-  // (5) 幅 390px でも、チャット欄を開いて閉じられる。
+  // (4a) 一覧の項目からスレッドを開くとパネル全体がそのスレッドになり、返信を書くとスレッドに出る。
+  await evaluate(`document.querySelector('#cv-items .cv-card[data-id="c1"]').click(); true`);
+  await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-list').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('rename this line')`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(p => p.textContent.includes('Renamed it.'))`), true);
+  await browser('fill', '#cv-reply-text', 'Thanks, that works.');
+  await browser('click', '#cv-reply button[type="submit"]');
+  await waitFor(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="reviewer"]')).some(p => p.textContent.includes('Thanks, that works.')) && document.querySelector('#cv-reply-text').value === ''`);
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  console.log('PASS 一覧の項目からスレッドを開き、返信を書くとスレッドに出る');
+
+  // (5) 幅 390px でも、会話パネルを画面いっぱいのシートで開いて閉じられる。
   await browser('set', 'viewport', '390', '844');
-  await waitFor(`getComputedStyle(document.querySelector('#tree')).position === 'fixed'`);
-  await browser('click', '#btn-chat');
-  await waitFor(`!document.querySelector('#chat').hidden`);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
+  await waitFor(`getComputedStyle(document.querySelector('#tree')).position === 'fixed' && ${panelClosed}`);
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
+  const sheet = await evaluate(`JSON.stringify(document.querySelector('#conversation').getBoundingClientRect())`).then(JSON.parse);
+  assert.deepEqual([sheet.left, sheet.top, sheet.width, sheet.height].map(Math.round), [0, 0, 390, 844]);
+  await browser('click', '#cv-close');
+  await waitFor(panelClosed);
   await browser('set', 'viewport', '1280', '800');
-  await waitFor(`getComputedStyle(document.querySelector('#tree')).position !== 'fixed'`);
-  console.log('PASS 幅 390px でもチャット欄を開いて閉じられる');
+  await waitFor(`getComputedStyle(document.querySelector('#tree')).position !== 'fixed' && ${panelOpen}`);
+  console.log('PASS 幅 390px でも会話パネルのシートを開いて閉じられる');
 
   // (6) 未渡しを残して submit を押すと、確認に件数が出て、submit の JSON にそのコメントが入る。
   await browser('click', '#btn-approve');
   await waitFor(`!document.querySelector('#modal').hidden && document.querySelector('#unhanded-notice') !== null`);
   const notice = await evaluate(`document.querySelector('#unhanded-notice').textContent`);
-  assert.match(notice, /\b2\b/);
+  // 渡していないのは、画面で付けた 2 つのコメントと (4a) の返信。
+  assert.match(notice, /\b3\b/);
   await browser('click', '#modal-ok');
   const { code, stdout } = await kemi.exited;
   assert.equal(code, 0);

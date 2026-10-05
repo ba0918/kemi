@@ -2,7 +2,6 @@
 // 行の選択、コメントの入力欄の開閉、コメントの追加・編集・削除、吹き出しの開閉。
 
 import * as api from "../api.js";
-import { dom } from "../dom.js";
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
 import { commentLabel, draftKey, firstLine, shownLineNumbers, tapSelection } from "../model.js";
@@ -14,7 +13,7 @@ import {
   renderFloating,
 } from "./display.js";
 import { refreshRendered } from "./rendered.js";
-import { renderCommentList } from "../views/comment-list.js";
+import { renderConversation } from "../views/conversation.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderHeader } from "../views/header.js";
 import { openModal, showOverlay } from "../views/overlay.js";
@@ -251,9 +250,7 @@ export function updateComments(change) {
   renderDiff();
   renderFloating();
   refreshRendered();
-  if (!dom.commentList.hidden) {
-    renderCommentList();
-  }
+  renderConversation();
 }
 
 /**
@@ -270,6 +267,7 @@ export async function addComment(payload) {
     }
     refreshCommentBadges(before);
     renderHeader();
+    renderConversation();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
     // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
     const stored = state.commentStore.get(payload.file_id);
@@ -337,6 +335,9 @@ export function confirmDeleteComment(comment) {
 async function deleteComment(comment) {
   try {
     await api.postComment({ op: "delete", id: comment.id });
+    if (state.conversation.thread === comment.id) {
+      state.conversation.thread = null;
+    }
     updateComments((comments) => comments.filter((item) => item.id !== comment.id));
   } catch (error) {
     showOverlay("could not delete the comment", String(error));

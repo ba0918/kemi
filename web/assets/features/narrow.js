@@ -13,7 +13,7 @@ import {
   renderFloating,
 } from "./display.js";
 import { refreshRendered } from "./rendered.js";
-import { closeCommentList } from "./comment-list.js";
+import { closeSheet } from "./conversation.js";
 import { renderHeader } from "../views/header.js";
 import { renderDrawer } from "../views/tree.js";
 
@@ -30,7 +30,8 @@ export function applyNarrow(narrow) {
   state.narrow = narrow;
   state.narrowOnlyComment = null;
   closeDrawer();
-  closeCommentList();
+  // 狭い画面のシートは閉じ、広い画面では覚えている会話パネルの開閉に戻る。
+  closeSheet();
   dom.titleSheet.hidePopover();
   dom.viewMenu.hidePopover();
   dom.notes.hidePopover();

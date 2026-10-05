@@ -1,14 +1,14 @@
 // @ts-check
-// エージェントとの往復（agent-channel.md）: スレッドの返信と解決、チャット欄の発言、
+// エージェントとの往復（agent-channel.md）: スレッドの返信と解決、全体への発言、
 // 「Hand to agent」、状態の表示。サーバからの通知（返信・発言・状態）は届いたらその場で
 // 取り込み、見ている位置は動かさない（R-LIVE の例外）。
 
 import * as api from "../api.js";
 import { dom } from "../dom.js";
-import { state } from "../state.js";
+import { conversationShown, state } from "../state.js";
 import { addMessage, replaceComment } from "../model.js";
 import { setCommentOpen, updateComments } from "./comments.js";
-import { renderAgent, renderChat } from "../views/chat.js";
+import { renderConversation } from "../views/conversation.js";
 import { showOverlay, showToast } from "../views/overlay.js";
 
 /**
@@ -17,7 +17,7 @@ import { showOverlay, showToast } from "../views/overlay.js";
  */
 export function applyAgent(agent) {
   state.agent = agent;
-  renderAgent();
+  renderConversation();
 }
 
 /**
@@ -87,8 +87,8 @@ export function receiveMissed() {
 export function applyMessage(message) {
   const before = state.messages;
   state.messages = addMessage(state.messages, message);
-  renderAgent();
-  if (state.messages !== before && message.author === "agent" && !state.chatOpen) {
+  renderConversation();
+  if (state.messages !== before && message.author === "agent" && !conversationShown()) {
     showToast("New message from the agent");
   }
 }
@@ -115,7 +115,7 @@ async function resyncAgent() {
     if (review.agent) {
       state.agent = review.agent;
     }
-    renderAgent();
+    renderConversation();
   } catch {
     // 読み直せなければ、次の通知か再読み込みで揃う。
   }
@@ -130,6 +130,9 @@ export async function replyTo(comment, body) {
   try {
     const updated = await api.postComment({ op: "reply", id: comment.id, body });
     state.replyDrafts.delete(comment.id);
+    if (dom.cvReply.dataset.thread === comment.id) {
+      dom.cvReplyText.value = "";
+    }
     applyThread(updated);
   } catch (error) {
     showOverlay("could not reply", String(error));
@@ -144,6 +147,8 @@ export async function replyTo(comment, body) {
 export async function setResolved(comment, resolved) {
   try {
     const updated = await api.postComment({ op: "resolve", id: comment.id, resolved });
+    // 畳みの上書きを捨て、解決したら畳み、解決を取り消したら開く既定に戻す。
+    state.conversation.folded.delete(comment.id);
     applyThread(updated);
     if (resolved) {
       setCommentOpen(comment.id, false);
@@ -160,11 +165,9 @@ export async function setResolved(comment, resolved) {
 export async function postMessage(body) {
   try {
     const message = await api.postMessage(body);
-    state.chatDraft = "";
+    dom.cvMessage.value = "";
     applyMessage(message);
-    if (state.chatOpen) {
-      renderChat();
-    }
+    renderConversation({ toEnd: true });
   } catch (error) {
     showOverlay("could not post the message", String(error));
   }
@@ -180,32 +183,5 @@ export async function handToAgent() {
     showToast(answer.handed ? "Handed to the agent" : "Nothing new to hand to the agent");
   } catch (error) {
     showOverlay("could not hand to the agent", String(error));
-  }
-}
-
-export function openChat() {
-  state.chatOpen = true;
-  dom.chat.hidden = false;
-  dom.btnChat.setAttribute("aria-expanded", "true");
-  dom.btnDockChat.setAttribute("aria-expanded", "true");
-  renderChat();
-  const field = dom.chat.querySelector("textarea");
-  if (field && !state.narrow) {
-    field.focus({ preventScroll: true });
-  }
-}
-
-export function closeChat() {
-  state.chatOpen = false;
-  dom.chat.hidden = true;
-  dom.btnChat.setAttribute("aria-expanded", "false");
-  dom.btnDockChat.setAttribute("aria-expanded", "false");
-}
-
-export function toggleChat() {
-  if (state.chatOpen) {
-    closeChat();
-  } else {
-    openChat();
   }
 }
