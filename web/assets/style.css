@@ -2822,7 +2822,8 @@ ul.files ul {
   }
 
   /* 会話パネルは画面いっぱいのシート。閉じている間は帯も出さない。中身と閉じる操作は
-     広い画面と同じで、幅を変える縁は出さない。 */
+     広い画面と同じで、幅を変える縁は出さない。シートから出した失敗の知らせ（オーバーレイと
+     トースト）が隠れないよう、それらより下に重ねる。 */
   .conversation {
     display: none;
   }
@@ -2830,7 +2831,7 @@ ul.files ul {
   .conversation[data-open="true"] {
     position: fixed;
     inset: 0;
-    z-index: 45;
+    z-index: 30;
     display: flex;
     width: auto;
     border: 0;
@@ -2933,5 +2934,6 @@ ul.files ul {
 
   #toast {
     right: 14px;
+    z-index: 31;
   }
 }
