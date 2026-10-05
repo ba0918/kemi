@@ -24,11 +24,14 @@ export function renderAgent() {
   dom.handCount.textContent = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
   dom.btnHand.disabled = state.submitted || agent.unhanded === 0;
   if (state.chatOpen) {
-    renderChat();
+    refreshChat();
   }
 }
 
-/** チャット欄。狭い画面では下から出すシートになる（CSS の狭い画面の規則）。 */
+/**
+ * チャット欄を作り直す（開いたときと、自分で発言したとき）。並びは末尾を見せる。
+ * 狭い画面では下から出すシートになる（CSS の狭い画面の規則）。
+ */
 export function renderChat() {
   const focused = document.activeElement === dom.chat.querySelector("textarea");
   dom.chat.textContent = "";
@@ -44,18 +47,7 @@ export function renderChat() {
   dom.chat.append(head);
 
   const list = el("ol", "chat-items");
-  if (state.messages.length === 0) {
-    list.append(textEl("li", "cl-empty", "No messages yet"));
-  }
-  for (const message of state.messages) {
-    const item = el("li", "chat-item");
-    item.dataset.author = message.author;
-    item.append(
-      textEl("span", "reply-author", authorLabel(message.author)),
-      textEl("p", "reply-body", message.body),
-    );
-    list.append(item);
-  }
+  fillMessages(list);
   dom.chat.append(list);
   if (state.submitted) {
     return;
@@ -76,10 +68,8 @@ export function renderChat() {
     }
   });
   const row = el("div", "chat-actions");
-  const hand = button("btn");
-  hand.textContent =
-    state.agent.unhanded > 0 ? `Hand to agent (${state.agent.unhanded})` : "Hand to agent";
-  hand.disabled = state.agent.unhanded === 0;
+  const hand = button("btn chat-hand");
+  labelHand(hand);
   hand.addEventListener("click", () => actions.handToAgent());
   const post = /** @type {HTMLButtonElement} */ (el("button", "btn primary"));
   post.type = "submit";
@@ -97,4 +87,76 @@ export function renderChat() {
   if (focused) {
     body.focus({ preventScroll: true });
   }
+}
+
+/**
+ * 届いた通知（エージェントの状態・発言・返信）でチャット欄をその場で直す。並びの
+ * スクロール位置と、書く欄（書きかけ・カーソル・変換中の文字）はそのまま残す（R-LIVE）。
+ */
+function refreshChat() {
+  const list = /** @type {HTMLElement | null} */ (dom.chat.querySelector(".chat-items"));
+  if (!list) {
+    renderChat();
+    return;
+  }
+  const status = /** @type {HTMLElement | null} */ (dom.chat.querySelector(".chat-head .agent-status"));
+  if (status) {
+    status.dataset.status = state.agent.status;
+    status.textContent = agentStatusLabel(state.agent.status);
+  }
+  const top = list.scrollTop;
+  fillMessages(list);
+  list.scrollTop = top;
+  const form = dom.chat.querySelector(".chat-form");
+  if (form && state.submitted) {
+    form.remove();
+    return;
+  }
+  const hand = /** @type {HTMLButtonElement | null} */ (dom.chat.querySelector(".chat-hand"));
+  if (hand) {
+    labelHand(hand);
+  }
+}
+
+/**
+ * 発言の並びを state.messages に合わせる。発言は後ろに増えるだけなので、並んでいるものが
+ * 先頭から一致していれば足りない分だけを足し、そうでなければ並べ直す。
+ * @param {HTMLElement} list
+ */
+function fillMessages(list) {
+  const shown = Array.from(
+    list.querySelectorAll(".chat-item"),
+    (item) => /** @type {HTMLElement} */ (item).dataset.id,
+  );
+  const appendOnly =
+    shown.length <= state.messages.length &&
+    shown.every((id, index) => id === state.messages[index].id);
+  if (!appendOnly) {
+    list.textContent = "";
+  }
+  list.querySelector(".cl-empty")?.remove();
+  if (state.messages.length === 0) {
+    list.append(textEl("li", "cl-empty", "No messages yet"));
+    return;
+  }
+  for (const message of state.messages.slice(appendOnly ? shown.length : 0)) {
+    const item = el("li", "chat-item");
+    item.dataset.id = message.id;
+    item.dataset.author = message.author;
+    item.append(
+      textEl("span", "reply-author", authorLabel(message.author)),
+      textEl("p", "reply-body", message.body),
+    );
+    list.append(item);
+  }
+}
+
+/**
+ * 「Hand to agent」の文言（未渡しの件数つき）と、押せるかどうか。
+ * @param {HTMLButtonElement} hand
+ */
+function labelHand(hand) {
+  hand.textContent =
+    state.agent.unhanded > 0 ? `Hand to agent (${state.agent.unhanded})` : "Hand to agent";
+  hand.disabled = state.agent.unhanded === 0;
 }
