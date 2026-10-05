@@ -84,9 +84,10 @@ pub(super) async fn forward(
         .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/html"));
     if html {
         // 同じ URL でも行き先によって中身が変わるので、キャッシュに区別させる。
-        parts
-            .headers
-            .append(header::VARY, HeaderValue::from_static("sec-fetch-dest"));
+        parts.headers.append(
+            header::VARY,
+            HeaderValue::from_static("sec-fetch-dest, upgrade-insecure-requests"),
+        );
     }
     if !html || !page {
         return Response::from_parts(parts, Body::new(body));
@@ -112,12 +113,15 @@ pub(super) async fn forward(
 
 /// ページとして開かれる要求か（文書としての移動か iframe への読み込み）。ページの
 /// スクリプトが fetch などで取る要求はブラウザが `Sec-Fetch-Dest: empty` を付ける。
-/// 見出しを送らない古いブラウザでもページが動くよう、無ければページとして扱う。
+/// ブラウザは `Sec-Fetch-Dest` を安全なオリジンにだけ送るので、`--bind` で LAN のアドレスから
+/// 平文の HTTP で開くと付かない。そのときは移動にだけ付く `Upgrade-Insecure-Requests: 1` で見分ける。
 pub(super) fn opened_as_page(headers: &HeaderMap) -> bool {
-    headers
-        .get("sec-fetch-dest")
-        .and_then(|value| value.to_str().ok())
-        .is_none_or(|dest| matches!(dest, "document" | "iframe" | "frame"))
+    match headers.get("sec-fetch-dest") {
+        Some(dest) => matches!(dest.as_bytes(), b"document" | b"iframe" | b"frame"),
+        None => headers
+            .get("upgrade-insecure-requests")
+            .is_some_and(|value| value.as_bytes() == b"1"),
+    }
 }
 
 /// `X-Frame-Options` を外し、CSP を書き換え、開発サーバ自身への転送先を中継の中に向ける。

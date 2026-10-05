@@ -240,12 +240,7 @@ async fn a_page_that_refuses_frames_is_rewritten_and_gets_the_page_script() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
 
-    let response = reqwest::Client::new()
-        .get(&running.live)
-        .header(header::COOKIE, relay_cookie(&running))
-        .send()
-        .await
-        .unwrap();
+    let response = open_as_page(&running, "/").await;
 
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.headers().get(header::X_FRAME_OPTIONS).is_none());
@@ -273,18 +268,20 @@ async fn a_page_that_refuses_frames_is_rewritten_and_gets_the_page_script() {
     assert!(body.contains("dev page"), "{body}");
 }
 
+/// `headers` を付けて中継の `path` を取る。
+async fn get_with(running: &Running, path: &str, headers: &[(&str, &str)]) -> String {
+    let mut request = reqwest::Client::new()
+        .get(format!("{}{path}", running.live))
+        .header(header::COOKIE, relay_cookie(running));
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.send().await.unwrap().text().await.unwrap()
+}
+
 /// `Sec-Fetch-Dest` を付けて中継の `path` を取る（ブラウザが要求の行き先に付ける見出し）。
 async fn get_as(running: &Running, path: &str, dest: &str) -> String {
-    reqwest::Client::new()
-        .get(format!("{}{path}", running.live))
-        .header(header::COOKIE, relay_cookie(running))
-        .header("sec-fetch-dest", dest)
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap()
+    get_with(running, path, &[("sec-fetch-dest", dest)]).await
 }
 
 #[tokio::test]
@@ -310,12 +307,43 @@ async fn html_fetched_by_the_page_scripts_is_relayed_without_the_page_script() {
     );
 }
 
+/// ブラウザは `Sec-Fetch-Dest` を安全なオリジン（localhost など）にだけ送るので、`--bind` で
+/// LAN のアドレスから平文の HTTP で開くと、移動にも fetch にも付かない。
+#[tokio::test]
+async fn without_sec_fetch_dest_only_a_navigation_gets_the_page_script() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let fetched = get_with(&running, "/", &[("accept", "*/*")]).await;
+    let navigated = get_with(
+        &running,
+        "/",
+        &[
+            ("upgrade-insecure-requests", "1"),
+            (
+                "accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        fetched,
+        "<!doctype html><html><head><title>dev</title></head><body>dev page</body></html>"
+    );
+    assert!(
+        navigated.contains(r#"<script src="/__kemi/page.js""#),
+        "{navigated}"
+    );
+}
+
 #[tokio::test]
 async fn a_page_that_allows_scripts_by_nonce_lets_the_page_script_run_by_its_own_nonce() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
 
-    let response = get_with_cookie(&running, "/nonce").await;
+    let response = open_as_page(&running, "/nonce").await;
 
     let policy = response.headers()[header::CONTENT_SECURITY_POLICY]
         .to_str()
@@ -426,6 +454,17 @@ async fn start_file_review(root: &Scratch, path: &str) -> Running {
     .await
 }
 
+/// ブラウザが文書として開くときと同じく `Sec-Fetch-Dest: document` を付けて取る。
+async fn open_as_page(running: &Running, path: &str) -> reqwest::Response {
+    reqwest::Client::new()
+        .get(format!("{}{path}", running.live))
+        .header(header::COOKIE, relay_cookie(running))
+        .header("sec-fetch-dest", "document")
+        .send()
+        .await
+        .unwrap()
+}
+
 async fn get_with_cookie(running: &Running, path: &str) -> reqwest::Response {
     reqwest::Client::new()
         .get(format!("{}{path}", running.live))
@@ -445,7 +484,7 @@ async fn a_file_page_is_served_with_the_page_script_and_its_css() {
     root.write("docs/style.css", "p { color: red; }");
     let running = start_file_review(&root, "docs/page.html").await;
 
-    let page = get_with_cookie(&running, "/docs/page.html").await;
+    let page = open_as_page(&running, "/docs/page.html").await;
     let css = get_with_cookie(&running, "/docs/style.css").await;
 
     assert_eq!(page.status(), StatusCode::OK);
