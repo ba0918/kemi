@@ -84,8 +84,9 @@
   // data: の URL に埋め込む。スナップショットを出す枠はレビュー画面の中の別のオリジンで、
   // 中継の cookie を持たず、中継のポートから何も読めないため。
 
+  /** 1 回の写しの中で読んだ URL。写すたびに作り直し、前の写しの後で変わった画像や CSS を読み直す。 */
   /** @type {Map<string, Promise<string>>} */
-  const inlined = new Map();
+  let inlined = new Map();
 
   /**
    * URL の中身を data: の URL にする。読めなければ元の URL のまま。
@@ -273,6 +274,7 @@
   }
 
   async function captureSnapshot() {
+    inlined = new Map();
     const owner = document.implementation.createHTMLDocument('');
     const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner));
     const head = root.querySelector('head');
