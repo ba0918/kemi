@@ -183,6 +183,20 @@ export function takeSnapshot(snapshot) {
   return postJson("api/snapshot", snapshot);
 }
 
+/**
+ * ページにモックを割り当てる。path が null なら外す（live-compare.md の R-PAGE-MOCK）。
+ * @param {string} page
+ * @param {string | null} path
+ */
+export function assignMock(page, path) {
+  return postJson("api/mock", { page, path });
+}
+
+/** 割り当てたモック。 */
+export function listMocks() {
+  return getJson("api/mocks");
+}
+
 /** 預けたスナップショットの見出し（取った順）。 */
 export function listSnapshots() {
   return getJson("api/snapshots");

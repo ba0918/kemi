@@ -10,7 +10,7 @@ import * as api from "../api.js";
 import { dom } from "../dom.js";
 import {
   buildPageTree,
-  chooseSnapshot,
+  chooseReference,
   fitScale,
   liveOrigin,
   pageKey,
@@ -64,6 +64,12 @@ const live = {
   bodies: new Map(),
   /** 比べる相手の枠に今出しているスナップショット。 */
   shownSnapshot: "",
+  /** @type {Map<string, { path: string, url: string }>} ページごとのモックの割り当て */
+  mocks: new Map(),
+  /** モックを出し始めたときの条件。変わったら読み直す（R-PAGE-MOCK の読むきっかけ）。 */
+  mockShownKey: "",
+  /** 読み直す操作を押した。 */
+  mockReloadAsked: false,
 };
 
 /** @type {import("../views/live.js").LiveShell | null} */
@@ -123,11 +129,18 @@ export function startLive(info) {
     if (!shell) {
       return;
     }
-    if (shell.compareSelect.value === "") {
-      live.chosen.delete(live.page);
-    } else {
-      live.chosen.set(live.page, shell.compareSelect.value);
+    live.chosen.set(live.page, shell.compareSelect.value);
+    render();
+  });
+  shell.mockAssign.addEventListener("click", () => void assignMock());
+  shell.mockInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      void assignMock();
     }
+  });
+  shell.mockRemove.addEventListener("click", () => void removeMock());
+  shell.mockReload.addEventListener("click", () => {
+    live.mockReloadAsked = true;
     render();
   });
   shell.recordButton.addEventListener("click", () => void capture("manual"));
@@ -139,6 +152,12 @@ export function startLive(info) {
 
   shell.liveFrame.src = live.origin + live.page;
   setView("page");
+  void api.listMocks().then((list) => {
+    for (const mock of list.mocks ?? []) {
+      live.mocks.set(mock.page, { path: mock.path, url: mock.url });
+    }
+    render();
+  });
   void api.listSnapshots().then((list) => {
     live.snapshots = list.snapshots ?? [];
     // 読み込み直したページでは、開始時のスナップショットはもう取ってある。
@@ -247,6 +266,37 @@ function receive(event) {
   takeStartSnapshot();
 }
 
+/** 入れたパスのモックを、表示中のページに割り当てる。断られたら理由を出す（R-PAGE-MOCK）。 */
+async function assignMock() {
+  if (!shell || shell.mockInput.value.trim() === "") {
+    return;
+  }
+  const page = live.page;
+  try {
+    const mock = await api.assignMock(page, shell.mockInput.value.trim());
+    live.mocks.set(page, { path: mock.path, url: mock.url });
+    // 割り当てたページは既定でモックと比べる。
+    live.chosen.delete(page);
+    shell.mockInput.value = "";
+    shell.mockError.hidden = true;
+  } catch (error) {
+    shell.mockError.textContent = error instanceof Error ? error.message : String(error);
+    shell.mockError.hidden = false;
+  }
+  render();
+}
+
+/** 表示中のページのモックを外す。比べる相手はスナップショットに戻る。 */
+async function removeMock() {
+  const page = live.page;
+  await api.assignMock(page, null);
+  live.mocks.delete(page);
+  if (live.chosen.get(page) === "mock") {
+    live.chosen.delete(page);
+  }
+  render();
+}
+
 /** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
 function takeStartSnapshot() {
   if (live.startTaken || !live.reachable) {
@@ -326,14 +376,18 @@ function renderBand() {
     choice.setAttribute("aria-pressed", String(choice.dataset.side === live.side));
   }
   shell.stage.dataset.side = live.side;
+  const mock = live.mocks.get(live.page) ?? null;
   renderCompareOptions(
     shell.compareSelect,
     [
-      { value: "", label: "Latest (handed, start, recorded)" },
+      ...(mock ? [{ value: "mock", label: `Mock: ${mock.path}` }] : []),
+      { value: "latest", label: "Latest snapshot (handed, start, recorded)" },
       ...snapshotOptions(live.snapshots, live.page).map((option) => ({ value: option.id, label: option.label })),
     ],
-    live.chosen.get(live.page) ?? "",
+    live.chosen.get(live.page) ?? (mock ? "mock" : "latest"),
   );
+  shell.mockRemove.hidden = mock === null;
+  shell.mockReload.hidden = mock === null;
   shell.recordButton.disabled = !live.reachable;
   shell.liveLabel.textContent = `${live.page} · ${live.width}${live.scale < 1 ? ` · ×${live.scale.toFixed(2)}` : ""}`;
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
@@ -353,7 +407,7 @@ function renderTree() {
   }
   renderPageTree(
     shell.pageTree,
-    buildPageTree({ current: live.page, snapshots: live.snapshots, mocks: new Set() }),
+    buildPageTree({ current: live.page, snapshots: live.snapshots, mocks: new Set(live.mocks.keys()) }),
     {
       onPage: openPage,
       onWidth: (page, width) => {
@@ -369,11 +423,32 @@ function renderReference() {
   if (!shell) {
     return;
   }
-  const snapshot = chooseSnapshot(live.snapshots, live.page, live.width, live.chosen.get(live.page) ?? null);
+  const mock = live.mocks.get(live.page) ?? null;
+  const reference = chooseReference({
+    snapshots: live.snapshots,
+    mock: mock?.path ?? null,
+    page: live.page,
+    width: live.width,
+    chosen: live.chosen.get(live.page),
+  });
   shell.refNotice.hidden = live.refNotice === "";
   shell.refNotice.textContent = live.refNotice;
   shell.refNotice.dataset.kind = "waiting";
-  if (!snapshot) {
+  if (reference.type !== "mock") {
+    shell.refMockFrame.hidden = true;
+    live.mockShownKey = "";
+  }
+  if (reference.type === "mock") {
+    shell.refPane.dataset.reference = "mock";
+    delete shell.refPane.dataset.snapshot;
+    shell.refLabel.textContent = `Mock · ${reference.path} · ${live.width}`;
+    shell.refFrame.hidden = true;
+    shell.refEmpty.hidden = true;
+    live.shownSnapshot = "";
+    showMock(mock?.url ?? "");
+    return;
+  }
+  if (reference.type === "none") {
     shell.refPane.dataset.reference = "none";
     delete shell.refPane.dataset.snapshot;
     shell.refLabel.textContent = `${live.page} · ${live.width}`;
@@ -384,6 +459,7 @@ function renderReference() {
     live.shownSnapshot = "";
     return;
   }
+  const snapshot = reference.snapshot;
   shell.refPane.dataset.reference = "snapshot";
   shell.refPane.dataset.snapshot = snapshot.id;
   shell.refLabel.textContent = `${snapshotLabel(live.snapshots, snapshot)} · ${snapshot.page} · ${snapshot.width}`;
@@ -393,6 +469,29 @@ function renderReference() {
     live.shownSnapshot = snapshot.id;
     void showSnapshot(snapshot.id);
   }
+}
+
+/**
+ * モックを出す。読むのは出し始めるときだけ: モックに切り替えたとき、ページを移ったとき、
+ * 表示幅を切り替えたとき、読み直す操作を押したとき。出している間にファイルが変わっても
+ * 勝手には描き直さない（R-PAGE-MOCK）。読み直すときは枠ごと作り直す。
+ * @param {string} url
+ */
+function showMock(url) {
+  if (!shell) {
+    return;
+  }
+  const key = `${live.page}\n${live.width}\n${url}`;
+  if (key === live.mockShownKey && !live.mockReloadAsked && !shell.refMockFrame.hidden) {
+    return;
+  }
+  live.mockShownKey = key;
+  live.mockReloadAsked = false;
+  const frame = /** @type {HTMLIFrameElement} */ (shell.refMockFrame.cloneNode(false));
+  frame.hidden = false;
+  frame.src = url;
+  shell.refMockFrame.replaceWith(frame);
+  shell.refMockFrame = frame;
 }
 
 /**
@@ -427,7 +526,7 @@ function layoutFrames() {
   const viewport = shell.liveViewport.clientWidth > 0 ? shell.liveViewport : shell.refViewport;
   const scale = fitScale(viewport.clientWidth, live.width);
   const height = viewport.clientHeight / scale;
-  for (const target of [shell.liveFrame, shell.refFrame]) {
+  for (const target of [shell.liveFrame, shell.refFrame, shell.refMockFrame]) {
     target.style.width = `${live.width}px`;
     target.style.height = `${height}px`;
     target.style.transform = `scale(${scale})`;

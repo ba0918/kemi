@@ -14,12 +14,12 @@ use super::{LiveState, LiveTarget, rewrite};
 const HTML_LIMIT: usize = 32 * 1024 * 1024;
 
 /// 開発サーバにつながるか、配るファイルがあるか（待っているページが確かめる）。
-pub(super) async fn reachable(target: &LiveTarget, path: Option<&str>) -> bool {
-    match target {
+pub(super) async fn reachable(state: &LiveState, path: Option<&str>) -> bool {
+    match &state.target {
         LiveTarget::Url { authority, .. } => TcpStream::connect(authority.as_str()).await.is_ok(),
-        LiveTarget::File { root, .. } => path
+        LiveTarget::File { .. } => path
             .and_then(|path| path.strip_prefix('/'))
-            .is_some_and(|relative| super::files::resolve(root, relative).is_some()),
+            .is_some_and(|relative| super::files::resolve(&state.info.root, relative).is_some()),
     }
 }
 

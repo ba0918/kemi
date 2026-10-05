@@ -308,3 +308,27 @@ body[data-live-view="code"] .lv-page-only {
 .lv-frame[hidden] {
   display: none;
 }
+
+/* ---- モック ---- */
+.lv-mock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-mock-input {
+  width: 200px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.lv-mock-remove[hidden],
+.lv-mock-reload[hidden],
+.lv-mock-input[hidden],
+.lv-mock-assign[hidden] {
+  display: none;
+}

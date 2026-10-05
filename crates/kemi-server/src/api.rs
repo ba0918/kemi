@@ -6,6 +6,7 @@ mod agent;
 mod channel;
 mod comments;
 mod file;
+mod mock;
 mod rendered;
 mod snapshot;
 mod submit;
@@ -36,6 +37,7 @@ pub(crate) use self::channel::start_status_ticker;
 use self::channel::{agent_json, hand_api, message_api};
 use self::comments::comment_api;
 use self::file::file_api;
+use self::mock::{assign_mock, list_mocks, mock_file};
 use self::rendered::{render_file, repository_image, review_image};
 use self::snapshot::{SNAPSHOT_BODY_LIMIT, get_snapshot, list_snapshots, take_snapshot};
 use self::submit::submit_api;
@@ -69,8 +71,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/s/{token}/api/snapshots", get(list_snapshots))
         .route("/s/{token}/api/snapshot/{id}", get(get_snapshot))
+        .route("/s/{token}/api/mock", post(assign_mock))
+        .route("/s/{token}/api/mocks", get(list_mocks))
         .with_state(state.clone())
-        .layer(middleware::from_fn_with_state(state, guard))
+        .layer(middleware::from_fn_with_state(state.clone(), guard))
+        // モックはトークンの外で配る（R-PAGE-MOCK）。トークンの検証の層の外に置く。
+        .merge(
+            Router::new()
+                .route("/m/{secret}/{*path}", get(mock_file))
+                .with_state(state),
+        )
 }
 
 /// token・Host・Origin の検証は本文の解釈より先に行う。

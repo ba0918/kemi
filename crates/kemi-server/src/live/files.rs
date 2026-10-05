@@ -13,7 +13,7 @@ use super::{LiveState, relay, rewrite};
 
 /// 要求のパスを、配れる範囲の根からの相対パスにする。`..` を含むものは断る（パーセント
 /// 符号化されていても）。
-fn requested_path(raw: &str) -> Option<String> {
+pub(crate) fn requested_path(raw: &str) -> Option<String> {
     let decoded = percent_decode(raw)?;
     let mut parts = Vec::new();
     for segment in decoded.split('/') {
@@ -45,7 +45,7 @@ pub(super) fn percent_decode(raw: &str) -> Option<String> {
 }
 
 /// 配れる範囲の中の実在するファイルの実体の場所。範囲の外と `.git` の中は None。
-pub(super) fn resolve(root: &Path, relative: &str) -> Option<PathBuf> {
+pub(crate) fn resolve(root: &Path, relative: &str) -> Option<PathBuf> {
     let real = std::fs::canonicalize(root.join(relative)).ok()?;
     served_path(root, &real).ok()?;
     real.is_file().then_some(real)
@@ -98,7 +98,7 @@ fn waiting_for_the_file(state: &LiveState, host: &str, relative: &str) -> Respon
     )
 }
 
-fn mime_for(path: &str) -> &'static str {
+pub(crate) fn mime_for(path: &str) -> &'static str {
     let extension = path
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())

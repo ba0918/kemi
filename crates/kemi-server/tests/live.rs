@@ -21,6 +21,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 const RELAY: &str = "relay-secret";
+const MOCK_SECRET: &str = "mock-secret";
 
 struct EmptySource;
 
@@ -112,15 +113,18 @@ impl Drop for Running {
 }
 
 async fn start_review(authority: &str) -> Running {
-    start_review_of(LiveTarget::Url {
-        authority: authority.to_string(),
-        start: "/".to_string(),
-        display: format!("http://{authority}/"),
-    })
+    start_review_of(
+        LiveTarget::Url {
+            authority: authority.to_string(),
+            start: "/".to_string(),
+            display: format!("http://{authority}/"),
+        },
+        std::env::temp_dir(),
+    )
     .await
 }
 
-async fn start_review_of(target: LiveTarget) -> Running {
+async fn start_review_of(target: LiveTarget, root: std::path::PathBuf) -> Running {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let review_port = listener.local_addr().unwrap().port();
     let live_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -137,7 +141,9 @@ async fn start_review_of(target: LiveTarget) -> Running {
         live: Some(LiveParams {
             listener: live_listener,
             target,
+            root,
             cookie: RELAY.to_string(),
+            mock_secret: MOCK_SECRET.to_string(),
             code_view: false,
         }),
     };
@@ -341,10 +347,12 @@ impl Drop for Scratch {
 }
 
 async fn start_file_review(root: &Scratch, path: &str) -> Running {
-    start_review_of(LiveTarget::File {
-        root: root.0.clone(),
-        path: path.to_string(),
-    })
+    start_review_of(
+        LiveTarget::File {
+            path: path.to_string(),
+        },
+        root.0.clone(),
+    )
     .await
 }
 
@@ -568,4 +576,129 @@ async fn handing_to_the_agent_asks_the_page_for_a_snapshot() {
             .expect("the event stream ended");
         buffer.push_str(&String::from_utf8_lossy(&chunk));
     }
+}
+
+// ---- モック（live-compare.md の R-PAGE-MOCK） ----
+
+#[tokio::test]
+async fn a_mock_inside_the_range_is_assigned_to_a_page_and_listed() {
+    let root = Scratch::new("mock-assign");
+    root.write("page.html", "<p>page</p>");
+    root.write("mocks/next.html", "<p>mock</p>");
+    let running = start_file_review(&root, "page.html").await;
+
+    let assigned = post_review(
+        &running,
+        "api/mock",
+        serde_json::json!({ "page": "/page.html", "path": "mocks/next.html" }),
+    )
+    .await;
+    assert_eq!(assigned.status(), StatusCode::OK);
+    let assigned: serde_json::Value = assigned.json().await.unwrap();
+    let list = get_review_json(&running, "api/mocks").await;
+
+    assert_eq!(assigned["page"], "/page.html");
+    assert_eq!(assigned["path"], "mocks/next.html");
+    assert_eq!(assigned["url"], format!("/m/{MOCK_SECRET}/mocks/next.html"));
+    assert_eq!(list["mocks"][0]["page"], "/page.html");
+}
+
+#[tokio::test]
+async fn a_mock_outside_the_range_or_not_html_is_refused_with_the_reason() {
+    let root = Scratch::new("mock-refuse");
+    root.write("site/page.html", "<p>page</p>");
+    root.write("site/notes.txt", "notes");
+    root.write("secret.html", "<p>secret</p>");
+    let range = Scratch(root.0.join("site"));
+    let running = start_file_review(&range, "page.html").await;
+
+    for (path, reason) in [
+        ("../secret.html", "outside"),
+        ("notes.txt", ".html or .htm"),
+        ("missing.html", "cannot read"),
+    ] {
+        let refused = post_review(
+            &running,
+            "api/mock",
+            serde_json::json!({ "page": "/page.html", "path": path }),
+        )
+        .await;
+        assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY, "{path}");
+        let body: serde_json::Value = refused.json().await.unwrap();
+        assert!(
+            body["error"].as_str().unwrap().contains(reason),
+            "{path}: {body}"
+        );
+    }
+    let list = get_review_json(&running, "api/mocks").await;
+    assert_eq!(list["mocks"].as_array().unwrap().len(), 0);
+    std::mem::forget(range);
+}
+
+#[tokio::test]
+async fn a_removed_mock_is_no_longer_listed() {
+    let root = Scratch::new("mock-remove");
+    root.write("page.html", "<p>page</p>");
+    root.write("mock.html", "<p>mock</p>");
+    let running = start_file_review(&root, "page.html").await;
+    post_review(
+        &running,
+        "api/mock",
+        serde_json::json!({ "page": "/page.html", "path": "mock.html" }),
+    )
+    .await;
+
+    let removed = post_review(
+        &running,
+        "api/mock",
+        serde_json::json!({ "page": "/page.html", "path": null }),
+    )
+    .await;
+
+    assert_eq!(removed.status(), StatusCode::OK);
+    let list = get_review_json(&running, "api/mocks").await;
+    assert_eq!(list["mocks"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_only() {
+    let root = Scratch::new("mock-serve");
+    root.write("site/page.html", "<p>page</p>");
+    root.write(
+        "site/mock.html",
+        "<link rel=stylesheet href=mock.css><p>mock</p>",
+    );
+    root.write("site/mock.css", "p { color: green; }");
+    root.write("site/.git/config", "[core]");
+    root.write("secret.html", "<p>secret</p>");
+    let range = Scratch(root.0.join("site"));
+    let running = start_file_review(&range, "page.html").await;
+    let base = running
+        .review
+        .trim_end_matches("/s/test-token/")
+        .to_string();
+
+    let page = reqwest::get(format!("{base}/m/{MOCK_SECRET}/mock.html"))
+        .await
+        .unwrap();
+    let css = reqwest::get(format!("{base}/m/{MOCK_SECRET}/mock.css"))
+        .await
+        .unwrap();
+
+    assert_eq!(page.status(), StatusCode::OK);
+    assert_eq!(
+        page.headers()[header::CONTENT_SECURITY_POLICY],
+        "sandbox allow-scripts"
+    );
+    assert!(page.text().await.unwrap().contains("<p>mock</p>"));
+    assert_eq!(css.status(), StatusCode::OK);
+    for path in [
+        format!("/m/{MOCK_SECRET}/..%2fsecret.html"),
+        format!("/m/{MOCK_SECRET}/.git/config"),
+        "/m/wrong-secret/mock.html".to_string(),
+    ] {
+        let refused = reqwest::get(format!("{base}{path}")).await.unwrap();
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    std::mem::forget(range);
 }

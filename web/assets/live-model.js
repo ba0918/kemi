@@ -152,3 +152,24 @@ export function snapshotOptions(snapshots, page) {
     .reverse()
     .map((snapshot) => ({ id: snapshot.id, label: `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}` }));
 }
+
+/**
+ * @typedef {{ type: "mock", path: string } | { type: "snapshot", snapshot: SnapshotSummary } | { type: "none" }} Reference
+ */
+
+/**
+ * 比べる相手（live-compare.md の R-PAGE-REF）。選んでいなければ、モックを割り当てたページは
+ * モック、無ければスナップショットの既定の順。`latest` はモックがあってもスナップショットの
+ * 既定の順で、スナップショットの id はその時点。モックを選んでいても割り当てが無ければ
+ * スナップショットに戻る。
+ * @param {{ snapshots: SnapshotSummary[], mock: string | null, page: string, width: number, chosen: string | undefined }} input
+ * @returns {Reference}
+ */
+export function chooseReference({ snapshots, mock, page, width, chosen }) {
+  if (mock !== null && (chosen === undefined || chosen === "mock")) {
+    return { type: "mock", path: mock };
+  }
+  const point = chosen === undefined || chosen === "mock" || chosen === "latest" ? null : chosen;
+  const snapshot = chooseSnapshot(snapshots, page, width, point);
+  return snapshot ? { type: "snapshot", snapshot } : { type: "none" };
+}

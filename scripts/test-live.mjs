@@ -16,6 +16,8 @@
 //   記録されていない旨と取る操作が出る。動いているページと画素を比べる（完全に一致しなければ
 //   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
 //   渡すと取る。
+// - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
+//   戻る。JS のモックが描かれ、トークンが得られず API に断られる。モックだけがあるページがツリーに出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -509,6 +511,109 @@ async function snapshotsAreTakenShownAndChosen(repository) {
   }
 }
 
+/** 画像の (x, y) の色。 */
+function pixelAt(image, x, y) {
+  const at = (y * image.width + x) * 4;
+  return [image.pixels[at], image.pixels[at + 1], image.pixels[at + 2]];
+}
+
+/** モック（R-PAGE-MOCK、R-PAGE-REF、R-PAGE-VIEW）。 */
+async function mocksAreAssignedShownAndKeptApart(repository) {
+  const { mkdir } = await import('node:fs/promises');
+  const { basename, dirname } = await import('node:path');
+  await mkdir(join(repository, 'mocks'), { recursive: true });
+  await writeFile(join(repository, 'mocks', 'mock.html'), '<!doctype html><html><head><link rel="stylesheet" href="mock.css"></head><body><img src="dot.png" alt="" style="display:block;width:40px;height:40px"></body></html>\n');
+  await writeFile(join(repository, 'mocks', 'mock.css'), 'html, body { margin: 0; background: rgb(0, 200, 0); }\n');
+  const red = Buffer.alloc(4 * 4 * 4);
+  for (let i = 0; i < 16; i++) red.set([255, 0, 0, 255], i * 4);
+  await writeFile(join(repository, 'mocks', 'dot.png'), encodePng(4, 4, red));
+  await writeFile(join(repository, 'mocks', 'notes.txt'), 'not a mock\n');
+  const outside = join(dirname(repository), `outside-${basename(repository)}.html`);
+  await writeFile(outside, '<p>outside</p>\n');
+
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', dev.url]);
+  const token = new URL(kemi.url).pathname.split('/')[2];
+  await writeFile(join(repository, 'mocks', 'script.html'), `<!doctype html><html><head></head><body style="margin:0"><p id="drawn"></p><script>
+    document.body.style.background = 'rgb(0, 0, 200)';
+    document.getElementById('drawn').textContent = 'drawn by the mock';
+    const tryRead = (read) => { try { return String(read()); } catch { return 'blocked'; } };
+    const report = { mockReport: true, href: location.href, cookie: tryRead(() => document.cookie), parent: tryRead(() => parent.document.title) };
+    report.sawToken = [report.href, report.cookie, report.parent].some((text) => text.includes(${JSON.stringify(token)}));
+    fetch(${JSON.stringify(`${kemi.url}api/message`)}, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ body: 'written by the mock' }) })
+      .catch(() => {})
+      .finally(() => parent.postMessage(report, '*'));
+  </script></body></html>\n`);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await post(kemi.url, 'api/message', { body: 'before the mock' });
+    await post(kemi.url, 'api/hand', {});
+    await waitFor(showsSnapshot('Handed 1'));
+
+    for (const [path, reason] of [[`../${basename(outside)}`, 'outside'], ['mocks/notes.txt', '.html or .htm']]) {
+      await browser('fill', '.lv-mock-input', path);
+      await browser('click', '.lv-mock-assign');
+      await waitFor(`${visible('.lv-mock-error')} && document.querySelector('.lv-mock-error').textContent.includes(${JSON.stringify(reason)})`);
+      assert.notEqual(await evaluate(`document.querySelector('${refPane}').dataset.reference`), 'mock', path);
+    }
+    console.log('PASS 配れる範囲の外のパスと .txt のファイルは、理由が出て割り当てられない');
+
+    await browser('fill', '.lv-mock-input', 'mocks/mock.html');
+    await browser('click', '.lv-mock-assign');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && !${visible('.lv-mock-error')}`);
+    await new Promise((done) => setTimeout(done, 800));
+    const mock = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'mock');
+    assert.deepEqual(pixelAt(mock, 200, 200), [0, 200, 0], 'the mock CSS is applied');
+    assert.deepEqual(pixelAt(mock, 10, 10), [255, 0, 0], 'the mock image is shown');
+    assert.equal(mock.width, 390);
+    assert.equal(await evaluate(`document.querySelector('#page-tree .lv-page[data-page="/"] .lv-mock-tag') !== null`), true);
+    console.log('PASS CSS と画像を参照するモックを割り当てると、比べる相手がモックになり、同じ表示幅でスタイルと画像ごと出る');
+
+    await browser('click', '.lv-mock-remove');
+    await waitFor(showsSnapshot('Handed 1'));
+    console.log('PASS モックを外すと、最後に渡した時点のスナップショットに戻る');
+
+    await evaluate(`window.__mockReports = []; window.addEventListener('message', (event) => { if (event.data && event.data.mockReport) window.__mockReports.push(event.data); }); true`);
+    const messagesBefore = (await (await fetch(new URL('api/review', kemi.url))).json()).messages.length;
+    await browser('fill', '.lv-mock-input', 'mocks/script.html');
+    await browser('click', '.lv-mock-assign');
+    await waitFor(`window.__mockReports.length > 0`);
+    const report = JSON.parse(await evaluate(`JSON.stringify(window.__mockReports[0])`));
+    assert.equal(report.sawToken, false, JSON.stringify(report));
+    assert.equal(report.parent, 'blocked', JSON.stringify(report));
+    await new Promise((done) => setTimeout(done, 500));
+    const drawn = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'script-mock');
+    assert.deepEqual(pixelAt(drawn, 200, 200), [0, 0, 200], 'the mock script runs');
+    const messagesAfter = (await (await fetch(new URL('api/review', kemi.url))).json()).messages.length;
+    assert.equal(messagesAfter, messagesBefore, 'the API refuses the mock even with the token');
+    console.log('PASS JS で描くモックが描かれ、そのスクリプトからトークンは得られず、トークンを付けても API に断られる');
+
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${dev.url}other.html`.replace(dev.url, `${new URL(kemi.live).origin}/`))}; true`);
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html'`);
+    await browser('fill', '.lv-mock-input', 'mocks/mock.html');
+    await browser('click', '.lv-mock-assign');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
+    await browser('click', '#page-tree .lv-page[data-page="/"] .lv-page-open');
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/'`);
+    assert.equal(
+      await evaluate(`(() => { const row = document.querySelector('#page-tree .lv-page[data-page="/other.html"]'); return row !== null && row.querySelector('.lv-mock-tag') !== null && row.querySelectorAll('.lv-width-tag').length === 0; })()`),
+      true,
+      'a page with only a mock stays in the tree',
+    );
+    await browser('click', '#page-tree .lv-page[data-page="/other.html"] .lv-page-open');
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html' && document.querySelector('${refPane}').dataset.reference === 'mock'`);
+    console.log('PASS モックの割り当てだけがあるページがツリーに出て、押すとそのページへ移りモックと比べる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -518,6 +623,7 @@ try {
   await outsideGitFilePages();
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);
+  await mocksAreAssignedShownAndKeptApart(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

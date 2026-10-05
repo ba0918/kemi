@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   WIDTH_CHOICES,
   buildPageTree,
+  chooseReference,
   chooseSnapshot,
   fitScale,
   liveOrigin,
@@ -101,4 +102,18 @@ test("the points to choose from are the snapshots of the page, newest first", ()
     { id: "s3", label: "Recorded 1 · 390" },
     { id: "s1", label: "Start · 1280" },
   ]);
+});
+
+test("a page with a mock compares with the mock unless something else is chosen", () => {
+  const snapshots = [snap("s1", "start"), snap("s2", "handed")];
+  assert.deepEqual(chooseReference({ snapshots, mock: "m.html", page: "/", width: 1280, chosen: undefined }), { type: "mock", path: "m.html" });
+  assert.deepEqual(chooseReference({ snapshots, mock: "m.html", page: "/", width: 1280, chosen: "latest" }), { type: "snapshot", snapshot: snapshots[1] });
+  assert.deepEqual(chooseReference({ snapshots, mock: "m.html", page: "/", width: 1280, chosen: "s1" }), { type: "snapshot", snapshot: snapshots[0] });
+});
+
+test("without a mock, or once it is removed, the snapshot order applies again", () => {
+  const snapshots = [snap("s1", "start"), snap("s2", "handed")];
+  assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: undefined }), { type: "snapshot", snapshot: snapshots[1] });
+  assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "mock" }), { type: "snapshot", snapshot: snapshots[1] });
+  assert.deepEqual(chooseReference({ snapshots: [], mock: null, page: "/", width: 1280, chosen: undefined }), { type: "none" });
 });

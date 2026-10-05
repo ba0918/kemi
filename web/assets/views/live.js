@@ -18,6 +18,11 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   compareSlot: HTMLElement,
  *   compareSelect: HTMLSelectElement,
  *   recordButton: HTMLButtonElement,
+ *   mockInput: HTMLInputElement,
+ *   mockAssign: HTMLButtonElement,
+ *   mockRemove: HTMLButtonElement,
+ *   mockReload: HTMLButtonElement,
+ *   mockError: HTMLElement,
  *   sideSeg: HTMLElement,
  *   stage: HTMLElement,
  *   refPane: HTMLElement,
@@ -26,6 +31,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   refNotice: HTMLElement,
  *   refViewport: HTMLElement,
  *   refFrame: HTMLIFrameElement,
+ *   refMockFrame: HTMLIFrameElement,
  *   refEmpty: HTMLElement,
  *   refEmptyText: HTMLElement,
  *   refRecordButton: HTMLButtonElement,
@@ -88,6 +94,23 @@ export function buildShell() {
   recordButton.textContent = "Record now";
   recordButton.title = "Take a snapshot of the page as it is now";
   compareSlot.append(compareSelect, recordButton);
+  const mockGroup = el("div", "lv-mock");
+  const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
+  mockInput.type = "text";
+  mockInput.placeholder = "Mock path, e.g. docs/mock.html";
+  mockInput.setAttribute("aria-label", "Path of the mock HTML file");
+  const mockAssign = button("lv-record lv-mock-assign");
+  mockAssign.textContent = "Assign mock";
+  const mockRemove = button("lv-record lv-mock-remove");
+  mockRemove.textContent = "Remove mock";
+  const mockReload = button("lv-record lv-mock-reload");
+  mockReload.textContent = "Reload mock";
+  mockReload.title = "Read the mock file again";
+  const mockError = el("span", "lv-width-error lv-mock-error");
+  mockError.setAttribute("role", "alert");
+  mockError.hidden = true;
+  mockGroup.append(mockInput, mockAssign, mockRemove, mockReload, mockError);
+  compareSlot.append(mockGroup);
 
   const sideSeg = el("div", "lv-seg lv-side lv-page-only");
   sideSeg.setAttribute("role", "group");
@@ -118,7 +141,13 @@ export function buildShell() {
   const refRecordButton = button("btn lv-record");
   refRecordButton.textContent = "Record now";
   refEmpty.append(refEmptyText, refRecordButton);
-  ref.box.append(refFrame, refEmpty);
+  // モックのスクリプトは動かすが、allow-same-origin を付けないので不透明なオリジンで動き、
+  // レビュー画面にも kemi の API にも届かない（R-PAGE-MOCK）。
+  const refMockFrame = /** @type {HTMLIFrameElement} */ (el("iframe", "lv-frame"));
+  refMockFrame.title = "Mock";
+  refMockFrame.setAttribute("sandbox", "allow-scripts");
+  refMockFrame.hidden = true;
+  ref.box.append(refFrame, refMockFrame, refEmpty);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -150,6 +179,11 @@ export function buildShell() {
     compareSlot,
     compareSelect,
     recordButton,
+    mockInput,
+    mockAssign,
+    mockRemove,
+    mockReload,
+    mockError,
     sideSeg,
     stage,
     refPane: ref.pane,
@@ -158,6 +192,7 @@ export function buildShell() {
     refNotice,
     refViewport: ref.viewport,
     refFrame,
+    refMockFrame,
     refEmpty,
     refEmptyText,
     refRecordButton,

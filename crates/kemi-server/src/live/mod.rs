@@ -2,10 +2,12 @@
 //! 中継し、HTML にページ用のスクリプトを差し込む。中継のポートは中継用の cookie を持つ
 //! 要求だけを通す。cookie はレビュー画面のトークンの URL を開いたときに入れる。
 
-mod files;
+pub(crate) mod files;
 mod relay;
 mod rewrite;
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -22,8 +24,12 @@ pub struct LiveParams {
     /// `--live-port` と `--bind` で立てたリスナー。
     pub listener: TcpListener,
     pub target: LiveTarget,
+    /// 配れる範囲の根（実体の場所）。ファイルのページとモックはこの中からだけ配る。
+    pub root: PathBuf,
     /// 中継用の cookie の値。ページのトークンとは別の秘密。
     pub cookie: String,
+    /// モックを配る URL に含める、レビューごとの推測できない値（live-compare.md の DC1）。
+    pub mock_secret: String,
     /// コードの見方を出せるか（git の作業ツリーの中か）。
     pub code_view: bool,
 }
@@ -37,12 +43,8 @@ pub enum LiveTarget {
         start: String,
         display: String,
     },
-    /// 配れる範囲の HTML ファイル。`root` は範囲の根（実体の場所）、`path` はそこからの
-    /// 相対パス（`/` 区切り）。
-    File {
-        root: std::path::PathBuf,
-        path: String,
-    },
+    /// 配れる範囲の HTML ファイル。`path` は範囲の根からの相対パス（`/` 区切り）。
+    File { path: String },
 }
 
 /// レビュー画面と中継が共有する、中継の情報。
@@ -55,6 +57,11 @@ pub(crate) struct LiveInfo {
     pub code_view: bool,
     /// 取ったスナップショット。保存はまだ無く、メモリにだけ持つ（R-PAGE-SNAPSHOT）。
     pub snapshots: std::sync::Mutex<Vec<Snapshot>>,
+    pub root: PathBuf,
+    pub mock_secret: String,
+    /// ページ（パスとクエリ）ごとのモックの割り当て（範囲の根からの相対パス）。保存はまだ
+    /// 無く、メモリにだけ持つ（R-PAGE-MOCK）。
+    pub mocks: std::sync::Mutex<BTreeMap<String, String>>,
 }
 
 /// スナップショット 1 つ。中身はスクリプトを含まない HTML（形はページ用のスクリプトが決める）。
@@ -166,6 +173,9 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
         display,
         code_view: params.code_view,
         snapshots: std::sync::Mutex::new(Vec::new()),
+        root: params.root,
+        mock_secret: params.mock_secret,
+        mocks: std::sync::Mutex::new(BTreeMap::new()),
     };
     Ok((params.listener, info, params.target))
 }
@@ -205,7 +215,7 @@ async fn handle(State(state): State<Arc<LiveState>>, mut request: Request) -> Re
         LiveTarget::Url {
             authority, display, ..
         } => relay::forward(&state, authority, display, request).await,
-        LiveTarget::File { root, .. } => files::serve(&state, root, request).await,
+        LiveTarget::File { .. } => files::serve(&state, &state.info.root, request).await,
     }
 }
 
@@ -225,7 +235,7 @@ async fn own_file(state: &LiveState, path: &str, query: Option<&str>) -> Respons
             let page = query
                 .and_then(|query| query.strip_prefix("path="))
                 .and_then(files::percent_decode);
-            if relay::reachable(&state.target, page.as_deref()).await {
+            if relay::reachable(state, page.as_deref()).await {
                 StatusCode::NO_CONTENT.into_response()
             } else {
                 StatusCode::BAD_GATEWAY.into_response()

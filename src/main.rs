@@ -658,13 +658,9 @@ impl LiveRun {
                     url.path_and_query,
                 ))
             }
-            LivePage::File(path) => Some((
-                LiveTarget::File {
-                    root: self.root.clone(),
-                    path: path.clone(),
-                },
-                format!("/{path}"),
-            )),
+            LivePage::File(path) => {
+                Some((LiveTarget::File { path: path.clone() }, format!("/{path}")))
+            }
         }
     }
 }
@@ -686,7 +682,9 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
     Some(LiveParams {
         listener,
         target,
+        root: live.root.clone(),
         cookie: random_token(),
+        mock_secret: random_token(),
         code_view: kemi_core::source::git::repo_root(&live.root).is_ok(),
     })
 }
