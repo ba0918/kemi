@@ -74,7 +74,8 @@ pub(super) async fn forward(
     }
 
     let (mut parts, body) = response.into_parts();
-    let rewrote = rewrite_headers(&mut parts.headers, state, &host, authority);
+    let nonce = nonce();
+    let rewrote = rewrite_headers(&mut parts.headers, state, &host, authority, &nonce);
     let html = parts
         .headers
         .get(header::CONTENT_TYPE)
@@ -94,7 +95,10 @@ pub(super) async fn forward(
         }
     };
     let text = String::from_utf8_lossy(&bytes);
-    let injected = rewrite::inject_script(&text, &script_tag(state, &host, &rewrote, true));
+    let injected = rewrite::inject_script(
+        &text,
+        &script_tag(state, &host, &rewrote, true, Some(&nonce)),
+    );
     parts.headers.remove(header::CONTENT_LENGTH);
     parts.headers.remove(header::TRANSFER_ENCODING);
     Response::from_parts(parts, Body::from(injected))
@@ -107,6 +111,7 @@ fn rewrite_headers(
     state: &LiveState,
     host: &str,
     authority: &str,
+    nonce: &str,
 ) -> Vec<&'static str> {
     let mut rewrote = Vec::new();
     if headers.remove(header::X_FRAME_OPTIONS).is_some() {
@@ -122,7 +127,7 @@ fn rewrite_headers(
         let ancestors = review_origin(state, host);
         let script = format!("http://{host}/__kemi/page.js");
         for policy in policies {
-            let rewritten = rewrite::rewrite_csp(&policy, &ancestors, &script);
+            let rewritten = rewrite::rewrite_csp(&policy, &ancestors, &script, nonce);
             if rewritten != policy && !rewrote.contains(&"content-security-policy") {
                 rewrote.push("content-security-policy");
             }
@@ -162,16 +167,29 @@ fn review_origin(state: &LiveState, host: &str) -> String {
     format!("http://{name}:{}", state.review_port)
 }
 
+/// 応答ごとの、推測できない nonce（CSP で差し込むスクリプトだけを通すため）。
+fn nonce() -> String {
+    let mut bytes = [0u8; 16];
+    // 取れなければ nonce を使う CSP のページでスクリプトが止まるだけで、中継は続けられる。
+    if getrandom::fill(&mut bytes).is_err() {
+        return String::new();
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// 差し込むスクリプトの要素。`data-kemi-watch` はファイルの保存で読み込み直すページの印。
+/// `nonce` は、ページの CSP に足したものと同じ値。
 pub(super) fn script_tag(
     state: &LiveState,
     host: &str,
     rewrote: &[&str],
     reachable: bool,
+    nonce: Option<&str>,
 ) -> String {
     let watch = matches!(state.target, LiveTarget::File { .. });
+    let nonce = nonce.map_or_else(String::new, |nonce| format!(r#" nonce="{nonce}""#));
     format!(
-        r#"<script src="/__kemi/page.js" data-kemi-review="{}" data-kemi-rewrote="{}" data-kemi-reachable="{reachable}" data-kemi-watch="{watch}"></script>"#,
+        r#"<script src="/__kemi/page.js"{nonce} data-kemi-review="{}" data-kemi-rewrote="{}" data-kemi-reachable="{reachable}" data-kemi-watch="{watch}"></script>"#,
         review_origin(state, host),
         rewrote.join(" "),
     )
@@ -221,7 +239,7 @@ setInterval(async () => {{
 </script>
 </body></html>
 "#,
-        script_tag(state, host, &[], false)
+        script_tag(state, host, &[], false, None)
     );
     (
         status,

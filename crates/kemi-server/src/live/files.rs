@@ -82,7 +82,7 @@ pub(super) async fn serve(state: &LiveState, root: &Path, request: Request) -> R
     if is_html(&relative) {
         let host = relay::request_host(request.headers());
         let text = String::from_utf8_lossy(&bytes);
-        let tag = relay::script_tag(state, &host, &[], true);
+        let tag = relay::script_tag(state, &host, &[], true, None);
         return (headers, rewrite::inject_script(&text, &tag)).into_response();
     }
     (headers, bytes).into_response()

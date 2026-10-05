@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 axum = "0.8.9"
 futures-util = "0.3.34"
+getrandom = "0.3"
 hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 kemi-core = { path = "../kemi-core" }

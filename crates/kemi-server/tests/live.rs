@@ -65,8 +65,8 @@ impl NoticeSink for Quiet {
     fn notify(&self, _notice: Notice) {}
 }
 
-/// 開発サーバの代わり。`/` は枠を拒むヘッダを付けた HTML、`/cookies` は受け取った
-/// Cookie ヘッダを返す。
+/// 開発サーバの代わり。`/` は枠を拒むヘッダを付けた HTML、`/nonce` は nonce と
+/// 'strict-dynamic' でスクリプトを縛る HTML、`/cookies` は受け取った Cookie ヘッダを返す。
 async fn start_dev_server() -> (String, JoinHandle<()>) {
     async fn page() -> Response {
         (
@@ -88,8 +88,22 @@ async fn start_dev_server() -> (String, JoinHandle<()>) {
             .map(|value| value.to_str().unwrap().to_string())
             .unwrap_or_else(|| "(none)".to_string())
     }
+    async fn nonce_page() -> Response {
+        (
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    "script-src 'nonce-dev' 'strict-dynamic'",
+                ),
+            ],
+            "<!doctype html><html><head></head><body>nonce page</body></html>",
+        )
+            .into_response()
+    }
     let app = Router::new()
         .route("/", get(page))
+        .route("/nonce", get(nonce_page))
         .route("/cookies", get(cookies));
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let authority = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -257,6 +271,26 @@ async fn a_page_that_refuses_frames_is_rewritten_and_gets_the_page_script() {
     let body = response.text().await.unwrap();
     assert!(body.contains(r#"<script src="/__kemi/page.js""#), "{body}");
     assert!(body.contains("dev page"), "{body}");
+}
+
+#[tokio::test]
+async fn a_page_that_allows_scripts_by_nonce_lets_the_page_script_run_by_its_own_nonce() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let response = get_with_cookie(&running, "/nonce").await;
+
+    let policy = response.headers()[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let body = response.text().await.unwrap();
+    let nonce = policy
+        .split_whitespace()
+        .filter_map(|source| source.strip_prefix("'nonce-")?.strip_suffix('\''))
+        .find(|nonce| *nonce != "dev")
+        .unwrap_or_else(|| panic!("no nonce for the page script: {policy}"));
+    assert!(body.contains(&format!(r#"nonce="{nonce}""#)), "{body}");
 }
 
 #[tokio::test]

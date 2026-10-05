@@ -33,10 +33,29 @@ fn find_tag(lower: &str, name: &str) -> Option<usize> {
     None
 }
 
-/// CSP の `frame-ancestors` をレビュー画面のオリジンだけにし、スクリプトを縛る指示に
-/// 差し込むスクリプトだけを足す。ほかの指示は変えない。`script-src` が無く
-/// `default-src` があるときは、`default-src` の値に足した `script-src` を作る。
-pub fn rewrite_csp(policy: &str, ancestors: &str, script_source: &str) -> String {
+/// CSP の `frame-ancestors` をレビュー画面のオリジンだけにし、スクリプトを縛る指示
+/// （`script-src-elem` と `script-src`）に差し込むスクリプトだけを足す。ほかの指示は変えない。
+/// どちらも無く `default-src` があるときは、`default-src` の値に足した `script-src` を作る。
+/// nonce・ハッシュ・'strict-dynamic' を使う指示には、URL ではなく差し込むスクリプトの
+/// `nonce` を足す。'strict-dynamic' があると URL での許可は無視されるため。
+pub fn rewrite_csp(policy: &str, ancestors: &str, script_url: &str, nonce: &str) -> String {
+    let allow = |sources: &str| {
+        let lower = sources.to_ascii_lowercase();
+        if [
+            "'nonce-",
+            "'sha256-",
+            "'sha384-",
+            "'sha512-",
+            "'strict-dynamic'",
+        ]
+        .iter()
+        .any(|keyword| lower.contains(keyword))
+        {
+            format!("'nonce-{nonce}'")
+        } else {
+            script_url.to_string()
+        }
+    };
     let mut directives: Vec<String> = Vec::new();
     let mut default_src = None;
     let mut has_script_src = false;
@@ -48,9 +67,9 @@ pub fn rewrite_csp(policy: &str, ancestors: &str, script_source: &str) -> String
             .to_ascii_lowercase();
         match name.as_str() {
             "frame-ancestors" => directives.push(format!("frame-ancestors {ancestors}")),
-            "script-src" => {
+            "script-src" | "script-src-elem" => {
                 has_script_src = true;
-                directives.push(format!("{directive} {script_source}"));
+                directives.push(format!("{directive} {}", allow(directive)));
             }
             _ => {
                 if name == "default-src" {
@@ -61,7 +80,7 @@ pub fn rewrite_csp(policy: &str, ancestors: &str, script_source: &str) -> String
         }
     }
     if !has_script_src && let Some(sources) = default_src {
-        directives.push(format!("script-src {sources} {script_source}"));
+        directives.push(format!("script-src {sources} {}", allow(&sources)));
     }
     directives.join("; ")
 }
@@ -316,7 +335,8 @@ mod tests {
             rewrite_csp(
                 policy,
                 "http://127.0.0.1:4000",
-                "http://127.0.0.1:5000/__kemi/page.js"
+                "http://127.0.0.1:5000/__kemi/page.js",
+                NONCE
             ),
             "default-src 'self'; frame-ancestors http://127.0.0.1:4000; img-src *; script-src 'self' http://127.0.0.1:5000/__kemi/page.js"
         );
@@ -326,15 +346,54 @@ mod tests {
     fn script_src_gets_only_the_injected_script_added() {
         let policy = "script-src 'self' 'unsafe-inline'; style-src 'self'";
         assert_eq!(
-            rewrite_csp(policy, "http://h:1", "http://h:2/__kemi/page.js"),
+            rewrite_csp(policy, "http://h:1", "http://h:2/__kemi/page.js", NONCE),
             "script-src 'self' 'unsafe-inline' http://h:2/__kemi/page.js; style-src 'self'"
+        );
+    }
+
+    const NONCE: &str = "n0nce";
+
+    fn csp(policy: &str) -> String {
+        rewrite_csp(policy, "http://h:1", "http://h:2/__kemi/page.js", NONCE)
+    }
+
+    #[test]
+    fn script_src_elem_also_gets_the_injected_script_added() {
+        assert_eq!(
+            csp("script-src-elem 'self'; script-src 'self'"),
+            "script-src-elem 'self' http://h:2/__kemi/page.js; script-src 'self' http://h:2/__kemi/page.js"
+        );
+        assert_eq!(
+            csp("default-src 'self'; script-src-elem 'self'"),
+            "default-src 'self'; script-src-elem 'self' http://h:2/__kemi/page.js"
+        );
+    }
+
+    #[test]
+    fn a_policy_with_nonces_hashes_or_strict_dynamic_gets_only_the_injected_nonce() {
+        assert_eq!(
+            csp("script-src 'nonce-page' 'strict-dynamic'"),
+            "script-src 'nonce-page' 'strict-dynamic' 'nonce-n0nce'"
+        );
+        assert_eq!(
+            csp("script-src-elem 'sha256-abc='"),
+            "script-src-elem 'sha256-abc=' 'nonce-n0nce'"
+        );
+        assert_eq!(
+            csp("default-src 'self' 'nonce-page'"),
+            "default-src 'self' 'nonce-page'; script-src 'self' 'nonce-page' 'nonce-n0nce'"
         );
     }
 
     #[test]
     fn a_policy_without_script_or_default_src_keeps_scripts_unrestricted() {
         assert_eq!(
-            rewrite_csp("img-src 'self'", "http://h:1", "http://h:2/__kemi/page.js"),
+            rewrite_csp(
+                "img-src 'self'",
+                "http://h:1",
+                "http://h:2/__kemi/page.js",
+                NONCE
+            ),
             "img-src 'self'"
         );
     }
