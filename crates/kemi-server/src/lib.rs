@@ -243,6 +243,8 @@ pub(crate) enum Event {
     Message(serde_json::Value),
     /// エージェントの状態か未渡しの件数が変わった（R-AGENT-STATE）。
     Agent(serde_json::Value),
+    /// エージェントに渡した。`--live` のページはスナップショットを取る（R-PAGE-SNAPSHOT）。
+    Handed,
 }
 
 /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が

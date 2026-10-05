@@ -7,6 +7,7 @@ mod channel;
 mod comments;
 mod file;
 mod rendered;
+mod snapshot;
 mod submit;
 
 use std::convert::Infallible;
@@ -36,6 +37,7 @@ use self::channel::{agent_json, hand_api, message_api};
 use self::comments::comment_api;
 use self::file::file_api;
 use self::rendered::{render_file, repository_image, review_image};
+use self::snapshot::{SNAPSHOT_BODY_LIMIT, get_snapshot, list_snapshots, take_snapshot};
 use self::submit::submit_api;
 use crate::session::{Session, page_comment_json, page_message_json, persist, start_freeze};
 use crate::units::{self, Unavailable};
@@ -61,6 +63,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/state", post(state_api))
         .route("/s/{token}/api/submit", post(submit_api))
         .route("/s/{token}/api/events", get(events))
+        .route(
+            "/s/{token}/api/snapshot",
+            post(take_snapshot).layer(axum::extract::DefaultBodyLimit::max(SNAPSHOT_BODY_LIMIT)),
+        )
+        .route("/s/{token}/api/snapshots", get(list_snapshots))
+        .route("/s/{token}/api/snapshot/{id}", get(get_snapshot))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, guard))
 }
@@ -130,6 +138,13 @@ impl ApiError {
     fn conflict(message: impl Into<String>) -> Self {
         ApiError {
             status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
+    fn too_large(message: impl Into<String>) -> Self {
+        ApiError {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
             message: message.into(),
         }
     }
@@ -560,6 +575,7 @@ async fn events(
                 Ok(Event::Thread(comment)) => ("thread", comment.to_string()),
                 Ok(Event::Message(message)) => ("message", message.to_string()),
                 Ok(Event::Agent(agent)) => ("agent", agent.to_string()),
+                Ok(Event::Handed) => ("handed", "{}".to_string()),
                 // 取りこぼした通知は、どれだったか分からない。ページは更新があったもの
                 // として扱い、スレッドと発言とエージェントの状態を取り直す。
                 Err(_) => ("lagged", "{}".to_string()),

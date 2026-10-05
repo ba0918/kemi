@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { WIDTH_CHOICES, buildPageTree, fitScale, liveOrigin, pageKey, parseWidth } from "./live-model.js";
+import {
+  WIDTH_CHOICES,
+  buildPageTree,
+  chooseSnapshot,
+  fitScale,
+  liveOrigin,
+  pageKey,
+  parseWidth,
+  snapshotLabel,
+  snapshotOptions,
+} from "./live-model.js";
 
 test("the width choices are 390, 768 and 1280", () => {
   assert.deepEqual(WIDTH_CHOICES, [390, 768, 1280]);
@@ -51,5 +61,44 @@ test("the page tree lists the shown page and the pages with snapshots or mocks, 
     { page: "/a", widths: [390, 1280], current: false, mock: false },
     { page: "/b", widths: [], current: true, mock: false },
     { page: "/c", widths: [], current: false, mock: true },
+  ]);
+});
+
+/** @param {string} id @param {string} kind @param {string} [page] @param {number} [width] */
+const snap = (id, kind, page = "/", width = 1280) => ({ id, kind, page, width });
+
+test("without a choice, the last handed snapshot of the page and width is compared", () => {
+  const snapshots = [snap("s1", "start"), snap("s2", "handed"), snap("s3", "manual"), snap("s4", "handed")];
+  assert.equal(chooseSnapshot(snapshots, "/", 1280, null)?.id, "s4");
+});
+
+test("before any hand-over, the start snapshot is compared, and then the last manual one", () => {
+  assert.equal(chooseSnapshot([snap("s1", "manual"), snap("s2", "start")], "/", 1280, null)?.id, "s2");
+  assert.equal(chooseSnapshot([snap("s1", "manual"), snap("s2", "manual")], "/", 1280, null)?.id, "s2");
+});
+
+test("only snapshots of the same page and width are compared", () => {
+  const snapshots = [snap("s1", "start", "/", 1280), snap("s2", "handed", "/other", 1280)];
+  assert.equal(chooseSnapshot(snapshots, "/", 390, null), null);
+  assert.equal(chooseSnapshot(snapshots, "/other", 1280, null)?.id, "s2");
+  assert.equal(chooseSnapshot(snapshots, "/missing", 1280, null), null);
+});
+
+test("a chosen point stays chosen when the width changes, and shows nothing at a width it lacks", () => {
+  const snapshots = [snap("s1", "start", "/", 1280), snap("s2", "manual", "/", 390)];
+  assert.equal(chooseSnapshot(snapshots, "/", 1280, "s1")?.id, "s1");
+  assert.equal(chooseSnapshot(snapshots, "/", 390, "s1"), null);
+});
+
+test("points are named by when they were taken, counted per kind", () => {
+  const snapshots = [snap("s1", "start"), snap("s2", "handed"), snap("s3", "manual"), snap("s4", "handed")];
+  assert.deepEqual(snapshots.map((s) => snapshotLabel(snapshots, s)), ["Start", "Handed 1", "Recorded 1", "Handed 2"]);
+});
+
+test("the points to choose from are the snapshots of the page, newest first", () => {
+  const snapshots = [snap("s1", "start"), snap("s2", "handed", "/other"), snap("s3", "manual", "/", 390)];
+  assert.deepEqual(snapshotOptions(snapshots, "/"), [
+    { id: "s3", label: "Recorded 1 · 390" },
+    { id: "s1", label: "Start · 1280" },
   ]);
 });

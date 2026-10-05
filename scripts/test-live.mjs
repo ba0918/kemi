@@ -12,9 +12,14 @@
 //   出す。幅 390px で 1 枚ずつ切り替える。git の外ではコードの見方の代わりに理由が出る。範囲の
 //   別の HTML へのリンクで見る対象が移り、ツリーに出る。`--live` でないレビューはページ用の
 //   ファイルを読み込まない。
+// - スナップショット: 渡す前は開始時が既定。390 と 1280 で取って切り替える。無い幅・別の URL では
+//   記録されていない旨と取る操作が出る。動いているページと画素を比べる（完全に一致しなければ
+//   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
+//   渡すと取る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -305,6 +310,205 @@ async function otherReviewsLoadNoPageFiles(repository) {
   }
 }
 
+// ---- 画素の比較（スナップショットの見た目） ----
+
+/** PNG を読む（8 ビットの RGB か RGBA、インターレース無し）。 */
+function decodePng(bytes) {
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let channels = 4;
+  const data = [];
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString('latin1', offset + 4, offset + 8);
+    const body = bytes.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') {
+      width = body.readUInt32BE(0);
+      height = body.readUInt32BE(4);
+      assert.equal(body[8], 8, 'only 8-bit PNG');
+      channels = body[9] === 6 ? 4 : body[9] === 2 ? 3 : assert.fail(`color type ${body[9]}`);
+    } else if (type === 'IDAT') {
+      data.push(body);
+    }
+    offset += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(data));
+  const stride = width * channels;
+  const pixels = Buffer.alloc(width * height * 4);
+  let previous = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
+    for (let x = 0; x < stride; x++) {
+      const left = x >= channels ? line[x - channels] : 0;
+      const up = previous[x];
+      const corner = x >= channels ? previous[x - channels] : 0;
+      const paeth = () => {
+        const p = left + up - corner;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - corner);
+        return pa <= pb && pa <= pc ? left : pb <= pc ? up : corner;
+      };
+      const add = [0, left, up, (left + up) >> 1, paeth()][filter];
+      line[x] = (line[x] + add) & 0xff;
+    }
+    for (let x = 0; x < width; x++) {
+      for (let c = 0; c < 4; c++) {
+        pixels[(y * width + x) * 4 + c] = c < channels ? line[x * channels + c] : 255;
+      }
+    }
+    previous = line;
+  }
+  return { width, height, pixels };
+}
+
+/** RGBA の画素を PNG にする（差の画像を残すため）。 */
+function encodePng(width, height, pixels) {
+  const chunk = (type, body) => {
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(body.length, 0);
+    header.write(type, 4, 'latin1');
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'latin1'), body])), 0);
+    return Buffer.concat([header, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const raw = Buffer.alloc(height * (width * 4 + 1));
+  for (let y = 0; y < height; y++) {
+    pixels.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
+  }
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+/** 要素のスクリーンショット。 */
+async function shot(selector, dir, name) {
+  const path = join(dir, `${name}.png`);
+  await browser('screenshot', selector, path);
+  return decodePng(await readFile(path));
+}
+
+/** 2 枚の重なる範囲を比べ、違う画素の数と割合を返す。違えば差の画像を書く。 */
+async function comparePixels(left, right, diffPath) {
+  const width = Math.min(left.width, right.width);
+  const height = Math.min(left.height, right.height);
+  const diff = Buffer.alloc(width * height * 4);
+  let different = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const a = (y * left.width + x) * 4;
+      const b = (y * right.width + x) * 4;
+      const same = [0, 1, 2].every((c) => left.pixels[a + c] === right.pixels[b + c]);
+      const d = (y * width + x) * 4;
+      if (same) {
+        diff[d] = diff[d + 1] = diff[d + 2] = Math.round(left.pixels[a] * 0.3 + 178);
+      } else {
+        different += 1;
+        diff[d] = 255;
+      }
+      diff[d + 3] = 255;
+    }
+  }
+  if (different > 0) {
+    await writeFile(diffPath, encodePng(width, height, diff));
+  }
+  return { different, total: width * height, ratio: different / (width * height) };
+}
+
+const refPane = '#live-stage .lv-pane[data-side="ref"]';
+const livePane = '#live-stage .lv-pane[data-side="live"]';
+
+/** 比べる相手の枠に、その id のスナップショットが出るのを待つ。 */
+const showsSnapshot = (label) => `document.querySelector('${refPane}').dataset.reference === 'snapshot' && document.querySelector('${refPane} .lv-bar-label').textContent.startsWith(${JSON.stringify(label)})`;
+const notRecorded = `document.querySelector('${refPane}').dataset.reference === 'none' && ${visible(`${refPane} .lv-empty`)} && document.querySelector('${refPane} .lv-empty').textContent.includes('has not been recorded')`;
+
+/** 枠の中の点を押す。 */
+async function clickInPane(pane, x, y) {
+  const box = await evaluate(`(() => { const r = document.querySelector('${pane} .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
+  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+  await browser('mouse', 'move', String(Math.round(box.x + x * scale)), String(Math.round(box.y + y * scale)));
+  await browser('mouse', 'down');
+  await browser('mouse', 'up');
+}
+
+/** スナップショット（R-PAGE-SNAPSHOT、R-PAGE-VIEW、R-PAGE-REF）。 */
+async function snapshotsAreTakenShownAndChosen(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    console.log('PASS 渡す前のレビューで、開始時のスナップショットが既定の比べる相手になる');
+
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(showsSnapshot('Recorded 1'));
+    assert.equal(
+      await evaluate(`document.querySelector('${refPane} .lv-frame').style.width === document.querySelector('${livePane} .lv-frame').style.width && document.querySelector('${livePane} .lv-frame').style.width === '390px'`),
+      true,
+    );
+    await browser('click', '.lv-widths button[data-width="1280"]');
+    await waitFor(showsSnapshot('Start'));
+    assert.equal(await evaluate(`document.querySelector('${refPane} .lv-frame').style.width`), '1280px');
+    console.log('PASS 390 と 1280 で取ってから幅を切り替えると、動いているページと比べる相手が同じ幅で描かれ、無い幅では記録されていない旨と取る操作が出る');
+
+    // 画素の比較は 390 で（縮めずに描ける幅）。
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(showsSnapshot('Recorded 1'));
+    await new Promise((done) => setTimeout(done, 500));
+    const before = await shot(`${refPane} .lv-frame`, shots, 'snapshot');
+    const now = await shot(`${livePane} .lv-frame`, shots, 'live');
+    const compared = await comparePixels(before, now, join(shots, 'diff.png'));
+    if (compared.different === 0) {
+      console.log(`PASS shadow DOM・canvas・SVG・入力欄を持つページのスナップショットが、動いているページと画素まで同じに出る（${compared.total} 画素）`);
+    } else {
+      console.log(`CHECK スナップショットと動いているページの画素が ${compared.different} / ${compared.total}（${(compared.ratio * 100).toFixed(3)}%）違う。差の画像: ${join(shots, 'diff.png')}（人が確かめる）`);
+    }
+
+    await clickInPane(refPane, 150, 250);
+    await new Promise((done) => setTimeout(done, 300));
+    const afterClick = await shot(`${refPane} .lv-frame`, shots, 'snapshot-clicked');
+    assert.equal((await comparePixels(before, afterClick, join(shots, 'clicked-diff.png'))).different, 0, 'the snapshot must not run onclick');
+    await clickInPane(livePane, 150, 250);
+    await new Promise((done) => setTimeout(done, 300));
+    const liveClicked = await shot(`${livePane} .lv-frame`, shots, 'live-clicked');
+    assert.ok((await comparePixels(now, liveClicked, join(shots, 'live-clicked-diff.png'))).different > 0, 'the running page runs onclick (control)');
+    console.log('PASS onclick を持つ要素を押しても、スナップショットではスクリプトが動かない（動いているページでは動く）');
+
+    await browser('click', '.lv-widths button[data-width="1280"]');
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${kemi.live.replace(/\/rich\.html$/, '')}/other.html`)}; true`);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/other.html') && ${notRecorded}`);
+    console.log('PASS 別の URL に移ると、その URL のスナップショットが無い旨が出る');
+
+    await browser('click', '.lv-record');
+    await waitFor(showsSnapshot('Recorded 2'));
+    const pages = `Array.from(document.querySelectorAll('#page-tree .lv-page')).map((row) => row.dataset.page + ':' + Array.from(row.querySelectorAll('.lv-width-tag')).map((tag) => tag.dataset.width).join(','))`;
+    await waitFor(`JSON.stringify(${pages}) === JSON.stringify(['/other.html:1280', '/rich.html:390,1280'])`);
+    await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/rich.html' && ${showsSnapshot('Start')}`);
+    await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-width-tag[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && ${showsSnapshot('Recorded 1')}`);
+    console.log('PASS スナップショットを持つ 2 つのページがツリーに表示幅と並び、押すとそのページ・その幅に移る');
+
+    await post(kemi.url, 'api/message', { body: 'please look' });
+    await post(kemi.url, 'api/hand', {});
+    await waitFor(showsSnapshot('Handed 1'));
+    console.log('PASS エージェントに渡すと表示中のページのスナップショットを取り、それが既定の比べる相手になる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -313,6 +517,7 @@ try {
   await pageViewShowsFramedPagesWidthsAndNarrowScreens(repository);
   await outsideGitFilePages();
   await otherReviewsLoadNoPageFiles(repository);
+  await snapshotsAreTakenShownAndChosen(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

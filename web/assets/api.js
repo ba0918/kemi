@@ -162,6 +162,39 @@ export function submit(verdict) {
  * }} AgentHandlers
  */
 
+/** subscribeEvents が開いた通知の流れ。後から読み込むページの見方が聞き足す。 */
+/** @type {EventSource | null} */
+let serverEvents = null;
+
+/**
+ * 開いている通知の流れに、名前の通知の受け手を足す（`--live` のページの見方が使う）。
+ * @param {string} name
+ * @param {() => void} handler
+ */
+export function onServerEvent(name, handler) {
+  serverEvents?.addEventListener(name, handler);
+}
+
+/**
+ * スナップショットを預ける（live.md の R-PAGE-SNAPSHOT）。
+ * @param {{ page: string, width: number, kind: string, html: string }} snapshot
+ */
+export function takeSnapshot(snapshot) {
+  return postJson("api/snapshot", snapshot);
+}
+
+/** 預けたスナップショットの見出し（取った順）。 */
+export function listSnapshots() {
+  return getJson("api/snapshots");
+}
+
+/**
+ * @param {string} id
+ */
+export function getSnapshot(id) {
+  return getJson(`api/snapshot/${encodeURIComponent(id)}`);
+}
+
 /**
  * @param {() => void} onUpdate 新側の供給元が変わった（更新バッジ）
  * @param {() => void} onUnit もう片方のグループ単位の作成の状態が変わった
@@ -170,6 +203,7 @@ export function submit(verdict) {
  */
 export function subscribeEvents(onUpdate, onUnit, agent) {
   const events = new EventSource("api/events");
+  serverEvents = events;
   events.addEventListener("update", onUpdate);
   events.addEventListener("unit", onUnit);
   /**

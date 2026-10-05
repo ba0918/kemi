@@ -16,11 +16,19 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   widthInput: HTMLInputElement,
  *   widthError: HTMLElement,
  *   compareSlot: HTMLElement,
+ *   compareSelect: HTMLSelectElement,
+ *   recordButton: HTMLButtonElement,
  *   sideSeg: HTMLElement,
  *   stage: HTMLElement,
  *   refPane: HTMLElement,
  *   refBar: HTMLElement,
+ *   refLabel: HTMLElement,
+ *   refNotice: HTMLElement,
  *   refViewport: HTMLElement,
+ *   refFrame: HTMLIFrameElement,
+ *   refEmpty: HTMLElement,
+ *   refEmptyText: HTMLElement,
+ *   refRecordButton: HTMLButtonElement,
  *   livePane: HTMLElement,
  *   liveBar: HTMLElement,
  *   liveLabel: HTMLElement,
@@ -73,6 +81,13 @@ export function buildShell() {
   widthGroup.append(widthSeg, widthInput, widthError);
 
   const compareSlot = el("div", "lv-compare lv-page-only");
+  compareSlot.append(textEl("span", "lv-label", "Compare with"));
+  const compareSelect = /** @type {HTMLSelectElement} */ (el("select", "lv-compare-select"));
+  compareSelect.setAttribute("aria-label", "Compare with");
+  const recordButton = button("lv-record");
+  recordButton.textContent = "Record now";
+  recordButton.title = "Take a snapshot of the page as it is now";
+  compareSlot.append(compareSelect, recordButton);
 
   const sideSeg = el("div", "lv-seg lv-side lv-page-only");
   sideSeg.setAttribute("role", "group");
@@ -89,6 +104,21 @@ export function buildShell() {
   const stage = el("div", "lv-stage");
   stage.id = "live-stage";
   const ref = pane("ref", "Before");
+  const refNotice = el("span", "lv-notice");
+  refNotice.hidden = true;
+  ref.bar.append(refNotice);
+  // スクリプトを止める（allow-scripts を付けない）。allow-same-origin も付けないので、
+  // 中身はレビュー画面と別の不透明なオリジンになる（R-PAGE-SNAPSHOT）。
+  const refFrame = /** @type {HTMLIFrameElement} */ (el("iframe", "lv-frame"));
+  refFrame.title = "Snapshot";
+  refFrame.setAttribute("sandbox", "");
+  refFrame.hidden = true;
+  const refEmpty = el("div", "lv-empty");
+  const refEmptyText = textEl("p", "", "");
+  const refRecordButton = button("btn lv-record");
+  refRecordButton.textContent = "Record now";
+  refEmpty.append(refEmptyText, refRecordButton);
+  ref.box.append(refFrame, refEmpty);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -118,11 +148,19 @@ export function buildShell() {
     widthInput,
     widthError,
     compareSlot,
+    compareSelect,
+    recordButton,
     sideSeg,
     stage,
     refPane: ref.pane,
     refBar: ref.bar,
+    refLabel: ref.label,
+    refNotice,
     refViewport: ref.viewport,
+    refFrame,
+    refEmpty,
+    refEmptyText,
+    refRecordButton,
     livePane: live.pane,
     liveBar: live.bar,
     liveLabel: live.label,
@@ -150,6 +188,23 @@ function pane(side, title) {
   viewport.append(box);
   element.append(bar, viewport);
   return { pane: element, bar, label, viewport, box };
+}
+
+/**
+ * 比べる相手の選択の中身。先頭は既定（決まった順で選ぶ）。
+ * @param {HTMLSelectElement} select
+ * @param {{ value: string, label: string }[]} options
+ * @param {string} chosen
+ */
+export function renderCompareOptions(select, options, chosen) {
+  select.textContent = "";
+  for (const option of options) {
+    const element = /** @type {HTMLOptionElement} */ (el("option"));
+    element.value = option.value;
+    element.textContent = option.label;
+    select.append(element);
+  }
+  select.value = chosen;
 }
 
 /**

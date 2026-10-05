@@ -10,7 +10,8 @@
 // ページ:
 //   /             style.css を読み、HMR の知らせで CSS を差し替える
 //   /framed.html  `X-Frame-Options: DENY` と `frame-ancestors 'none'` を返す
-//   /rich.html    shadow DOM・canvas・SVG・入力欄・onclick を持つ
+//   /rich.html    shadow DOM・canvas・SVG・入力欄・onclick（押すと背景が黄色になる、左上 (0, 200) の
+//                 300×100 のボタン）を持つ
 //   /siblings.html  兄弟の並び。`?extra=1` で途中に 1 つ足す
 //   /other.html   別のページ（ページの移動に使う）
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
@@ -60,7 +61,7 @@ const PAGES = {
 <style>
   body { margin: 0; font: 16px/1.4 sans-serif; }
   .row { display: flex; gap: 12px; padding: 12px; }
-  #clicked { color: rgb(0, 128, 0); }
+  #button { position: absolute; left: 0; top: 200px; width: 300px; height: 100px; }
 </style>
 </head><body>
 <div class="row">
@@ -71,8 +72,8 @@ const PAGES = {
 <div class="row">
   <input id="field" type="text">
   <input id="check" type="checkbox">
-  <button id="button" onclick="document.body.dataset.clicked = 'yes'">Press</button>
 </div>
+<button id="button" onclick="document.body.style.background = 'rgb(255, 255, 0)'">Press</button>
 <script>
   const host = document.getElementById('host');
   const root = host.attachShadow({ mode: 'open' });

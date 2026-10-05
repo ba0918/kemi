@@ -1,20 +1,38 @@
 // @ts-check
-// `--live` のページの見方（live.md の R-PAGE-MODE・R-PAGE-VIEW）。ページとコードの見方を
-// 切り替え、動いているページを選んだ表示幅で描き、比べる相手を並べ、ページのツリーを出す。
+// `--live` のページの見方（live.md の R-PAGE-MODE・R-PAGE-VIEW・R-PAGE-SNAPSHOT、
+// live-compare.md の R-PAGE-REF）。ページとコードの見方を切り替え、動いているページを選んだ
+// 表示幅で描き、比べる相手（スナップショット）を同じ幅で並べ、ページのツリーを出す。
 // app.js が `--live` のレビューでだけ動的に読み込む（R-VERIFY: ほかのレビューは読まない）。
 // 中継したページとは postMessage だけで話す（R-PAGE-PROXY）。
 
 import { actions } from "../actions.js";
+import * as api from "../api.js";
 import { dom } from "../dom.js";
-import { buildPageTree, fitScale, liveOrigin, pageKey, parseWidth } from "../live-model.js";
-import { buildShell, renderPageTree } from "../views/live.js";
+import {
+  buildPageTree,
+  chooseSnapshot,
+  fitScale,
+  liveOrigin,
+  pageKey,
+  parseWidth,
+  snapshotLabel,
+  snapshotOptions,
+} from "../live-model.js";
+import { buildShell, renderCompareOptions, renderPageTree } from "../views/live.js";
 
 /**
  * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
+ * @typedef {import("../live-model.js").SnapshotSummary} SnapshotSummary
  */
 
 /** 表示幅の既定。 */
 const DEFAULT_WIDTH = 1280;
+
+/** スナップショット 1 つの上限（R-PAGE-SNAPSHOT）。 */
+const SNAPSHOT_LIMIT = 2 * 1024 * 1024;
+
+/** ページが写しを返すまで待つ上限。 */
+const CAPTURE_TIMEOUT = 15000;
 
 const live = {
   /** @type {LiveInfo | null} */
@@ -25,7 +43,7 @@ const live = {
   width: DEFAULT_WIDTH,
   /** 表示中のページ（パスとクエリ）。 */
   page: "/",
-  reachable: true,
+  reachable: false,
   /** @type {string[]} */
   rewrote: [],
   /** 狭い画面で見ている側。 */
@@ -33,10 +51,28 @@ const live = {
   side: "live",
   /** 枠に収めるためにかけている倍率。 */
   scale: 1,
+  /** @type {SnapshotSummary[]} 取った順 */
+  snapshots: [],
+  /** ページごとに選んだ時点（スナップショットの id）。無ければ既定の順で選ぶ。 */
+  /** @type {Map<string, string>} */
+  chosen: new Map(),
+  /** 開始時のスナップショットを取りに行ったか。 */
+  startTaken: false,
+  /** 取れなかったときの知らせ。次に描くまで出す。 */
+  refNotice: "",
+  /** @type {Map<string, string>} 中身の写し（id → HTML） */
+  bodies: new Map(),
+  /** 比べる相手の枠に今出しているスナップショット。 */
+  shownSnapshot: "",
 };
 
 /** @type {import("../views/live.js").LiveShell | null} */
 let shell = null;
+
+/** 写しを頼んで返事を待っているもの。 */
+/** @type {Map<number, (message: any) => void>} */
+const pendingCaptures = new Map();
+let nextCapture = 1;
 
 /**
  * ページの見方を始める。
@@ -80,15 +116,36 @@ export function startLive(info) {
     const side = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.side;
     if (side === "live" || side === "ref") {
       live.side = side;
-      renderBand();
-      layoutFrames();
+      render();
     }
   });
+  shell.compareSelect.addEventListener("change", () => {
+    if (!shell) {
+      return;
+    }
+    if (shell.compareSelect.value === "") {
+      live.chosen.delete(live.page);
+    } else {
+      live.chosen.set(live.page, shell.compareSelect.value);
+    }
+    render();
+  });
+  shell.recordButton.addEventListener("click", () => void capture("manual"));
+  shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
+  // エージェントに渡すたびに、表示中のページのスナップショットを取る（R-PAGE-SNAPSHOT）。
+  api.onServerEvent("handed", () => void capture("handed"));
   new ResizeObserver(() => layoutFrames()).observe(shell.stage);
 
   shell.liveFrame.src = live.origin + live.page;
   setView("page");
+  void api.listSnapshots().then((list) => {
+    live.snapshots = list.snapshots ?? [];
+    // 読み込み直したページでは、開始時のスナップショットはもう取ってある。
+    live.startTaken = live.startTaken || live.snapshots.some((snapshot) => snapshot.kind === "start");
+    render();
+    takeStartSnapshot();
+  });
 }
 
 /**
@@ -113,14 +170,12 @@ function mirrorDrawer(pageTree) {
 function setView(view) {
   live.view = view;
   document.body.dataset.liveView = view;
+  document.body.dataset.liveCode = String(Boolean(live.info?.code));
   if (view === "code" && live.info?.code) {
     // 隠れていた間に測れなかった差分の枠を測り直させる。
     window.dispatchEvent(new Event("resize"));
   }
-  document.body.dataset.liveCode = String(Boolean(live.info?.code));
-  renderBand();
-  renderTree();
-  layoutFrames();
+  render();
 }
 
 /**
@@ -132,8 +187,7 @@ function setWidth(width) {
     shell.widthInput.value = "";
     shell.widthError.hidden = true;
   }
-  renderBand();
-  layoutFrames();
+  render();
 }
 
 function applyWidthInput() {
@@ -159,8 +213,7 @@ function openPage(page) {
   }
   live.page = page;
   shell.liveFrame.src = live.origin + page;
-  renderTree();
-  renderBand();
+  render();
   actions.closeDrawer();
 }
 
@@ -173,14 +226,90 @@ function receive(event) {
     return;
   }
   const message = event.data;
-  if (!message || message.kemi !== "live" || message.type !== "page") {
+  if (!message || message.kemi !== "live") {
     return;
   }
-  live.page = pageKey(String(message.path ?? "/"));
+  if (message.type === "captured") {
+    pendingCaptures.get(Number(message.id))?.(message);
+    return;
+  }
+  if (message.type !== "page") {
+    return;
+  }
+  const page = pageKey(String(message.path ?? "/"));
+  if (page !== live.page) {
+    live.refNotice = "";
+  }
+  live.page = page;
   live.reachable = message.reachable !== false;
   live.rewrote = Array.isArray(message.rewrote) ? message.rewrote.map(String) : [];
+  render();
+  takeStartSnapshot();
+}
+
+/** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
+function takeStartSnapshot() {
+  if (live.startTaken || !live.reachable) {
+    return;
+  }
+  live.startTaken = true;
+  void capture("start");
+}
+
+/**
+ * 表示中のページのスナップショットを取り、預ける。2 MB を超えるものは取らず、そのことを
+ * 出す。比べる相手は 1 つ前のまま（R-PAGE-SNAPSHOT）。
+ * @param {"start" | "handed" | "manual"} kind
+ */
+async function capture(kind) {
+  const frame = shell?.liveFrame.contentWindow;
+  if (!frame || !live.reachable) {
+    return;
+  }
+  const id = nextCapture++;
+  const page = live.page;
+  const width = live.width;
+  /** @type {any} */
+  const answer = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ error: "the page did not answer" }), CAPTURE_TIMEOUT);
+    pendingCaptures.set(id, (message) => {
+      clearTimeout(timer);
+      resolve(message);
+    });
+    frame.postMessage({ kemi: "live", type: "capture", id }, live.origin);
+  });
+  pendingCaptures.delete(id);
+  if (typeof answer.html !== "string") {
+    live.refNotice = `Not recorded: ${answer.error ?? "the page could not be copied"}`;
+    render();
+    return;
+  }
+  if (new Blob([answer.html]).size > SNAPSHOT_LIMIT) {
+    live.refNotice = "Not recorded: the snapshot is larger than 2 MB";
+    render();
+    return;
+  }
+  try {
+    const taken = await api.takeSnapshot({
+      page: pageKey(String(answer.path ?? page)),
+      width,
+      kind,
+      html: answer.html,
+    });
+    live.snapshots.push(taken);
+    live.bodies.set(taken.id, answer.html);
+    live.refNotice = "";
+  } catch (error) {
+    live.refNotice = `Not recorded: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  render();
+}
+
+function render() {
   renderBand();
   renderTree();
+  renderReference();
+  layoutFrames();
 }
 
 function renderBand() {
@@ -197,6 +326,15 @@ function renderBand() {
     choice.setAttribute("aria-pressed", String(choice.dataset.side === live.side));
   }
   shell.stage.dataset.side = live.side;
+  renderCompareOptions(
+    shell.compareSelect,
+    [
+      { value: "", label: "Latest (handed, start, recorded)" },
+      ...snapshotOptions(live.snapshots, live.page).map((option) => ({ value: option.id, label: option.label })),
+    ],
+    live.chosen.get(live.page) ?? "",
+  );
+  shell.recordButton.disabled = !live.reachable;
   shell.liveLabel.textContent = `${live.page} · ${live.width}${live.scale < 1 ? ` · ×${live.scale.toFixed(2)}` : ""}`;
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {
@@ -215,7 +353,7 @@ function renderTree() {
   }
   renderPageTree(
     shell.pageTree,
-    buildPageTree({ current: live.page, snapshots: [], mocks: new Set() }),
+    buildPageTree({ current: live.page, snapshots: live.snapshots, mocks: new Set() }),
     {
       onPage: openPage,
       onWidth: (page, width) => {
@@ -224,6 +362,60 @@ function renderTree() {
       },
     },
   );
+}
+
+/** 比べる相手を出す。無ければ、記録されていない旨と取る操作を出す（R-PAGE-VIEW）。 */
+function renderReference() {
+  if (!shell) {
+    return;
+  }
+  const snapshot = chooseSnapshot(live.snapshots, live.page, live.width, live.chosen.get(live.page) ?? null);
+  shell.refNotice.hidden = live.refNotice === "";
+  shell.refNotice.textContent = live.refNotice;
+  shell.refNotice.dataset.kind = "waiting";
+  if (!snapshot) {
+    shell.refPane.dataset.reference = "none";
+    delete shell.refPane.dataset.snapshot;
+    shell.refLabel.textContent = `${live.page} · ${live.width}`;
+    shell.refFrame.hidden = true;
+    shell.refEmpty.hidden = false;
+    shell.refEmptyText.textContent = "This page at this width has not been recorded yet.";
+    shell.refRecordButton.disabled = !live.reachable;
+    live.shownSnapshot = "";
+    return;
+  }
+  shell.refPane.dataset.reference = "snapshot";
+  shell.refPane.dataset.snapshot = snapshot.id;
+  shell.refLabel.textContent = `${snapshotLabel(live.snapshots, snapshot)} · ${snapshot.page} · ${snapshot.width}`;
+  shell.refEmpty.hidden = true;
+  shell.refFrame.hidden = false;
+  if (live.shownSnapshot !== snapshot.id) {
+    live.shownSnapshot = snapshot.id;
+    void showSnapshot(snapshot.id);
+  }
+}
+
+/**
+ * スナップショットの中身を、スクリプトを止めた枠に出す。
+ * @param {string} id
+ */
+async function showSnapshot(id) {
+  if (!shell) {
+    return;
+  }
+  let html = live.bodies.get(id);
+  if (html === undefined) {
+    html = String((await api.getSnapshot(id)).html ?? "");
+    live.bodies.set(id, html);
+  }
+  if (live.shownSnapshot !== id) {
+    return;
+  }
+  // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。
+  const frame = /** @type {HTMLIFrameElement} */ (shell.refFrame.cloneNode(false));
+  frame.srcdoc = html;
+  shell.refFrame.replaceWith(frame);
+  shell.refFrame = frame;
 }
 
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
@@ -235,12 +427,14 @@ function layoutFrames() {
   const viewport = shell.liveViewport.clientWidth > 0 ? shell.liveViewport : shell.refViewport;
   const scale = fitScale(viewport.clientWidth, live.width);
   const height = viewport.clientHeight / scale;
-  for (const target of [shell.liveFrame]) {
+  for (const target of [shell.liveFrame, shell.refFrame]) {
     target.style.width = `${live.width}px`;
     target.style.height = `${height}px`;
     target.style.transform = `scale(${scale})`;
   }
   shell.stage.style.setProperty("--lv-scale", String(scale));
-  live.scale = scale;
-  renderBand();
+  if (live.scale !== scale) {
+    live.scale = scale;
+    renderBand();
+  }
 }

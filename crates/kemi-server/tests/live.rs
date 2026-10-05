@@ -451,3 +451,121 @@ async fn a_missing_file_page_says_so_and_waits() {
     assert!(body.contains("kemi cannot read /gone.html"), "{body}");
     assert!(body.contains("/__kemi/alive"), "{body}");
 }
+
+// ---- スナップショット（R-PAGE-SNAPSHOT） ----
+
+async fn post_review(running: &Running, path: &str, body: serde_json::Value) -> reqwest::Response {
+    let origin = running
+        .review
+        .trim_end_matches("/s/test-token/")
+        .to_string();
+    reqwest::Client::new()
+        .post(format!("{}{path}", running.review))
+        .header(header::ORIGIN, origin)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn get_review_json(running: &Running, path: &str) -> serde_json::Value {
+    reqwest::get(format!("{}{path}", running.review))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_snapshot_is_kept_listed_and_returned() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let taken = post_review(
+        &running,
+        "api/snapshot",
+        serde_json::json!({ "page": "/", "width": 1280, "kind": "start", "html": "<p>then</p>" }),
+    )
+    .await;
+    assert_eq!(taken.status(), StatusCode::OK);
+    let taken: serde_json::Value = taken.json().await.unwrap();
+    let list = get_review_json(&running, "api/snapshots").await;
+    let one = get_review_json(
+        &running,
+        &format!("api/snapshot/{}", taken["id"].as_str().unwrap()),
+    )
+    .await;
+
+    assert_eq!(taken["page"], "/");
+    assert_eq!(taken["width"], 1280);
+    assert_eq!(taken["kind"], "start");
+    assert_eq!(list["snapshots"].as_array().unwrap().len(), 1);
+    assert_eq!(list["snapshots"][0]["id"], taken["id"]);
+    assert!(
+        list["snapshots"][0].get("html").is_none(),
+        "the list carries no bodies"
+    );
+    assert_eq!(one["html"], "<p>then</p>");
+}
+
+#[tokio::test]
+async fn a_snapshot_over_two_megabytes_is_refused_and_not_kept() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let refused = post_review(
+        &running,
+        "api/snapshot",
+        serde_json::json!({ "page": "/", "width": 1280, "kind": "manual", "html": "x".repeat(2 * 1024 * 1024 + 1) }),
+    )
+    .await;
+    let list = get_review_json(&running, "api/snapshots").await;
+
+    assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(list["snapshots"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn a_snapshot_of_an_unknown_kind_is_refused() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let refused = post_review(
+        &running,
+        "api/snapshot",
+        serde_json::json!({ "page": "/", "width": 1280, "kind": "later", "html": "<p></p>" }),
+    )
+    .await;
+
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn handing_to_the_agent_asks_the_page_for_a_snapshot() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+    let mut events = reqwest::get(format!("{}api/events", running.review))
+        .await
+        .unwrap();
+    post_review(
+        &running,
+        "api/message",
+        serde_json::json!({ "body": "look" }),
+    )
+    .await;
+
+    let handed = post_review(&running, "api/hand", serde_json::json!({})).await;
+    assert_eq!(handed.status(), StatusCode::OK);
+
+    let mut buffer = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !buffer.contains("event: handed") {
+        let chunk = tokio::time::timeout_at(deadline, events.chunk())
+            .await
+            .expect("no handed event")
+            .unwrap()
+            .expect("the event stream ended");
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+    }
+}

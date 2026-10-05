@@ -58,6 +58,9 @@ pub(super) async fn hand_api(
     persist(&state);
     if handed {
         state.wake.notify_waiters();
+        if state.live.is_some() {
+            let _ = state.events.send(Event::Handed);
+        }
     }
     notify_agent_state(&state);
     Ok(Json(json!({ "handed": handed })))

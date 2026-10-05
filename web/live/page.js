@@ -16,10 +16,231 @@
   /** @param {Record<string, unknown>} message */
   const post = (message) => window.parent.postMessage({ kemi: 'live', ...message }, review);
 
-  post({
+  window.addEventListener('message', async (event) => {
+    if (event.source !== window.parent || event.origin !== review) return;
+    const message = event.data;
+    if (!message || message.kemi !== 'live' || message.type !== 'capture') return;
+    try {
+      const html = await captureSnapshot();
+      post({ type: 'captured', id: message.id, path: location.pathname + location.search, html });
+    } catch (error) {
+      post({ type: 'captured', id: message.id, error: String(error) });
+    }
+  });
+
+  // 読み込み終えてから知らせる。知らせを受けたレビュー画面は、すぐ開始時の写しを頼むことがある。
+  const announce = () => post({
     type: 'page',
     path: location.pathname + location.search,
     reachable: script?.dataset.kemiReachable !== 'false',
     rewrote: (script?.dataset.kemiRewrote ?? '').split(' ').filter(Boolean),
   });
+  if (document.readyState === 'complete') announce();
+  else window.addEventListener('load', announce, { once: true });
+
+  // ---- スナップショット（R-PAGE-SNAPSHOT、形は DL3） ----
+  // 今の DOM を写し、スクリプトを除いた 1 つの HTML にする。shadow DOM は宣言的な
+  // shadow root に、canvas は画像に、入力欄の値は属性に移す。読み込んだ CSS と画像は
+  // data: の URL に埋め込む。スナップショットを出す枠はレビュー画面の中の別のオリジンで、
+  // 中継の cookie を持たず、中継のポートから何も読めないため。
+
+  /** @type {Map<string, Promise<string>>} */
+  const inlined = new Map();
+
+  /**
+   * URL の中身を data: の URL にする。読めなければ元の URL のまま。
+   * @param {string} url
+   * @returns {Promise<string>}
+   */
+  function dataUrl(url) {
+    if (url.startsWith('data:')) return Promise.resolve(url);
+    let pending = inlined.get(url);
+    if (!pending) {
+      pending = fetch(url, { credentials: 'same-origin' })
+        .then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
+        .then((blob) => new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        }))
+        .then((value) => String(value))
+        .catch(() => url);
+      inlined.set(url, pending);
+    }
+    return pending;
+  }
+
+  /**
+   * CSS の url() を、基準の URL で解いて data: の URL に埋め込む。
+   * @param {string} css
+   * @param {string} base
+   * @returns {Promise<string>}
+   */
+  async function inlineCss(css, base) {
+    const pattern = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+    const found = [...css.matchAll(pattern)];
+    const replacements = await Promise.all(found.map(async (match) => {
+      const target = match[2].trim();
+      if (target.startsWith('data:') || target.startsWith('#')) return match[0];
+      const absolute = new URL(target, base).href;
+      return `url("${await dataUrl(absolute)}")`;
+    }));
+    let index = 0;
+    return css.replace(pattern, () => replacements[index++]);
+  }
+
+  /**
+   * スタイルシートの規則の文字列。読めない（別のオリジンの）ものは空。
+   * @param {CSSStyleSheet} sheet
+   * @returns {string}
+   */
+  function sheetText(sheet) {
+    try {
+      return [...sheet.cssRules].map((rule) => rule.cssText).join('\n');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * @param {Document} owner
+   * @param {string} css
+   */
+  function styleElement(owner, css) {
+    const style = owner.createElement('style');
+    style.textContent = css;
+    return style;
+  }
+
+  /**
+   * 元の要素の今の状態を、写しの要素に移す。写しは置き換わることがあるので、最後に
+   * 写しとして使う要素を返す（取り除くときは null）。
+   * @param {Element} original
+   * @param {Element} copy
+   * @returns {Promise<Element | null>}
+   */
+  async function snapshotElement(original, copy) {
+    const owner = /** @type {Document} */ (copy.ownerDocument);
+    const tag = original.localName;
+    if (tag === 'script' || tag === 'noscript' || (tag === 'meta' && /refresh/i.test(original.getAttribute('http-equiv') ?? ''))) {
+      return null;
+    }
+    if (tag === 'link') {
+      const rel = (original.getAttribute('rel') ?? '').toLowerCase().split(/\s+/);
+      const sheet = /** @type {HTMLLinkElement} */ (original).sheet;
+      if (rel.includes('stylesheet') && sheet) {
+        return styleElement(owner, await inlineCss(sheetText(sheet), sheet.href ?? location.href));
+      }
+      if (rel.some((value) => ['preload', 'modulepreload', 'prefetch'].includes(value))) return null;
+    }
+    if (tag === 'style') {
+      copy.textContent = await inlineCss(original.textContent ?? '', document.baseURI);
+      return copy;
+    }
+    if (tag === 'canvas') {
+      const canvas = /** @type {HTMLCanvasElement} */ (original);
+      const image = owner.createElement('img');
+      for (const attribute of [...original.attributes]) image.setAttribute(attribute.name, attribute.value);
+      image.setAttribute('width', String(canvas.width));
+      image.setAttribute('height', String(canvas.height));
+      try {
+        image.setAttribute('src', canvas.toDataURL());
+      } catch {
+        // 別のオリジンの画像を描いた canvas は読み出せない。大きさだけを保つ。
+      }
+      return image;
+    }
+    if (tag === 'img') {
+      const image = /** @type {HTMLImageElement} */ (original);
+      const source = image.currentSrc || image.src;
+      if (source) copy.setAttribute('src', await dataUrl(source));
+      copy.removeAttribute('srcset');
+      copy.removeAttribute('sizes');
+      copy.removeAttribute('loading');
+    }
+    if (tag === 'input') {
+      const input = /** @type {HTMLInputElement} */ (original);
+      if (input.type === 'checkbox' || input.type === 'radio') {
+        if (input.checked) copy.setAttribute('checked', '');
+        else copy.removeAttribute('checked');
+      } else if (input.type !== 'file' && input.type !== 'password') {
+        copy.setAttribute('value', input.value);
+      }
+    }
+    if (tag === 'textarea') {
+      copy.textContent = /** @type {HTMLTextAreaElement} */ (original).value;
+    }
+    if (tag === 'option') {
+      if (/** @type {HTMLOptionElement} */ (original).selected) copy.setAttribute('selected', '');
+      else copy.removeAttribute('selected');
+    }
+    for (const attribute of [...copy.attributes]) {
+      if (/^on/i.test(attribute.name) || /^\s*javascript:/i.test(attribute.value)) {
+        copy.removeAttribute(attribute.name);
+      }
+    }
+    if (tag !== 'textarea') {
+      await snapshotChildren(original, copy);
+    }
+    if (original.shadowRoot) {
+      const template = owner.createElement('template');
+      template.setAttribute('shadowrootmode', 'open');
+      for (const child of [...original.shadowRoot.childNodes]) {
+        const copied = await snapshotNode(child, owner);
+        if (copied) template.content.append(copied);
+      }
+      for (const sheet of original.shadowRoot.adoptedStyleSheets) {
+        template.content.append(styleElement(owner, await inlineCss(sheetText(sheet), document.baseURI)));
+      }
+      copy.prepend(template);
+    }
+    return copy;
+  }
+
+  /**
+   * 1 つの節を写す。要素は状態ごと、それ以外はそのまま。
+   * @param {Node} original
+   * @param {Document} owner
+   * @returns {Promise<Node | null>}
+   */
+  async function snapshotNode(original, owner) {
+    const copy = owner.importNode(original, false);
+    if (original instanceof Element) {
+      return snapshotElement(original, /** @type {Element} */ (copy));
+    }
+    return copy;
+  }
+
+  /**
+   * 子を 1 つずつ写す（浅く写して、子は自分で足す）。
+   * @param {Element} original
+   * @param {Element} copy
+   */
+  async function snapshotChildren(original, copy) {
+    const owner = /** @type {Document} */ (copy.ownerDocument);
+    const children = original instanceof HTMLTemplateElement ? original.content.childNodes : original.childNodes;
+    const target = copy instanceof HTMLTemplateElement ? copy.content : copy;
+    for (const child of [...children]) {
+      const copied = await snapshotNode(child, owner);
+      if (copied) target.append(copied);
+    }
+  }
+
+  async function captureSnapshot() {
+    const owner = document.implementation.createHTMLDocument('');
+    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner));
+    const head = root.querySelector('head');
+    if (head) {
+      // 埋め込めなかった相対の参照は、中継のオリジンに解く（読めなくても形は崩れない）。
+      const base = owner.createElement('base');
+      base.setAttribute('href', location.href);
+      head.prepend(base);
+      for (const sheet of document.adoptedStyleSheets) {
+        head.append(styleElement(owner, await inlineCss(sheetText(sheet), document.baseURI)));
+      }
+    }
+    const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
+    return doctype + root.outerHTML;
+  }
 })();

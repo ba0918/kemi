@@ -92,3 +92,63 @@ export function buildPageTree({ current, snapshots, mocks }) {
       mock: mocks.has(page),
     }));
 }
+
+/**
+ * スナップショットの見出し（中身は持たない）。
+ * @typedef {{ id: string, kind: string, page: string, width: number }} SnapshotSummary
+ */
+
+/**
+ * 比べる相手のスナップショット（live-compare.md の R-PAGE-REF）。時点を選んでいればその
+ * スナップショットで、ページか表示幅が違えば無い。選んでいなければ、そのページと表示幅の
+ * ものから、最後に渡した時点 → 開始時 → 最後に手で取ったもの、の順に最初に見つかったもの。
+ * @param {SnapshotSummary[]} snapshots 取った順
+ * @param {string} page
+ * @param {number} width
+ * @param {string | null} chosen 選んだ時点（スナップショットの id）
+ * @returns {SnapshotSummary | null}
+ */
+export function chooseSnapshot(snapshots, page, width, chosen) {
+  const here = snapshots.filter((snapshot) => snapshot.page === page && snapshot.width === width);
+  if (chosen !== null) {
+    return here.find((snapshot) => snapshot.id === chosen) ?? null;
+  }
+  for (const kind of ["handed", "start", "manual"]) {
+    const found = here.filter((snapshot) => snapshot.kind === kind).at(-1);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+/** @type {Record<string, string>} */
+const KIND_LABELS = { start: "Start", handed: "Handed", manual: "Recorded" };
+
+/**
+ * 時点の呼び名。開始時はひとつ、渡した時点と手で取った時点は種類ごとに数える。
+ * @param {SnapshotSummary[]} snapshots 取った順
+ * @param {SnapshotSummary} snapshot
+ * @returns {string}
+ */
+export function snapshotLabel(snapshots, snapshot) {
+  const label = KIND_LABELS[snapshot.kind] ?? snapshot.kind;
+  if (snapshot.kind === "start") {
+    return label;
+  }
+  const index = snapshots.filter((other) => other.kind === snapshot.kind).indexOf(snapshot);
+  return `${label} ${index + 1}`;
+}
+
+/**
+ * 比べる相手の選択に並べる時点。そのページのスナップショットを新しい順に、表示幅を添えて。
+ * @param {SnapshotSummary[]} snapshots 取った順
+ * @param {string} page
+ * @returns {{ id: string, label: string }[]}
+ */
+export function snapshotOptions(snapshots, page) {
+  return snapshots
+    .filter((snapshot) => snapshot.page === page)
+    .reverse()
+    .map((snapshot) => ({ id: snapshot.id, label: `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}` }));
+}

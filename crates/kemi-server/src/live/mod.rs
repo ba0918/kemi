@@ -53,6 +53,45 @@ pub(crate) struct LiveInfo {
     pub start: String,
     pub display: String,
     pub code_view: bool,
+    /// 取ったスナップショット。保存はまだ無く、メモリにだけ持つ（R-PAGE-SNAPSHOT）。
+    pub snapshots: std::sync::Mutex<Vec<Snapshot>>,
+}
+
+/// スナップショット 1 つ。中身はスクリプトを含まない HTML（形はページ用のスクリプトが決める）。
+pub(crate) struct Snapshot {
+    pub id: String,
+    /// ページ（パスとクエリ）。
+    pub page: String,
+    pub width: u32,
+    pub kind: SnapshotKind,
+    pub html: String,
+}
+
+/// 取った時点（R-PAGE-SNAPSHOT）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SnapshotKind {
+    Start,
+    Handed,
+    Manual,
+}
+
+impl SnapshotKind {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "start" => Some(SnapshotKind::Start),
+            "handed" => Some(SnapshotKind::Handed),
+            "manual" => Some(SnapshotKind::Manual),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SnapshotKind::Start => "start",
+            SnapshotKind::Handed => "handed",
+            SnapshotKind::Manual => "manual",
+        }
+    }
 }
 
 impl LiveInfo {
@@ -126,6 +165,7 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
         start,
         display,
         code_view: params.code_view,
+        snapshots: std::sync::Mutex::new(Vec::new()),
     };
     Ok((params.listener, info, params.target))
 }
