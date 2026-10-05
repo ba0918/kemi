@@ -124,6 +124,7 @@ export async function refresh() {
     renderFileHeader();
     renderNotice();
     renderConversation();
+    actions.reloadThreadLines();
     return;
   }
   if (keep) {
@@ -133,6 +134,8 @@ export async function refresh() {
   }
   dom.viewport.scrollTop = scrollTop;
   scheduleRender();
+  // 表示中のファイルを読み終えてから。開いているスレッドが同じファイルなら読み直さずに済む。
+  actions.reloadThreadLines();
 }
 
 /**

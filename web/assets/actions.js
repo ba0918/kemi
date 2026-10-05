@@ -22,6 +22,7 @@
  *   addComment: (payload: any) => void,
  *   closeThread: () => void,
  *   loadCommitGroups: () => void,
+ *   reloadThreadLines: () => void,
  *   editFromThread: (comment: any, unit: string | null) => void,
  *   openThread: (id: string) => void,
  *   replyTo: (comment: any, body: string) => void,

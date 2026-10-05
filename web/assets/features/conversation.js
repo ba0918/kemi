@@ -186,6 +186,17 @@ async function loadThreadLines(comment) {
   }
 }
 
+/**
+ * 会話パネルで開いているスレッドの対象の行の前後を読み直す。再取得で行のキャッシュが消えた後に
+ * 呼ぶ。
+ */
+export function reloadThreadLines() {
+  const comment = openedThread();
+  if (conversationShown() && comment) {
+    void loadThreadLines(comment);
+  }
+}
+
 /** 届いたことを示す印を押した。見えている並びを一番下へ送る。 */
 export function showNewest() {
   const list = dom.cvThread.hidden ? dom.cvItems : dom.cvThreadBody;
