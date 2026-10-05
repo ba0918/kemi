@@ -6,44 +6,71 @@ on:
     tags-ignore: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
+# 同じブランチ・PR に新しい push が来たら、走っている検査は古いので止める。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    name: Rust (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
       - name: Licenses
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check licenses
       - name: Domain purity
-        run: |
-          if rg -n 'use (axum|hyper|tokio|std::process)' crates/kemi-core/src/domain; then
-            echo "domain must not depend on infrastructure" >&2
-            exit 1
-          fi
+        run: scripts/check-domain-purity.sh
 
   rust-windows:
-    runs-on: windows-latest
+    name: Rust (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   web:
-    runs-on: ubuntu-latest
+    name: Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "26"
+          package-manager-cache: false
       - name: Install
         run: npm ci
       - name: Types
@@ -52,23 +79,19 @@ jobs:
         run: node --test web
 
   skill:
-    runs-on: ubuntu-latest
+    name: Skill
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
       - name: Skill format
         run: uvx --from skills-ref==0.1.1 agentskills validate ./skills/kemi
       - name: Skill frontmatter
-        run: |
-          fm=$(awk 'NR>1 && /^---$/{exit} NR>1' skills/kemi/SKILL.md)
-          if printf '%s\n' "$fm" | grep -nP '[^\x00-\x7F]'; then
-            echo "frontmatter must be ASCII only" >&2
-            exit 1
-          fi
-          keys=$(printf '%s\n' "$fm" | grep -cE '^[a-z][a-z0-9_-]*:') || true
-          if [ "$keys" != 3 ]; then
-            echo "frontmatter must have exactly 3 keys, found $keys" >&2
-            exit 1
-          fi
+        run: scripts/check-skill-frontmatter.sh

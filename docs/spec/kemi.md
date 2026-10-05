@@ -1790,7 +1790,7 @@ scripts/
 | 条件 | 出所 |
 |---|---|
 | Rust のユニット・統合テスト | `cargo test`（CI は ubuntu と windows。macOS は ubuntu で代表する） |
-| 警告ゼロ | `cargo clippy -- -D warnings` / `cargo fmt --check` |
+| 警告ゼロ | `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo fmt --all --check` |
 | 依存ライセンス | `cargo deny check licenses` |
 | フロントの型 | `npx tsc -p web --noEmit` |
 | フロントの純ロジック | `node --test web` |

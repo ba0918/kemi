@@ -58,10 +58,10 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Install（利用者） | `mise use -g github:ba0918/kemi`（リリース後） |
 | Build | `cargo build --release` |
 | Test | `cargo test` / `node --test web` |
-| Lint | `cargo clippy -- -D warnings` / `cargo fmt --check` / `npx tsc -p web --noEmit` |
+| Lint | `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo fmt --all --check` / `npx tsc -p web --noEmit` |
 | スキルの形式 | `agentskills validate ./skills/kemi` |
-| スキルの frontmatter（非 ASCII） | `awk 'NR>1 && /^---$/{exit} NR>1' skills/kemi/SKILL.md \| grep -nP '[^\x00-\x7F]'` が一致しない |
-| スキルの frontmatter（項目数） | `awk 'NR>1 && /^---$/{exit} NR>1' skills/kemi/SKILL.md \| grep -cE '^[a-z][a-z0-9_-]*:'` が `3` |
+| スキルの frontmatter（ASCII だけ・項目は 3 つ） | `scripts/check-skill-frontmatter.sh` |
+| ドメインの純粋さ | `scripts/check-domain-purity.sh` |
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
