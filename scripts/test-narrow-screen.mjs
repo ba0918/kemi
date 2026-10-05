@@ -4,12 +4,13 @@
 //   node scripts/test-narrow-screen.mjs <kemi-bin>
 //
 // 1 回目の起動: 引き出し、1 列と折返し、折返しの記憶と localStorage、ファイルヘッダの 2 行、
-// 吹き出しの左端と画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
+// 画像の並び、n での引き出し、幅をまたいだ表示モード、幅をまたいだときの
 // 選択・下書き・上端の行、上部バーの 2 段、「…」のメニュー、320px の進捗、title と
 // 会話パネルのシート（狭い画面で読み込むと閉じて始まること）、広い画面の上部バー、広い画面の
 // ドラッグ、狭い画面のタップの選択と解除の範囲、押し下げとホバーで選択が始まらないこと、
-// 吹き出しの既定（畳んだ札）と「…」の Comments で隠すことと、シートのスレッドから移った
-// 1 件だけの表示、描画表示のブロックのタップ。
+// 札と入力欄の左端、札を押すとシートでスレッドが開くこと、「…」の Comments で札を隠すこと、
+// シートのスレッドからその行へ移るとシートが閉じてその行が見えること、シートを開いたまま
+// 幅をまたぐとシートが閉じること、描画表示のブロックのタップ。
 // 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -567,8 +568,12 @@ try {
   assert.notEqual(numberCell.shadow, 'none', `the line-number cell should carry the comment line: ${JSON.stringify(numberCell)}`);
   console.log('PASS 390px で付けたコメントは札で出て、押すとシートでスレッドが開き、Comments で札が消えて行番号の欄の線は残る');
 
-  // (20) 札を隠している間も、会話パネルのシートの一覧からスレッドを開いてその行へ移れる。
-  //      戻すと札が出る。
+  // (20) シートのスレッドからその行へ移ると、シートが閉じて、そのファイルのその行が見える。
+  //      札を隠している間も同じで、戻すと札が出る。
+  await browser('click', '#btn-tree');
+  await waitFor(drawerOpen);
+  await selectFile(LONG_PATH);
+  await waitFor(drawerClosed);
   await browser('click', '#btn-comments');
   await waitFor(sheetOpen);
   // シートは最後に開いていたスレッド（(19) で開いたもの）のまま開く。一覧へ戻ってから選ぶ。
@@ -577,11 +582,32 @@ try {
   await evaluate(`Array.from(document.querySelectorAll('#cv-items .cv-card')).find(b => b.querySelector('.cv-first')?.textContent === 'narrow comment').click(); true`);
   await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('narrow comment')`);
   await browser('click', '#cv-thread-head .cv-go');
-  await waitFor(`${sheetClosed} && ${notLoading} && ${newNumber(6)} !== undefined`);
+  const lineInView = `(() => {
+    const number = ${newNumber(6)};
+    if (!number) return false;
+    const box = number.getBoundingClientRect();
+    const view = document.querySelector('#diff-viewport').getBoundingClientRect();
+    return box.top >= view.top && box.bottom <= view.bottom;
+  })()`;
+  await waitFor(`${sheetClosed} && ${at('src/dir0/file0.txt')} && ${notLoading} && ${lineInView}`);
+  assert.equal(await isShown('#conversation'), false);
   assert.equal(await chips(), 0);
   assert.equal(await toggleComments(), 'true');
   assert.equal(await chips(), 2);
-  console.log('PASS 札を隠している間もシートのスレッドからその行へ移れ、戻すと札が出る');
+  console.log('PASS シートのスレッドからその行へ移るとシートが閉じてその行が見え、札を隠していても移れる');
+
+  // (21) シートを開いたまま幅をまたぐと、再読込なしに配置が切り替わってシートは閉じる。
+  //      広い画面では覚えている会話パネルの開閉（開いた列）に戻り、狭い画面へ戻ってもシートは閉じたまま。
+  await browser('click', '#btn-comments');
+  await waitFor(sheetOpen);
+  await browser('set', 'viewport', ...WIDE);
+  await waitFor(`${wideApplied} && getComputedStyle(document.querySelector('#conversation')).position !== 'fixed'`);
+  const column = await rect('#conversation');
+  assert.ok(column.left > 600 && Math.round(column.right) === 1280, `the panel should be the right column: ${JSON.stringify(column)}`);
+  await browser('set', 'viewport', ...NARROW);
+  await waitFor(`${narrowApplied} && ${sheetClosed}`);
+  assert.equal(await isShown('#conversation'), false);
+  console.log('PASS シートを開いたまま幅をまたぐとシートは閉じ、広い画面では右の列に戻る');
 
   // (16) 390px の描画表示では、ブロックのタップで `+` が出る。
   await browser('click', '#btn-tree');
