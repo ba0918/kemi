@@ -13,15 +13,25 @@
 | When | Read |
 |---|---|
 | Always | ba0918-design, ba0918-placement, ba0918-readability, ba0918-secrets |
+| ci | ba0918-ci |
 | commit | ba0918-commit |
 | delegate | ba0918-delegation |
 | design | ba0918-reuse |
 | diff-review | ba0918-diff-review |
+| document | ba0918-documents |
+| gui | ba0918-gui-structure |
 | implement | ba0918-tdd |
+| mutation | ba0918-mutation-testing |
 | release | ba0918-release |
 | review | ba0918-verification |
+| rust | ba0918-rust |
+| worktree | ba0918-worktree |
 
 ルールはスキル名で参照する。該当する作業を始める前に、対応するルールをすべて読む。
+一度読んだルールは、そのコンテキストの間は有効とする。読み直すのは、コンテキストが圧縮・
+クリアされた後か、ルール自体が変わったときだけ。委譲された作業では、委譲プロンプトが
+「埋め込み済み」と明示したルールはそのプロンプトから有効とし、読み直さない。それ以外の
+ルールは、この表に従って通常どおり読む。
 
 ## Project Context
 
