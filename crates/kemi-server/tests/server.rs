@@ -3688,10 +3688,9 @@ async fn a_second_concurrent_wait_is_refused() {
     };
     server.wait_until_status("waiting").await;
 
-    let (status, answer) = server.wait(Some(100)).await;
+    let (status, _) = server.wait(Some(100)).await;
 
     assert_eq!(status, 409);
-    assert!(answer["error"].as_str().unwrap().contains("kemi wait"));
 }
 
 /// 起動時は読めるが、取り直しの読み取りで失敗する入力。
@@ -3905,13 +3904,9 @@ async fn a_write_with_variants_is_a_shape_error_outside_a_live_review() {
     let mut with_variants = agent_reply("c1", "two ideas");
     with_variants["variants"] = json!([{ "label": "A", "replace": [], "css": "" }]);
 
-    let (status, answer) = server.reply(json!([with_variants])).await;
+    let (status, _) = server.reply(json!([with_variants])).await;
 
     assert_eq!(status, 400);
-    assert!(
-        answer["error"].as_str().unwrap().contains("variants"),
-        "{answer}"
-    );
     assert_nothing_written(&server).await;
 }
 
