@@ -90,7 +90,8 @@ the change the same way the page will show it.
 An interrupted run (exit `130`) keeps its comments, seen marks, folding, and resolutions in a
 session. Only a session whose copy completed within the size limit can be listed or resumed;
 one whose copy is unfinished or too large keeps the state alone, and a run with nothing to keep
-leaves no session. Continue it instead of rebuilding the input:
+leaves no session. A `--live` review keeps no copy: it is kept only when it holds a comment, a
+reply, or a message. Continue it instead of rebuilding the input:
 
 ```text
 kemi --resume <id>   # the id is in the `kemi: resume with:` line on stderr
@@ -98,12 +99,13 @@ kemi --resume        # in a terminal, choose from the list of sessions
 ```
 
 The resumed page shows the diff as frozen when the review started, so the working tree or the
-repository may have moved on; only origin notes then read "Cannot determine". `--resume` is not an
-input mode to combine with the others: it takes only `--port`, `--bind`, `--no-open`, and
-`--serve`, and any input mode or `--digest` beside it is a usage error (exit `2`). Without an
-id and without a terminal it prints the resumable sessions as tab-separated lines (id, last
-update, workspace, mode, seen/total, newest first) and exits `0`, or exits `2` with nothing
-on stdout when there are none.
+repository may have moved on; only origin notes then read "Cannot determine". A `--live` review is
+the exception: resuming it reads the working tree as it is then and connects to the same page again
+([above](#reviewing-a-running-page)). `--resume` is not an input mode to combine with the others:
+it takes only `--port`, `--bind`, `--no-open`, and `--serve`, and any input mode or `--digest`
+beside it is a usage error (exit `2`). Without an id and without a terminal it prints the resumable
+sessions as tab-separated lines (id, last update, workspace, mode, seen/total, newest first) and
+exits `0`, or exits `2` with nothing on stdout when there are none.
 
 ## Writing a manifest
 
