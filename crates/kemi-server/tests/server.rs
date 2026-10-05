@@ -4053,11 +4053,14 @@ async fn agent_request_head(
     stream
 }
 
-/// 接続が閉じるまで読んだ応答の状態コード。
+/// 接続が閉じるまで読んだ応答の状態コード。閉じないまま止まったら、待ち続けずに失敗させる。
 async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
     use tokio::io::AsyncReadExt;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("the agent API never closed the connection")
+        .unwrap();
     let text = String::from_utf8_lossy(&response);
     text.split(' ').nth(1).unwrap().parse().unwrap()
 }
@@ -4070,10 +4073,14 @@ async fn a_reply_arriving_after_the_submit_is_not_reported_as_written_when_missi
     let body = json!({ "writes": [{ "type": "message", "body": "late" }] }).to_string();
     let mut late = agent_request_head(&server, "reply", body.len()).await;
 
-    let response = server
-        .page
-        .post("api/submit", json!({"verdict": "approved"}))
-        .await;
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        server
+            .page
+            .post("api/submit", json!({"verdict": "approved"})),
+    )
+    .await
+    .expect("the submit never answered");
     assert_eq!(response.status(), 200);
     late.write_all(body.as_bytes()).await.unwrap();
     let status = response_status(&mut late).await;
