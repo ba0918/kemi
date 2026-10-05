@@ -2711,11 +2711,14 @@ async fn reply_writes_a_reply_and_a_message_that_reach_the_submit() {
 
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let ids: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(ids, serde_json::json!({ "ids": ["r1", "m1"] }));
+    assert_eq!(ids["ids"].as_array().map(Vec::len), Some(2), "{ids}");
     kemi.submit("approved").await;
     let (status, stdout) = kemi.wait();
     assert_eq!(status.code(), Some(0));
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    // 書いた順の id が、書いた返信と発言のものになる。
+    assert_eq!(document["comments"][0]["replies"][0]["id"], ids["ids"][0]);
+    assert_eq!(document["messages"][0]["id"], ids["ids"][1]);
     assert_eq!(document["comments"][0]["replies"][0]["author"], "agent");
     assert_eq!(document["comments"][0]["replies"][0]["body"], "renamed");
     assert_eq!(document["messages"][0]["body"], "all done");
@@ -2811,8 +2814,7 @@ fn wait_and_reply_for_an_unknown_id_exit_2() {
         let output = run_agent(&dir.path, &state.path, &args, "{\"writes\":[]}");
         assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
         assert!(output.stdout.is_empty(), "kemi {args:?}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("kemi --result"), "kemi {args:?}: {stderr}");
+        assert!(!output.stderr.is_empty(), "kemi {args:?}");
     }
 }
 

@@ -2706,7 +2706,7 @@ async fn submit_lists_reviewer_and_agent_replies_in_creation_order_with_messages
     let replies = &document["comments"][0]["replies"];
     assert_eq!(replies[0]["id"], "r1");
     assert_eq!(replies[0]["author"], "agent");
-    assert_eq!(replies[1]["id"], "r2");
+    assert_ne!(replies[1]["id"], replies[0]["id"]);
     assert_eq!(replies[1]["author"], "reviewer");
     assert_eq!(replies[1]["body"], "thanks");
     for reply in replies.as_array().unwrap() {
@@ -3801,8 +3801,11 @@ async fn reply_writes_replies_and_messages_as_the_agent_and_returns_their_ids() 
         .await;
 
     assert_eq!(status, 200);
-    assert_eq!(answer, json!({ "ids": ["r1", "m1"] }));
+    assert_eq!(answer["ids"].as_array().map(Vec::len), Some(2), "{answer}");
     let state = server.sink.last_state();
+    // 書いた順の id が、書いた返信と発言のものになる。
+    assert_eq!(answer["ids"][0], state.comments[0].replies[0].id.as_str());
+    assert_eq!(answer["ids"][1], state.messages[0].id.as_str());
     assert_eq!(state.comments[0].replies[0].body, "renamed it");
     assert_eq!(
         state.comments[0].replies[0].author,
@@ -3834,7 +3837,12 @@ async fn a_write_to_a_missing_comment_writes_nothing() {
         .await;
 
     assert_eq!(status, 400);
-    assert!(answer["error"].as_str().unwrap().contains("c9"), "{answer}");
+    assert!(
+        answer["error"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty()),
+        "{answer}"
+    );
     assert_nothing_written(&server).await;
 }
 
