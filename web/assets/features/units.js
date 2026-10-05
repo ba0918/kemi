@@ -2,6 +2,7 @@
 // グループ単位（最終形 / コミットごと）の切り替えと、作成に失敗した単位の作り直し。
 
 import * as api from "../api.js";
+import { actions } from "../actions.js";
 import { currentEntry, flatten, state, unitLabel } from "../state.js";
 import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
@@ -114,6 +115,9 @@ export async function onUnitEvent() {
   const review = await api.getReview(false);
   state.units = review.units || [];
   renderUnitSwitch();
+  // 会話パネルを開いたままコミットごとの単位ができたら（再取得で作り直したときも）、消えた
+  // コミットを見分けられるようにする。
+  actions.loadCommitGroups();
   const pending = state.pendingUnit;
   if (!pending) {
     return;

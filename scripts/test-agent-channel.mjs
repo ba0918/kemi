@@ -1,6 +1,6 @@
 // エージェントとの往復（agent-channel.md）のブラウザ自動化。実際の kemi バイナリを worktree
-// モードで起動し、`kemi wait` と `kemi reply` を別プロセスで呼びながら、画面を agent-browser で
-// 確かめる。
+// モード（消えたコミットだけはコミット範囲）で起動し、`kemi wait` と `kemi reply` を別プロセスで
+// 呼びながら、画面を agent-browser で確かめる。
 //
 //   node scripts/test-agent-channel.mjs <kemi-bin>
 //
@@ -14,7 +14,8 @@
 // 「This file」の絞り込みが選んだファイルに合わせて変わる、
 // 幅 720px で会話パネルを開いても差分の列が潰れない、
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
-// 出て、submit の JSON にそのコメントが入る。
+// 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
+// 読み直しても読み込み直しても「消えたコミット」と示される。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -54,10 +55,9 @@ const waitFor = async (code) => {
 
 const LINES = (count) => Array.from({ length: count }, (_, i) => `line ${i + 1}\n`);
 
-/** worktree の変更。a.txt の 3 行目・60 行目・100 行目と、コメントの無い b.txt の 1 行目を書き換える。 */
-async function makeFixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-'));
-  const git = (...args) => run('git', ['-C', dir, ...args], {
+/** 利用者の git の設定に左右されない git。 */
+function gitIn(dir) {
+  return (...args) => run('git', ['-C', dir, ...args], {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: join(dir, '.git-test-global'),
@@ -68,6 +68,12 @@ async function makeFixture() {
       GIT_COMMITTER_EMAIL: 'kemi@example.com',
     },
   });
+}
+
+/** worktree の変更。a.txt の 3 行目・60 行目・100 行目と、コメントの無い b.txt の 1 行目を書き換える。 */
+async function makeFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-'));
+  const git = gitIn(dir);
   await git('init', '-q');
   const lines = LINES(120);
   await writeFile(join(dir, 'a.txt'), lines.join(''));
@@ -82,12 +88,29 @@ async function makeFixture() {
   return dir;
 }
 
+/** コミット範囲。base の後に、c.txt を変える first と、d.txt を変える second の 2 コミット。 */
+async function makeRangeFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-range-'));
+  const git = gitIn(dir);
+  await git('init', '-q');
+  await writeFile(join(dir, 'c.txt'), LINES(5).join(''));
+  await writeFile(join(dir, 'd.txt'), LINES(5).join(''));
+  await git('add', 'c.txt', 'd.txt');
+  await git('commit', '-q', '-m', 'base');
+  const from = (await git('rev-parse', 'HEAD')).stdout.trim();
+  await writeFile(join(dir, 'c.txt'), ['first\n', ...LINES(5).slice(1)].join(''));
+  await git('commit', '-q', '-am', 'first');
+  await writeFile(join(dir, 'd.txt'), ['second\n', ...LINES(5).slice(1)].join(''));
+  await git('commit', '-q', '-am', 'second');
+  return { dir, from, git };
+}
+
 function environment(state) {
   return { ...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home'), LOCALAPPDATA: join(state, 'localappdata') };
 }
 
-async function startKemi(dir, state) {
-  const child = spawn(binary, ['--worktree', '--port', '0', '--no-open'], {
+async function startKemi(dir, state, source = ['--worktree']) {
+  const child = spawn(binary, [...source, '--port', '0', '--no-open'], {
     cwd: dir,
     env: environment(state),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -385,5 +408,44 @@ try {
 } finally {
   kemi.child.kill('SIGTERM');
   await kemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (7) 履歴の書き換えで消えたコミットのスレッドは、会話パネルを開いたまま更新バッジで読み直しても、
+// 開いたまま読み込み直しても「消えたコミット」と示され、その行へ移る操作と編集が出ない（R-VIEW、R-LIVE）。
+const range = await makeRangeFixture();
+const rangeState = await mkdtemp(join(tmpdir(), 'kemi-agent-range-state-'));
+const rangeKemi = await startKemi(range.dir, rangeState, ['--from', range.from]);
+try {
+  // コミットごとの単位は、最初の api/review の後に裏で作られる。
+  for (;;) {
+    const current = await (await fetch(new URL('api/review', rangeKemi.url))).json();
+    if (current.units?.find((unit) => unit.unit === 'commit')?.state === 'ready') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const commitReview = await (await fetch(new URL('api/review?unit=commit', rangeKemi.url))).json();
+  const second = commitReview.groups.find((group) => group.title === 'second');
+  await post(rangeKemi.url, 'api/comment', { op: 'add', file_id: second.files[0].id, side: 'new', start_line: 1, end_line: 1, body: 'about the second commit' });
+  const card = `document.querySelector('#cv-items .cv-card[data-id="c1"]')`;
+  const vanished = `${card}?.querySelector('.cv-unit.vanished') !== null`;
+  await browser('open', rangeKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await browser('click', '#btn-comments');
+  await waitFor(`${panelOpen} && ${card} !== null`);
+  assert.equal(await evaluate(vanished), false);
+  await range.git('commit', '-q', '--amend', '-m', 'second, rewritten');
+  await waitFor(`!document.querySelector('#update-badge').hidden`);
+  await browser('click', '#update-badge');
+  await waitFor(vanished);
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  await waitFor(vanished);
+  await evaluate(`${card}.click(); true`);
+  await waitFor(threadOpen('about the second commit'));
+  assert.equal(await evaluate(`document.querySelector('#cv-thread-head .cv-go') === null && document.querySelector('#cv-thread-head .cv-edit') === null`), true);
+  console.log('PASS 消えたコミットのスレッドは、開いたまま読み直しても読み込み直しても「消えたコミット」と示される');
+} finally {
+  rangeKemi.child.kill('SIGTERM');
+  await rangeKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

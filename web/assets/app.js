@@ -58,6 +58,7 @@ import {
   editFromThread,
   goToComment,
   keepReplyDraft,
+  loadCommitGroups,
   markLoaded,
   onConversationScroll,
   openConversation,
@@ -202,6 +203,7 @@ async function boot() {
     markLoaded();
     renderHeader();
     renderConversation({ toEnd: true });
+    void loadCommitGroups();
     renderTree();
     if (state.visible.length > 0) {
       await selectIndex(0, { scrollTop: true });
@@ -277,6 +279,7 @@ window
 bindActions({
   addComment,
   closeThread,
+  loadCommitGroups: () => void loadCommitGroups(),
   editFromThread: (comment, unit) => void editFromThread(comment, unit),
   openThread,
   replyTo: (comment, body) => void replyTo(comment, body),
