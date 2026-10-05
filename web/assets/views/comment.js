@@ -6,7 +6,6 @@ import { button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { saveDraft } from "../storage.js";
 import {
-  agentControlsShown,
   authorLabel,
   commentLabel,
   draftKey,
@@ -75,9 +74,9 @@ function renderComment(comment) {
     head.append(textEl("span", "t-resolved-mark", "Resolved"));
   }
   const acts = el("span", "acts");
-  const talking = agentControlsShown(state.agent) && !state.submitted;
+  const talking = !state.submitted;
   if (talking) {
-    // 解決は人間だけが付ける（R-AGENT-HAND）。往復しているレビューでだけ出す。
+    // 解決は人間だけが付ける（R-AGENT-HAND）。
     const resolve = button("");
     resolve.textContent = comment.resolved ? "Reopen" : "Resolve";
     resolve.dataset.focusKey = `resolve:${comment.id}`;

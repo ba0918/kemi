@@ -57,7 +57,7 @@ import {
   effectiveDisplay,
   balloonShown,
   agentStatusLabel,
-  agentControlsShown,
+  handShown,
   authorLabel,
   replaceComment,
   addMessage,
@@ -1451,10 +1451,10 @@ test("エージェントの 4 つの状態を見分けられる呼び名で出�
   assert.equal(new Set(labels).size, 4);
 });
 
-test("kemi wait が一度でも呼ばれたレビューでだけ往復の操作を出す", () => {
-  assert.equal(agentControlsShown({ called: false, status: "unconnected", unhanded: 2 }), false);
-  assert.equal(agentControlsShown({ called: true, status: "working", unhanded: 0 }), true);
-  assert.equal(agentControlsShown(null), false);
+test("kemi wait が一度でも呼ばれたレビューでだけ「Hand to agent」を出す", () => {
+  assert.equal(handShown({ called: false, status: "unconnected", unhanded: 2 }), false);
+  assert.equal(handShown({ called: true, status: "working", unhanded: 0 }), true);
+  assert.equal(handShown(null), false);
 });
 
 test("書いた人が人間かエージェントかを見分けられる呼び名で出す", () => {

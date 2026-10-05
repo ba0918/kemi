@@ -128,10 +128,11 @@ open:
   200 agent messages exits with 2. Agents cannot open or resolve comments.
 
 What you write is not sent as you type: **Hand to agent** delivers every
-change since the last hand-over at once. The button and the agent status
-(waiting, working, not responding) appear only after `kemi wait` has been
-called once in that review, so reviews without an agent look as before. The
-agent API listens on `127.0.0.1` whatever `--bind` says, accepts only
+change since the last hand-over at once. Threads (reply, resolve), the chat,
+and the agent status (not connected, waiting, working, not responding) are
+there in every review; only the **Hand to agent** button waits until
+`kemi wait` has been called once in that review. The agent API listens on
+`127.0.0.1` whatever `--bind` says, accepts only
 requests without an `Origin` carrying its own token, and the token is kept in
 `<id>.endpoint` next to the session (owner-only; on Windows under
 `%LOCALAPPDATA%\kemi\sessions\`), never on the page or stderr. A

@@ -6,7 +6,7 @@
 import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { state } from "../state.js";
-import { addMessage, agentControlsShown, replaceComment } from "../model.js";
+import { addMessage, replaceComment } from "../model.js";
 import { setCommentOpen, updateComments } from "./comments.js";
 import { renderAgent, renderChat } from "../views/chat.js";
 import { showOverlay, showToast } from "../views/overlay.js";
@@ -16,20 +16,8 @@ import { showOverlay, showToast } from "../views/overlay.js";
  * @param {import("../model.js").AgentState} agent
  */
 export function applyAgent(agent) {
-  setAgent(agent);
-  renderAgent();
-}
-
-/**
- * 最初の `kemi wait` で、開いているコメントにも返信の欄と解決が出るよう描き直す。
- * @param {import("../model.js").AgentState} agent
- */
-function setAgent(agent) {
-  const shown = agentControlsShown(state.agent);
   state.agent = agent;
-  if (agentControlsShown(agent) !== shown) {
-    updateComments((comments) => comments);
-  }
+  renderAgent();
 }
 
 /**
@@ -125,7 +113,7 @@ async function resyncAgent() {
     updateComments((comments) => comments.map((comment) => fresh.get(comment.id) || comment));
     state.messages = review.messages || [];
     if (review.agent) {
-      setAgent(review.agent);
+      state.agent = review.agent;
     }
     renderAgent();
   } catch {

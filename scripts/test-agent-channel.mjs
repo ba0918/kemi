@@ -4,8 +4,8 @@
 //
 //   node scripts/test-agent-channel.mjs <kemi-bin>
 //
-// 確かめること: kemi wait を呼ぶ前は「Hand to agent」が無く状態が未接続、kemi wait を待たせると
-// 待機中、返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が
+// 確かめること: kemi wait を呼ぶ前から返信の欄・解決・チャット欄の書く欄と未接続の状態が出て、
+// 「Hand to agent」だけが無い、kemi wait を待たせると待機中、返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が
 // 変わらない、kemi reply の発言がチャット欄に出る、幅 390px でもチャット欄を開いて閉じられる、未渡しを
 // 残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る。
 import assert from 'node:assert/strict';
@@ -144,12 +144,22 @@ try {
   await browser('open', kemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
 
-  // (1) kemi wait を呼ぶ前は、渡すも状態もチャット欄の入口も出ず、状態は未接続。
+  // (1) kemi wait を呼ぶ前から、返信の欄・解決・チャット欄の書く欄と状態（未接続）は出る。
+  // 「Hand to agent」だけが無い。
+  assert.equal(await evaluate(shown('#agent-status')), true);
   assert.equal(await evaluate(statusIs('unconnected')), true);
   assert.equal(await evaluate(shown('#btn-hand')), false);
-  assert.equal(await evaluate(shown('#btn-dock-chat')), false);
-  assert.equal(await evaluate(`document.querySelectorAll('.reply-box, .thread').length`), 0);
-  console.log('PASS kemi wait を呼ぶ前は「Hand to agent」が無く、状態が未接続');
+  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
+  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
+  assert.equal(await evaluate(shown('#diff-content .bal [data-focus-key="resolve:c1"]')), true);
+  assert.equal(await evaluate(shown('#btn-dock-chat')), true);
+  await browser('click', '#btn-dock-chat');
+  await waitFor(`!document.querySelector('#chat').hidden`);
+  assert.equal(await evaluate(shown('#chat .chat-form textarea')), true);
+  assert.equal(await evaluate(shown('#chat .chat-hand')), false);
+  await browser('click', '#chat .cl-close');
+  await waitFor(`document.querySelector('#chat').hidden`);
+  console.log('PASS kemi wait を呼ぶ前から返信・解決・チャット欄と未接続の状態が出て、「Hand to agent」だけが無い');
 
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
   const waiting = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '2']);
@@ -161,8 +171,7 @@ try {
   assert.equal(await evaluate(shown('#btn-hand')), true);
   console.log('PASS kemi wait を待たせると待機中、返った後は作業中に変わり、渡すが出る');
 
-  // (3) kemi reply の返信がスレッドに出て、スクロール位置が変わらない。
-  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
+  // (3) kemi reply の返信がスレッドに出て、スクロール位置が変わらない（コメントは (1) で開いた）。
   await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
   await evaluate(`document.querySelector('#diff-viewport').scrollTop = 30; true`);
   await waitFor(`document.querySelector('#diff-viewport').scrollTop === 30`);

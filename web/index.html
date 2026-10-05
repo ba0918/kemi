@@ -135,7 +135,7 @@
         <button id="update-badge" type="button" class="update-badge" hidden>
           Update available
         </button>
-        <button class="iconbtn narrow-only" id="btn-chat" type="button" title="Chat with the agent" aria-label="Chat with the agent" aria-expanded="false" hidden>
+        <button class="iconbtn narrow-only" id="btn-chat" type="button" title="Chat with the agent" aria-label="Chat with the agent" aria-expanded="false">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 2.5h9v6h-5l-2.5 2v-2h-1.5z"/><path d="M12.5 5.5h2v6h-1.5v2l-2.5-2h-4v-1"/></svg>
           <span class="agent-status" id="chat-status" data-status="unconnected"></span>
         </button>
@@ -217,10 +217,10 @@
       </main>
     </div>
 
-    <div class="agent-dock" id="agent-dock" role="group" aria-label="Agent" hidden>
+    <div class="agent-dock" id="agent-dock" role="group" aria-label="Agent">
       <span class="agent-status" id="agent-status" data-status="unconnected" role="status"></span>
       <button class="btn" id="btn-dock-chat" type="button" aria-expanded="false">Chat</button>
-      <button class="btn primary" id="btn-hand" type="button" title="Hand everything written since the last hand-over to the agent">
+      <button class="btn primary" id="btn-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
         Hand to agent<span class="hand-count" id="hand-count"></span>
       </button>
     </div>

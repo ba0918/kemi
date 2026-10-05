@@ -1,11 +1,11 @@
 // @ts-check
 // エージェントとの往復の表示（agent-channel.md）: 上部の状態と「Hand to agent」、チャット欄
-// （発言の並びと書く欄）。`kemi wait` が一度も呼ばれていないレビューでは何も出さない。
+// （発言の並びと書く欄）。「Hand to agent」だけは `kemi wait` が一度でも呼ばれたレビューでだけ出す。
 
 import { actions } from "../actions.js";
 import { button, dom, el, textEl } from "../dom.js";
 import { state } from "../state.js";
-import { agentControlsShown, agentStatusLabel, authorLabel } from "../model.js";
+import { agentStatusLabel, authorLabel, handShown } from "../model.js";
 
 /**
  * 状態・渡す・チャット欄の入口。広い画面ではファイルツリーの下端に置き、上部バーの並びは
@@ -14,13 +14,10 @@ import { agentControlsShown, agentStatusLabel, authorLabel } from "../model.js";
  */
 export function renderAgent() {
   const agent = state.agent;
-  const shown = agentControlsShown(agent);
   dom.agentStatus.dataset.status = agent.status;
   dom.agentStatus.textContent = agentStatusLabel(agent.status);
   dom.chatStatus.dataset.status = agent.status;
-  dom.agentDock.hidden = !shown;
-  dom.btnChat.hidden = !shown;
-  document.body.toggleAttribute("data-agent", shown);
+  dom.btnHand.hidden = !handShown(agent);
   dom.handCount.textContent = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
   dom.btnHand.disabled = state.submitted || agent.unhanded === 0;
   if (state.chatOpen) {
@@ -152,10 +149,12 @@ function fillMessages(list) {
 }
 
 /**
- * 「Hand to agent」の文言（未渡しの件数つき）と、押せるかどうか。
+ * 「Hand to agent」の文言（未渡しの件数つき）と、出すか・押せるか。最初の `kemi wait` で
+ * 出すとき、書く欄を作り直さずに済むよう、ボタンは常に作っておき隠すだけにする。
  * @param {HTMLButtonElement} hand
  */
 function labelHand(hand) {
+  hand.hidden = !handShown(state.agent);
   hand.textContent =
     state.agent.unhanded > 0 ? `Hand to agent (${state.agent.unhanded})` : "Hand to agent";
   hand.disabled = state.agent.unhanded === 0;

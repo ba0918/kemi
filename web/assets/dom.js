@@ -65,7 +65,6 @@ export const dom = {
   commentCount: must("#comment-count"),
   commentList: must("#comment-list"),
   updateBadge: /** @type {HTMLButtonElement} */ (must("#update-badge")),
-  agentDock: must("#agent-dock"),
   agentStatus: must("#agent-status"),
   chatStatus: must("#chat-status"),
   btnDockChat: /** @type {HTMLButtonElement} */ (must("#btn-dock-chat")),

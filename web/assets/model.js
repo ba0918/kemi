@@ -1575,12 +1575,12 @@ export function agentStatusLabel(status) {
 }
 
 /**
- * 往復の操作（渡す・状態・チャット欄・返信・解決）を出すか。`kemi wait` が一度でも
- * 呼ばれたレビューでだけ出し、エージェントを使わないレビューの画面は変えない。
+ * 「Hand to agent」を出すか。`kemi wait` が一度でも呼ばれたレビューでだけ出す
+ * （R-AGENT-STATE）。状態・チャット欄・返信・解決はどのレビューでも出す。
  * @param {AgentState | null} agent
  * @returns {boolean}
  */
-export function agentControlsShown(agent) {
+export function handShown(agent) {
   return Boolean(agent && agent.called);
 }
 
@@ -1623,7 +1623,7 @@ export function addMessage(messages, message) {
  * @returns {string | null}
  */
 export function unhandedNotice(agent) {
-  if (!agentControlsShown(agent) || !agent || agent.unhanded === 0) {
+  if (!handShown(agent) || !agent || agent.unhanded === 0) {
     return null;
   }
   const one = agent.unhanded === 1;

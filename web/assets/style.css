@@ -2322,7 +2322,7 @@ ul.files ul {
   margin-right: auto;
 }
 
-body[data-agent] .tree {
+.tree {
   padding-bottom: 110px;
 }
 
@@ -2720,7 +2720,7 @@ body[data-agent] .tree {
     display: none;
   }
 
-  body[data-agent] .tree {
+  .tree {
     padding-bottom: 48px;
   }
 
