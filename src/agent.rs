@@ -68,7 +68,7 @@ pub fn run(command: Command, sessions: Option<PathBuf>, endpoints: Option<PathBu
                 Ok(endpoint) => endpoint,
                 Err(code) => return code,
             };
-            let body = serde_json::json!({ "timeout_ms": timeout.map(|seconds| seconds * 1000) });
+            let body = serde_json::json!({ "timeout_ms": timeout.map(|seconds| seconds.saturating_mul(1000)) });
             match post(&endpoint, "wait", body.to_string().as_bytes()) {
                 Ok((200, answer)) => match acknowledge(&endpoint, &answer) {
                     Ok(()) => print_events(&id, &answer),

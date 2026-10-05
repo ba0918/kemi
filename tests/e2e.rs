@@ -2809,6 +2809,29 @@ async fn wait_with_a_timeout_and_nothing_happening_exits_3_with_empty_stdout() {
     kemi.kill();
 }
 
+#[tokio::test]
+async fn wait_with_the_largest_timeout_keeps_waiting_until_something_is_handed() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let largest = u64::MAX.to_string();
+    let waiting = spawn_wait(
+        &dir.path,
+        &state.path,
+        &["wait", &id, "--timeout", &largest],
+    );
+    kemi.wait_agent_status("waiting").await;
+
+    kemi.add_comment(1, "rename this").await;
+    kemi.hand().await;
+
+    let (code, stdout, stderr) = finish_agent(waiting).await;
+    assert_eq!(code, Some(0), "{stderr}");
+    let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(answer["events"][0]["type"], "handed");
+    kemi.kill();
+}
+
 #[test]
 fn wait_and_reply_for_an_unknown_id_exit_2() {
     let dir = TempDir::new();
