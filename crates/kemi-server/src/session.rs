@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use kemi_core::domain::agent::Channel;
-use kemi_core::domain::review::{Comment, Message};
+use kemi_core::domain::review::{Comment, Message, Reply};
 use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
 use serde_json::json;
@@ -75,7 +75,8 @@ fn highest_number<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u3
         .unwrap_or(0)
 }
 
-/// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。
+/// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。`page` は
+/// `--live` のページへのコメントだけが持つので、ここでは常に `null`。
 pub fn comment_json(comment: &Comment) -> serde_json::Value {
     json!({
         "id": comment.id,
@@ -87,13 +88,36 @@ pub fn comment_json(comment: &Comment) -> serde_json::Value {
         "end_line": comment.end_line,
         "quote": comment.quote,
         "body": comment.body,
-        "replies": comment.replies.iter().map(|reply| &reply.body).collect::<Vec<_>>(),
+        "page": null,
+        "replies": comment.replies.iter().map(reply_json).collect::<Vec<_>>(),
         "resolved": comment.resolved,
         "outdated": comment.outdated,
         "suggestion": comment
             .suggestion
             .as_ref()
             .map(|suggestion| json!({ "replacement": suggestion.replacement })),
+    })
+}
+
+/// R-SUBMIT の契約に合わせた返信の JSON。案（`variants`・`chosen`・`applied`）は
+/// `--live` のレビューでだけ持つので、ここでは常に空。
+pub fn reply_json(reply: &Reply) -> serde_json::Value {
+    json!({
+        "id": reply.id,
+        "author": reply.author.as_str(),
+        "body": reply.body,
+        "variants": [],
+        "chosen": null,
+        "applied": null,
+    })
+}
+
+/// R-SUBMIT の契約に合わせた発言の JSON。
+pub fn message_json(message: &Message) -> serde_json::Value {
+    json!({
+        "id": message.id,
+        "author": message.author.as_str(),
+        "body": message.body,
     })
 }
 

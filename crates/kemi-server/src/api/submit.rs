@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{ApiError, find_file, side_lines, source_content};
-use crate::session::{comment_json, delete_stored};
+use crate::session::{comment_json, delete_stored, message_json};
 use crate::{AppState, Notice, Stop, SubmitState};
 
 #[derive(Debug, Deserialize)]
@@ -136,8 +136,9 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         }
     }
     let comments: Vec<Value> = session.comments.iter().map(comment_json).collect();
+    let messages: Vec<Value> = session.messages.iter().map(message_json).collect();
     Ok(json!({
-        "kemi": 1,
+        "kemi": 2,
         "title": review.title,
         "verdict": verdict,
         "approval": review.approval.iter().map(|approval| json!({
@@ -145,5 +146,6 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
             "identity": approval.identity,
         })).collect::<Vec<_>>(),
         "comments": comments,
+        "messages": messages,
     }))
 }

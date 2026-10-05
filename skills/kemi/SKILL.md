@@ -105,7 +105,9 @@ error (exit `2`), and `--digest` / `--result` never create sessions.
 
 ## Handle the result
 
-Check the JSON contract version (`kemi: 1`) and that `verdict` agrees with the exit code.
+Check the JSON contract version (`kemi: 2`) and that `verdict` agrees with the exit code. Do
+not guess at a version you do not know; a result written before version 2 is printed by
+`kemi --result` exactly as it was stored.
 Read comments on both approval and requests for changes. Before using an approval, compare
 its identities with the current bytes. Before applying a suggestion, compare its `quote`
 with the file; locate outdated comments by their text rather than trusting old line numbers.

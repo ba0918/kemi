@@ -483,8 +483,11 @@ async fn exit_code_approved_is_0_and_stdout_json() {
     let (status, stdout) = kemi.wait();
     assert_eq!(status.code(), Some(0));
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(document["kemi"], 2);
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["comments"][0]["body"], "ここ直して");
+    assert_eq!(document["comments"][0]["page"], serde_json::Value::Null);
+    assert_eq!(document["messages"], serde_json::json!([]));
     assert!(
         stderr_lines.iter().any(|line| line.starts_with("kemi: ")),
         "the comment live display is missing from stderr: {stderr_lines:?}"
@@ -1023,6 +1026,23 @@ async fn result_flag_returns_the_same_json_and_the_original_exit_code() {
 
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(String::from_utf8(output.stdout).unwrap(), stdout);
+}
+
+#[tokio::test]
+async fn result_flag_prints_a_contract_version_1_result_unchanged() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (_, _, code) = submit_manifest(&dir.path, &state.path, "approved", "版 1").await;
+    assert_eq!(code, Some(0));
+    // ライブ改訂の前の kemi が書いた結果（返信は本文の並び、page も messages も無い）。
+    let version_1 = "{\"kemi\":1,\"title\":\"old\",\"verdict\":\"changes_requested\",\
+        \"approval\":[],\"comments\":[{\"id\":\"c1\",\"replies\":[\"ok\"]}]}\n";
+    std::fs::write(&result_files(&state.path)[0], version_1).unwrap();
+
+    let output = run_with_state(&dir.path, &["--result"], &state.path);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), version_1);
 }
 
 #[test]

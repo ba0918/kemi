@@ -673,7 +673,9 @@ async fn two_clients_share_comments_and_seen_without_an_author_field() {
 
     let document = server.finish().await;
     let comment = &document["comments"][0];
-    assert_eq!(comment["replies"], json!(["2台目から"]));
+    assert_eq!(comment["replies"][0]["body"], "2台目から");
+    // 返信の書いた人は「人間」だけで、どの端末かは区別しない（P5）。
+    assert_eq!(comment["replies"][0]["author"], "reviewer");
     assert!(comment.get("author").is_none(), "{comment}");
 }
 
@@ -812,8 +814,9 @@ async fn submit_schema_follows_contract() {
     assert_eq!(response.status(), 200);
     let document = server.finish().await;
 
-    assert_eq!(document["kemi"], 1);
+    assert_eq!(document["kemi"], 2);
     assert_eq!(document["title"], "テストのレビュー");
+    assert_eq!(document["messages"], json!([]));
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["approval"][0]["identity"], "sha256:abc");
     let comments = document["comments"].as_array().unwrap();
@@ -826,7 +829,18 @@ async fn submit_schema_follows_contract() {
     assert_eq!(comments[0]["start_line"], 11);
     assert_eq!(comments[0]["end_line"], 11);
     assert_eq!(comments[0]["quote"], json!(["new"]));
-    assert_eq!(comments[0]["replies"], json!(["返信1"]));
+    assert_eq!(comments[0]["page"], Value::Null);
+    assert_eq!(
+        comments[0]["replies"],
+        json!([{
+            "id": "r1",
+            "author": "reviewer",
+            "body": "返信1",
+            "variants": [],
+            "chosen": null,
+            "applied": null,
+        }])
+    );
     assert_eq!(comments[0]["resolved"], true);
     assert_eq!(comments[0]["outdated"], false);
     assert_eq!(
@@ -1849,6 +1863,14 @@ impl TestServer {
         .unwrap()
     }
 
+    async fn submit_document(self) -> Value {
+        let response = self
+            .post("api/submit", json!({"verdict": "approved"}))
+            .await;
+        assert_eq!(response.status(), 200);
+        self.finish().await
+    }
+
     async fn submit_comments(self) -> Vec<Value> {
         let response = self
             .post("api/submit", json!({"verdict": "approved"}))
@@ -2646,6 +2668,52 @@ async fn session_restored_replies_continue_their_numbering() {
         .await;
 
     assert_eq!(restored.last_state().comments[0].replies[0].id, "r2");
+}
+
+#[tokio::test]
+async fn submit_lists_reviewer_and_agent_replies_in_creation_order_with_messages() {
+    use kemi_core::domain::review::{Author, Message, Reply};
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    server.add_new_side_comment().await;
+    // エージェントの書き込みはまだ経路が無いので、保存された状態に直接置いて復元する。
+    let mut saved = sink.last_state();
+    saved.comments[0].replies.push(Reply {
+        id: "r1".to_string(),
+        author: Author::Agent,
+        body: "renamed it".to_string(),
+    });
+    saved.last_reply = 1;
+    saved.messages.push(Message {
+        id: "m1".to_string(),
+        author: Author::Agent,
+        body: "all comments are addressed".to_string(),
+    });
+    saved.last_message = 1;
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), restored).await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "thanks"}))
+        .await;
+
+    let document = server.submit_document().await;
+
+    let replies = &document["comments"][0]["replies"];
+    assert_eq!(replies[0]["id"], "r1");
+    assert_eq!(replies[0]["author"], "agent");
+    assert_eq!(replies[1]["id"], "r2");
+    assert_eq!(replies[1]["author"], "reviewer");
+    assert_eq!(replies[1]["body"], "thanks");
+    for reply in replies.as_array().unwrap() {
+        assert_eq!(reply["variants"], json!([]));
+        assert_eq!(reply["chosen"], Value::Null);
+        assert_eq!(reply["applied"], Value::Null);
+    }
+    assert_eq!(
+        document["messages"],
+        json!([{"id": "m1", "author": "agent", "body": "all comments are addressed"}])
+    );
 }
 
 // ---- R-RENDER（描画のエンドポイントと api/file の描画表示の情報） ----

@@ -5,6 +5,14 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+### 破壊的変更
+
+- submit の結果 JSON の契約の版を 2 に上げた（`"kemi": 2`）。`replies` が本文の文字列の並び
+  から、`id`・`author`（`reviewer` か `agent`）・`body`・`variants`・`chosen`・`applied` を
+  持つ返信の並びになる。各コメントに `page`（今は常に `null`）、結果のトップにレビュー全体
+  への発言 `messages` が増えた。`kemi` の値を見て読み方を選んでほしい。この版より前に
+  書かれた結果ファイルは、`kemi --result` がこれまでどおり書き換えずに出す。
+
 ### 変更
 
 - セッション形式の版を 3 に上げた。返信の書いた人と、エージェントとの往復の続きを

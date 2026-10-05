@@ -300,7 +300,7 @@ The JSON printed at the end:
 
 ```json
 {
-  "kemi": 1,
+  "kemi": 2,
   "title": "Review",
   "verdict": "approved",
   "approval": [{ "path": "src/a.rs", "identity": "sha256:…" }],
@@ -315,15 +315,29 @@ The JSON printed at the end:
       "end_line": 14,
       "quote": ["the line text when the comment was written"],
       "body": "the comment",
-      "replies": [],
+      "page": null,
+      "replies": [
+        {
+          "id": "r1",
+          "author": "reviewer",
+          "body": "a reply in the thread",
+          "variants": [],
+          "chosen": null,
+          "applied": null
+        }
+      ],
       "resolved": false,
       "outdated": false,
       "suggestion": { "replacement": "the replacement text" }
     }
-  ]
+  ],
+  "messages": [{ "id": "m1", "author": "reviewer", "body": "a note on the whole review" }]
 }
 ```
 
+- `kemi` is the contract version, `2`. Version `1` results (from kemi before
+  replies and messages) are printed unchanged by `kemi --result`; do not read
+  a version you do not know by guessing.
 - `side` is `new` or `old`. File-wide comments are `new` with `start_line` and
   `end_line` `null`, and `quote` `[]`.
 - `suggestion` is `null` when the comment carries no suggestion, and always
@@ -331,6 +345,10 @@ The JSON printed at the end:
   lines should be deleted.
 - `outdated` is `true` when the file changed after the comment was written.
   kemi never moves a comment to a new line number.
+- `replies` are in creation order. `author` is `reviewer` or `agent`;
+  `variants`, `chosen`, and `applied` are `[]`, `null`, `null` outside a
+  review of a running page, and so is `page`.
+- `messages` are notes on the whole review, in creation order.
 - `comments` are in creation order.
 
 ## Digest
