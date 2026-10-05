@@ -148,6 +148,11 @@ async function loadThreadLines(comment) {
   }
   const rows = data.rows || [];
   state.cache.set(key, { ...data, rows, collapsedRows: rows });
+  // 後で返信や解決があっても、そのファイルを選んだときに読み直した当時のコメントが出ないよう、
+  // 差し替えの届く控えへ入れておく。
+  if (!state.commentStore.has(entry.file.id)) {
+    state.commentStore.set(entry.file.id, data.comments || []);
+  }
   if (state.conversation.thread === comment.id) {
     renderConversation();
   }
