@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kemi 会話 UI モック</title>
+<style>
+/* ===== トークン（docs/design/ui-mock-v2.html と同じ） ===== */
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #f5f6f8; --panel-2: #eceef2;
+  --ink: #1b1f24; --ink-2: #555e6a; --ink-3: #858d99;
+  --line: #d6dae0; --line-soft: #e8ebef;
+  --ai: #3b4ea8; --ai-soft: #e9ecfa; --ai-ink: #ffffff;
+  --add-bg: #e8f7ec; --add-gut: #cdeed6; --add-mark: #a9e5b9; --add-ink: #1a7f37;
+  --del-bg: #fdeceb; --del-gut: #f8d3cf; --del-mark: #f5bdb6; --del-ink: #c62a2a;
+  --note-bg: #fff6d6; --note-line: #e0ac2b; --note-ink: #7a5200;
+  --star: #7b4fd0; --star-soft: #f1eafd;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1216; --panel: #161a20; --panel-2: #1e232b;
+  --ink: #e4e8ee; --ink-2: #9aa3ae; --ink-3: #6b7480;
+  --line: #2c323b; --line-soft: #20252d;
+  --ai: #8b9cf0; --ai-soft: #1d2340; --ai-ink: #0f1216;
+  --add-bg: #11261a; --add-gut: #18351f; --add-mark: #2a5c3a; --add-ink: #4ac26b;
+  --del-bg: #2a1618; --del-gut: #3d1e1f; --del-mark: #6d2d2b; --del-ink: #f0645c;
+  --note-bg: #2b2512; --note-line: #9c7a1f; --note-ink: #e8c060;
+  --star: #b69af5; --star-soft: #261d3d;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.7; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+
+/* ===== 文書の枠 ===== */
+.docnav { position: sticky; top: 0; z-index: 30; background: var(--panel); border-bottom: 1px solid var(--line); padding-inline: 20px; }
+.docnav .in { max-width: 1320px; margin: 0 auto; display: flex; gap: 14px; align-items: center; min-height: 48px; flex-wrap: wrap; }
+.docnav a { color: var(--ink-2); text-decoration: none; font-size: 13.5px; }
+.docnav a:hover { color: var(--ai); }
+.docnav .sp { flex: 1; }
+.docnav button { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; font-size: 13px; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-inline: 20px; padding-block: 12px 80px; }
+section { padding-block: 34px 10px; border-bottom: 1px solid var(--line-soft); }
+h1 { font-size: 26px; margin: 18px 0 6px; }
+h2 { font-size: 21px; margin: 0 0 4px; }
+h3 { font-size: 16px; margin: 22px 0 6px; }
+.lead { color: var(--ink-2); max-width: 80ch; margin: 0 0 10px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; max-width: 96ch; margin: 10px 0 16px; font-size: 14px; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; }
+.tag { display: inline-block; font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+.tag.bug { border-color: var(--del-ink); color: var(--del-ink); }
+.tag.design { border-color: var(--ai); color: var(--ai); }
+.tag.spec { border-color: var(--star); color: var(--star); background: var(--star-soft); }
+.cap { font-size: 13px; color: var(--ink-3); margin: 0 0 6px; }
+.cap b { color: var(--ink); }
+.frame { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+.scroll-x { overflow-x: auto; }
+.shot { display: block; width: 100%; max-width: 1000px; border: 1px solid var(--line); border-radius: 10px; }
+.note-list { margin: 8px 0 0; padding-left: 1.2em; color: var(--ink-2); font-size: 14px; max-width: 96ch; }
+.note-list li { margin: 3px 0; }
+.note-list strong { color: var(--ink); }
+.variant-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.variant-tabs button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 4px 14px; font-size: 13.5px; color: var(--ink-2); }
+.variant-tabs button[aria-pressed="true"] { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); font-weight: 600; }
+.rec { margin-left: 6px; font-size: 11px; color: var(--star); border: 1px solid var(--star); border-radius: 999px; padding: 0 6px; background: var(--star-soft); }
+.toggles { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 10px; font-size: 13px; color: var(--ink-2); }
+.toggles button { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 2px 10px; font-size: 13px; }
+.toggles button[aria-pressed="true"] { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); }
+.pane-variant[hidden] { display: none; }
+
+/* ===== アプリ ===== */
+.app { display: flex; flex-direction: column; width: 1280px; height: 720px; font-size: 15px; line-height: 1.5; position: relative; }
+.k-top { display: flex; align-items: center; gap: 14px; padding: 9px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.k-brand { font-weight: 700; }
+.k-title { font-weight: 600; }
+.k-meta { color: var(--ink-3); font-size: 12.5px; }
+.k-top .sp { flex: 1; }
+.ib { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink-2); font-size: 12.5px; }
+.ib.on { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); }
+.btn { height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); font-size: 13px; white-space: nowrap; }
+.btn.primary { background: var(--ai); border-color: var(--ai); color: var(--ai-ink); font-weight: 600; }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.k-body { display: grid; grid-template-columns: 250px minmax(0, 1fr) var(--pane, 400px); flex: 1; min-height: 0; }
+.app.folded .k-body { --pane: 44px !important; }
+.app.nopane .k-body { grid-template-columns: 250px minmax(0, 1fr); }
+.k-tree { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; font-size: 13px; overflow: hidden; }
+.k-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.g-title { font-weight: 600; padding: 4px 8px; }
+.f { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; padding: 3px 8px 3px 18px; border-radius: 6px; color: var(--ink-2); }
+.f.active { background: var(--ai-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--ai); }
+.f .nm { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st { font-family: var(--mono); font-size: 11.5px; }
+.st .p { color: var(--add-ink); } .st .m { color: var(--del-ink); }
+.cbadge { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--note-ink); background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.cbadge.new { background: var(--ai); border-color: var(--ai); color: var(--ai-ink); }
+.fhead { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 13px; }
+.fhead .sp { flex: 1; }
+
+/* 差分 */
+.dv { font-family: var(--mono); font-size: 13px; line-height: 22px; overflow: hidden; flex: 1; }
+.ln { display: grid; grid-template-columns: 44px 44px 18px 1fr; }
+.ln .n { text-align: right; padding-right: 8px; color: var(--ink-3); background: var(--panel); }
+.ln.add { background: var(--add-bg); } .ln.add .n { background: var(--add-gut); color: var(--add-ink); }
+.ln.del { background: var(--del-bg); } .ln.del .n { background: var(--del-gut); color: var(--del-ink); }
+.ln .s { text-align: center; color: var(--ink-3); }
+.ln.add .s { color: var(--add-ink); } .ln.del .s { color: var(--del-ink); }
+.ln.cmt .n:first-child { box-shadow: inset 3px 0 0 var(--note-line); }
+.ln code { font-size: 13px; white-space: pre; }
+
+/* 差分の中のスレッド（今と同じ吹き出し） */
+.th { margin: 6px 16px 8px 106px; max-width: 640px; border: 1px solid var(--note-line); background: var(--note-bg); border-radius: 8px; padding: 8px 12px; font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+.th-head { display: flex; gap: 10px; font-size: 12px; color: var(--note-ink); }
+.th-head .sp { flex: 1; }
+.th-head a { color: var(--note-ink); text-decoration: underline; }
+.th p { margin: 2px 0; }
+/* 案 A・B: 差分の中は 1 行の札 */
+.stub { margin: 4px 16px 6px 106px; max-width: 640px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--note-line); background: var(--note-bg); border-radius: 999px; padding: 2px 12px; font-family: var(--sans); font-size: 13px; color: var(--note-ink); }
+.stub .who { font-weight: 600; color: var(--ai); }
+.stub .txt { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.stub.sel { outline: 2px solid var(--ai); }
+.stub .newdot { width: 8px; height: 8px; border-radius: 50%; background: var(--ai); }
+
+/* 右の会話パネル */
+.pane { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.p-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.p-head b { font-size: 14px; }
+.p-head .sp { flex: 1; }
+.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #d29922; }
+.status.waiting::before { background: var(--add-ink); }
+.p-tabs { display: flex; border-bottom: 1px solid var(--line); padding-inline: 8px; gap: 2px; }
+.p-tabs button { border: 0; background: none; padding: 6px 10px; font-size: 13px; color: var(--ink-2); border-bottom: 2px solid transparent; }
+.p-tabs button.on { color: var(--ai); border-bottom-color: var(--ai); font-weight: 600; }
+.p-filter { display: flex; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; color: var(--ink-3); }
+.p-filter span { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; background: var(--bg); }
+.p-filter span.on { border-color: var(--ai); color: var(--ai); background: var(--ai-soft); }
+.timeline > * { flex-shrink: 0; }
+.timeline { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+.msg { max-width: 88%; padding: 7px 11px; border-radius: 12px; line-height: 1.45; }
+.msg .who { display: block; font-size: 11.5px; color: var(--ink-3); margin-bottom: 1px; }
+.msg.me { align-self: flex-end; background: var(--ai); color: var(--ai-ink); border-bottom-right-radius: 4px; }
+.msg.me .who { color: var(--ai-ink); opacity: .8; }
+.msg.agent { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.card { background: var(--bg); border: 1px solid var(--note-line); border-radius: 10px; overflow: hidden; }
+.card.sel { box-shadow: 0 0 0 2px var(--ai); }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--note-bg); font-size: 12px; color: var(--note-ink); }
+.card-head .loc { font-family: var(--mono); }
+.card-head .sp { flex: 1; }
+.card-head a { color: var(--note-ink); }
+.card-quote { font-family: var(--mono); font-size: 12px; padding: 3px 10px; background: var(--add-bg); color: var(--ink); border-bottom: 1px solid var(--line-soft); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.card-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.card-body .msg { max-width: 92%; font-size: 13.5px; }
+.card.resolved { border-color: var(--line); opacity: .75; }
+.card.resolved .card-head { background: var(--panel-2); color: var(--ink-3); }
+.card-reply { display: flex; gap: 6px; padding: 0 10px 8px; }
+.card-reply .in { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12.5px; color: var(--ink-3); background: var(--bg); }
+.day { align-self: center; font-size: 11.5px; color: var(--ink-3); }
+.compose { border-top: 1px solid var(--line); padding: 8px 10px; background: var(--bg); }
+.compose .in { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-height: 52px; font-size: 13.5px; color: var(--ink-3); }
+.compose .row { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; align-items: center; }
+.compose .row .hint { flex: 1; font-size: 12px; color: var(--ink-3); }
+.newpill { position: absolute; left: 50%; transform: translateX(-50%); bottom: 112px; background: var(--ai); color: var(--ai-ink); border-radius: 999px; padding: 3px 12px; font-size: 12.5px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+/* 畳んだ縦帯 */
+.rail { display: none; flex-direction: column; align-items: center; gap: 12px; padding-top: 10px; font-size: 12px; color: var(--ink-2); }
+.rail .vt { writing-mode: vertical-rl; letter-spacing: .1em; }
+.rail .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--add-ink); }
+.app.folded .pane > :not(.rail) { display: none; }
+.app.folded .pane .rail { display: flex; }
+
+/* 案 C: 下のドロワー */
+.drawer { position: absolute; left: 250px; right: 0; bottom: 0; height: 300px; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -6px 16px rgba(0,0,0,.08); display: flex; flex-direction: column; }
+.drawer .grip { align-self: center; width: 44px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px 0 2px; }
+.drawer .timeline { flex-direction: column; }
+.app.folded .drawer { height: 40px; }
+.app.folded .drawer > :not(.p-head):not(.grip) { display: none; }
+.bubbles .msg { font-size: 13.5px; }
+.th.chatty { display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+.th.chatty .first { background: var(--note-bg); border-radius: 8px; padding: 6px 10px; }
+
+
+/* ===== 案 A2 ===== */
+.app.wide .k-body { --pane: 640px; }
+.resizer { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; }
+.resizer::after { content: ""; position: absolute; left: 3px; top: 50%; height: 36px; margin-top: -18px; width: 2px; border-radius: 1px; background: var(--line); }
+.rows { flex: 1; overflow: auto; padding: 6px 0; display: flex; flex-direction: column; font-size: 14px; }
+.rows > * { flex-shrink: 0; }
+.row { padding: 6px 14px; line-height: 1.55; }
+.row .who { font-size: 12px; font-weight: 600; color: var(--ai); margin-right: 6px; }
+.row.me .who { color: var(--ink-2); }
+.row .t { font-size: 11px; color: var(--ink-3); }
+.row p { margin: 1px 0 0; }
+.row.me { background: var(--panel-2); }
+.tcard { margin: 6px 12px; background: var(--bg); border: 1px solid var(--note-line); border-radius: 8px; overflow: hidden; cursor: pointer; }
+.tcard.sel { box-shadow: 0 0 0 2px var(--ai); }
+.tcard .card-head { padding: 4px 10px; }
+.tcard .last { padding: 5px 10px; font-size: 13.5px; display: flex; gap: 6px; }
+.tcard .last .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.tcard .more { padding: 0 10px 6px; font-size: 12px; color: var(--ai); }
+.tview-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--note-bg); color: var(--note-ink); font-size: 13px; }
+.tview-head .back { border: 0; background: none; color: var(--ai); font-size: 13px; padding: 0 4px 0 0; }
+.tview-head .loc { font-family: var(--mono); }
+.tview-head .sp { flex: 1; }
+.tview-head a { color: var(--note-ink); }
+.ctx { font-family: var(--mono); font-size: 12px; line-height: 20px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.ctx div { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.ctx .a { background: var(--add-bg); }
+.ctx .d { background: var(--del-bg); }
+.ctx .hit { box-shadow: inset 3px 0 0 var(--note-line); }
+.treply { border-top: 1px solid var(--line); padding: 8px 10px; background: var(--bg); }
+.treply .in { border: 1px solid var(--ai); border-radius: 8px; padding: 6px 10px; min-height: 76px; font-size: 13.5px; color: var(--ink-3); }
+.treply .row2 { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; align-items: center; }
+.treply .row2 .hint { flex: 1; font-size: 12px; color: var(--ink-3); }
+.a2-list, .a2-thread { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.app:not(.thread) .a2-thread, .app.thread .a2-list { display: none; }
+.app.folded .pane .a2-list, .app.folded .pane .a2-thread { display: none; }
+
+/* ページの見方（次の段階）の代わりの絵 */
+.pageview { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: var(--panel-2); }
+.pv { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+.pv .bar { font-size: 12px; color: var(--ink-3); padding: 4px 10px; border-bottom: 1px solid var(--line-soft); }
+.pv .body { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.pv .blk { background: var(--panel-2); border-radius: 6px; height: 28px; }
+.pv .blk.hero { height: 120px; }
+.pv .blk.mark { outline: 2px dashed var(--star); }
+</style>
+</head>
+<body>
+<nav class="docnav"><div class="in">
+  <b>kemi 会話 UI モック</b>
+  <a href="#why">何を決めるか</a>
+  <a href="#variants">案を比べる</a>
+  <a href="#follow">新しい返信への追従</a>
+  <a href="#live">ページの見方と並べる</a>
+  <a href="#next">決めたあと</a>
+  <span class="sp"></span>
+  <button type="button" id="theme">テーマを切り替え</button>
+</div></nav>
+<div class="wrap">
+<h1>スレッドとチャット欄の置き方</h1>
+<p class="lead"><strong>採用: 案 A2 と、会話の並びだけが新しいものについていく決まり（2026-10-05）。</strong>仕様は <code>docs/spec/agent-channel.md</code>。モックと仕様が食い違うときは仕様が正しい。</p>
+<p class="lead">エージェントとの往復（agent-channel）を実際に使った感想を受けて、スレッドとチャット欄をどこに置くかを決めるモック。ここで決めるのは、どこに置くかと、差分の中のスレッドとチャット欄の関係だけ。色・上部バー・ツリーは今のまま。</p>
+
+<section id="why">
+  <h2>何を決めるか <span class="tag design">設計変更</span> <span class="tag spec">仕様判断（追従）</span> <span class="tag bug">不具合</span></h2>
+  <dl class="kv">
+    <dt>使ってみた感想</dt><dd>スレッドもチャット欄も狭い。返信が来たらそこへ追従したい。もっとチャットらしくしたい。画面の高さいっぱいに出して、すぐ畳めるようにしたい。</dd>
+    <dt>今の形</dt><dd>チャット欄は、ツリーの下の端から浮く小さな箱（幅 440px くらい、並びは 2〜3 件ぶん）。スレッドは差分の中の付箋色の吹き出しで、返信が増えると差分を大きく押し下げる。</dd>
+    <dt>不具合</dt><dd>ファイル全体へのコメントのスレッドが差分に食い込む。どの案でも、ファイル全体へのコメントはファイルの見出しの下に置き直す。</dd>
+    <dt>次の段階との関係</dt><dd>次に作る <code>--live</code> は、動いているページとスナップショットを同じ幅で並べる。会話の置き場所は、その横に並んでも邪魔にならないこと。</dd>
+  </dl>
+  <p class="cap"><b>今の形</b>（本物のバイナリでのスクリーンショット）</p>
+  <img class="shot" src="ui-mock-conversation-before.png" alt="今の画面。左下にチャット欄の小さな箱、差分の中に付箋色のスレッド">
+</section>
+
+<section id="variants">
+  <h2>案を比べる</h2>
+  <p class="lead">同じ内容（行へのコメントが 2 件、ファイル全体へのコメントが 1 件、全体への発言が数件）を 3 つの置き方で見せる。どの案も「畳む」で会話を閉じたときの形を確かめられる。</p>
+  <div class="variant-tabs" role="group" aria-label="置き方の案">
+    <button type="button" data-v="a" aria-pressed="false">案 A: 右の会話パネル（ひとつながり）</button>
+    <button type="button" data-v="a2" aria-pressed="true">案 A2: A + スレッドを開くとパネルいっぱい<span class="rec">採用</span></button>
+    <button type="button" data-v="b" aria-pressed="false">案 B: 右のパネルをタブで分ける</button>
+    <button type="button" data-v="c" aria-pressed="false">案 C: 下から引き出す + 差分の中で会話</button>
+  </div>
+  <div class="toggles"><span>会話を</span><button type="button" id="fold" aria-pressed="false">畳む</button></div>
+
+  <!-- ===== 案 A ===== -->
+  <div class="pane-variant" data-v="a" hidden>
+    <div class="frame scroll-x"><div class="app" id="app-a">
+      <div class="k-top"><span class="k-brand">kemi</span><span class="k-title">Working tree changes</span><span class="k-meta">Files 2 · Changes +14 −6</span><span class="sp"></span><span class="ib on">会話 3</span><button class="btn">Hand to agent 2</button><button class="btn primary">Approve</button><button class="btn">Request changes</button></div>
+      <div class="k-body">
+        <div class="k-tree"></div>
+        <div class="k-main">
+          <div class="fhead">src/parse.rs <span class="cbadge">2</span><span class="sp"></span><span style="font-family:var(--sans);font-size:12px;color:var(--ink-3)">Seen ○</span></div>
+          <div class="stub"><span>ファイル全体</span><span class="txt">エラーの型をまとめたい</span><span class="who">You</span></div>
+          <div class="dv" data-diff="main" data-mode="stub"></div>
+        </div>
+        <aside class="pane">
+          <div class="p-head"><b>会話</b><span class="status">Working</span><span class="sp"></span><button class="btn sm">畳む ›</button></div>
+          <div class="p-filter"><span class="on">すべて</span><span>未解決</span><span>このファイル</span></div>
+          <div class="timeline">
+            <div class="msg me"><span class="who">You</span>ざっと見て、気になったところに付けたよ</div>
+            <div class="card">
+              <div class="card-head"><span class="loc">parse.rs:3</span><span class="sp"></span><a href="#">差分へ</a><a href="#">Resolve</a></div>
+              <div class="card-quote">+ fn parse_line(s: &amp;str) -&gt; Line {</div>
+              <div class="card-body"><div class="msg me"><span class="who">You</span>rename this line</div><div class="msg agent"><span class="who">Agent</span>parse_line に変えて、呼び出し側も直した</div></div>
+            </div>
+            <div class="card sel">
+              <div class="card-head"><span class="loc">parse.rs:12</span><span class="sp"></span><a href="#">差分へ</a><a href="#">Resolve</a></div>
+              <div class="card-quote">+     let n = s.trim().parse().unwrap();</div>
+              <div class="card-body"><div class="msg me"><span class="who">You</span>unwrap はやめてほしい</div><div class="msg agent"><span class="who">Agent</span>Result を返す形にする？呼び出し元が 3 か所ある</div></div>
+              <div class="card-reply"><span class="in">返信…</span><button class="btn sm">Reply</button></div>
+            </div>
+            <div class="msg agent"><span class="who">Agent</span>最初の 2 件を直した。残りは返事待ち</div>
+          </div>
+          <div class="compose"><div class="in">全体への発言（Cmd/Ctrl+Enter で投稿）</div><div class="row"><span class="hint">未渡し 2 件</span><button class="btn sm">Hand to agent</button><button class="btn sm primary">Post</button></div></div>
+          <div class="rail"><span class="dot"></span><span class="vt">会話 3</span><span class="cbadge new">2</span></div>
+        </aside>
+      </div>
+    </div></div>
+    <ul class="note-list">
+      <li><strong>形</strong>: 右に高さいっぱいの会話パネル。全体への発言と各スレッドを、届いた順に 1 本の並びで見せる。スレッドは引用つきのカードで、カードの中で返信できる。差分の中には 1 行の札（最後の発言の書き出し）だけを残す。</li>
+      <li><strong>行き来</strong>: 札を押すとパネルのカードへ、カードの「差分へ」を押すとその行へ移る。いま選んでいるスレッドは両方で縁取る。</li>
+      <li><strong>畳む</strong>: 44px の縦の帯になる。状態の点と、まだ読んでいない返信の数だけを出す。開き閉じは上部バーの「会話」でもできる。</li>
+      <li><strong>良いところ</strong>: チャットらしく読める。差分はスレッドで押し下げられない（札 1 行ぶんだけ）。<code>--live</code> でも、同じパネルがページの横にそのまま並ぶ。</li>
+      <li><strong>気になるところ</strong>: 差分の幅が 400px 減る。パネルを開いたまま横並び（split）の差分を見ると窮屈。パネルの幅は掴んで変えられるようにする想定。</li>
+    </ul>
+  </div>
+
+  <!-- ===== 案 A2 ===== -->
+  <div class="pane-variant" data-v="a2">
+    <div class="toggles"><span>パネルの中身</span><button type="button" id="a2-list" aria-pressed="true">一覧</button><button type="button" id="a2-thread" aria-pressed="false">6 行目のスレッドを開く</button><span style="margin-left:10px">幅</span><button type="button" id="a2-wide" aria-pressed="false">広げる</button></div>
+    <div class="frame scroll-x"><div class="app" id="app-a2" style="--pane-default: 440px">
+      <div class="k-top"><span class="k-brand">kemi</span><span class="k-title">Working tree changes</span><span class="k-meta">Files 2 · Changes +14 −6</span><span class="sp"></span><span class="ib on">会話 3</span><button class="btn">Hand to agent 2</button><button class="btn primary">Approve</button><button class="btn">Request changes</button></div>
+      <div class="k-body" style="--pane: 440px">
+        <div class="k-tree"></div>
+        <div class="k-main">
+          <div class="fhead">src/parse.rs <span class="cbadge">2</span><span class="sp"></span><span style="font-family:var(--sans);font-size:12px;color:var(--ink-3)">Seen ○</span></div>
+          <div class="stub"><span>ファイル全体</span><span class="txt">エラーの型をまとめたい</span><span class="who">You</span></div>
+          <div class="dv" data-diff="main" data-mode="stub"></div>
+        </div>
+        <aside class="pane">
+          <span class="resizer" title="掴んで幅を変える"></span>
+          <div class="p-head"><b>会話</b><span class="status">Working</span><span class="sp"></span><button class="btn sm">広げる ‹</button><button class="btn sm">畳む ›</button></div>
+          <div class="a2-list">
+            <div class="p-filter"><span class="on">すべて</span><span>未解決</span><span>このファイル</span></div>
+            <div class="rows">
+              <div class="row me"><span class="who">You</span><span class="t">10:02</span><p>ざっと見て、気になったところに付けたよ</p></div>
+              <div class="tcard"><div class="card-head"><span class="loc">parse.rs（ファイル全体）</span><span class="sp"></span><span>1 件</span></div><div class="last"><b style="font-size:12px;color:var(--ink-2)">You</b><span class="txt">エラーの型をまとめたい</span></div></div>
+              <div class="tcard"><div class="card-head"><span class="loc">parse.rs:3</span><span class="sp"></span><span>2 件</span></div><div class="last"><b style="font-size:12px;color:var(--ai)">Agent</b><span class="txt">parse_line に変えて、呼び出し側も直した</span></div></div>
+              <div class="tcard sel"><div class="card-head"><span class="loc">parse.rs:6</span><span class="sp"></span><span class="cbadge new">新着 1</span></div><div class="last"><b style="font-size:12px;color:var(--ai)">Agent</b><span class="txt">Result を返す形にする？呼び出し元が 3 か所あるけど、どれも ? で…</span></div><div class="more">開く ›</div></div>
+              <div class="row"><span class="who">Agent</span><span class="t">10:09</span><p>最初の 2 件を直した。残りは返事待ち。6 行目は方針を決めてほしい</p></div>
+            </div>
+            <div class="compose"><div class="in">全体への発言（Cmd/Ctrl+Enter で投稿）</div><div class="row" style="padding:0;display:flex;gap:6px;justify-content:flex-end;margin-top:6px;align-items:center"><span class="hint" style="flex:1;font-size:12px;color:var(--ink-3)">未渡し 2 件</span><button class="btn sm">Hand to agent</button><button class="btn sm primary">Post</button></div></div>
+          </div>
+          <div class="a2-thread">
+            <div class="tview-head"><button class="back" type="button">‹ 会話</button><span class="loc">parse.rs:6</span><span class="sp"></span><a href="#">差分へ</a><a href="#">Resolve</a></div>
+            <div class="ctx"><div>    let head = s.split(':').next();</div><div>    let rest = &amp;s[head.len()..];</div><div class="d">-    let n: u32 = rest.parse().expect("num");</div><div class="a hit">+    let n = s.trim().parse().unwrap();</div><div>    Line { head, n }</div></div>
+            <div class="rows">
+              <div class="row me"><span class="who">You</span><span class="t">10:03</span><p>unwrap はやめてほしい。空行が来たら落ちる</p></div>
+              <div class="row"><span class="who">Agent</span><span class="t">10:08</span><p>Result を返す形にする？呼び出し元が 3 か所あるけど、どれも ? で上に流せる。<br>もう一つの案は、空行を読み飛ばして 0 にする形。こっちは呼び出し側を変えずに済むけど、壊れた入力を黙って通すことになる。</p></div>
+              <div class="row me"><span class="who">You</span><span class="t">10:09</span><p>Result で。エラーの型はファイル全体のコメントに書いたやつにまとめて</p></div>
+              <div class="row"><span class="who">Agent</span><span class="t">10:11</span><p>了解。ParseError に寄せて、parse_all も Result&lt;Vec&lt;Line&gt;, ParseError&gt; にする</p></div>
+            </div>
+            <div class="treply"><div class="in">このスレッドへの返信（Cmd/Ctrl+Enter）</div><div class="row2"><span class="hint">未渡し 2 件</span><button class="btn sm">Hand to agent</button><button class="btn sm primary">Reply</button></div></div>
+          </div>
+          <div class="rail"><span class="dot"></span><span class="vt">会話 3</span><span class="cbadge new">2</span></div>
+        </aside>
+      </div>
+    </div></div>
+    <ul class="note-list">
+      <li><strong>A との違い 1（スレッドを開く）</strong>: 一覧のスレッドは、場所と最後の 1 件だけの小さなカード。押すとパネル全体がそのスレッドになる（Slack のスレッドと同じ）。上にコードの前後数行、下に大きな返信欄。会話の長さはパネルの高さいっぱい使える。「‹ 会話」で一覧へ戻る。差分の札を押したときも、このスレッドが開く。</li>
+      <li><strong>A との違い 2（吹き出しをやめる）</strong>: 発言は吹き出しではなく、名前と本文の行にする。吹き出しは幅の 8〜9 割しか使えず、左右に寄せる分だけ狭くなるため。自分の発言は背景の色で区別する。</li>
+      <li><strong>A との違い 3（幅）</strong>: 既定は 440px。左の縁を掴んで幅を変えられ、「広げる」で 640px にする（差分は狭くなるが、会話を読む間だけ）。幅は覚えておく。</li>
+      <li><strong>新着</strong>: エージェントの返信が届いたスレッドのカードに「新着」を付ける。開いているスレッドに届いたら、一番下を見ているときだけついていく（下の「新しい返信への追従」）。</li>
+    </ul>
+  </div>
+
+  <!-- ===== 案 B ===== -->
+  <div class="pane-variant" data-v="b" hidden>
+    <div class="frame scroll-x"><div class="app" id="app-b">
+      <div class="k-top"><span class="k-brand">kemi</span><span class="k-title">Working tree changes</span><span class="k-meta">Files 2 · Changes +14 −6</span><span class="sp"></span><span class="ib on">会話 3</span><button class="btn">Hand to agent 2</button><button class="btn primary">Approve</button><button class="btn">Request changes</button></div>
+      <div class="k-body">
+        <div class="k-tree"></div>
+        <div class="k-main">
+          <div class="fhead">src/parse.rs <span class="cbadge">2</span><span class="sp"></span><span style="font-family:var(--sans);font-size:12px;color:var(--ink-3)">Seen ○</span></div>
+          <div class="stub"><span>ファイル全体</span><span class="txt">エラーの型をまとめたい</span><span class="who">You</span></div>
+          <div class="dv" data-diff="main" data-mode="stub"></div>
+        </div>
+        <aside class="pane">
+          <div class="p-head"><b>会話</b><span class="status">Working</span><span class="sp"></span><button class="btn sm">畳む ›</button></div>
+          <div class="p-tabs"><button class="on">スレッド 3</button><button>チャット</button></div>
+          <div class="p-filter"><span class="on">未解決</span><span>すべて</span><span>このファイル</span></div>
+          <div class="timeline">
+            <div class="card">
+              <div class="card-head"><span class="loc">parse.rs（ファイル全体）</span><span class="sp"></span><a href="#">差分へ</a></div>
+              <div class="card-body"><div class="msg me"><span class="who">You</span>エラーの型をまとめたい</div></div>
+            </div>
+            <div class="card sel">
+              <div class="card-head"><span class="loc">parse.rs:12</span><span class="sp"></span><a href="#">差分へ</a><a href="#">Resolve</a></div>
+              <div class="card-quote">+     let n = s.trim().parse().unwrap();</div>
+              <div class="card-body"><div class="msg me"><span class="who">You</span>unwrap はやめてほしい</div><div class="msg agent"><span class="who">Agent</span>Result を返す形にする？呼び出し元が 3 か所ある</div></div>
+              <div class="card-reply"><span class="in">返信…</span><button class="btn sm">Reply</button></div>
+            </div>
+            <div class="card resolved">
+              <div class="card-head"><span class="loc">parse.rs:3 · 解決済み</span><span class="sp"></span><a href="#">開く</a></div>
+            </div>
+          </div>
+          <div class="compose"><div class="in">返信は各スレッドへ。全体への発言は「チャット」タブで</div><div class="row"><span class="hint">未渡し 2 件</span><button class="btn sm">Hand to agent</button></div></div>
+          <div class="rail"><span class="dot"></span><span class="vt">会話 3</span><span class="cbadge new">2</span></div>
+        </aside>
+      </div>
+    </div></div>
+    <ul class="note-list">
+      <li><strong>形</strong>: 右のパネルは案 A と同じ。中を「スレッド」と「チャット」のタブに分ける。スレッドはファイル・行の順に並べ、解決したものは 1 行に畳む。</li>
+      <li><strong>良いところ</strong>: スレッドを場所の順にまとめて見直せる。submit 前の見直しに向く。</li>
+      <li><strong>気になるところ</strong>: エージェントの返事が「どこに来たか」をタブを切り替えて探すことになる。追従したいという感想とは逆向き。新しい返信はタブの点で知らせるしかない。</li>
+    </ul>
+  </div>
+
+  <!-- ===== 案 C ===== -->
+  <div class="pane-variant" data-v="c" hidden>
+    <div class="frame scroll-x"><div class="app nopane" id="app-c">
+      <div class="k-top"><span class="k-brand">kemi</span><span class="k-title">Working tree changes</span><span class="k-meta">Files 2 · Changes +14 −6</span><span class="sp"></span><span class="ib on">会話 3</span><button class="btn">Hand to agent 2</button><button class="btn primary">Approve</button><button class="btn">Request changes</button></div>
+      <div class="k-body">
+        <div class="k-tree"></div>
+        <div class="k-main">
+          <div class="fhead">src/parse.rs <span class="cbadge">2</span><span class="sp"></span><span style="font-family:var(--sans);font-size:12px;color:var(--ink-3)">Seen ○</span></div>
+          <div class="dv" data-diff="main" data-mode="chatty"></div>
+        </div>
+      </div>
+      <div class="drawer">
+        <div class="grip"></div>
+        <div class="p-head"><b>チャット</b><span class="status">Working</span><span class="sp"></span><button class="btn sm">高さいっぱい</button><button class="btn sm">畳む ⌄</button></div>
+        <div class="timeline bubbles">
+          <div class="msg me"><span class="who">You</span>ざっと見て、気になったところに付けたよ</div>
+          <div class="msg agent"><span class="who">Agent</span>最初の 2 件を直した。残りは返事待ち</div>
+        </div>
+        <div class="compose"><div class="in">全体への発言（Cmd/Ctrl+Enter で投稿）</div><div class="row"><span class="hint">未渡し 2 件</span><button class="btn sm">Hand to agent</button><button class="btn sm primary">Post</button></div></div>
+      </div>
+    </div></div>
+    <ul class="note-list">
+      <li><strong>形</strong>: 全体への発言は下から引き出すドロワー（高さいっぱいまで広げられる）。スレッドは今どおり差分の中に置き、中身を吹き出しにして読みやすくする。</li>
+      <li><strong>良いところ</strong>: スレッドがコードのすぐ下にあり、文脈が切れない。差分の幅が減らない。</li>
+      <li><strong>気になるところ</strong>: スレッドが伸びると差分を押し下げる問題が残る。開いたドロワーは差分を下から隠す。<code>--live</code> では縦の高さを奪い合い、ページの見方が狭くなる。</li>
+    </ul>
+  </div>
+
+  <h3>採用: 案 A2（A に、スレッドを開く・吹き出しをやめる・幅を変えるを足したもの）</h3>
+  <ul class="note-list">
+    <li>感想の 4 点（狭い・追従・チャットらしさ・高さいっぱいで畳める）に一番素直に応える。</li>
+    <li>差分の中は札 1 行だけなので、スレッドで差分が分断されない。ファイル全体へのコメントも札になり、食い込む不具合は形ごと無くなる。</li>
+    <li><code>--live</code> でも同じパネルを使い回せる（下の「ページの見方と並べる」）。案 C はここで作り直しになる。</li>
+    <li>案 B の「場所の順に見直す」は、案 A のパネル上部の絞り込み（すべて・未解決・このファイル）で代わりになる。</li>
+  </ul>
+</section>
+
+<section id="follow">
+  <h2>新しい返信への追従 <span class="tag spec">仕様判断</span></h2>
+  <dl class="kv">
+    <dt>今の仕様</dt><dd><code>kemi.md</code> の R-LIVE: エージェントの返信・発言・状態は届いたらその場で出す。<strong>スクロール位置は変えない</strong>。</dd>
+    <dt>感想</dt><dd>返信が来たら、そこへ追従したい。</dd>
+    <dt>提案</dt><dd><strong>会話パネルの中だけ</strong>、チャットでよくある決まりにする。並びの一番下を見ているときは、新しいものが来たら一番下へついていく。上のほうを読んでいるときは動かさず、下に「新しい返信 2 件 ↓」の札を出す（押すと一番下へ）。<strong>差分は今どおり動かさない</strong>。代わりに、ツリーのファイルと差分の札に、まだ読んでいない印を付ける。</dd>
+    <dt>仕様の変更</dt><dd>R-LIVE の例外に「会話パネルの並びは、一番下を見ているときだけ新しいものへついていく」を足す。agent-channel.md にも同じ一文を足す。</dd>
+  </dl>
+  <div class="frame scroll-x" style="max-width: 420px;"><div class="app" style="width: 400px; height: 360px;">
+    <aside class="pane" style="height: 100%; border-left: 0;">
+      <div class="p-head"><b>会話</b><span class="status">Working</span></div>
+      <div class="timeline">
+        <div class="msg me"><span class="who">You</span>ざっと見て、気になったところに付けたよ</div>
+        <div class="card"><div class="card-head"><span class="loc">parse.rs:3</span></div><div class="card-body"><div class="msg me"><span class="who">You</span>rename this line</div></div></div>
+      </div>
+      <span class="newpill" style="bottom: 96px;">新しい返信 2 件 ↓</span>
+      <div class="compose"><div class="in">全体への発言</div></div>
+    </aside>
+  </div></div>
+  <p class="cap">上のほうを読んでいる間に返信が 2 件届いたとき。並びは動かさず、札だけを出す。</p>
+</section>
+
+<section id="live">
+  <h2>ページの見方と並べる（次の段階の確認）</h2>
+  <p class="lead">案 A のパネルを、<code>--live</code> のページの見方の横に置いた形。ツリーは引っ込め、ページは 2 枚を同じ幅で並べる。パネルを畳めば、ページにほぼ全幅を渡せる。</p>
+  <div class="toggles"><span>会話を</span><button type="button" id="fold-live" aria-pressed="false">畳む</button></div>
+  <div class="frame scroll-x"><div class="app" id="app-live">
+    <div class="k-top"><span class="k-brand">kemi</span><span class="k-title">localhost:5173/</span><span class="ib on">ページ</span><span class="ib">コード</span><span class="k-meta">幅 390 · 1280</span><span class="sp"></span><span class="ib on">会話 1</span><button class="btn">Hand to agent 1</button><button class="btn primary">Approve</button></div>
+    <div class="k-body" style="grid-template-columns: minmax(0, 1fr) var(--pane, 400px);">
+      <div class="pageview">
+        <div class="pv"><div class="bar">スナップショット（前）</div><div class="body"><div class="blk"></div><div class="blk hero"></div><div class="blk"></div><div class="blk"></div></div></div>
+        <div class="pv"><div class="bar">動いているページ</div><div class="body"><div class="blk"></div><div class="blk hero mark"></div><div class="blk"></div><div class="blk"></div></div></div>
+      </div>
+      <aside class="pane">
+        <div class="p-head"><b>会話</b><span class="status waiting">Waiting</span><span class="sp"></span><button class="btn sm">畳む ›</button></div>
+        <div class="timeline">
+          <div class="card sel">
+            <div class="card-head"><span class="loc">ページ · 要素 .hero</span><span class="sp"></span><a href="#">ページへ</a></div>
+            <div class="card-body"><div class="msg me"><span class="who">You</span>見出しをもう少し大きく</div><div class="msg agent"><span class="who">Agent</span>2 案作った。切り替えて見てみて</div></div>
+          </div>
+        </div>
+        <div class="compose"><div class="in">全体への発言</div><div class="row"><button class="btn sm primary">Post</button></div></div>
+        <div class="rail"><span class="dot"></span><span class="vt">会話 1</span></div>
+      </aside>
+    </div>
+  </div></div>
+</section>
+
+<section id="next">
+  <h2>決めたあと</h2>
+  <ul class="note-list">
+    <li>採った案を <code>docs/design/</code> に置き、<code>agent-channel.md</code> と <code>live.md</code> からリンクする（live.md の「まだ無い」を埋める）。</li>
+    <li>追従の決まりを R-LIVE と agent-channel.md に足す。</li>
+    <li>狭い画面（幅 390px）は今のシートのまま。案 A なら、パネルがそのまま下からのシートになるだけで、形は変わらない想定。</li>
+    <li>そのあと、実装の計画を立てる。</li>
+  </ul>
+</section>
+</div>
+
+<script>
+const tree = `<div class="g-title">Working tree changes</div>
+<div class="f active"><span class="nm">src/parse.rs</span><span class="cbadge new">2</span><span class="st"><span class="p">+12</span> <span class="m">−4</span></span></div>
+<div class="f"><span class="nm">src/main.rs</span><span></span><span class="st"><span class="p">+2</span> <span class="m">−2</span></span></div>`;
+document.querySelectorAll(".k-tree").forEach((t) => (t.innerHTML = tree));
+
+const lines = [
+  [" ", 1, 1, "use crate::line::Line;"],
+  [" ", 2, 2, ""],
+  ["-", 3, "", "fn parse(s: &str) -> Line {"],
+  ["+", "", 3, "fn parse_line(s: &str) -> Line {", "c1"],
+  [" ", 4, 4, "    let head = s.split(':').next();"],
+  [" ", 5, 5, "    let rest = &s[head.len()..];"],
+  ["-", 6, "", "    let n: u32 = rest.parse().expect(\"num\");"],
+  ["+", "", 6, "    let n = s.trim().parse().unwrap();", "c2"],
+  [" ", 7, 7, "    Line { head, n }"],
+  [" ", 8, 8, "}"],
+  [" ", 9, 9, ""],
+  [" ", 10, 10, "pub fn parse_all(text: &str) -> Vec<Line> {"],
+  [" ", 11, 11, "    text.lines().map(parse_line).collect()"],
+  [" ", 12, 12, "}"],
+];
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const stubs = {
+  c1: `<div class="stub"><span>3 行目</span><span class="txt">parse_line に変えて、呼び出し側も直した</span><span class="who">Agent</span></div>`,
+  c2: `<div class="stub sel"><span class="newdot"></span><span>6 行目</span><span class="txt">Result を返す形にする？呼び出し元が 3 か所ある</span><span class="who">Agent</span></div>`,
+};
+const chatty = {
+  c1: `<div class="th chatty bubbles"><div class="th-head"><span>3 行目</span><span class="sp"></span><a href="#">Resolve</a><a href="#">Fold</a></div><div class="msg me" style="align-self:flex-end;background:var(--ai);color:var(--ai-ink)"><span class="who" style="color:var(--ai-ink)">You</span>rename this line</div><div class="msg agent"><span class="who">Agent</span>parse_line に変えて、呼び出し側も直した</div></div>`,
+  c2: `<div class="th chatty bubbles"><div class="th-head"><span>6 行目</span><span class="sp"></span><a href="#">Resolve</a><a href="#">Fold</a></div><div class="msg me" style="align-self:flex-end;background:var(--ai);color:var(--ai-ink)"><span class="who" style="color:var(--ai-ink)">You</span>unwrap はやめてほしい</div><div class="msg agent"><span class="who">Agent</span>Result を返す形にする？呼び出し元が 3 か所ある</div><div class="card-reply" style="padding:0"><span class="in">返信…</span><button class="btn sm">Reply</button></div></div>`,
+};
+document.querySelectorAll(".dv").forEach((dv) => {
+  const mode = dv.dataset.mode;
+  let html = "";
+  if (mode === "chatty") {
+    html += `<div class="th chatty" style="margin-left:16px"><div class="th-head"><span>ファイル全体</span></div><div class="msg me" style="align-self:flex-end;background:var(--ai);color:var(--ai-ink)">エラーの型をまとめたい</div></div>`;
+  }
+  for (const [s, o, n, code, c] of lines) {
+    const cls = s === "+" ? "add" : s === "-" ? "del" : "";
+    html += `<div class="ln ${cls} ${c ? "cmt" : ""}"><span class="n">${o}</span><span class="n">${n}</span><span class="s">${s.trim()}</span><code>${esc(code)}</code></div>`;
+    if (c) html += mode === "chatty" ? chatty[c] : stubs[c];
+  }
+  dv.innerHTML = html;
+});
+
+for (const b of document.querySelectorAll(".variant-tabs button")) {
+  b.addEventListener("click", () => {
+    for (const o of document.querySelectorAll(".variant-tabs button")) o.setAttribute("aria-pressed", String(o === b));
+    for (const v of document.querySelectorAll(".pane-variant")) v.hidden = v.dataset.v !== b.dataset.v;
+  });
+}
+const fold = (btn, apps) => btn.addEventListener("click", () => {
+  const on = btn.getAttribute("aria-pressed") !== "true";
+  btn.setAttribute("aria-pressed", String(on));
+  btn.textContent = on ? "開く" : "畳む";
+  for (const id of apps) document.getElementById(id).classList.toggle("folded", on);
+});
+fold(document.getElementById("fold"), ["app-a", "app-a2", "app-b", "app-c"]);
+const a2 = document.getElementById("app-a2");
+const a2list = document.getElementById("a2-list"), a2thread = document.getElementById("a2-thread"), a2wide = document.getElementById("a2-wide");
+const showThread = (on) => { a2.classList.toggle("thread", on); a2list.setAttribute("aria-pressed", String(!on)); a2thread.setAttribute("aria-pressed", String(on)); };
+a2list.addEventListener("click", () => showThread(false));
+a2thread.addEventListener("click", () => showThread(true));
+a2.querySelector(".tcard.sel").addEventListener("click", () => showThread(true));
+a2.querySelector(".back").addEventListener("click", () => showThread(false));
+a2wide.addEventListener("click", () => { const on = a2wide.getAttribute("aria-pressed") !== "true"; a2wide.setAttribute("aria-pressed", String(on)); a2.querySelector(".k-body").style.setProperty("--pane", on ? "640px" : "440px"); });
+fold(document.getElementById("fold-live"), ["app-live"]);
+document.getElementById("theme").addEventListener("click", () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
+});
+</script>
+</body>
+</html>
