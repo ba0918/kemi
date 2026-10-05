@@ -59,13 +59,16 @@ const MANIFEST: &str = r#"{
 }"#;
 
 /// kemi を起動するコマンド。結果ファイルが利用者の本物の状態ディレクトリへ書かれない
-/// よう、`XDG_STATE_HOME` と `HOME` を必ず `state` の下に向ける。
+/// よう、`XDG_STATE_HOME` と `HOME` を必ず `state` の下に向ける。Windows の
+/// `<id>.endpoint` は `XDG_STATE_HOME` に関わらず `LOCALAPPDATA` の下に置かれるので、
+/// それも向ける。
 fn kemi_command(dir: &Path, state: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_kemi"));
     command
         .current_dir(dir)
         .env("XDG_STATE_HOME", state)
-        .env("HOME", state.join("home"));
+        .env("HOME", state.join("home"))
+        .env("LOCALAPPDATA", state.join("localappdata"));
     command
 }
 
@@ -1233,6 +1236,12 @@ async fn result_unwritable_location_keeps_stdout_and_exit_code() {
     assert_eq!(stdout, writable_stdout);
     assert!(answer["saved"]["error"].is_string());
     // 文言は契約でないので、書ける場合より stderr の行が増えたことで警告を確かめる。
+    // 状態の置き場所に書けないとセッションを作れず、review の行も出ないので、比べる前に
+    // 書ける側からも除く。
+    let writable_stderr: Vec<&String> = writable_stderr
+        .iter()
+        .filter(|line| !line.starts_with("kemi: review "))
+        .collect();
     assert!(
         stderr.len() > writable_stderr.len(),
         "a warning must go to stderr: {stderr:?} vs {writable_stderr:?}"
@@ -2505,4 +2514,523 @@ async fn resume_submit_uses_the_original_workspace_for_the_result() {
     let from_file: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(from_file["approval"], document["approval"]);
     assert!(session_dir_files(&state.path).is_empty());
+}
+
+// ---- R-AGENT-CLI / R-AGENT-LINK（kemi wait と kemi reply） ----
+
+impl Kemi {
+    /// URL の後の stderr を `kemi: review <id>` の行まで読み、id を返す。並びは URL →
+    /// 公開の警告 → 結果の保存先 → review（R-INPUT-6）で、保存先の次が review の行。
+    fn review_id(&mut self) -> String {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.stderr.read_line(&mut line).unwrap();
+            assert!(read > 0, "kemi printed no review line");
+            if line.starts_with("kemi: exposed on the LAN;") {
+                continue;
+            }
+            assert!(
+                line.contains("results"),
+                "the results line must come before the review line: {line:?}"
+            );
+            break;
+        }
+        line.clear();
+        self.stderr.read_line(&mut line).unwrap();
+        line.trim()
+            .strip_prefix("kemi: review ")
+            .unwrap_or_else(|| panic!("the review line must follow the results line: {line:?}"))
+            .to_string()
+    }
+
+    async fn review_json(&self) -> serde_json::Value {
+        reqwest::get(format!("{}api/review", self.url))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn wait_agent_status(&self, expected: &str) {
+        for _ in 0..500 {
+            if self.review_json().await["agent"]["status"] == expected {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the agent status never became {expected}");
+    }
+
+    async fn add_comment(&self, line: u32, body: &str) {
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add", "file_id": "f1", "side": "new",
+                    "start_line": line, "end_line": line, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+
+    async fn hand(&self) {
+        let response = self.post("api/hand", serde_json::json!({})).await;
+        assert_eq!(response.status(), 200);
+    }
+
+    async fn submit(&self, verdict: &str) -> serde_json::Value {
+        let response = self
+            .post("api/submit", serde_json::json!({ "verdict": verdict }))
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+}
+
+/// 写し（`<id>.payload`）ができるまで待つ。できる前に保留すると復元できない。
+#[cfg(unix)]
+async fn wait_for_copy(state: &Path, id: &str) {
+    let payload = sessions_dir(state).join(format!("{id}.payload"));
+    for _ in 0..500 {
+        if payload.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the session copy was never written");
+}
+
+fn endpoint_dir(state: &Path) -> PathBuf {
+    if cfg!(windows) {
+        state.join("localappdata").join("kemi").join("sessions")
+    } else {
+        sessions_dir(state)
+    }
+}
+
+/// `kemi wait` / `kemi reply` を終わるまで走らせる。
+fn run_agent(dir: &Path, state: &Path, args: &[&str], stdin: &str) -> std::process::Output {
+    let mut child = kemi_command(dir, state)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// `kemi wait` を裏で待たせる。
+fn spawn_wait(dir: &Path, state: &Path, args: &[&str]) -> Child {
+    kemi_command(dir, state)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+/// 終わるのを待ち、(終了コード, stdout, stderr)。
+async fn finish_agent(child: Child) -> (Option<i32>, String, String) {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::task::spawn_blocking(move || child.wait_with_output().unwrap()),
+    )
+    .await
+    .expect("the agent command did not finish")
+    .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+/// worktree のレビューを起動し、review の id を読む。
+fn start_worktree_review(dir: &TempDir, state: &TempDir, extra: &[&str]) -> (Kemi, String) {
+    worktree_fixture(dir);
+    let mut args = vec!["--worktree", "--no-open"];
+    args.extend_from_slice(extra);
+    let mut kemi = Kemi::spawn_with_state(&dir.path, &args, &state.path);
+    let id = kemi.review_id();
+    (kemi, id)
+}
+
+#[tokio::test]
+async fn wait_returns_the_comment_handed_while_it_waited() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
+    kemi.wait_agent_status("waiting").await;
+
+    kemi.add_comment(1, "rename this").await;
+    kemi.hand().await;
+
+    let (code, stdout, _) = finish_agent(waiting).await;
+    assert_eq!(code, Some(0));
+    let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(answer["kemi"], 2);
+    assert_eq!(answer["review"], id.as_str());
+    assert_eq!(answer["events"][0]["type"], "handed");
+    assert_eq!(
+        answer["events"][0]["comments"][0]["comment"]["body"],
+        "rename this"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn reply_writes_a_reply_and_a_message_that_reach_the_submit() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.add_comment(1, "rename this").await;
+
+    let output = run_agent(
+        &dir.path,
+        &state.path,
+        &["reply", &id],
+        r#"{"writes":[{"type":"reply","comment_id":"c1","body":"renamed"},{"type":"message","body":"all done"}]}"#,
+    );
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let ids: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(ids, serde_json::json!({ "ids": ["r1", "m1"] }));
+    kemi.submit("approved").await;
+    let (status, stdout) = kemi.wait();
+    assert_eq!(status.code(), Some(0));
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(document["comments"][0]["replies"][0]["author"], "agent");
+    assert_eq!(document["comments"][0]["replies"][0]["body"], "renamed");
+    assert_eq!(document["messages"][0]["body"], "all done");
+}
+
+#[tokio::test]
+async fn approving_ends_the_waiting_wait_with_the_result_and_code_0() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
+    kemi.wait_agent_status("waiting").await;
+
+    kemi.submit("approved").await;
+
+    let (code, stdout, _) = finish_agent(waiting).await;
+    assert_eq!(code, Some(0));
+    let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let submitted = answer["events"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(submitted["type"], "submitted");
+    assert_eq!(submitted["result"]["verdict"], "approved");
+    let (status, review_stdout) = kemi.wait();
+    assert_eq!(status.code(), Some(0));
+    let document: serde_json::Value = serde_json::from_str(review_stdout.trim()).unwrap();
+    assert_eq!(submitted["result"], document);
+}
+
+#[tokio::test]
+async fn requesting_changes_ends_the_waiting_wait_with_code_1() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
+    kemi.wait_agent_status("waiting").await;
+
+    kemi.submit("changes_requested").await;
+
+    let (code, stdout, _) = finish_agent(waiting).await;
+    assert_eq!(code, Some(1));
+    assert!(stdout.contains("changes_requested"));
+    let (status, _) = kemi.wait();
+    assert_eq!(status.code(), Some(1));
+}
+
+#[tokio::test]
+async fn wait_with_a_timeout_and_nothing_happening_exits_3_with_empty_stdout() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+
+    let started = std::time::Instant::now();
+    let output = run_agent(&dir.path, &state.path, &["wait", &id, "--timeout", "1"], "");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+    assert!(started.elapsed() >= std::time::Duration::from_millis(900));
+    kemi.kill();
+}
+
+#[test]
+fn wait_and_reply_for_an_unknown_id_exit_2() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+
+    for args in [
+        vec!["wait", "01HF7YAT00ZZZZZZZZZZZZZZZZ"],
+        vec!["reply", "01HF7YAT00ZZZZZZZZZZZZZZZZ"],
+        vec!["wait", "../../etc/passwd"],
+    ] {
+        let output = run_agent(&dir.path, &state.path, &args, "{\"writes\":[]}");
+        assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
+        assert!(output.stdout.is_empty(), "kemi {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("kemi --result"), "kemi {args:?}: {stderr}");
+    }
+}
+
+#[tokio::test]
+async fn wait_after_the_submit_exits_2_and_points_to_the_result() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.submit("approved").await;
+    let (status, _) = kemi.wait();
+    assert_eq!(status.code(), Some(0));
+
+    let output = run_agent(&dir.path, &state.path, &["wait", &id], "");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("kemi --result"), "{stderr}");
+}
+
+#[test]
+fn wait_and_reply_refuse_other_flags_in_english() {
+    let dir = TempDir::new();
+    let id = "01HF7YAT00ZZZZZZZZZZZZZZZZ";
+    for args in [
+        vec!["wait", id, "--worktree"],
+        vec!["wait", id, "--no-open"],
+        vec!["wait", "--timeout", "1"],
+        vec!["wait", id, "--timeout", "soon"],
+        vec!["wait"],
+        vec!["reply", id, "--timeout", "1"],
+        vec!["reply"],
+        vec!["reply", id, "extra"],
+    ] {
+        let output = run(&dir.path, &args);
+        assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
+        assert!(output.stdout.is_empty(), "kemi {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.is_empty(), "kemi {args:?}");
+        assert!(!contains_japanese(&stderr), "kemi {args:?}: {stderr}");
+    }
+}
+
+#[tokio::test]
+async fn without_a_state_location_there_is_no_review_line_and_submit_still_works() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi = Kemi::start(
+        Command::new(env!("CARGO_BIN_EXE_kemi"))
+            .args(["--worktree", "--no-open"])
+            .current_dir(&dir.path)
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("HOME")
+            .env_remove("LOCALAPPDATA"),
+    );
+    kemi.wait_serving().await;
+
+    kemi.submit("approved").await;
+
+    let mut rest = String::new();
+    kemi.stderr.read_to_string(&mut rest).unwrap();
+    let (status, stdout) = kemi.wait();
+    assert_eq!(status.code(), Some(0));
+    assert!(stdout.contains("\"verdict\":\"approved\""));
+    assert!(!rest.contains("kemi: review"), "{rest}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_endpoint_is_owner_only_and_gone_after_the_submit() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let endpoint = endpoint_dir(&state.path).join(format!("{id}.endpoint"));
+    let mode = std::fs::metadata(&endpoint).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+
+    kemi.submit("approved").await;
+    let (status, _) = kemi.wait();
+
+    assert_eq!(status.code(), Some(0));
+    assert!(!endpoint.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn suspending_removes_the_endpoint_and_ends_the_waiting_wait_with_2() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
+    kemi.wait_agent_status("waiting").await;
+
+    signal(&kemi.child, "-INT");
+    let (status, stdout, _) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    let (code, wait_stdout, wait_stderr) = finish_agent(waiting).await;
+    assert_eq!(code, Some(2));
+    assert!(wait_stdout.is_empty());
+    assert!(wait_stderr.contains("suspended"), "{wait_stderr}");
+    assert!(
+        !endpoint_dir(&state.path)
+            .join(format!("{id}.endpoint"))
+            .exists()
+    );
+}
+
+#[test]
+fn a_stale_endpoint_without_a_running_review_is_treated_as_missing() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let id = "01HF7YAT00YYYYYYYYYYYYYYYY";
+    // 強制終了で残ったつなぎ先。ロックは無い。待ち受けの無いポートを指す。
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    std::fs::create_dir_all(endpoint_dir(&state.path)).unwrap();
+    std::fs::write(
+        endpoint_dir(&state.path).join(format!("{id}.endpoint")),
+        format!("{{\"port\":{port},\"token\":\"stale\"}}"),
+    )
+    .unwrap();
+
+    let output = run_agent(&dir.path, &state.path, &["wait", id], "");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no running review"), "{stderr}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn wait_and_reply_work_when_the_page_listens_on_another_loopback_address() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &["--bind", "127.0.0.2"]);
+    assert!(kemi.url.starts_with("http://127.0.0.2:"), "{}", kemi.url);
+    kemi.add_comment(1, "rename this").await;
+    kemi.hand().await;
+
+    let waited = run_agent(&dir.path, &state.path, &["wait", &id], "");
+    let replied = run_agent(
+        &dir.path,
+        &state.path,
+        &["reply", &id],
+        r#"{"writes":[{"type":"message","body":"ok"}]}"#,
+    );
+
+    assert_eq!(waited.status.code(), Some(0), "{waited:?}");
+    assert!(String::from_utf8_lossy(&waited.stdout).contains("rename this"));
+    assert_eq!(replied.status.code(), Some(0), "{replied:?}");
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn refused_replies_exit_2_and_add_nothing_to_the_submit() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.add_comment(1, "rename this").await;
+    let too_long = "x".repeat(64 * 1024 + 1);
+    let over_limit = serde_json::json!({ "writes": [
+        { "type": "message", "body": "fine" },
+        { "type": "reply", "comment_id": "c1", "body": too_long },
+    ]})
+    .to_string();
+    let with_variants = r#"{"writes":[{"type":"reply","comment_id":"c1","body":"two ideas","variants":[{"label":"A","replace":[],"css":""}]}]}"#;
+
+    for input in [over_limit.as_str(), with_variants, "not json"] {
+        let output = run_agent(&dir.path, &state.path, &["reply", &id], input);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(!output.stderr.is_empty());
+    }
+
+    kemi.submit("approved").await;
+    let (_, stdout) = kemi.wait();
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(document["comments"][0]["replies"], serde_json::json!([]));
+    assert_eq!(document["messages"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn a_handed_comment_has_the_same_keys_as_in_the_submit() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.add_comment(1, "rename this").await;
+    kemi.hand().await;
+
+    let output = run_agent(&dir.path, &state.path, &["wait", &id], "");
+    kemi.submit("approved").await;
+    let (_, stdout) = kemi.wait();
+
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(answer["kemi"], 2);
+    assert_eq!(answer["review"], id.as_str());
+    let handed = &answer["events"][0]["comments"][0]["comment"];
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let submitted = &document["comments"][0];
+    let keys = |value: &serde_json::Value| {
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(handed["id"], submitted["id"]);
+    assert_eq!(keys(handed), keys(submitted));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_hand_made_before_suspending_is_returned_after_resuming() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.wait_serving().await;
+    wait_for_copy(&state.path, &id).await;
+    kemi.add_comment(1, "rename this").await;
+    kemi.hand().await;
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+
+    let mut resumed =
+        Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    assert_eq!(resumed.review_id(), id);
+    let output = run_agent(&dir.path, &state.path, &["wait", &id], "");
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("rename this"));
+    let review = resumed.review_json().await;
+    assert_eq!(review["agent"]["called"], true);
+    resumed.kill();
+}
+
+#[test]
+fn a_manifest_named_wait_opens_with_a_path() {
+    let dir = TempDir::new();
+    dir.write("wait", MANIFEST);
+
+    let output = run(&dir.path, &["--digest", "./wait"]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let digest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(digest["title"], "e2e のレビュー");
 }

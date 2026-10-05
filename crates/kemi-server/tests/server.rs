@@ -3466,6 +3466,7 @@ impl AgentServer {
             agent: Some(AgentParams {
                 listener: agent_listener,
                 token: "agent-secret".to_string(),
+                control: kemi_server::ServeControl::new(),
             }),
         };
         let task = tokio::spawn(serve(listener, params));

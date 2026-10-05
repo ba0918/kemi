@@ -59,10 +59,12 @@ pub enum ServeOutcome {
     Submitted(serde_json::Value),
 }
 
-/// サーバを止めた理由。submit か、レビュー中の実行時エラーか。
+/// サーバを止めた理由。submit か、レビュー中の実行時エラーか、保留か。
 pub(crate) enum Stop {
     Submitted(serde_json::Value),
     Failed(String),
+    /// 待っている `kemi wait` に保留を知らせるために止めた（[`ServeControl::suspend`]）。
+    Suspended,
 }
 
 /// 結果ファイルを残せなかった理由（R-RESULT）。完了画面には Display の文を出す。
@@ -179,6 +181,42 @@ pub struct AgentParams {
     pub listener: TcpListener,
     /// ページのトークンとは別の秘密。`<id>.endpoint` にだけ書く。
     pub token: String,
+    /// 保留を待っている `kemi wait` に知らせる入口。起動側が持つ。
+    pub control: ServeControl,
+}
+
+/// 起動側からサーバへの入口。保留（SIGINT / SIGTERM）は submit や実行時エラーと違って
+/// サーバの中を通らず、起動側が serve の future を捨てて終わるので、待っている
+/// `kemi wait` に理由を返すにはここから知らせる（R-AGENT-CLI）。
+#[derive(Clone, Default)]
+pub struct ServeControl {
+    state: Arc<std::sync::OnceLock<std::sync::Weak<AppState>>>,
+}
+
+impl ServeControl {
+    pub fn new() -> Self {
+        ServeControl::default()
+    }
+
+    /// 保留で終わることを、待っている `kemi wait` に知らせてサーバを止め始める。待っている
+    /// ものが無ければ何もせず false を返し、起動側は今までどおりすぐ終わってよい。true の
+    /// ときは、serve が返る（理由を返し終えて接続が閉じる）のを待ってから終わる。
+    pub fn suspend(&self) -> bool {
+        let Some(state) = self.state.get().and_then(std::sync::Weak::upgrade) else {
+            return false;
+        };
+        if !state.agent.lock().expect("agent poisoned").waiting {
+            return false;
+        }
+        {
+            let mut stop = state.stop.lock().expect("stop poisoned");
+            if stop.is_none() {
+                *stop = Some(Stop::Suspended);
+            }
+        }
+        let _ = state.shutdown.send(true);
+        true
+    }
 }
 
 /// エージェント用のリスナーを立てる。`--bind` に関わらず `127.0.0.1` で待つので、
@@ -332,6 +370,9 @@ pub async fn serve(
         freeze_started: std::sync::atomic::AtomicBool::new(false),
     });
 
+    if let Some(agent) = &params.agent {
+        let _ = agent.control.state.set(Arc::downgrade(&state));
+    }
     watch::start(state.source.watch_paths(), state.events.clone());
 
     let app = api::router(state.clone());
@@ -354,6 +395,7 @@ pub async fn serve(
     match stop {
         Some(Stop::Submitted(document)) => Ok(ServeOutcome::Submitted(document)),
         Some(Stop::Failed(message)) => Err(ServerError::Stopped(message)),
+        Some(Stop::Suspended) => Err(ServerError::Stopped("the review was suspended".to_string())),
         None => Err(ServerError::Stopped(
             "server stopped without a submit".to_string(),
         )),

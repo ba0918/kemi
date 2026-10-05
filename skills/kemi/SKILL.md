@@ -42,7 +42,8 @@ identifier and output paths. A tool that yields while the process keeps running 
 process ending.
 
 Read the `kemi: <url>` line from stderr and send the URL to the user in a progress message.
-stderr also reports the result storage directory. Explain the groups, what needs judgment,
+stderr also reports the result storage directory, followed by `kemi: review <id>` when the
+review can hold a conversation (see below). Explain the groups, what needs judgment,
 any assumptions, and that **Approve** or **Request changes** submits the review.
 
 Wait for the same process to exit using the execution environment's normal process lifecycle.
@@ -77,6 +78,17 @@ conversation decision. Stop only your own run by its retained identifier, never 
 name; that path yields no review JSON. The review stays as a session when it has state or a
 copy to keep, so report the resume command if stderr printed one and the user may want to
 continue.
+
+## Talk with the person before the submit
+
+When stderr printed `kemi: review <id>`, the person can hand you comments, replies, and notes
+while the review is still open, and you can answer in the page. Run `kemi wait <id>` in the
+background; it returns what the person handed over (or the submit) as JSON. Address it, answer
+with `kemi reply <id>` (JSON on stdin), and wait again until the submit arrives. Keep waiting for
+the main `kemi` process as well: its exit code and stdout stay the result of the review. Read
+[the conversation reference](references/conversation.md) for the commands, the JSON, the exit
+codes, and the limits. Without the review line, or if you never call `kemi wait`, the review
+is submit-only as before.
 
 ## Resume an interrupted review
 

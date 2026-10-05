@@ -216,6 +216,11 @@ fn ready(state: &AppState) -> Ready {
         Some(Stop::Failed(message)) => {
             return Ready::Stopped(format!("the review stopped with an error: {message}"));
         }
+        Some(Stop::Suspended) => {
+            return Ready::Stopped(
+                "the review was suspended; it continues after kemi --resume".to_string(),
+            );
+        }
         None => {}
     }
     if events.is_empty() {

@@ -56,6 +56,8 @@ kemi --from main --digest            # print the review map and exit
 kemi --result                        # print the last submitted result here and exit
 kemi --resume                        # pick an interrupted review (terminal only)
 kemi --resume <id>                   # continue that review, from any directory
+kemi wait <id> [--timeout <seconds>] # (agent) wait for what the reviewer hands over
+kemi reply <id> < writes.json        # (agent) answer in the page
 ```
 
 A commit range has two ways to group the same changes, and the page switches
@@ -102,6 +104,38 @@ kemi prints the JSON below to stdout and exits with 0
 130 (interrupted before submit). An interrupted review is kept as a session,
 so nothing you wrote on the page is lost; `kemi --resume` picks it up again
 when its frozen copy completed within the size limit (see [Sessions](#sessions)).
+
+### Talking with an agent before the submit
+
+When kemi keeps a session for the review, stderr also prints
+`kemi: review <id>` after the URL (and after the line naming where results are
+saved). An agent can then hold a conversation with you while the review is
+open:
+
+- `kemi wait <id> [--timeout <seconds>]` waits until you press **Hand to
+  agent** (or submit) and prints everything handed over since its previous
+  call as one JSON document: `{"kemi": 2, "review": "<id>", "events": [...]}`.
+  A `handed` event lists comments as `added`, `edited`, or `deleted` (id
+  only), new replies, and new messages; a `submitted` event carries the
+  result JSON. Exit codes: 0 (events; an approval if submitted), 1 (submitted
+  with changes requested), 2 (no running review — read a submitted one with
+  `kemi --result` — or the review stopped, or another `kemi wait` is
+  waiting), 3 (`--timeout` passed, stdout empty).
+- `kemi reply <id>` reads `{"writes": [{"type": "reply", "comment_id": "c1",
+  "body": "…"}, {"type": "message", "body": "…"}]}` from stdin and prints
+  `{"ids": [...]}`. Either all writes are stored or none: a missing comment,
+  a body over 64 KB, more than 50 agent replies on one comment, or more than
+  200 agent messages exits with 2. Agents cannot open or resolve comments.
+
+What you write is not sent as you type: **Hand to agent** delivers every
+change since the last hand-over at once. The button and the agent status
+(waiting, working, not responding) appear only after `kemi wait` has been
+called once in that review, so reviews without an agent look as before. The
+agent API listens on `127.0.0.1` whatever `--bind` says, accepts only
+requests without an `Origin` carrying its own token, and the token is kept in
+`<id>.endpoint` next to the session (owner-only; on Windows under
+`%LOCALAPPDATA%\kemi\sessions\`), never on the page or stderr. A
+subcommand name comes first; open a manifest named `wait` as `kemi ./wait`.
 
 ### Rendered view
 

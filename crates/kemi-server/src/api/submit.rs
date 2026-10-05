@@ -42,8 +42,8 @@ pub(super) async fn submit_api(
         Ok(document) => {
             {
                 let mut stop = state.stop.lock().expect("stop poisoned");
-                if matches!(*stop, Some(Stop::Failed(_))) {
-                    return Err(ApiError::conflict("stopped after a runtime error"));
+                if matches!(*stop, Some(Stop::Failed(_) | Stop::Suspended)) {
+                    return Err(ApiError::conflict("the review is already stopping"));
                 }
                 *stop = Some(Stop::Submitted(document.clone()));
             }
