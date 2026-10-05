@@ -16,8 +16,8 @@
 // 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
 // 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
 // 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない、まだ読んで
-// いないファイルのスレッドを開いても対象の行の前後が見える、畳んだ帯にも未渡しの件数つきで
-// 渡すが出る。
+// いないファイルのスレッドを開いても、開いたまま表示色の明暗を切り替えても対象の行の前後が見える、
+// 畳んだ帯にも未渡しの件数つきで渡すが出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -486,9 +486,17 @@ try {
   await waitFor(`${contextLines}.some(l => l.textContent === 'line 2') && ${contextLines}.some(l => l.textContent === 'line 4')`);
   assert.deepEqual(await evaluate(`${contextLines}.filter(l => l.classList.contains('hit')).map(l => l.textContent)`), ['line 3']);
   assert.equal(await evaluate(`document.querySelector('#file-header .path')?.textContent`), 'a.txt', 'the shown file stays');
+  // 表示色の明暗を切り替えて行を読み直しても、開いたままのスレッドの対象の行の前後が見える。
+  // 描き直した後の並びだと分かるよう、切り替える前の並びに印を付けておく。
+  await evaluate(`document.querySelector('#cv-thread-body .cv-context').dataset.before = '1'; true`);
+  await browser('click', '#btn-theme');
+  await browser('click', '#btn-theme');
+  await waitFor(`document.documentElement.dataset.theme === 'dark'`);
+  const freshLines = `Array.from(document.querySelectorAll('#cv-thread-body .cv-context:not([data-before]) .cv-line'))`;
+  await waitFor(`${freshLines}.some(l => l.textContent === 'line 2') && ${freshLines}.some(l => l.textContent === 'line 4')`);
   await browser('click', '#cv-thread-head .cv-back');
   await waitFor(`!document.querySelector('#cv-list').hidden`);
-  console.log('PASS まだ読んでいないファイルのスレッドを開いても、対象の行の前後が見える');
+  console.log('PASS まだ読んでいないファイルのスレッドを開いても、表示色を切り替えても、対象の行の前後が見える');
 
   // (10) 別のファイルを読めなかった後に、エージェントの状態が変わって描き直しても、届いた印は
   // 出ない。読み込み直して b.txt をまだ読んでいない状態にし、b.txt の行データの取得を失敗させる。

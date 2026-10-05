@@ -1,6 +1,7 @@
 // @ts-check
 // テーマの適用と切り替え。
 
+import { actions } from "../actions.js";
 import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
 import { dom } from "../dom.js";
 import { THEME_LABELS, currentEntry, state } from "../state.js";
@@ -29,7 +30,12 @@ export function applyTheme() {
     const entry = currentEntry();
     if (entry) {
       // テーマ切替は表示色の再取得だけ。入力中のエディタは閉じない。
-      void selectEntry(entry, { scrollTop: false, keepEditor: true });
+      // 表示中のファイルを読み終えてから。開いているスレッドが同じファイルなら読み直さずに済む。
+      void selectEntry(entry, { scrollTop: false, keepEditor: true }).then(() =>
+        actions.reloadThreadLines(),
+      );
+    } else {
+      actions.reloadThreadLines();
     }
   } else if (!changed) {
     // 明暗が同じでもプリセットが変われば追加・削除の色が変わる。位置の帯を描き直す。
