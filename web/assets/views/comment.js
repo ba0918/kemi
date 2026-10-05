@@ -5,7 +5,14 @@ import { actions } from "../actions.js";
 import { button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { saveDraft } from "../storage.js";
-import { commentLabel, draftKey, firstLine, suggestionAllowed } from "../model.js";
+import {
+  agentControlsShown,
+  authorLabel,
+  commentLabel,
+  draftKey,
+  firstLine,
+  suggestionAllowed,
+} from "../model.js";
 
 /** @typedef {import("../state.js").Editor} Editor */
 
@@ -45,6 +52,13 @@ function renderComment(comment) {
     if (comment.suggestion) {
       chip.append(textEl("span", "badge-suggest", "Suggestion"));
     }
+    const replies = comment.replies ? comment.replies.length : 0;
+    if (replies > 0) {
+      chip.append(textEl("span", "reply-count", replies === 1 ? "1 reply" : `${replies} replies`));
+    }
+    if (comment.resolved) {
+      chip.append(textEl("span", "t-resolved-mark", "Resolved"));
+    }
     chip.addEventListener("click", () => actions.setCommentOpen(comment.id, true));
     return chip;
   }
@@ -57,7 +71,19 @@ function renderComment(comment) {
   if (comment.outdated) {
     head.append(textEl("span", "t-outdated-mark", "Outdated comment"));
   }
+  if (comment.resolved) {
+    head.append(textEl("span", "t-resolved-mark", "Resolved"));
+  }
   const acts = el("span", "acts");
+  const talking = agentControlsShown(state.agent) && !state.submitted;
+  if (talking) {
+    // 解決は人間だけが付ける（R-AGENT-HAND）。往復しているレビューでだけ出す。
+    const resolve = button("");
+    resolve.textContent = comment.resolved ? "Reopen" : "Resolve";
+    resolve.dataset.focusKey = `resolve:${comment.id}`;
+    resolve.addEventListener("click", () => actions.setResolved(comment, !comment.resolved));
+    acts.append(resolve);
+  }
   if (!state.submitted) {
     const edit = button("");
     edit.textContent = "Edit";
@@ -102,7 +128,68 @@ function renderComment(comment) {
       ),
     );
   }
+  const replies = comment.replies || [];
+  if (replies.length > 0) {
+    balloon.append(renderThread(replies));
+  }
+  if (talking) {
+    balloon.append(renderReplyBox(comment));
+  }
   return balloon;
+}
+
+/**
+ * スレッドの返信。書いた人（人間かエージェントか）を添えて作成順に並べる。
+ * @param {any[]} replies
+ * @returns {HTMLElement}
+ */
+function renderThread(replies) {
+  const thread = el("ol", "thread");
+  for (const reply of replies) {
+    const item = el("li", "reply");
+    item.dataset.author = reply.author;
+    item.append(
+      textEl("span", "reply-author", authorLabel(reply.author)),
+      textEl("p", "reply-body", reply.body),
+    );
+    thread.append(item);
+  }
+  return thread;
+}
+
+/**
+ * スレッドに返信を書く欄。書きかけは描き直し（通知での取り込みやスクロール）で消えない
+ * よう、ページの状態に置く。
+ * @param {any} comment
+ * @returns {HTMLFormElement}
+ */
+function renderReplyBox(comment) {
+  const form = /** @type {HTMLFormElement} */ (el("form", "reply-box"));
+  const body = document.createElement("textarea");
+  body.rows = 1;
+  body.placeholder = "Reply (Cmd/Ctrl+Enter to send)";
+  body.dataset.editorField = `reply-${comment.id}`;
+  body.value = state.replyDrafts.get(comment.id) ?? "";
+  body.addEventListener("input", () => {
+    state.replyDrafts.set(comment.id, body.value);
+  });
+  body.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  const send = /** @type {HTMLButtonElement} */ (el("button", "btn"));
+  send.type = "submit";
+  send.textContent = "Reply";
+  form.append(body, send);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (body.value.trim() !== "") {
+      actions.replyTo(comment, body.value);
+    }
+  });
+  return form;
 }
 
 /**

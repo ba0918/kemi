@@ -134,6 +134,19 @@ export function postComment(body) {
 }
 
 /**
+ * レビュー全体への発言を書く。
+ * @param {string} body
+ */
+export function postMessage(body) {
+  return postJson("api/message", { body });
+}
+
+/** 前に渡した後の変化を、まとめてエージェントに渡す（R-AGENT-HAND）。 */
+export function hand() {
+  return postJson("api/hand", {});
+}
+
+/**
  * @param {"approved" | "changes_requested"} verdict
  */
 export function submit(verdict) {
@@ -141,14 +154,40 @@ export function submit(verdict) {
 }
 
 /**
+ * @typedef {{
+ *   onThread: (comment: any) => void,
+ *   onMessage: (message: any) => void,
+ *   onAgent: (agent: any) => void,
+ *   onLagged: () => void,
+ * }} AgentHandlers
+ */
+
+/**
  * @param {() => void} onUpdate 新側の供給元が変わった（更新バッジ）
  * @param {() => void} onUnit もう片方のグループ単位の作成の状態が変わった
+ * @param {AgentHandlers} agent 返信・発言・エージェントの状態の通知と、取りこぼし
  * @returns {EventSource}
  */
-export function subscribeEvents(onUpdate, onUnit) {
+export function subscribeEvents(onUpdate, onUnit, agent) {
   const events = new EventSource("api/events");
   events.addEventListener("update", onUpdate);
   events.addEventListener("unit", onUnit);
+  /**
+   * @param {string} name
+   * @param {(payload: any) => void} handler
+   */
+  const json = (name, handler) =>
+    events.addEventListener(name, (event) => {
+      handler(JSON.parse(/** @type {MessageEvent} */ (event).data));
+    });
+  json("thread", agent.onThread);
+  json("message", agent.onMessage);
+  json("agent", agent.onAgent);
+  // どの通知を取りこぼしたかは分からない。更新があったものとして扱い、往復の中身も取り直す。
+  events.addEventListener("lagged", () => {
+    onUpdate();
+    agent.onLagged();
+  });
   // つながる前（や切れていた間）に届かなかった状態の変化を、つながった時点で読み直す。
   events.addEventListener("open", onUnit);
   return events;

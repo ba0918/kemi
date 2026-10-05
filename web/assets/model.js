@@ -1554,3 +1554,78 @@ export function balloonShown(settings, id) {
   }
   return settings.narrowComments || settings.narrowOnlyComment === id;
 }
+
+/** @typedef {{ called: boolean, status: string, unhanded: number }} AgentState */
+
+/** @type {Record<string, string>} */
+const AGENT_STATUS_LABELS = {
+  unconnected: "Not connected",
+  waiting: "Waiting",
+  working: "Working",
+  unresponsive: "Not responding",
+};
+
+/**
+ * エージェントの状態の画面での呼び名（R-AGENT-STATE）。知らない状態はサーバの名前のまま。
+ * @param {string} status
+ * @returns {string}
+ */
+export function agentStatusLabel(status) {
+  return AGENT_STATUS_LABELS[status] || status;
+}
+
+/**
+ * 往復の操作（渡す・状態・チャット欄・返信・解決）を出すか。`kemi wait` が一度でも
+ * 呼ばれたレビューでだけ出し、エージェントを使わないレビューの画面は変えない。
+ * @param {AgentState | null} agent
+ * @returns {boolean}
+ */
+export function agentControlsShown(agent) {
+  return Boolean(agent && agent.called);
+}
+
+/**
+ * 返信と発言を書いた人の呼び名。
+ * @param {string} author
+ * @returns {string}
+ */
+export function authorLabel(author) {
+  return author === "agent" ? "Agent" : "You";
+}
+
+/**
+ * 同じ id のコメントだけを差し替えた新しい並び。知らない id なら同じ中身の並び。
+ * @param {any[]} comments
+ * @param {any} updated
+ * @returns {any[]}
+ */
+export function replaceComment(comments, updated) {
+  return comments.map((comment) => (comment.id === updated.id ? updated : comment));
+}
+
+/**
+ * 発言を足した新しい並び。書いた画面には応答と通知の両方で届くので、同じ id は足さない。
+ * @param {any[]} messages
+ * @param {any} message
+ * @returns {any[]}
+ */
+export function addMessage(messages, message) {
+  if (messages.some((known) => known.id === message.id)) {
+    return messages;
+  }
+  return [...messages, message];
+}
+
+/**
+ * submit の確認に出す、まだ渡していない件数の注意（R-SUBMIT）。往復していないレビューと、
+ * 未渡しが無いときは出さない。submit は止めない。
+ * @param {AgentState | null} agent
+ * @returns {string | null}
+ */
+export function unhandedNotice(agent) {
+  if (!agentControlsShown(agent) || !agent || agent.unhanded === 0) {
+    return null;
+  }
+  const one = agent.unhanded === 1;
+  return `${countLabel(agent.unhanded, "item")} not handed to the agent yet (comments, replies, and messages). ${one ? "It is" : "They are"} still included in the result.`;
+}

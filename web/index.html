@@ -9,6 +9,7 @@
     <link rel="modulepreload" href="assets/actions.js" />
     <link rel="modulepreload" href="assets/api.js" />
     <link rel="modulepreload" href="assets/dom.js" />
+    <link rel="modulepreload" href="assets/features/agent.js" />
     <link rel="modulepreload" href="assets/features/comment-list.js" />
     <link rel="modulepreload" href="assets/features/comments.js" />
     <link rel="modulepreload" href="assets/features/display.js" />
@@ -23,6 +24,7 @@
     <link rel="modulepreload" href="assets/model.js" />
     <link rel="modulepreload" href="assets/state.js" />
     <link rel="modulepreload" href="assets/storage.js" />
+    <link rel="modulepreload" href="assets/views/chat.js" />
     <link rel="modulepreload" href="assets/views/comment-list.js" />
     <link rel="modulepreload" href="assets/views/comment.js" />
     <link rel="modulepreload" href="assets/views/diff-rows.js" />
@@ -133,6 +135,10 @@
         <button id="update-badge" type="button" class="update-badge" hidden>
           Update available
         </button>
+        <button class="iconbtn narrow-only" id="btn-chat" type="button" title="Chat with the agent" aria-label="Chat with the agent" aria-expanded="false" hidden>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 2.5h9v6h-5l-2.5 2v-2h-1.5z"/><path d="M12.5 5.5h2v6h-1.5v2l-2.5-2h-4v-1"/></svg>
+          <span class="agent-status" id="chat-status" data-status="unconnected"></span>
+        </button>
         <button class="btn primary" id="btn-approve" type="button">Approve</button>
         <button class="btn secondary" id="btn-changes" type="button">Request changes</button>
         <button
@@ -184,6 +190,7 @@
     </header>
 
     <div class="comment-list" id="comment-list" role="dialog" aria-label="Comment list" hidden></div>
+    <div class="chat" id="chat" role="dialog" aria-label="Chat with the agent" hidden></div>
 
     <div class="layout">
       <aside class="tree" id="tree" aria-label="File tree"></aside>
@@ -208,6 +215,14 @@
         </div>
         <div id="horizontal-scroll" tabindex="0" role="region" aria-label="Scroll both code panes horizontally" hidden><div id="horizontal-scroll-width"></div></div>
       </main>
+    </div>
+
+    <div class="agent-dock" id="agent-dock" role="group" aria-label="Agent" hidden>
+      <span class="agent-status" id="agent-status" data-status="unconnected" role="status"></span>
+      <button class="btn" id="btn-dock-chat" type="button" aria-expanded="false">Chat</button>
+      <button class="btn primary" id="btn-hand" type="button" title="Hand everything written since the last hand-over to the agent">
+        Hand to agent<span class="hand-count" id="hand-count"></span>
+      </button>
     </div>
 
     <div class="modal" id="modal" hidden>

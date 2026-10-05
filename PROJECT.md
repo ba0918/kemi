@@ -42,7 +42,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
 - `features/` の中の順番は
-  `horizontal-scroll → display → navigation → files → rendered → theme → comments → units → comment-list → narrow → submit` で、
+  `horizontal-scroll → display → navigation → files → rendered → theme → comments → agent → units → comment-list → narrow → submit` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
 - `state.js` は `storage.js` と `model.js` を import してよい。ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
@@ -66,7 +66,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Run locally | `cargo run -- --worktree` |
 | Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
-| Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>`（agent-browser をローカルに入れて実行） |
+| Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>` / `node scripts/test-agent-channel.mjs <target/release/kemi>`（agent-browser をローカルに入れて実行） |
 | Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（agent-browser が要る。`web/` は自前の HTTP サーバから配るので引数は無い） |
 | Release plan | `dist plan`（cargo-dist をローカルに入れて実行） |
 

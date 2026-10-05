@@ -232,10 +232,11 @@ export function setCommentOpen(id, open) {
 }
 
 /**
- * 表示とキャッシュのコメントを差し替える。
+ * 表示とキャッシュのコメントを差し替える。行の高さは測り直すが、見ている位置は動かさない
+ * （見ている位置より上で伸びた分は測り直しが打ち消す）。
  * @param {(comments: any[]) => any[]} change
  */
-function updateComments(change) {
+export function updateComments(change) {
   const before = state.allComments;
   state.allComments = change(state.allComments);
   for (const [id, comments] of state.commentStore) {

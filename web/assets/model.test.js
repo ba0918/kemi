@@ -56,6 +56,12 @@ import {
   shownLineNumbers,
   effectiveDisplay,
   balloonShown,
+  agentStatusLabel,
+  agentControlsShown,
+  authorLabel,
+  replaceComment,
+  addMessage,
+  unhandedNotice,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1432,4 +1438,66 @@ test("狭い画面で Comments を隠していても一覧から選んだコメ�
   const settings = { narrow: true, narrowComments: false, narrowOnlyComment: "c1" };
   assert.equal(balloonShown(settings, "c1"), true);
   assert.equal(balloonShown(settings, "c2"), false);
+});
+
+// エージェントとの往復（agent-channel.md）。状態の呼び名、操作を出すか、届いた書き込みの
+// 取り込み、submit の確認の未渡しの件数。
+test("エージェントの状態を画面の言葉で呼ぶ", () => {
+  assert.equal(agentStatusLabel("unconnected"), "Not connected");
+  assert.equal(agentStatusLabel("waiting"), "Waiting");
+  assert.equal(agentStatusLabel("working"), "Working");
+  assert.equal(agentStatusLabel("unresponsive"), "Not responding");
+});
+
+test("kemi wait が一度でも呼ばれたレビューでだけ往復の操作を出す", () => {
+  assert.equal(agentControlsShown({ called: false, status: "unconnected", unhanded: 2 }), false);
+  assert.equal(agentControlsShown({ called: true, status: "working", unhanded: 0 }), true);
+  assert.equal(agentControlsShown(null), false);
+});
+
+test("書いた人を人間かエージェントかで呼ぶ", () => {
+  assert.equal(authorLabel("reviewer"), "You");
+  assert.equal(authorLabel("agent"), "Agent");
+});
+
+test("届いたコメントは同じ id のものだけを差し替える", () => {
+  const comments = [
+    { id: "c1", body: "one", replies: [] },
+    { id: "c2", body: "two", replies: [] },
+  ];
+  const updated = { id: "c2", body: "two", replies: [{ id: "r1", author: "agent", body: "done" }] };
+
+  const next = replaceComment(comments, updated);
+
+  assert.deepEqual(next, [comments[0], updated]);
+  assert.deepEqual(comments[1].replies, [], "the original list is not changed");
+});
+
+test("知らないコメントが届いても一覧は変わらない", () => {
+  const comments = [{ id: "c1", body: "one", replies: [] }];
+
+  assert.deepEqual(replaceComment(comments, { id: "c9", body: "x", replies: [] }), comments);
+});
+
+test("発言は id が同じものを二度足さない", () => {
+  const first = { id: "m1", author: "reviewer", body: "hello" };
+  const once = addMessage([], first);
+
+  assert.deepEqual(once, [first]);
+  // 書いた画面には、応答と SSE の通知の両方で同じ発言が届く。
+  assert.deepEqual(addMessage(once, { ...first }), [first]);
+  assert.deepEqual(addMessage(once, { id: "m2", author: "agent", body: "hi" }).length, 2);
+});
+
+test("submit の確認には、往復しているレビューでだけ未渡しの件数を出す", () => {
+  assert.equal(unhandedNotice({ called: false, status: "unconnected", unhanded: 3 }), null);
+  assert.equal(unhandedNotice({ called: true, status: "working", unhanded: 0 }), null);
+  assert.equal(
+    unhandedNotice({ called: true, status: "working", unhanded: 1 }),
+    "1 item not handed to the agent yet (comments, replies, and messages). It is still included in the result.",
+  );
+  assert.equal(
+    unhandedNotice({ called: true, status: "waiting", unhanded: 3 }),
+    "3 items not handed to the agent yet (comments, replies, and messages). They are still included in the result.",
+  );
 });

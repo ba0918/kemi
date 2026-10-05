@@ -54,6 +54,10 @@ export function applyReview(review, fresh) {
   }
   if (fresh) {
     state.allComments = review.comments || [];
+    state.messages = review.messages || [];
+    if (review.agent) {
+      state.agent = review.agent;
+    }
   }
   if (state.unit) {
     state.reviews.set(state.unit, review);

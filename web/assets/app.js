@@ -59,6 +59,19 @@ import {
   toggleCommentList,
 } from "./features/comment-list.js";
 import { openConfirm } from "./features/submit.js";
+import {
+  applyAgent,
+  applyMessage,
+  applyThread,
+  closeChat,
+  handToAgent,
+  postMessage,
+  replyTo,
+  resyncAgent,
+  setResolved,
+  toggleChat,
+} from "./features/agent.js";
+import { renderAgent } from "./views/chat.js";
 import { renderNotice } from "./views/file-header.js";
 import { renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
@@ -86,6 +99,10 @@ function handleKey(event) {
     }
     if (!dom.commentList.hidden) {
       closeCommentList();
+      return;
+    }
+    if (state.chatOpen) {
+      closeChat();
       return;
     }
     if (state.drawerOpen) {
@@ -139,6 +156,7 @@ function handleKey(event) {
 async function boot() {
   applyReview(await api.getReview(false), true);
   renderHeader();
+  renderAgent();
   renderTree();
   if (state.visible.length > 0) {
     await selectIndex(0, { scrollTop: true });
@@ -151,6 +169,12 @@ async function boot() {
       renderUpdateBadge();
     },
     () => void onUnitEvent(),
+    {
+      onThread: applyThread,
+      onMessage: applyMessage,
+      onAgent: applyAgent,
+      onLagged: () => void resyncAgent(),
+    },
   );
 }
 
@@ -176,6 +200,9 @@ dom.chipSort.addEventListener("click", toggleSortBySize);
 dom.btnTheme.addEventListener("click", stepTheme);
 dom.notes.addEventListener("beforetoggle", placeNotes);
 dom.updateBadge.addEventListener("click", () => void refresh());
+dom.btnHand.addEventListener("click", () => void handToAgent());
+dom.btnChat.addEventListener("click", toggleChat);
+dom.btnDockChat.addEventListener("click", toggleChat);
 dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
 dom.modalCancel.addEventListener("click", closeModal);
@@ -196,6 +223,11 @@ window
 
 bindActions({
   addComment,
+  closeChat,
+  handToAgent: () => void handToAgent(),
+  postMessage: (body) => void postMessage(body),
+  replyTo: (comment, body) => void replyTo(comment, body),
+  setResolved: (comment, resolved) => void setResolved(comment, resolved),
   applyRenderedView,
   closeCommentList,
   closeDrawer,
