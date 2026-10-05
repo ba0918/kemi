@@ -209,11 +209,16 @@
       </main>
       <aside class="conversation" id="conversation" aria-label="Conversation" data-open="false">
         <div class="cv-resizer" id="cv-resizer" title="Drag to resize"></div>
-        <button class="cv-rail" id="cv-rail" type="button" title="Open the conversation" aria-label="Open the conversation">
-          <span class="agent-status" id="rail-status" data-status="unconnected"></span>
-          <span class="cv-rail-label">Conversation</span>
-          <span class="cv-unread" id="cv-unread" hidden></span>
-        </button>
+        <div class="cv-rail-col">
+          <button class="cv-rail" id="cv-rail" type="button" title="Open the conversation" aria-label="Open the conversation">
+            <span class="agent-status" id="rail-status" data-status="unconnected"></span>
+            <span class="cv-rail-label">Conversation</span>
+            <span class="cv-unread" id="cv-unread" hidden></span>
+          </button>
+          <button class="cv-rail-hand" id="rail-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
+            <span class="cv-rail-label">Hand to agent</span><span class="hand-count" id="rail-hand-count"></span>
+          </button>
+        </div>
         <div class="cv-panel" id="cv-panel">
           <div class="cv-head">
             <b>Conversation</b>

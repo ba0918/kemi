@@ -74,8 +74,8 @@ function openThreadComment() {
 }
 
 /**
- * エージェントの状態（見出しと畳んだ帯）と「Hand to agent」。「Hand to agent」は `kemi wait` が
- * 一度でも呼ばれたレビューでだけ出す（R-AGENT-STATE）。
+ * エージェントの状態（見出しと畳んだ帯）と「Hand to agent」（書く欄の並びと畳んだ帯）。
+ * 「Hand to agent」は `kemi wait` が一度でも呼ばれたレビューでだけ出す（R-AGENT-STATE）。
  */
 export function renderAgentState() {
   const agent = state.agent;
@@ -84,9 +84,14 @@ export function renderAgentState() {
   dom.agentStatus.textContent = label;
   dom.railStatus.dataset.status = agent.status;
   dom.railStatus.title = label;
-  dom.btnHand.hidden = !handShown(agent);
-  dom.handCount.textContent = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
-  dom.btnHand.disabled = state.submitted || agent.unhanded === 0;
+  const count = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
+  for (const hand of [dom.btnHand, dom.railHand]) {
+    hand.hidden = !handShown(agent);
+    hand.disabled = state.submitted || agent.unhanded === 0;
+  }
+  dom.handCount.textContent = count;
+  dom.railHandCount.textContent = count;
+  dom.railHand.setAttribute("aria-label", `Hand to agent${count ? ` (${agent.unhanded})` : ""}`);
   const unread = unreadCount(state.allComments, state.messages, state.conversation.read);
   dom.cvUnread.hidden = unread === 0;
   dom.cvUnread.textContent = String(unread);

@@ -16,7 +16,8 @@
 // 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
 // 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
 // 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない、まだ読んで
-// いないファイルのスレッドを開いても対象の行の前後が見える。
+// いないファイルのスレッドを開いても対象の行の前後が見える、畳んだ帯にも未渡しの件数つきで
+// 渡すが出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -209,6 +210,7 @@ try {
   // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いて
   // そのスレッドになる。
   assert.equal(await evaluate(panelClosed), true);
+  assert.equal(await evaluate(shown('#rail-hand')), false);
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);
@@ -306,6 +308,12 @@ try {
   assert.equal(ids.length, 2);
   await waitFor(`${chipC1}?.querySelector('.unread-mark') !== null && document.querySelector('#cv-unread').textContent === '2' && !document.querySelector('#cv-unread').hidden`);
   assert.equal(await evaluate(panelClosed), true, 'the panel must not open by itself');
+  // 畳んだ帯からも、未渡しの件数つきで「Hand to agent」を押せる。
+  const { unhanded } = (await (await fetch(new URL('api/review', kemi.url))).json()).agent;
+  assert.ok(unhanded > 0);
+  assert.equal(await evaluate(shown('#rail-hand')), true);
+  assert.equal(await evaluate(`document.querySelector('#rail-hand-count').textContent.trim()`), String(unhanded));
+  assert.equal(await evaluate(`document.querySelector('#rail-hand').disabled`), false);
   await diffUnmoved();
   // (3b) 札からスレッドを開くと返信が見え、新着の印が消える。
   await evaluate(`${chipC1}.click(); true`);

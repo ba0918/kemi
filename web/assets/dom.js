@@ -69,6 +69,8 @@ export const dom = {
   cvRail: /** @type {HTMLButtonElement} */ (must("#cv-rail")),
   railStatus: must("#rail-status"),
   cvUnread: must("#cv-unread"),
+  railHand: /** @type {HTMLButtonElement} */ (must("#rail-hand")),
+  railHandCount: must("#rail-hand-count"),
   cvClose: /** @type {HTMLButtonElement} */ (must("#cv-close")),
   agentStatus: must("#agent-status"),
   cvList: must("#cv-list"),

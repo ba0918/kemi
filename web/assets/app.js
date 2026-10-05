@@ -247,6 +247,7 @@ dom.btnTheme.addEventListener("click", stepTheme);
 dom.notes.addEventListener("beforetoggle", placeNotes);
 dom.updateBadge.addEventListener("click", () => void refresh());
 dom.btnHand.addEventListener("click", () => void handToAgent());
+dom.railHand.addEventListener("click", () => void handToAgent());
 dom.btnComments.addEventListener("click", toggleConversation);
 dom.cvRail.addEventListener("click", openConversation);
 dom.cvClose.addEventListener("click", closeConversation);

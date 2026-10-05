@@ -2173,20 +2173,44 @@ ul.files ul {
 
 .conversation[data-open="false"] .cv-panel,
 .conversation[data-open="false"] .cv-resizer,
-.conversation[data-open="true"] .cv-rail {
+.conversation[data-open="true"] .cv-rail-col {
   display: none;
+}
+
+/* 畳んだ帯。上は開く操作、下に「Hand to agent」。 */
+.cv-rail-col {
+  display: flex;
+  flex-direction: column;
+  width: 36px;
 }
 
 .cv-rail {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  width: 36px;
   padding: 12px 0;
   border: 0;
   background: none;
   color: var(--ink-2);
+}
+
+.cv-rail-hand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: var(--accent);
+}
+
+.cv-rail-hand:disabled {
+  color: var(--ink-2);
+  opacity: 0.6;
 }
 
 .cv-rail-label {
