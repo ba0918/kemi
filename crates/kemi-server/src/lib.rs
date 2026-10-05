@@ -163,7 +163,7 @@ pub async fn serve(
         IpAddr::V6(_) => {
             return Err(ServerError::Stopped(format!(
                 "{address} is not an IPv4 listener"
-            )))
+            )));
         }
     };
     let allowed = AllowedHosts::new(bind, params.share_address, address.port());

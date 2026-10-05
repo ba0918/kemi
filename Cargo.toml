@@ -8,11 +8,11 @@ repository = "https://github.com/ba0918/kemi"
 
 [workspace]
 members = ["crates/kemi-core", "crates/kemi-server", "crates/kemi-webview"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.1.9"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

@@ -234,9 +234,11 @@ mod tests {
         let blocks = change_blocks(&rows);
 
         assert_eq!(blocks.len(), 3, "{rows:?}");
-        assert!(blocks.iter().all(|block| rows[block.clone()]
-            .iter()
-            .all(|row| row.kind != RowKind::Equal)));
+        assert!(blocks.iter().all(|block| {
+            rows[block.clone()]
+                .iter()
+                .all(|row| row.kind != RowKind::Equal)
+        }));
         assert_eq!(blocks[0], 1..2);
     }
 

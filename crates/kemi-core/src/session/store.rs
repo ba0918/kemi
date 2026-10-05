@@ -152,7 +152,7 @@ impl SessionStore {
                 return Err(SessionError::Unusable {
                     id: id.to_string(),
                     reason,
-                })
+                });
             }
             CopyMeta::Ready => CopyState::Ready(self.read_copy(id)?),
         };
@@ -197,7 +197,7 @@ impl SessionStore {
                 return Err(SessionError::Io {
                     path: self.dir.clone(),
                     source,
-                })
+                });
             }
         };
         let mut ids = Vec::new();
@@ -1179,11 +1179,13 @@ mod tests {
         .unwrap();
 
         assert!(store.has_unreadable_version());
-        assert!(store
-            .list()
-            .unwrap()
-            .iter()
-            .all(|summary| summary.id != old));
+        assert!(
+            store
+                .list()
+                .unwrap()
+                .iter()
+                .all(|summary| summary.id != old)
+        );
     }
 
     #[test]
@@ -1352,10 +1354,12 @@ mod tests {
             .unwrap();
         open.save_state_at(state_with_comment(), 200).unwrap();
 
-        assert!(!scratch
-            .dir()
-            .join("01HF7YAT00CCCCCCCCCCCCCCCC.payload")
-            .exists());
+        assert!(
+            !scratch
+                .dir()
+                .join("01HF7YAT00CCCCCCCCCCCCCCCC.payload")
+                .exists()
+        );
         assert!(held_payload.exists());
         drop(held);
     }
@@ -1429,9 +1433,11 @@ mod tests {
         assert!(matches!(second, Err(SessionError::Locked { .. })));
 
         drop(first);
-        assert!(store
-            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
-            .is_ok());
+        assert!(
+            store
+                .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+                .is_ok()
+        );
     }
 
     #[test]

@@ -2,15 +2,15 @@
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use kemi_core::domain::content::AUTO_MAX_BYTES;
 use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
-use kemi_server::{serve, session_host, session_url, Asset, Assets, ServeOutcome, ServeParams};
-use serde_json::{json, Value};
+use kemi_server::{Asset, Assets, ServeOutcome, ServeParams, serve, session_host, session_url};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -904,13 +904,12 @@ fn raw_post_with_host(
     stream.write_all(request.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
-    let status = response
+    response
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse().ok())
-        .expect("status line");
-    status
+        .expect("status line")
 }
 
 async fn post_json(url: &str, origin: &str, path: &str, body: Value) -> reqwest::Response {
@@ -1540,10 +1539,12 @@ async fn unit_seen_separate_per_unit() {
     let final_form = server.get_json("api/review?unit=file").await;
     let per_commit = server.get_json("api/review?unit=commit").await;
     assert_eq!(file_in(&final_form, 0, "a.txt")["seen"], true);
-    assert!(files_of(&per_commit)
-        .iter()
-        .filter(|file| file["path"] == "a.txt")
-        .all(|file| file["seen"] == false));
+    assert!(
+        files_of(&per_commit)
+            .iter()
+            .filter(|file| file["path"] == "a.txt")
+            .all(|file| file["seen"] == false)
+    );
     server.stop();
 }
 
@@ -1572,9 +1573,11 @@ async fn unit_focus_applies_to_both_units() {
         .filter(|file| file["path"] == "a.txt")
         .collect();
     assert_eq!(marked.len(), 2);
-    assert!(marked
-        .iter()
-        .all(|file| file["focus"] == true && file["note"] == "ここ"));
+    assert!(
+        marked
+            .iter()
+            .all(|file| file["focus"] == true && file["note"] == "ここ")
+    );
     server.stop();
 }
 
@@ -1713,18 +1716,22 @@ async fn live_refresh_both_units_adds_new_commit_unseen() {
     let groups = refreshed["groups"].as_array().unwrap();
     assert_eq!(groups.len(), 3);
     assert_eq!(groups[2]["id"], new_sha.as_str());
-    assert!(groups[2]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|file| file["seen"] == false));
+    assert!(
+        groups[2]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["seen"] == false)
+    );
     assert_eq!(file_in(&refreshed, 0, "a.txt")["id"], first_a);
     assert_eq!(file_in(&refreshed, 0, "a.txt")["seen"], true);
     assert_eq!(refreshed["comments"][0]["body"], "残る");
     let final_form = server.get_json("api/review?unit=file").await;
-    assert!(files_of(&final_form)
-        .iter()
-        .any(|file| file["path"] == "c.txt"));
+    assert!(
+        files_of(&final_form)
+            .iter()
+            .any(|file| file["path"] == "c.txt")
+    );
     server.stop();
 }
 
@@ -1872,9 +1879,11 @@ async fn comment_edit_rejects_suggestion_on_old_side_and_file_wide() {
         assert_eq!(response.status(), 400, "{id}");
     }
     let comments = server.submit_comments().await;
-    assert!(comments
-        .iter()
-        .all(|comment| comment["suggestion"] == Value::Null && comment["body"] != "x"));
+    assert!(
+        comments
+            .iter()
+            .all(|comment| comment["suggestion"] == Value::Null && comment["body"] != "x")
+    );
 }
 
 #[tokio::test]
@@ -2459,10 +2468,10 @@ async fn session_copy_over_the_limit_is_unresumable() {
     let id = "01HF7YAT00SERVER0000000000";
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
-        if let Ok(stored) = store.read(id) {
-            if matches!(stored.copy, kemi_core::session::CopyState::Unusable(_)) {
-                break;
-            }
+        if let Ok(stored) = store.read(id)
+            && matches!(stored.copy, kemi_core::session::CopyState::Unusable(_))
+        {
+            break;
         }
         assert!(
             std::time::Instant::now() < deadline,
@@ -2818,10 +2827,12 @@ async fn render_of_an_image_gives_both_sides_and_marks_a_rename_with_identical_b
     assert_eq!(changed["same"], false);
     assert_eq!(changed["old"]["size"], 3);
     assert_eq!(changed["new"]["size"], 3);
-    assert!(changed["old"]["url"]
-        .as_str()
-        .unwrap()
-        .contains("api/image/review/f2/old"));
+    assert!(
+        changed["old"]["url"]
+            .as_str()
+            .unwrap()
+            .contains("api/image/review/f2/old")
+    );
 
     let renamed: Value = server.get("api/render/f12").await.json().await.unwrap();
     assert_eq!(renamed["same"], true);

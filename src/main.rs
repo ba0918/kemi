@@ -12,13 +12,13 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use kemi_core::session::{now_millis, SessionInfo, SessionMode, SessionStore, SessionSummary};
+use kemi_core::session::{SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis};
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
 use kemi_server::{
-    detect_share_address, exposure_warning, serve, session_host, session_url, Asset, Assets,
-    ResultSink, ServeOutcome, ServeParams, SessionSink,
+    Asset, Assets, ResultSink, ServeOutcome, ServeParams, SessionSink, detect_share_address,
+    exposure_warning, serve, session_host, session_url,
 };
 use tokio::net::TcpListener;
 
@@ -461,10 +461,10 @@ fn fail(message: &str) -> ! {
 
 /// 復元できるセッションが残るときだけ、機械が読む 1 行を stderr に出す（R-SESSION）。
 fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
-    if let Some(stored_session) = stored_session {
-        if let Some(line) = stored_session.resume_line() {
-            eprintln!("{line}");
-        }
+    if let Some(stored_session) = stored_session
+        && let Some(line) = stored_session.resume_line()
+    {
+        eprintln!("{line}");
     }
 }
 
@@ -481,7 +481,7 @@ async fn run_review(
     // 保留として 130 で終われるように（R-SESSION）。
     #[cfg(unix)]
     let mut signals = {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         (
             signal(SignalKind::interrupt()).expect("install the SIGINT handler"),
             signal(SignalKind::terminate()).expect("install the SIGTERM handler"),

@@ -8,9 +8,9 @@ use std::sync::Mutex;
 
 use crate::domain::content;
 use crate::domain::focus::FocusTargets;
-use crate::domain::noise::{classify, linguist_generated, NoiseInput};
+use crate::domain::noise::{NoiseInput, classify, linguist_generated};
 use crate::domain::review::{FileEntry, Group, ReviewMeta, Side, Status};
-use crate::source::origin::{file_origin, OriginPaths, OriginRange};
+use crate::source::origin::{OriginPaths, OriginRange, file_origin};
 use crate::source::{FileOrigin, Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError};
 
 /// 内容を読まずに統計だけを出す untracked の上限（D6）。
@@ -2045,8 +2045,8 @@ mod unit_tests {
     use super::*;
     use crate::source::testutil::TempRepo;
     use crate::source::{FileContent, FocusSource};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// 3 コミットの範囲。`b.txt` は範囲の途中で足して消すので、最終形には出ない。
     fn range_repo() -> (TempRepo, String, Vec<String>) {
@@ -2193,9 +2193,11 @@ mod unit_tests {
             range_source(&repo, &base, GroupBy::Commit).units(),
             vec![GroupBy::Commit, GroupBy::File]
         );
-        assert!(GitSource::new(repo.path.clone(), GitMode::Worktree)
-            .units()
-            .is_empty());
+        assert!(
+            GitSource::new(repo.path.clone(), GitMode::Worktree)
+                .units()
+                .is_empty()
+        );
     }
 
     fn focus_source(inner: Box<dyn ReviewSource>, repo: &TempRepo, json: &str) -> FocusSource {
@@ -2244,9 +2246,11 @@ mod unit_tests {
             .filter(|file| file.path == "b.txt")
             .collect();
         assert_eq!(b_entries.len(), 2);
-        assert!(b_entries
-            .iter()
-            .all(|file| file.focus && file.note == "途中で消えた"));
+        assert!(
+            b_entries
+                .iter()
+                .all(|file| file.focus && file.note == "途中で消えた")
+        );
     }
 
     #[test]

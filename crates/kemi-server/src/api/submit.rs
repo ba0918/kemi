@@ -4,14 +4,14 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use kemi_core::domain::comment;
 use kemi_core::domain::review::Side;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{find_file, side_lines, source_content, ApiError};
+use super::{ApiError, find_file, side_lines, source_content};
 use crate::session::{comment_json, delete_stored};
 use crate::{AppState, Stop, SubmitState};
 
@@ -69,7 +69,7 @@ fn save_result(state: &AppState, document: &Value) -> Value {
     let text = match serde_json::to_string(document) {
         Ok(json) => format!("{json}\n"),
         Err(error) => {
-            return json!({ "dir": sink.location(), "path": null, "error": error.to_string() })
+            return json!({ "dir": sink.location(), "path": null, "error": error.to_string() });
         }
     };
     match sink.save(&text) {

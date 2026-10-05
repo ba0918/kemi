@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use kemi_core::domain::review::{FileEntry, GroupBy, ReviewMeta};
 use kemi_core::source::SourceError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{AppState, Event};
 
@@ -152,10 +152,10 @@ pub(crate) fn retry(state: &Arc<AppState>, unit: GroupBy) -> bool {
 /// 食い違わないよう、今の作成が終わったら作り直す。
 pub(crate) fn invalidate_in_flight(state: &AppState) {
     let mut review = state.review.write().expect("review lock poisoned");
-    if let Some(other) = review.other.as_mut() {
-        if other.state == BuildState::Building {
-            other.generation += 1;
-        }
+    if let Some(other) = review.other.as_mut()
+        && other.state == BuildState::Building
+    {
+        other.generation += 1;
     }
 }
 

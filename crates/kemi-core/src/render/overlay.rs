@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 
 use crate::domain::diff::{self, RowKind};
 
+use super::Mark;
 use super::inline::WordMarks;
 use super::markdown::{BlockInfo, Plan, SideDoc};
-use super::Mark;
 
 /// 行ごとの整列の結果。添字は 1 始まりの行番号で、0 は使わない。
 struct Aligned {

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::domain::review::{FileEntry, GroupBy, ReviewMeta, Status};
 use crate::session::{SessionCopy, SessionInfo, SessionMode};
-use crate::source::origin::{file_origin, OriginPaths, OriginRange};
+use crate::source::origin::{OriginPaths, OriginRange, file_origin};
 
 use super::{FileContent, FileOrigin, ReviewSource, SourceError};
 

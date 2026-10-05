@@ -12,7 +12,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -24,7 +24,7 @@ use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{FileEntry, GroupBy, ReviewMeta, Side};
 use kemi_core::source::{FileOrigin, SourceError};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -32,9 +32,9 @@ use self::comments::comment_api;
 use self::file::file_api;
 use self::rendered::{render_file, repository_image, review_image};
 use self::submit::submit_api;
-use crate::session::{comment_json, persist, start_freeze, Session};
+use crate::session::{Session, comment_json, persist, start_freeze};
 use crate::units::{self, Unavailable};
-use crate::{stop_with_error, AppState, Event, ServerError};
+use crate::{AppState, Event, ServerError, stop_with_error};
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -67,10 +67,10 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
     if token != Some(state.token.as_str()) {
         return ApiError::not_found("page not found").into_response();
     }
-    if request.method() == Method::POST {
-        if let Err(error) = validate_post(&state, request.headers()) {
-            return error.into_response();
-        }
+    if request.method() == Method::POST
+        && let Err(error) = validate_post(&state, request.headers())
+    {
+        return error.into_response();
     }
     next.run(request).await
 }

@@ -263,9 +263,11 @@ mod tests {
         let layer = parse_focus("{}").unwrap();
         apply_focus(&mut review, &layer);
 
-        assert!(review
-            .groups
-            .iter()
-            .all(|group| group.files.iter().all(|file| !file.focus)));
+        assert!(
+            review
+                .groups
+                .iter()
+                .all(|group| group.files.iter().all(|file| !file.focus))
+        );
     }
 }

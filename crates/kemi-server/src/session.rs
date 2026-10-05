@@ -2,8 +2,8 @@
 //! コメント、見た、折りたたみ、解決をメモリに持ち、変更のたびに保存先へも書く。
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use kemi_core::domain::review::Comment;
@@ -143,13 +143,13 @@ async fn freeze(state: Arc<AppState>) {
             unit: review.startup_unit,
             review: review.startup.as_ref().clone(),
         }];
-        if let Some(other) = &review.other {
-            if let Some(meta) = &other.meta {
-                units.push(FrozenUnit {
-                    unit: Some(other.unit),
-                    review: meta.as_ref().clone(),
-                });
-            }
+        if let Some(other) = &review.other
+            && let Some(meta) = &other.meta
+        {
+            units.push(FrozenUnit {
+                unit: Some(other.unit),
+                review: meta.as_ref().clone(),
+            });
         }
         (review.startup_unit, units)
     };

@@ -229,11 +229,10 @@ fn push_text(inline: &mut Inline, stack: &[usize], text: &str) {
         wraps,
         content: Content::Text(existing),
     }) = inline.pieces.last_mut()
+        && wraps.as_slice() == stack
     {
-        if wraps.as_slice() == stack {
-            existing.push_str(text);
-            return;
-        }
+        existing.push_str(text);
+        return;
     }
     inline.pieces.push(Piece {
         wraps: stack.to_vec(),
@@ -280,7 +279,7 @@ fn resolve_image(raw: &str, context: &ImageContext<'_>) -> ImageSource {
         LinkTarget::External(url) => return ImageSource::External(url),
         LinkTarget::Relative(path) => path,
         LinkTarget::Anchor(_) | LinkTarget::Invalid => {
-            return ImageSource::Frame(raw.trim().to_string())
+            return ImageSource::Frame(raw.trim().to_string());
         }
     };
     let Some(markdown_path) = context.markdown_path else {

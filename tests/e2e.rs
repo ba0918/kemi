@@ -765,11 +765,13 @@ fn digest_mode_schema_and_bounded_output() {
     assert_eq!(digest["totals"]["files"], 4);
     assert_eq!(digest["totals"]["noise_files"], 1);
     assert_eq!(digest["directories"][0]["path"], ".");
-    assert!(digest["directories"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|directory| directory["path"] == "src"));
+    assert!(
+        digest["directories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|directory| directory["path"] == "src")
+    );
     assert_eq!(digest["top_n"], 100);
     assert_eq!(digest["top_files_omitted"]["files"], 0);
     assert_eq!(digest["top_files_omitted"]["add"], 0);
@@ -1225,11 +1227,13 @@ async fn result_not_written_on_interrupt_or_runtime_error() {
     );
     kemi.wait_serving().await;
     let pid = kemi.child.id().to_string();
-    assert!(Command::new("kill")
-        .args(["-INT", &pid])
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
     let (exit, _) = kemi.wait();
     assert_eq!(exit.code(), Some(130));
 

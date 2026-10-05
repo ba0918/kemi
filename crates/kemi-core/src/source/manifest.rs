@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::noise::{classify, linguist_generated, NoiseInput};
+use crate::domain::noise::{NoiseInput, classify, linguist_generated};
 use crate::domain::review::{Approval, FileEntry, Group, ReviewMeta, Status};
 use crate::source::{
-    read_side, text_stats, Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError,
+    Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError, read_side, text_stats,
 };
 
 #[derive(Clone, Debug, Default, Deserialize)]

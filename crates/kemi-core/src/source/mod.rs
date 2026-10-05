@@ -12,8 +12,8 @@ pub(crate) mod testutil;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::domain::focus::{self, FocusTargets};
 use crate::domain::origin::{BlockOrigin, RangeCommit};

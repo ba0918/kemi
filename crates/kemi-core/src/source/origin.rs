@@ -109,10 +109,10 @@ fn parse_line_porcelain(bytes: &[u8]) -> Vec<Option<BlameLine>> {
             else {
                 continue;
             };
-            if let (Ok(line), Ok(final_line)) = (line.parse(), final_line.parse::<usize>()) {
-                if final_line > 0 {
-                    header = Some((sha.to_string(), line, final_line));
-                }
+            if let (Ok(line), Ok(final_line)) = (line.parse(), final_line.parse::<usize>())
+                && final_line > 0
+            {
+                header = Some((sha.to_string(), line, final_line));
             }
         } else if raw == b"boundary" {
             boundary = true;

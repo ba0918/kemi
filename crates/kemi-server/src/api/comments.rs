@@ -2,16 +2,16 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use kemi_core::domain::comment::{self, CommentError};
 use kemi_core::domain::review::{Comment, LineRange, Side, Suggestion};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{file_not_found, find_file, parse_side, side_lines, source_content, ApiError};
-use crate::session::{comment_json, persist};
+use super::{ApiError, file_not_found, find_file, parse_side, side_lines, source_content};
 use crate::AppState;
+use crate::session::{comment_json, persist};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
@@ -149,7 +149,7 @@ async fn add_comment(
         _ => {
             return Err(ApiError::bad_request(
                 "start_line and end_line must both be given",
-            ))
+            ));
         }
     };
     let (file, group_title) = find_file(state, &file_id)?;

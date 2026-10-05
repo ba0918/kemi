@@ -6,21 +6,21 @@
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use kemi_core::domain::content;
 use kemi_core::domain::review::{FileEntry, Side, Status};
-use kemi_core::render::{self, ImageRef, ReviewPaths, Target, IMAGE_MAX_BYTES};
-use serde_json::{json, Value};
+use kemi_core::render::{self, IMAGE_MAX_BYTES, ImageRef, ReviewPaths, Target};
+use serde_json::{Value, json};
 
 use super::{
-    file_not_found, find_file, parse_side, runtime_error, side_lines, source_content, ApiError,
-    ExpandQuery,
+    ApiError, ExpandQuery, file_not_found, find_file, parse_side, runtime_error, side_lines,
+    source_content,
 };
-use crate::highlight::Highlighter;
 use crate::AppState;
+use crate::highlight::Highlighter;
 
 fn review_image_url(id: &str, side: Side) -> String {
     format!("api/image/review/{}/{}", url_segment(id), side.as_str())

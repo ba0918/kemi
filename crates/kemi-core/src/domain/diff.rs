@@ -218,11 +218,11 @@ fn push_segment(segments: &mut Vec<Segment>, text: &str, changed: bool) {
     if text.is_empty() {
         return;
     }
-    if let Some(last) = segments.last_mut() {
-        if last.changed == changed {
-            last.text.push_str(text);
-            return;
-        }
+    if let Some(last) = segments.last_mut()
+        && last.changed == changed
+    {
+        last.text.push_str(text);
+        return;
     }
     segments.push(Segment {
         text: text.to_string(),

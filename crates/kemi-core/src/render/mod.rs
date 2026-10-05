@@ -16,7 +16,7 @@ mod tests;
 
 use crate::domain::review::FileEntry;
 pub use crate::domain::review::Side;
-pub use table::{render_table, split_fields, unbalanced_line, TableInput, UnbalancedQuote};
+pub use table::{TableInput, UnbalancedQuote, render_table, split_fields, unbalanced_line};
 
 /// 描画表示の対象。拡張子で決める（R-RENDER）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

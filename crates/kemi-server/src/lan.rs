@@ -43,8 +43,7 @@ mod tests {
 
     use super::*;
 
-    const FIXED: &str =
-        "kemi: exposed on the LAN; anyone with the URL can read the diff and submit over plain HTTP.";
+    const FIXED: &str = "kemi: exposed on the LAN; anyone with the URL can read the diff and submit over plain HTTP.";
 
     #[test]
     fn exposure_warning_is_none_for_loopback() {

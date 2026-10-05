@@ -6,19 +6,19 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
 use axum::Json;
+use axum::extract::{Path, Query, State};
 use kemi_core::domain::comment;
 use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
 use kemi_core::domain::review::{FileEntry, Side};
-use kemi_core::render::{self, ImageKind, Target, IMAGE_MAX_BYTES};
-use serde_json::{json, Value};
+use kemi_core::render::{self, IMAGE_MAX_BYTES, ImageKind, Target};
+use serde_json::{Value, json};
 
-use super::{file_not_found, find_file, side_lines, source_content, ApiError, ExpandQuery};
+use super::{ApiError, ExpandQuery, file_not_found, find_file, side_lines, source_content};
+use crate::AppState;
 use crate::highlight::{self, HighlightedLine, Highlighter};
 use crate::session::comment_json;
-use crate::AppState;
 
 /// 1 ファイル分の左右のハイライト結果。
 struct Highlighted {

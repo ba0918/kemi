@@ -52,10 +52,10 @@ pub(super) fn resolve_relative(markdown_path: &str, relative: &str) -> Option<St
         .unwrap_or("")
         .trim_matches(|c: char| c.is_whitespace() || c.is_control());
     let mut segments: Vec<&str> = Vec::new();
-    if !relative.starts_with('/') {
-        if let Some((directory, _)) = markdown_path.rsplit_once('/') {
-            segments.extend(directory.split('/'));
-        }
+    if !relative.starts_with('/')
+        && let Some((directory, _)) = markdown_path.rsplit_once('/')
+    {
+        segments.extend(directory.split('/'));
     }
     for segment in relative.split('/') {
         match segment {

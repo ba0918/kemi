@@ -64,7 +64,7 @@ fn local_parts(seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         tm_gmtoff: i64,
         tm_zone: *const i8,
     }
-    extern "C" {
+    unsafe extern "C" {
         fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
     }
     let mut tm = std::mem::MaybeUninit::<Tm>::uninit();
@@ -100,7 +100,7 @@ fn local_parts(millis_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         second: u16,
         milliseconds: u16,
     }
-    extern "system" {
+    unsafe extern "system" {
         fn FileTimeToLocalFileTime(input: *const FileTime, output: *mut FileTime) -> i32;
         fn FileTimeToSystemTime(input: *const FileTime, output: *mut SystemTime) -> i32;
     }

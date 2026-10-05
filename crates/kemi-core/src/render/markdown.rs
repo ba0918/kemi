@@ -11,7 +11,7 @@ use ox_content_parser::{Parser, ParserOptions};
 use crate::domain::content;
 
 use super::inline::{self, ImageContext, Inline, Sink, WordMarks};
-use super::lines::{split_front_matter, LineIndex};
+use super::lines::{LineIndex, split_front_matter};
 use super::{Block, Highlight, ImageUrl, Mark, MarkdownInput, Rendered, Side, Unrenderable};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -472,10 +472,10 @@ impl<'w> Writer<'w> {
         walk.cursor += 1;
         let info = &walk.doc.blocks[index];
         let decision = &walk.plan.decisions[index];
-        if let Some(old) = walk.old {
-            if !std::mem::take(&mut self.before_written) {
-                self.write_old_blocks(old, &decision.before);
-            }
+        if let Some(old) = walk.old
+            && !std::mem::take(&mut self.before_written)
+        {
+            self.write_old_blocks(old, &decision.before);
         }
         self.write_block(walk.doc, info, decision.mark, decision.words.as_ref());
     }
