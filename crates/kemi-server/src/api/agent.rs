@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use super::ApiError;
 use super::channel::notify_agent_state;
 use crate::session::{agent_event_json, comment_json, message_json, persist};
-use crate::{AppState, Event, Stop};
+use crate::{AppState, Event, Stop, SubmitState};
 
 pub(crate) fn agent_router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -319,6 +319,16 @@ async fn reply_api(
 
     let (ids, threads, messages) = {
         let mut session = state.session.lock().expect("session poisoned");
+        // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
+        // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
+        if matches!(
+            *state.submit_state.lock().expect("submit poisoned"),
+            SubmitState::Claimed
+        ) {
+            return Err(ApiError::conflict(
+                "the review is being submitted; print its result with kemi --result",
+            ));
+        }
         validate_writes(&writes, &session.comments, &session.messages)
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
         let mut ids = Vec::new();

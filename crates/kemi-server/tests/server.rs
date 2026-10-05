@@ -4020,3 +4020,58 @@ async fn a_large_batch_within_the_limits_is_written_whatever_its_size() {
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["ids"].as_array().unwrap().len(), 40);
 }
+
+/// エージェント用の API に要求の頭だけを送り、本文はまだ送らない接続。
+async fn agent_request_head(
+    server: &AgentServer,
+    action: &str,
+    body_len: usize,
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.agent_port))
+        .await
+        .unwrap();
+    let head = format!(
+        "POST /a/{}/{action} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {body_len}\r\nConnection: close\r\n\r\n",
+        server.agent_token,
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream
+}
+
+/// 接続が閉じるまで読んだ応答の状態コード。
+async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
+    use tokio::io::AsyncReadExt;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+    let text = String::from_utf8_lossy(&response);
+    text.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+#[tokio::test]
+async fn a_reply_arriving_after_the_submit_is_not_reported_as_written_when_missing_from_the_result()
+{
+    use tokio::io::AsyncWriteExt;
+    let server = AgentServer::start().await;
+    let body = json!({ "writes": [{ "type": "message", "body": "late" }] }).to_string();
+    let mut late = agent_request_head(&server, "reply", body.len()).await;
+
+    let response = server
+        .page
+        .post("api/submit", json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    late.write_all(body.as_bytes()).await.unwrap();
+    let status = response_status(&mut late).await;
+
+    let document = server.page.finish().await;
+    let in_result = document["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["body"] == "late");
+    assert!(
+        status != 200 || in_result,
+        "the reply succeeded ({status}) but is missing from the result: {document}"
+    );
+}
