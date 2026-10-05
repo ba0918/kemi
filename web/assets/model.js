@@ -1629,3 +1629,154 @@ export function unhandedNotice(agent) {
   const one = agent.unhanded === 1;
   return `${countLabel(agent.unhanded, "item")} not handed to the agent yet (comments, replies, and messages). ${one ? "It is" : "They are"} still included in the result.`;
 }
+
+// ---- 会話パネル（R-VIEW、R-AGENT-HAND） ----
+
+/**
+ * どこまで読んだか。ページを開いている間だけ持ち、保存しない（R-VIEW）。
+ * `loaded` はページを読み込んだ時点の最後の通し番号で、それまでにあったものは新着にしない。
+ * `opened` はスレッドごとの、最後に開いた時点のそのスレッドの最後の通し番号。
+ * `messages` は会話パネルを最後に見ていた時点の、最後の発言の通し番号。
+ * @typedef {{ loaded: number, opened: Map<string, number>, messages: number }} ReadMarks
+ */
+
+/**
+ * @typedef {{ kind: "thread", comment: any, seq: number }
+ *   | { kind: "message", message: any, seq: number }} ConversationItem
+ */
+
+/** @typedef {"all" | "unresolved" | "file"} ConversationFilter */
+
+/**
+ * スレッドの最後の書き込み（コメントか、最後の返信）の通し番号。
+ * @param {any} comment
+ * @returns {number}
+ */
+function threadLastSeq(comment) {
+  return Math.max(
+    Number(comment.seq) || 0,
+    ...(comment.replies || []).map((/** @type {any} */ reply) => Number(reply.seq) || 0),
+  );
+}
+
+/**
+ * 会話パネルの並び。発言とすべてのスレッドを、最後に書き込みがあった順に 1 本にする。
+ * 返信が書かれたスレッドは一番後ろへ移る。
+ * @param {any[]} comments
+ * @param {any[]} messages
+ * @returns {ConversationItem[]}
+ */
+export function conversationItems(comments, messages) {
+  /** @type {ConversationItem[]} */
+  const items = [
+    ...comments.map((comment) => ({
+      kind: /** @type {const} */ ("thread"),
+      comment,
+      seq: threadLastSeq(comment),
+    })),
+    ...messages.map((message) => ({
+      kind: /** @type {const} */ ("message"),
+      message,
+      seq: Number(message.seq) || 0,
+    })),
+  ];
+  return items.sort((a, b) => a.seq - b.seq);
+}
+
+/**
+ * 会話パネルの絞り込み。「すべて」は発言とスレッドのすべて。「未解決」と「表示中のファイル」は
+ * スレッドを絞るもので、どのスレッドにも属さない発言は出さない。表示中のファイルは
+ * グループとパスで見分ける（コメントの JSON はファイル id を持たない）。
+ * @param {ConversationItem[]} items
+ * @param {ConversationFilter} filter
+ * @param {{ group_id: string, path: string } | null} file
+ * @returns {ConversationItem[]}
+ */
+export function filterConversation(items, filter, file) {
+  if (filter === "all") {
+    return items;
+  }
+  return items.filter((item) => {
+    if (item.kind !== "thread") {
+      return false;
+    }
+    if (filter === "unresolved") {
+      return !item.comment.resolved;
+    }
+    return (
+      file !== null && item.comment.group_id === file.group_id && item.comment.path === file.path
+    );
+  });
+}
+
+/**
+ * スレッドに新着があるか。最後に開いた後（開いていなければ読み込んだ後）に届いた
+ * エージェントの返信があれば新着。
+ * @param {any} comment
+ * @param {ReadMarks} marks
+ * @returns {boolean}
+ */
+export function threadUnread(comment, marks) {
+  const read = Math.max(marks.loaded, marks.opened.get(comment.id) ?? 0);
+  return (comment.replies || []).some(
+    (/** @type {any} */ reply) => reply.author === "agent" && Number(reply.seq) > read,
+  );
+}
+
+/**
+ * スレッドを畳んでいるか。解決したスレッドは既定で畳み、畳むと開くの操作はその既定を
+ * 上書きする（R-AGENT-HAND）。
+ * @param {any} comment
+ * @param {Map<string, boolean>} folded
+ * @returns {boolean}
+ */
+function threadFolded(comment, folded) {
+  return folded.get(comment.id) ?? Boolean(comment.resolved);
+}
+
+/**
+ * 差分の中の札と会話パネルの項目が示すもの（R-VIEW）。
+ * @param {any} comment
+ * @param {ReadMarks} marks
+ * @param {Map<string, boolean>} folded
+ * @returns {{ first: string, replies: number, unread: boolean, folded: boolean, resolved: boolean }}
+ */
+export function threadChip(comment, marks, folded) {
+  return {
+    first: firstLine(comment.body),
+    replies: (comment.replies || []).length,
+    unread: threadUnread(comment, marks),
+    folded: threadFolded(comment, folded),
+    resolved: Boolean(comment.resolved),
+  };
+}
+
+/**
+ * 畳んだ会話パネルの帯に出す新着の数。新着の印が付いたスレッドの数と、パネルを畳んでいる
+ * 間に届いたエージェントの発言の数の合計（R-VIEW）。
+ * @param {any[]} comments
+ * @param {any[]} messages
+ * @param {ReadMarks} marks
+ * @returns {number}
+ */
+export function unreadCount(comments, messages, marks) {
+  const read = Math.max(marks.loaded, marks.messages);
+  const threads = comments.filter((comment) => threadUnread(comment, marks)).length;
+  const arrived = messages.filter(
+    (message) => message.author === "agent" && Number(message.seq) > read,
+  ).length;
+  return threads + arrived;
+}
+
+/** 並びの一番下とみなす余白。行の高さの半分ほどで、端数のずれを一番下として扱う。 */
+const FOLLOW_MARGIN = 12;
+
+/**
+ * 並びの一番下を見ているか。見ていれば、新しいものが届いたときにそこまでついていく
+ * （R-AGENT-HAND）。
+ * @param {{ scrollTop: number, clientHeight: number, scrollHeight: number }} view
+ * @returns {boolean}
+ */
+export function followsNewest(view) {
+  return view.scrollHeight - view.scrollTop - view.clientHeight <= FOLLOW_MARGIN;
+}
