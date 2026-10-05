@@ -476,8 +476,9 @@ button:disabled {
 /* ---------- レイアウト ---------- */
 
 .layout {
+  --tree-width: 330px;
   display: grid;
-  grid-template-columns: 330px minmax(0, 1fr) auto;
+  grid-template-columns: var(--tree-width) minmax(0, 1fr) auto;
   flex: 1;
   min-height: 0;
 }
@@ -2160,8 +2161,14 @@ ul.files ul {
   font-size: 13.5px;
 }
 
+/* 狭い画面の手前の幅でも差分の列が潰れないよう、ツリーの右の残りのうち、360px と半分の
+   少ないほうは差分に残す。 */
 .conversation[data-open="true"] {
-  width: min(var(--cv-width, 440px), 60vw);
+  width: min(
+    var(--cv-width, 440px),
+    60vw,
+    max((100vw - var(--tree-width)) / 2, 100vw - var(--tree-width) - 360px)
+  );
 }
 
 .conversation[data-open="false"] .cv-panel,
