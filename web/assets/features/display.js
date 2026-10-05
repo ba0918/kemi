@@ -164,29 +164,31 @@ function activeLanding() {
 }
 
 /**
- * 描き直しでエディタを作り直す前に、フォーカス中の欄と選択位置を覚える。
+ * 描き直しでエディタや返信の欄を作り直す前に、フォーカス中の欄と選択位置を覚える。
+ * @param {HTMLElement} container
  * @returns {{ field: string, start: number, end: number } | null}
  */
-function captureEditorFocus() {
+function captureEditorFocus(container) {
   const active = document.activeElement;
   if (!(active instanceof HTMLTextAreaElement)) {
     return null;
   }
   const field = active.dataset.editorField;
-  if (!field || !dom.content.contains(active)) {
+  if (!field || !container.contains(active)) {
     return null;
   }
   return { field, start: active.selectionStart, end: active.selectionEnd };
 }
 
 /**
+ * @param {HTMLElement} container
  * @param {{ field: string, start: number, end: number } | null} focus
  */
-function restoreEditorFocus(focus) {
+function restoreEditorFocus(container, focus) {
   if (!focus) {
     return;
   }
-  const field = dom.content.querySelector(
+  const field = container.querySelector(
     `[data-editor-field="${focus.field}"]`,
   );
   if (!(field instanceof HTMLTextAreaElement)) {
@@ -198,7 +200,7 @@ function restoreEditorFocus(focus) {
 
 export function renderDiff() {
   const entry = currentEntry();
-  const focus = captureEditorFocus();
+  const focus = captureEditorFocus(dom.content);
   const focusKey = focusKeyWithin(dom.content);
   dom.content.textContent = "";
   // 画像の並び（2 列で左右、1 列で上下）は描画表示の側が CSS で決める。
@@ -244,7 +246,7 @@ export function renderDiff() {
   }
   dom.content.append(fragment);
   syncHorizontal();
-  restoreEditorFocus(focus);
+  restoreEditorFocus(dom.content, focus);
   restoreFocusKey(dom.content, focusKey);
   renderNav(offsets);
   renderRuler(offsets);
@@ -263,6 +265,7 @@ export function renderDiff() {
 
 /** ファイル全体へのコメント（と、表示行に見つからないコメント）を、ヘッダの下に同じ吹き出しで出す。 */
 export function renderFloating() {
+  const focus = captureEditorFocus(dom.floating);
   const focusKey = focusKeyWithin(dom.floating);
   dom.floating.textContent = "";
   const floating = shownComments(state.threads.floating);
@@ -280,6 +283,7 @@ export function renderFloating() {
     row.append(renderCommentOrEditor(comment));
     dom.floating.append(row);
   }
+  restoreEditorFocus(dom.floating, focus);
   restoreFocusKey(dom.floating, focusKey);
 }
 
