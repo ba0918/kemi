@@ -29,7 +29,8 @@ Use one input mode per run:
 | Drafts or groups you define | `kemi <manifest.json>` or `kemi -` for stdin |
 
 Read [the input reference](references/inputs.md) when writing a manifest, choosing commit
-presentation, adding focus marks, or surveying a large change with `--digest`. It also covers
+presentation, adding focus marks, reviewing a running page with `--live`, or surveying a large
+change with `--digest`. It also covers
 `--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
 reviewed work.
 For approval, identify the exact bytes being approved; the manifest's `approval` field is

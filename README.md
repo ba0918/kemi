@@ -134,17 +134,52 @@ before forwarding a request to the dev server. WebSocket traffic, such as hot
 module reloading, passes through unchanged. kemi drops `X-Frame-Options` and
 narrows the CSP `frame-ancestors` to the review page, adding only its own
 script to `script-src`. When the dev server is not running, the page says so
-and waits; it loads once the server starts.
+and waits; it loads once the server starts. `--bind` applies to the relay
+too, and its LAN warning adds that the page under development is visible.
 
 A file page is served on the same port, together with the other files in the
 served directory that it references. Saving the page or any file it loaded
 reloads it, and a link to another HTML file there moves to that page. Paths
 outside the directory, symlinks pointing outside, and `.git/` return 404. If
-the file is gone, the page says so and waits for it. `--bind` applies to the relay
-too, and its LAN warning adds that the page under development is visible.
+the file is gone, the page says so and waits for it.
 
-The code view is the same as `--worktree`. Outside a git repository there is
-no code view. `--live` takes only `--port`, `--bind`, `--no-open`,
+The page has two views, switched in the band above it:
+
+- **Page**: the running page next to what it is compared with, at the same
+  width — 390, 768, 1280, or any width from 320 to 3840 — scaled down
+  together when they do not fit. The page may change on its own (hot reload,
+  a saved file). The left column lists the pages: the one shown and every
+  page with a snapshot or a mock, with the widths of its snapshots; click a
+  page or a width to go there. On a narrow screen the two are shown one at a
+  time, the page list is a drawer, and the conversation is a sheet.
+- **Code**: the same diff as `--worktree`. Outside a git repository there is
+  no code view; the page says why.
+
+What the page is compared with is chosen per page (path and query):
+
+- A **snapshot** is a script-free copy of the page's DOM and CSS, including
+  shadow DOM, canvas contents, and form values, shown in a sandboxed frame
+  that runs no script. kemi takes one when the review starts (or when the
+  page first loads), one each time you hand to the agent, and one whenever
+  you press **Record now**; one over 2 MB is not taken, and the page says so.
+  By default the page is compared with the snapshot of the same page and
+  width taken at the last hand-over, then at the start, then the last one
+  recorded by hand. You can pick another point; it stays picked when the
+  width changes, and a width it lacks says it has not been recorded.
+- A **mock** is an HTML file in the served directory that you assign to the
+  page by its path. A page with a mock is compared with it by default;
+  removing the mock goes back to the snapshots. The mock runs its scripts in
+  a sandboxed frame on an opaque origin, and kemi serves it and the files it
+  references under a path holding a per-review secret instead of the review
+  token, so the mock reaches neither the review page nor kemi's API. kemi
+  reads the mock when it starts showing it (choosing it, moving to the page,
+  changing the width or the way of comparing, or **Reload mock**), not when
+  the file changes.
+
+**Side by side** puts the two next to each other. **Overlay** lays what the
+page is compared with over the page at the same width, with an opacity
+slider; it follows the page's scroll and lets clicks through to the page
+underneath. `--live` takes only `--port`, `--bind`, `--no-open`,
 `--live-port`, `--focus`, and `--serve`. The review title is
 `Live review of <url>`; for a file the URL is its path from the served
 directory, such as `/docs/mock.html`.
@@ -333,7 +368,8 @@ kemi --resume <id>     # continue a known session, from any directory
   one tab-separated line each — id, last update, workspace, mode, seen/total —
   newest first, and exits with 0; with none it prints nothing and exits with 2.
 - A `--live` review keeps no frozen copy. Resuming reads the working tree as
-  it is now and keeps watching it. It is kept only when it holds a comment, a
+  it is now and keeps watching it. Snapshots and mock assignments are kept
+  only while kemi runs; they do not come back on resume yet. It is kept only when it holds a comment, a
   reply, or a message; seen marks and folding alone are not kept. Its mode
   column reads `live <url>`.
 - A resumed `--live` review connects to the same URL again and prints a new

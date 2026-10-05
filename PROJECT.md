@@ -6,8 +6,8 @@ kemi は、変更をブラウザで読むためのローカルなレビュー道
 GitHub Releases で配り、`mise use -g github:ba0918/kemi` でインストールする。
 人間がページで行コメントと suggestion を付け、「承認」か「変更要求」でレビューを
 終えると、コメントが 1 つの JSON として実行ターミナル（通常はレビューを頼んだ
-エージェント）へ返る。元データは manifest / コミット範囲 / worktree / staged の
-4 モードで与える。名前は「閲する（けみする）」から。
+エージェント）へ返る。元データは manifest / コミット範囲 / worktree / staged /
+`--live`（動いているページと作業ツリー）の 5 モードで与える。名前は「閲する（けみする）」から。
 
 ## Stack and layout
 

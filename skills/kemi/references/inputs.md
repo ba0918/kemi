@@ -64,8 +64,16 @@ so send the person the review URL, not this one. When the dev server is not runn
 says so and waits for it. A file page is served on that port too, reloads when it or a file it
 loaded is saved, and waits when the file is missing.
 
+The page has a **Page** view (the running page beside what it is compared with, at a chosen width
+from 320 to 3840) and a **Code** view (the working-tree diff). What the page is compared with is a
+snapshot — a script-free copy kemi takes at the start, at each hand-over to you, and on
+**Record now** — or a mock, an HTML file in the served directory the person assigns to the page.
+They can be shown side by side or overlaid with adjustable opacity. When you change a page, say
+which page and width to look at, and hand over so a fresh snapshot is taken.
+
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
 connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
+Snapshots and mock assignments do not come back on resume yet.
 
 ## Surveying a large change first
 
