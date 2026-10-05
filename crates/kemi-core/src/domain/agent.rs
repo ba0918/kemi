@@ -1,7 +1,7 @@
 //! エージェントとの往復の続き（agent-channel.md）。人間が書いてまだ渡していない変化と、
 //! 渡したがまだ `kemi wait` が受け取っていない起きたこと。
 
-use super::review::{Comment, Message, Reply};
+use super::review::{Author, Comment, Message, Reply};
 
 /// 往復の続き。セッション状態の一部として保存し、保留と復元をまたぐ（R-SESSION）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -203,10 +203,107 @@ pub fn agent_status(called: bool, waiting: bool, last_activity: u128, now: u128)
     }
 }
 
+/// `kemi reply` の書き込み 1 件（R-AGENT-WRITE）。案は動いているページのレビューでだけ
+/// 受け付けるので、ここには無い。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentWrite {
+    Reply { comment_id: String, body: String },
+    Message { body: String },
+}
+
+/// 1 つのコメントへのエージェントの返信の上限。
+pub const MAX_AGENT_REPLIES_PER_COMMENT: usize = 50;
+/// エージェントのレビュー全体への発言の上限。
+pub const MAX_AGENT_MESSAGES: usize = 200;
+/// 本文 1 つの上限（UTF-8 のバイト数）。
+pub const MAX_BODY_BYTES: usize = 64 * 1024;
+
+/// 書き込みを 1 件も書かない理由。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteError {
+    NoSuchComment(String),
+    BodyTooLarge,
+    TooManyReplies(String),
+    TooManyMessages,
+}
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WriteError::NoSuchComment(id) => write!(formatter, "no comment {id} in this review"),
+            WriteError::BodyTooLarge => write!(
+                formatter,
+                "a body is larger than {} KB",
+                MAX_BODY_BYTES / 1024
+            ),
+            WriteError::TooManyReplies(id) => write!(
+                formatter,
+                "comment {id} would have more than {MAX_AGENT_REPLIES_PER_COMMENT} agent replies"
+            ),
+            WriteError::TooManyMessages => write!(
+                formatter,
+                "the review would have more than {MAX_AGENT_MESSAGES} agent messages"
+            ),
+        }
+    }
+}
+
+/// 書き込みをまとめて確かめる。1 件でも上限を超えるか宛先が無ければ、全体を断る
+/// （途中まで書いて半分だけ画面に出ることを防ぐ。R-AGENT-CLI）。上限には今ある
+/// エージェントの書き込みと、この書き込みの両方を数える。人間の書き込みは数えない。
+pub fn validate_writes(
+    writes: &[AgentWrite],
+    comments: &[Comment],
+    messages: &[Message],
+) -> Result<(), WriteError> {
+    let mut new_replies: Vec<(&str, usize)> = Vec::new();
+    let mut new_messages = 0usize;
+    for write in writes {
+        let body = match write {
+            AgentWrite::Reply { comment_id, body } => {
+                if !comments.iter().any(|comment| &comment.id == comment_id) {
+                    return Err(WriteError::NoSuchComment(comment_id.clone()));
+                }
+                match new_replies.iter_mut().find(|(id, _)| id == comment_id) {
+                    Some((_, count)) => *count += 1,
+                    None => new_replies.push((comment_id, 1)),
+                }
+                body
+            }
+            AgentWrite::Message { body } => {
+                new_messages += 1;
+                body
+            }
+        };
+        if body.len() > MAX_BODY_BYTES {
+            return Err(WriteError::BodyTooLarge);
+        }
+    }
+    for (comment_id, added) in new_replies {
+        let existing = comments
+            .iter()
+            .filter(|comment| comment.id == comment_id)
+            .flat_map(|comment| &comment.replies)
+            .filter(|reply| reply.author == Author::Agent)
+            .count();
+        if existing + added > MAX_AGENT_REPLIES_PER_COMMENT {
+            return Err(WriteError::TooManyReplies(comment_id.to_string()));
+        }
+    }
+    let existing = messages
+        .iter()
+        .filter(|message| message.author == Author::Agent)
+        .count();
+    if existing + new_messages > MAX_AGENT_MESSAGES {
+        return Err(WriteError::TooManyMessages);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::review::{Author, Side};
+    use crate::domain::review::Side;
 
     fn comment(id: &str, body: &str) -> Comment {
         Comment {
@@ -435,6 +532,122 @@ mod tests {
         assert_eq!(
             agent_status(true, false, returned, returned + UNRESPONSIVE_AFTER_MILLIS),
             AgentStatus::Unresponsive
+        );
+    }
+
+    fn agent_replies(count: usize) -> Vec<Reply> {
+        (0..count)
+            .map(|n| Reply {
+                id: format!("r{n}"),
+                author: Author::Agent,
+                body: "x".to_string(),
+            })
+            .collect()
+    }
+
+    fn reply_write(comment_id: &str, body: &str) -> AgentWrite {
+        AgentWrite::Reply {
+            comment_id: comment_id.to_string(),
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn writes_within_the_limits_are_accepted() {
+        let comments = vec![comment("c1", "one")];
+
+        assert_eq!(
+            validate_writes(
+                &[
+                    reply_write("c1", "ok"),
+                    AgentWrite::Message {
+                        body: "done".to_string()
+                    },
+                ],
+                &comments,
+                &[],
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_reply_to_a_missing_comment_is_refused() {
+        assert_eq!(
+            validate_writes(&[reply_write("c9", "lost")], &[comment("c1", "one")], &[]),
+            Err(WriteError::NoSuchComment("c9".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_body_over_64_kb_of_utf8_is_refused() {
+        let comments = vec![comment("c1", "one")];
+        // 3 バイトの文字で、文字数ではなくバイト数で数えることを確かめる。
+        let at_limit = "あ".repeat(MAX_BODY_BYTES / 3) + "x";
+        assert_eq!(at_limit.len(), MAX_BODY_BYTES);
+
+        assert_eq!(
+            validate_writes(&[reply_write("c1", &at_limit)], &comments, &[]),
+            Ok(())
+        );
+        assert_eq!(
+            validate_writes(
+                &[AgentWrite::Message {
+                    body: at_limit + "x"
+                }],
+                &comments,
+                &[]
+            ),
+            Err(WriteError::BodyTooLarge)
+        );
+    }
+
+    #[test]
+    fn agent_replies_on_one_comment_stop_at_fifty_counting_this_write() {
+        let mut comments = vec![comment("c1", "one")];
+        comments[0].replies = agent_replies(49);
+        // 人間の返信は数えない。
+        comments[0].replies.push(Reply {
+            id: "r99".to_string(),
+            author: Author::Reviewer,
+            body: "x".to_string(),
+        });
+
+        assert_eq!(
+            validate_writes(&[reply_write("c1", "fiftieth")], &comments, &[]),
+            Ok(())
+        );
+        assert_eq!(
+            validate_writes(
+                &[
+                    reply_write("c1", "fiftieth"),
+                    reply_write("c1", "fifty-first")
+                ],
+                &comments,
+                &[]
+            ),
+            Err(WriteError::TooManyReplies("c1".to_string()))
+        );
+    }
+
+    #[test]
+    fn agent_messages_stop_at_two_hundred_counting_this_write() {
+        let mut messages: Vec<Message> = (0..199)
+            .map(|n| Message {
+                id: format!("m{n}"),
+                author: Author::Agent,
+                body: "x".to_string(),
+            })
+            .collect();
+        messages.push(message("m200", "a reviewer message is not counted"));
+        let one = || AgentWrite::Message {
+            body: "x".to_string(),
+        };
+
+        assert_eq!(validate_writes(&[one()], &[], &messages), Ok(()));
+        assert_eq!(
+            validate_writes(&[one(), one()], &[], &messages),
+            Err(WriteError::TooManyMessages)
         );
     }
 }
