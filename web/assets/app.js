@@ -47,33 +47,44 @@ import {
   openCommentEditor,
   openEditorAt,
   openFileWideEditor,
-  setCommentOpen,
   startSelection,
   tapLine,
 } from "./features/comments.js";
 import { onUnitEvent, switchUnit } from "./features/units.js";
 import {
-  closeCommentList,
-  closeCommentListOnOutsideClick,
+  chooseFilter,
+  closeConversation,
+  closeThread,
+  editFromThread,
   goToComment,
-  toggleCommentList,
-} from "./features/comment-list.js";
+  keepReplyDraft,
+  loadCommitGroups,
+  markLoaded,
+  onConversationScroll,
+  openConversation,
+  openThread,
+  reloadThreadLines,
+  setThreadFolded,
+  showNewest,
+  startResize,
+  submitMessage,
+  submitOnModEnter,
+  submitReply,
+  toggleConversation,
+} from "./features/conversation.js";
 import { openConfirm } from "./features/submit.js";
 import {
   applyAgent,
   applyMessage,
-  closeChat,
   endComposition,
   handToAgent,
-  postMessage,
   receiveMissed,
   receiveThread,
   replyTo,
   setResolved,
   startComposition,
-  toggleChat,
 } from "./features/agent.js";
-import { renderAgent } from "./views/chat.js";
+import { renderConversation } from "./views/conversation.js";
 import { renderNotice } from "./views/file-header.js";
 import { renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
@@ -99,12 +110,9 @@ function handleKey(event) {
       // 狭い画面のメニューとシートはブラウザが閉じる。下の入力欄まで閉じない。
       return;
     }
-    if (!dom.commentList.hidden) {
-      closeCommentList();
-      return;
-    }
-    if (state.chatOpen) {
-      closeChat();
+    // 狭い画面のシートは重ねた覆いなので閉じる。広い画面の会話パネルは列なので閉じない。
+    if (state.narrow && state.conversation.sheetOpen) {
+      closeConversation();
       return;
     }
     if (state.drawerOpen) {
@@ -193,8 +201,10 @@ async function boot() {
   );
   try {
     applyReview(await api.getReview(false), true);
+    markLoaded();
     renderHeader();
-    renderAgent();
+    renderConversation({ toEnd: true });
+    void loadCommitGroups();
     renderTree();
     if (state.visible.length > 0) {
       await selectIndex(0, { scrollTop: true });
@@ -238,14 +248,24 @@ dom.btnTheme.addEventListener("click", stepTheme);
 dom.notes.addEventListener("beforetoggle", placeNotes);
 dom.updateBadge.addEventListener("click", () => void refresh());
 dom.btnHand.addEventListener("click", () => void handToAgent());
-dom.btnChat.addEventListener("click", toggleChat);
-dom.btnDockChat.addEventListener("click", toggleChat);
+dom.railHand.addEventListener("click", () => void handToAgent());
+dom.btnComments.addEventListener("click", toggleConversation);
+dom.cvRail.addEventListener("click", openConversation);
+dom.cvClose.addEventListener("click", closeConversation);
+dom.cvResizer.addEventListener("pointerdown", startResize);
+dom.cvFilter.addEventListener("click", chooseFilter);
+dom.cvCompose.addEventListener("submit", submitMessage);
+dom.cvMessage.addEventListener("keydown", submitOnModEnter);
+dom.cvReply.addEventListener("submit", submitReply);
+dom.cvReplyText.addEventListener("keydown", submitOnModEnter);
+dom.cvReplyText.addEventListener("input", keepReplyDraft);
+dom.cvNewer.addEventListener("click", showNewest);
+dom.cvItems.addEventListener("scroll", onConversationScroll);
+dom.cvThreadBody.addEventListener("scroll", onConversationScroll);
 dom.submitApproved.addEventListener("click", () => openConfirm("approved"));
 dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested"));
 dom.modalCancel.addEventListener("click", closeModal);
 dom.modalOk.addEventListener("click", runModalAction);
-dom.btnComments.addEventListener("click", toggleCommentList);
-document.addEventListener("click", closeCommentListOnOutsideClick);
 dom.navPrev.addEventListener("click", () => void navigate(-1));
 dom.navNext.addEventListener("click", () => void navigate(1));
 dom.ruler.addEventListener("click", scrollToRulerPosition);
@@ -260,13 +280,15 @@ window
 
 bindActions({
   addComment,
-  closeChat,
-  handToAgent: () => void handToAgent(),
-  postMessage: (body) => void postMessage(body),
+  closeThread,
+  loadCommitGroups: () => void loadCommitGroups(),
+  reloadThreadLines,
+  editFromThread: (comment, unit) => void editFromThread(comment, unit),
+  openThread,
   replyTo: (comment, body) => void replyTo(comment, body),
+  setThreadFolded,
   setResolved: (comment, resolved) => void setResolved(comment, resolved),
   applyRenderedView,
-  closeCommentList,
   closeDrawer,
   closeEditor,
   collapseAll,
@@ -282,7 +304,6 @@ bindActions({
   openBlockEditor,
   openFileWideEditor,
   selectIndex,
-  setCommentOpen,
   setRendered,
   showCollapsed,
   startSelection,

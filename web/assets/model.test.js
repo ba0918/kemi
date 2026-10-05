@@ -55,13 +55,18 @@ import {
   tapSelection,
   shownLineNumbers,
   effectiveDisplay,
-  balloonShown,
   agentStatusLabel,
   handShown,
   authorLabel,
   replaceComment,
   addMessage,
   unhandedNotice,
+  conversationItems,
+  filterConversation,
+  threadChip,
+  threadUnread,
+  unreadCount,
+  followsNewest,
 } from "./model.js";
 
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
@@ -1411,35 +1416,6 @@ test("広い画面では覚えている表示モードと折返しをそのま�
   );
 });
 
-// 狭い画面の吹き出し（R-NARROW）。「Comments」で隠している間は出さず、一覧から選んだ
-// そのコメントだけを出す。広い画面では常に出す。
-test("広い画面では吹き出しを常に出す", () => {
-  assert.equal(
-    balloonShown({ narrow: false, narrowComments: false, narrowOnlyComment: null }, "c1"),
-    true,
-  );
-});
-
-test("狭い画面で Comments を隠していると吹き出しを出さない", () => {
-  assert.equal(
-    balloonShown({ narrow: true, narrowComments: false, narrowOnlyComment: null }, "c1"),
-    false,
-  );
-});
-
-test("狭い画面で Comments を隠していなければ吹き出しを出す", () => {
-  assert.equal(
-    balloonShown({ narrow: true, narrowComments: true, narrowOnlyComment: null }, "c1"),
-    true,
-  );
-});
-
-test("狭い画面で Comments を隠していても一覧から選んだコメントだけ吹き出しを出す", () => {
-  const settings = { narrow: true, narrowComments: false, narrowOnlyComment: "c1" };
-  assert.equal(balloonShown(settings, "c1"), true);
-  assert.equal(balloonShown(settings, "c2"), false);
-});
-
 // エージェントとの往復（agent-channel.md）。状態の呼び名、操作を出すか、届いた書き込みの
 // 取り込み、submit の確認の未渡しの件数。
 test("エージェントの 4 つの状態を見分けられる呼び名で出す", () => {
@@ -1499,4 +1475,161 @@ test("submit の確認には、往復しているレビューでだけ未渡し�
   assert.equal(unhandedNotice({ called: true, status: "working", unhanded: 0 }), null);
   assert.match(unhandedNotice({ called: true, status: "working", unhanded: 1 }) ?? "", /\b1\b/);
   assert.match(unhandedNotice({ called: true, status: "waiting", unhanded: 3 }) ?? "", /\b3\b/);
+});
+
+// 会話パネル（R-VIEW、R-AGENT-HAND）。並び・絞り込み・札の中身・新着・帯の数・追従。
+
+/**
+ * @param {string} id
+ * @param {number} seq
+ * @param {{ author?: string, seq: number }[]} replies
+ * @param {Record<string, any>} [extra]
+ */
+function thread(id, seq, replies = [], extra = {}) {
+  return {
+    id,
+    seq,
+    group_id: "g1",
+    path: "src/a.rs",
+    body: "本文",
+    resolved: false,
+    replies: replies.map((reply, index) => ({
+      id: `${id}-r${index}`,
+      author: reply.author ?? "reviewer",
+      body: "返信",
+      seq: reply.seq,
+    })),
+    ...extra,
+  };
+}
+
+/**
+ * @param {string} id
+ * @param {number} seq
+ * @param {string} [author]
+ */
+function message(id, seq, author = "reviewer") {
+  return { id, seq, author, body: "発言" };
+}
+
+/** @param {any[]} items */
+function itemIds(items) {
+  return items.map((item) => (item.kind === "thread" ? item.comment.id : item.message.id));
+}
+
+/** @param {Partial<import("./model.js").ReadMarks>} [marks] */
+function readMarks(marks = {}) {
+  return { loaded: 0, opened: new Map(), messages: 0, ...marks };
+}
+
+test("会話パネルは発言とスレッドを最後の書き込みの順に 1 本に並べる", () => {
+  const comments = [thread("c1", 1), thread("c2", 3)];
+  const messages = [message("m1", 2), message("m2", 4)];
+
+  assert.deepEqual(itemIds(conversationItems(comments, messages)), ["c1", "m1", "c2", "m2"]);
+});
+
+test("返信が足されたスレッドは並びの一番後ろへ移る", () => {
+  const comments = [thread("c1", 1, [{ seq: 5 }]), thread("c2", 3)];
+  const messages = [message("m1", 2), message("m2", 4)];
+
+  assert.deepEqual(itemIds(conversationItems(comments, messages)), ["m1", "c2", "m2", "c1"]);
+});
+
+test("すべての絞り込みでは発言とスレッドをすべて出す", () => {
+  const items = conversationItems([thread("c1", 1, [], { resolved: true })], [message("m1", 2)]);
+
+  assert.deepEqual(itemIds(filterConversation(items, "all", null)), ["c1", "m1"]);
+});
+
+test("未解決の絞り込みでは解決していないスレッドだけを出す", () => {
+  const items = conversationItems(
+    [thread("c1", 1, [], { resolved: true }), thread("c2", 2)],
+    [message("m1", 3)],
+  );
+
+  assert.deepEqual(itemIds(filterConversation(items, "unresolved", null)), ["c2"]);
+});
+
+test("表示中のファイルの絞り込みではそのグループとパスのスレッドだけを出す", () => {
+  const items = conversationItems(
+    [
+      thread("c1", 1),
+      thread("c2", 2, [], { path: "src/b.rs" }),
+      thread("c3", 3, [], { group_id: "g2" }),
+    ],
+    [message("m1", 4)],
+  );
+
+  assert.deepEqual(
+    itemIds(filterConversation(items, "file", { group_id: "g1", path: "src/a.rs" })),
+    ["c1"],
+  );
+  assert.deepEqual(itemIds(filterConversation(items, "file", null)), []);
+});
+
+test("札は本文の 1 行目と返信の数を示す", () => {
+  const comment = thread("c1", 1, [{ seq: 2 }, { seq: 3 }], { body: "\n一行目\n二行目" });
+
+  const chip = threadChip(comment, readMarks(), new Map());
+
+  assert.equal(chip.first, "一行目");
+  assert.equal(chip.replies, 2);
+});
+
+test("解決したスレッドの札は畳み、解決済みの印を付ける。開き直せる", () => {
+  const resolved = thread("c1", 1, [], { resolved: true });
+
+  const chip = threadChip(resolved, readMarks(), new Map());
+
+  assert.equal(chip.folded, true);
+  assert.equal(chip.resolved, true);
+  assert.equal(threadChip(resolved, readMarks(), new Map([["c1", false]])).folded, false);
+  assert.equal(threadChip(thread("c2", 2), readMarks(), new Map([["c2", true]])).folded, true);
+  assert.equal(threadChip(thread("c3", 3), readMarks(), new Map()).folded, false);
+});
+
+test("スレッドを最後に開いた後に届いたエージェントの返信だけを新着にする", () => {
+  const comment = thread("c1", 1, [{ author: "agent", seq: 4 }, { seq: 6 }]);
+
+  assert.equal(threadUnread(comment, readMarks({ loaded: 2 })), true);
+  assert.equal(threadUnread(comment, readMarks({ loaded: 2, opened: new Map([["c1", 5]]) })), false);
+  // 人間の返信は新着にしない。
+  assert.equal(
+    threadUnread(thread("c2", 1, [{ seq: 6 }]), readMarks({ loaded: 2 })),
+    false,
+  );
+  assert.equal(threadChip(comment, readMarks({ loaded: 2 }), new Map()).unread, true);
+});
+
+test("ページを読み込んだ時点であった返信は新着にしない", () => {
+  const comment = thread("c1", 1, [{ author: "agent", seq: 4 }]);
+
+  assert.equal(threadUnread(comment, readMarks({ loaded: 4 })), false);
+});
+
+test("帯の新着の数は新着のスレッドの数と畳んでいる間に届いたエージェントの発言の数の合計", () => {
+  const comments = [
+    thread("c1", 1, [{ author: "agent", seq: 4 }, { author: "agent", seq: 5 }]),
+    thread("c2", 2, [{ author: "agent", seq: 6 }]),
+    thread("c3", 3),
+  ];
+  const messages = [
+    message("m1", 7, "agent"),
+    message("m2", 8, "agent"),
+    message("m3", 9, "reviewer"),
+    message("m4", 10, "agent"),
+  ];
+
+  const marks = readMarks({ loaded: 3, opened: new Map([["c2", 6]]), messages: 7 });
+
+  assert.equal(unreadCount(comments, messages, marks), 1 + 2);
+});
+
+test("並びの一番下を見ているときだけ新しいものについていく", () => {
+  assert.equal(followsNewest({ scrollTop: 600, clientHeight: 400, scrollHeight: 1000 }), true);
+  assert.equal(followsNewest({ scrollTop: 590, clientHeight: 400, scrollHeight: 1000 }), true);
+  assert.equal(followsNewest({ scrollTop: 300, clientHeight: 400, scrollHeight: 1000 }), false);
+  // 並びが短く、スクロールしないとき。
+  assert.equal(followsNewest({ scrollTop: 0, clientHeight: 400, scrollHeight: 200 }), true);
 });

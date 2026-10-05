@@ -87,7 +87,7 @@ function showSource() {
   renderDiff();
 }
 
-/** ブロックの列とコメントから、吹き出しの置き場と止まる場所を決め直す。 */
+/** ブロックの列とコメントから、札の置き場と止まる場所を決め直す。 */
 export function recomputeRenderedThreads() {
   const blocks = state.rendered ? state.rendered.blocks : [];
   state.renderedThreads = placeRenderedComments(blocks, state.comments);

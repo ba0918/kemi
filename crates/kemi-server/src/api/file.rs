@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use super::{ApiError, ExpandQuery, file_not_found, find_file, side_lines, source_content};
 use crate::AppState;
 use crate::highlight::{self, HighlightedLine, Highlighter};
-use crate::session::comment_json;
+use crate::session::page_comment_json;
 
 /// 1 ファイル分の左右のハイライト結果。
 struct Highlighted {
@@ -203,7 +203,7 @@ fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
         .comments
         .iter()
         .filter(|comment| comment.file_id == file_id)
-        .map(comment_json)
+        .map(page_comment_json)
         .collect()
 }
 

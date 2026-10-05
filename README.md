@@ -128,10 +128,22 @@ open:
   200 agent messages exits with 2. Agents cannot open or resolve comments.
 
 What you write is not sent as you type: **Hand to agent** delivers every
-change since the last hand-over at once. Threads (reply, resolve), the chat,
-and the agent status (not connected, waiting, working, not responding) are
-there in every review; only the **Hand to agent** button waits until
-`kemi wait` has been called once in that review. The agent API listens on
+change since the last hand-over at once. Threads and notes on the whole
+review live in the conversation panel on the right of the page. It lists
+notes and threads in one column, ordered by their latest write, and can be
+narrowed to all, unresolved, or the file on screen; pressing a thread turns
+the whole panel into that thread, where you reply, resolve, fold, edit,
+delete, or jump to its line. In the diff each comment is a one-line chip with
+the first line of its body and its reply count; pressing it opens the thread
+in the panel. The panel starts folded to a thin rail and opens from the
+comment count in the top bar; the page remembers whether it is open and how
+wide it is (drag its left edge). A new agent reply marks its chip and the
+thread as new, and the folded rail counts what is new; the panel never opens
+by itself, and its list follows new writes only while you are at its bottom.
+The panel, the agent status in its header (not connected, waiting, working,
+not responding), replies, and resolving are there in every review; only the
+**Hand to agent** button waits until `kemi wait` has been called once in that
+review. The agent API listens on
 `127.0.0.1` whatever `--bind` says, accepts only
 requests without an `Origin` carrying its own token, and the token is kept in
 `<id>.endpoint` next to the session (owner-only; on Windows under
@@ -198,12 +210,13 @@ comment editor. Tapping the same line again, or tapping the diff body anywhere
 other than a line number, clears the selection; taps on the top bar or the
 file header do not. While the editor is open the selection stays, and
 cancelling the editor clears it. In the rendered view, tap a block to show its
-`+`. On a narrow screen comment balloons appear as folded chips, and a new
-comment stays folded instead of opening. "Comments" behind the "..." button
-hides the chips; the comment count in the top bar and the coloured line beside
-the line numbers still show where they are, and choosing one from the comment
-list opens just that one even while they are hidden. Tap the title to see the
-subtitle and meta. Resizing across 720px switches the layout in place.
+`+`. The conversation panel opens as a full-screen sheet from the comment
+count in the top bar, and always starts closed on a narrow screen; tapping a
+chip opens its thread in the sheet, and jumping to the line from a thread
+closes the sheet. "Comments" behind the "..." button hides the chips; the
+comment count in the top bar and the coloured line beside the line numbers
+still show where they are. Tap the title to see the subtitle and meta.
+Resizing across 720px switches the layout in place and closes the sheet.
 
 ### Keys in the page
 

@@ -2203,6 +2203,7 @@ async fn session_state_is_saved_on_every_change() {
         state.comments[0].replies,
         vec![kemi_core::domain::review::Reply {
             id: "r1".to_string(),
+            seq: 2,
             author: kemi_core::domain::review::Author::Reviewer,
             body: "reply".to_string(),
         }]
@@ -2612,6 +2613,7 @@ async fn session_initial_state_is_restored() {
     use kemi_core::domain::review::Side;
     let comment = kemi_core::domain::review::Comment {
         id: "c7".to_string(),
+        seq: 1,
         file_id: "f1".to_string(),
         group_id: "g1".to_string(),
         group_title: "最初の変更".to_string(),
@@ -2623,6 +2625,7 @@ async fn session_initial_state_is_restored() {
         body: "復元されたコメント".to_string(),
         replies: vec![kemi_core::domain::review::Reply {
             id: "r1".to_string(),
+            seq: 2,
             author: kemi_core::domain::review::Author::Reviewer,
             body: "返信".to_string(),
         }],
@@ -2684,12 +2687,14 @@ async fn submit_lists_reviewer_and_agent_replies_in_creation_order_with_messages
     let mut saved = sink.last_state();
     saved.comments[0].replies.push(Reply {
         id: "r1".to_string(),
+        seq: 2,
         author: Author::Agent,
         body: "renamed it".to_string(),
     });
     saved.last_reply = 1;
     saved.messages.push(Message {
         id: "m1".to_string(),
+        seq: 3,
         author: Author::Agent,
         body: "all comments are addressed".to_string(),
     });
@@ -3395,11 +3400,13 @@ async fn the_first_load_carries_replies_messages_and_the_agent_state() {
     let mut saved = sink.last_state();
     saved.comments[0].replies.push(Reply {
         id: "r1".to_string(),
+        seq: 2,
         author: Author::Agent,
         body: "renamed it".to_string(),
     });
     saved.messages.push(Message {
         id: "m1".to_string(),
+        seq: 3,
         author: Author::Agent,
         body: "done for now".to_string(),
     });
@@ -3818,6 +3825,121 @@ async fn reply_writes_replies_and_messages_as_the_agent_and_returns_their_ids() 
     // エージェントの書き込みは渡す対象ではない。
     let review: Value = server.page.get("api/review").await.json().await.unwrap();
     assert_eq!(review["agent"]["unhanded"], 1);
+}
+
+#[tokio::test]
+async fn writes_from_the_page_and_the_agent_share_one_sequence_in_writing_order() {
+    let server = AgentServer::start().await;
+    let comment = server.page.add_comment_with_body(11, "first").await;
+    server.reply(json!([agent_reply("c1", "renamed it")])).await;
+    let message: Value = server
+        .page
+        .post("api/message", json!({ "body": "overall" }))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let thread: Value = server
+        .page
+        .comment(json!({"op": "reply", "id": "c1", "body": "thanks"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    let file: Value = server.page.get("api/file/f1").await.json().await.unwrap();
+
+    let in_review = &review["comments"][0];
+    let sequence = [
+        in_review["seq"].as_u64().unwrap(),
+        in_review["replies"][0]["seq"].as_u64().unwrap(),
+        review["messages"][0]["seq"].as_u64().unwrap(),
+        in_review["replies"][1]["seq"].as_u64().unwrap(),
+    ];
+    assert!(
+        sequence.windows(2).all(|pair| pair[0] < pair[1]),
+        "{sequence:?}"
+    );
+    assert_eq!(comment["seq"], in_review["seq"]);
+    assert_eq!(message["seq"], review["messages"][0]["seq"]);
+    assert_eq!(thread["replies"], in_review["replies"]);
+    assert_eq!(file["comments"][0], *in_review);
+}
+
+#[tokio::test]
+async fn a_write_after_restoring_comes_after_every_earlier_write() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    server.add_new_side_comment().await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "first"}))
+        .await;
+    server
+        .post("api/message", json!({ "body": "overall" }))
+        .await;
+    let saved = sink.last_state();
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), restored).await;
+    let before: Value = server.get("api/review").await.json().await.unwrap();
+
+    let thread: Value = server
+        .comment(json!({"op": "reply", "id": "c1", "body": "second"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    let earlier = [
+        before["comments"][0]["seq"].as_u64().unwrap(),
+        before["comments"][0]["replies"][0]["seq"].as_u64().unwrap(),
+        before["messages"][0]["seq"].as_u64().unwrap(),
+    ];
+    assert_eq!(
+        thread["replies"][0]["seq"],
+        before["comments"][0]["replies"][0]["seq"]
+    );
+    let latest = thread["replies"][1]["seq"].as_u64().unwrap();
+    assert!(
+        earlier.iter().all(|seq| *seq < latest),
+        "{earlier:?} {latest}"
+    );
+}
+
+#[tokio::test]
+async fn submitted_comments_carry_only_the_keys_of_the_contract() {
+    let server = TestServer::start().await;
+    server.add_new_side_comment().await;
+
+    let comments = server.submit_comments().await;
+
+    let mut keys: Vec<&str> = comments[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "body",
+            "end_line",
+            "group_id",
+            "group_title",
+            "id",
+            "outdated",
+            "page",
+            "path",
+            "quote",
+            "replies",
+            "resolved",
+            "side",
+            "start_line",
+            "suggestion",
+        ]
+    );
 }
 
 /// 書き込みが 1 件も残っていないこと。

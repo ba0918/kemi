@@ -883,6 +883,7 @@ mod tests {
     fn comment() -> crate::domain::review::Comment {
         crate::domain::review::Comment {
             id: "c1".to_string(),
+            seq: 0,
             file_id: "f1".to_string(),
             group_id: "all".to_string(),
             group_title: "final".to_string(),
@@ -894,6 +895,7 @@ mod tests {
             body: "please change".to_string(),
             replies: vec![Reply {
                 id: "r1".to_string(),
+                seq: 0,
                 author: Author::Reviewer,
                 body: "done".to_string(),
             }],
@@ -1645,6 +1647,7 @@ mod tests {
     fn reply(id: &str, author: Author, body: &str) -> Reply {
         Reply {
             id: id.to_string(),
+            seq: 0,
             author,
             body: body.to_string(),
         }
@@ -1659,6 +1662,7 @@ mod tests {
         ];
         state.messages = vec![Message {
             id: "m1".to_string(),
+            seq: 0,
             author: Author::Agent,
             body: "started on the review".to_string(),
         }];
@@ -1689,6 +1693,7 @@ mod tests {
                 }],
                 messages: vec![Message {
                     id: "m2".to_string(),
+                    seq: 0,
                     author: Author::Reviewer,
                     body: "look at the tests first".to_string(),
                 }],
@@ -1753,13 +1758,22 @@ mod tests {
         assert_eq!(
             state.comments[0].replies,
             vec![
-                reply("r1", Author::Reviewer, "first"),
-                reply("r2", Author::Reviewer, "second"),
+                Reply {
+                    seq: 2,
+                    ..reply("r1", Author::Reviewer, "first")
+                },
+                Reply {
+                    seq: 3,
+                    ..reply("r2", Author::Reviewer, "second")
+                },
             ]
         );
         assert_eq!(
             state.comments[1].replies,
-            vec![reply("r3", Author::Reviewer, "third")]
+            vec![Reply {
+                seq: 5,
+                ..reply("r3", Author::Reviewer, "third")
+            }]
         );
         assert_eq!(state.last_reply, 3);
         assert!(state.comments[0].resolved);
@@ -1768,6 +1782,25 @@ mod tests {
         assert!(state.messages.is_empty());
         assert_eq!(state.last_message, 0);
         assert_eq!(state.channel, Channel::default());
+    }
+
+    #[test]
+    fn version_2_session_numbers_each_comment_then_its_replies_in_creation_order() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        place_version_2_session(&scratch);
+
+        let state = store.read(VERSION_2_ID).unwrap().state;
+
+        let numbers: Vec<u32> = state
+            .comments
+            .iter()
+            .flat_map(|comment| {
+                std::iter::once(comment.seq).chain(comment.replies.iter().map(|reply| reply.seq))
+            })
+            .collect();
+        assert_eq!(numbers, vec![1, 2, 3, 4, 5]);
+        assert_eq!(state.last_seq, 5);
     }
 
     #[test]

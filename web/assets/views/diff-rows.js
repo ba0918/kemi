@@ -1,5 +1,5 @@
 // @ts-check
-// 差分の 1 行分（折りたたみ行・由来の行・コードの行）と、その行に付く吹き出しや入力欄。
+// 差分の 1 行分（折りたたみ行・由来の行・コードの行）と、その行に付く札や入力欄。
 
 import { actions } from "../actions.js";
 import { appendSegments, button, el, textEl } from "../dom.js";
@@ -41,8 +41,8 @@ export function renderBlock(line, index) {
   const threads = state.threads.byLine.get(index);
   if (threads) {
     for (const comment of shownComments(threads)) {
-      // 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める。
-      const row = el("div", `bal-row mode-${displayMode()} side-${comment.side}`);
+      // 札は範囲の最後の行の直下で、コードの列の位置から始める。
+      const row = el("div", `chip-row mode-${displayMode()} side-${comment.side}`);
       row.append(renderCommentOrEditor(comment));
       block.append(row);
     }

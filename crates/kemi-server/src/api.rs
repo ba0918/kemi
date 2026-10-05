@@ -37,7 +37,7 @@ use self::comments::comment_api;
 use self::file::file_api;
 use self::rendered::{render_file, repository_image, review_image};
 use self::submit::submit_api;
-use crate::session::{Session, comment_json, message_json, persist, start_freeze};
+use crate::session::{Session, page_comment_json, page_message_json, persist, start_freeze};
 use crate::units::{self, Unavailable};
 use crate::{AppState, Event, Notice, ServerError, stop_with_error};
 
@@ -353,8 +353,8 @@ fn review_json(review: &ReviewMeta, session: &Session) -> Value {
                     .unwrap_or(file.noise),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "comments": session.comments.iter().map(comment_json).collect::<Vec<_>>(),
-        "messages": session.messages.iter().map(message_json).collect::<Vec<_>>(),
+        "comments": session.comments.iter().map(page_comment_json).collect::<Vec<_>>(),
+        "messages": session.messages.iter().map(page_message_json).collect::<Vec<_>>(),
     })
 }
 

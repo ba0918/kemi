@@ -24,6 +24,7 @@ pub struct Session {
     pub messages: Vec<Message>,
     pub last_reply: u32,
     pub last_message: u32,
+    pub last_seq: u32,
     pub channel: Channel,
     /// `channel.events` からこれまでに外した起きたことの数。`kemi wait` の受け取りの
     /// 知らせ（何件目まで受け取ったか）を、重なっても二度外さないための起点。メモリだけに
@@ -44,6 +45,15 @@ impl Session {
             'r',
         );
         let from_messages = highest_number(state.messages.iter().map(|message| &message.id), 'm');
+        let from_writes = state
+            .comments
+            .iter()
+            .flat_map(|comment| {
+                std::iter::once(comment.seq).chain(comment.replies.iter().map(|reply| reply.seq))
+            })
+            .chain(state.messages.iter().map(|message| message.seq))
+            .max()
+            .unwrap_or(0);
         Session {
             comments: state.comments,
             seen: state.seen,
@@ -52,9 +62,16 @@ impl Session {
             messages: state.messages,
             last_reply: state.last_reply.max(from_replies),
             last_message: state.last_message.max(from_messages),
+            last_seq: state.last_seq.max(from_writes),
             channel: state.channel,
             received: 0,
         }
+    }
+
+    /// 次の書き込みの通し番号。画面とエージェントのどちらが書いても同じ列から振る。
+    pub(crate) fn next_seq(&mut self) -> u32 {
+        self.last_seq += 1;
+        self.last_seq
     }
 
     /// 保存する状態の写し。
@@ -67,6 +84,7 @@ impl Session {
             messages: self.messages.clone(),
             last_reply: self.last_reply,
             last_message: self.last_message,
+            last_seq: self.last_seq,
             channel: self.channel.clone(),
         }
     }
@@ -124,6 +142,28 @@ pub fn message_json(message: &Message) -> serde_json::Value {
         "author": message.author.as_str(),
         "body": message.body,
     })
+}
+
+/// ページに返すコメントの JSON。R-SUBMIT の形に、会話パネルの並びに使う通し番号
+/// （`seq`）をコメントと返信に足す。番号は結果 JSON と `kemi wait` には出さない（R-SESSION）。
+pub fn page_comment_json(comment: &Comment) -> serde_json::Value {
+    let mut value = comment_json(comment);
+    value["seq"] = json!(comment.seq);
+    value["replies"] = comment.replies.iter().map(page_reply_json).collect();
+    value
+}
+
+fn page_reply_json(reply: &Reply) -> serde_json::Value {
+    let mut value = reply_json(reply);
+    value["seq"] = json!(reply.seq);
+    value
+}
+
+/// ページに返す発言の JSON。R-SUBMIT の形に通し番号（`seq`）を足す。
+pub fn page_message_json(message: &Message) -> serde_json::Value {
+    let mut value = message_json(message);
+    value["seq"] = json!(message.seq);
+    value
 }
 
 /// `kemi wait` が返す起きたこと 1 つ（R-AGENT-EVENTS）。コメント・返信・発言の形は

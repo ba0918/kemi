@@ -1,8 +1,7 @@
 // @ts-check
-// 行の選択、コメントの入力欄の開閉、コメントの追加・編集・削除、吹き出しの開閉。
+// 行の選択、コメントの入力欄の開閉、コメントの追加・編集・削除。
 
 import * as api from "../api.js";
-import { dom } from "../dom.js";
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
 import { commentLabel, draftKey, firstLine, shownLineNumbers, tapSelection } from "../model.js";
@@ -14,7 +13,7 @@ import {
   renderFloating,
 } from "./display.js";
 import { refreshRendered } from "./rendered.js";
-import { renderCommentList } from "../views/comment-list.js";
+import { renderConversation } from "../views/conversation.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderHeader } from "../views/header.js";
 import { openModal, showOverlay } from "../views/overlay.js";
@@ -90,7 +89,7 @@ export function tapLine(side, number) {
 }
 
 /**
- * 狭い画面で、行番号以外を押すと選択を解除する（R-NARROW）。`+`、入力欄、吹き出しの中と
+ * 狭い画面で、行番号以外を押すと選択を解除する（R-NARROW）。`+`、入力欄、札と
  * 描画表示は除く。入力欄が開いている間は、その範囲を示す選択を残す。
  * @param {MouseEvent} event
  */
@@ -100,7 +99,7 @@ export function clearTapSelection(event) {
     !state.narrow ||
     !state.selection ||
     state.editor ||
-    target.closest(".num, .line-add-btn, .editor, .bal, .cchip, #rendered-doc")
+    target.closest(".num, .line-add-btn, .editor, .cchip, #rendered-doc")
   ) {
     return;
   }
@@ -217,21 +216,6 @@ export function closeEditor() {
 }
 
 /**
- * コメントの吹き出しの開閉。行の高さが変わるので、次の描画で測り直させる。
- * @param {string} id
- * @param {boolean} open
- */
-export function setCommentOpen(id, open) {
-  state.commentOpen.set(id, open);
-  if (!open && state.narrowOnlyComment === id) {
-    // 一覧から選んで 1 件だけ出していた吹き出しは、畳むと札に戻る（隠している間なら消える。R-NARROW）。
-    state.narrowOnlyComment = null;
-  }
-  remeasureAndRender();
-  refreshRendered();
-}
-
-/**
  * 表示とキャッシュのコメントを差し替える。行の高さは測り直すが、見ている位置は動かさない
  * （見ている位置より上で伸びた分は測り直しが打ち消す）。
  * @param {(comments: any[]) => any[]} change
@@ -251,9 +235,7 @@ export function updateComments(change) {
   renderDiff();
   renderFloating();
   refreshRendered();
-  if (!dom.commentList.hidden) {
-    renderCommentList();
-  }
+  renderConversation();
 }
 
 /**
@@ -264,12 +246,9 @@ export async function addComment(payload) {
     const comment = await api.postComment(payload);
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
-    if (!state.narrow) {
-      // 付けた直後は開いて出す（R-VIEW）。狭い画面ではこれを適用しない（R-NARROW）。
-      state.commentOpen.set(comment.id, true);
-    }
     refreshCommentBadges(before);
     renderHeader();
+    renderConversation();
     // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
     // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
     const stored = state.commentStore.get(payload.file_id);
@@ -337,6 +316,9 @@ export function confirmDeleteComment(comment) {
 async function deleteComment(comment) {
   try {
     await api.postComment({ op: "delete", id: comment.id });
+    if (state.conversation.thread === comment.id) {
+      state.conversation.thread = null;
+    }
     updateComments((comments) => comments.filter((item) => item.id !== comment.id));
   } catch (error) {
     showOverlay("could not delete the comment", String(error));

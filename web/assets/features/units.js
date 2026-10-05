@@ -2,10 +2,12 @@
 // グループ単位（最終形 / コミットごと）の切り替えと、作成に失敗した単位の作り直し。
 
 import * as api from "../api.js";
+import { actions } from "../actions.js";
 import { currentEntry, flatten, state, unitLabel } from "../state.js";
 import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { applyReview, jumpToEntry } from "./files.js";
+import { renderConversation } from "../views/conversation.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import { renderHeader, renderUnitSwitch } from "../views/header.js";
 import { openModal, showOverlay, showToast } from "../views/overlay.js";
@@ -13,7 +15,7 @@ import { renderTree } from "../views/tree.js";
 
 /**
  * グループ単位を切り替える（R-UNIT）。同じパスのファイル（コミットごとではそのパスを含む
- * 最初のコミット）を出す。由来やコメント一覧から移るときは、そのファイルの該当行を出す。
+ * 最初のコミット）を出す。由来や会話パネルのスレッドから移るときは、そのファイルの該当行を出す。
  * 移り先が無ければ（履歴の書き換えで消えたなど）別のファイルへは移らず、切り替えもせず
  * `missing` を呼ぶ。
  * @param {string} unit
@@ -52,7 +54,7 @@ export async function switchUnit(unit, jump) {
     }
   }
   if (jump && jump.find(flatten(review)) < 0) {
-    // 読んだ単位は控えておき、コメント一覧で消えたコミットを見分けられるようにする。
+    // 読んだ単位は控えておき、会話パネルで消えたコミットを見分けられるようにする。
     if (fresh) {
       state.reviews.set(unit, review);
     }
@@ -73,6 +75,7 @@ export async function switchUnit(unit, jump) {
     renderFileHeader();
     renderNotice();
     renderDiff();
+    renderConversation();
     return;
   }
   const entry = state.entries[index];
@@ -112,6 +115,9 @@ export async function onUnitEvent() {
   const review = await api.getReview(false);
   state.units = review.units || [];
   renderUnitSwitch();
+  // 会話パネルを開いたままコミットごとの単位ができたら（再取得で作り直したときも）、消えた
+  // コミットを見分けられるようにする。
+  actions.loadCommitGroups();
   const pending = state.pendingUnit;
   if (!pending) {
     return;

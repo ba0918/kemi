@@ -1,13 +1,23 @@
 // エージェントとの往復（agent-channel.md）のブラウザ自動化。実際の kemi バイナリを worktree
-// モードで起動し、`kemi wait` と `kemi reply` を別プロセスで呼びながら、画面を agent-browser で
-// 確かめる。
+// モード（消えたコミットだけはコミット範囲）で起動し、`kemi wait` と `kemi reply` を別プロセスで
+// 呼びながら、画面を agent-browser で確かめる。
 //
 //   node scripts/test-agent-channel.mjs <kemi-bin>
 //
-// 確かめること: kemi wait を呼ぶ前から返信の欄・解決・チャット欄の書く欄と未接続の状態が出て、
-// 「Hand to agent」だけが無い、ページの起動中に kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、返った後は作業中に変わり渡すが出る、kemi reply の返信がスレッドに出てスクロール位置が
-// 変わらない、kemi reply の発言がチャット欄に出る、幅 390px でもチャット欄を開いて閉じられる、未渡しを
-// 残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る。
+// 確かめること: kemi wait を呼ぶ前から返信の欄・解決・会話パネルの書く欄と未接続の状態が出て、
+// 「Hand to agent」だけが無い、会話パネルの開閉と幅が読み込み直しても残る、ページの起動中に
+// kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、
+// 返った後は作業中に変わり渡すが出る、畳んだまま返信が届くとパネルは開かず札と帯に新着が出て
+// スレッドを開くと消える、一番下を見ているときだけ並びが新しいものについていき、上を見ている
+// ときは届いた印が出て、どちらでも差分のスクロール位置が変わらない、
+// kemi reply の発言が会話パネルに出る、一覧の項目からスレッドを開いて返信を書くとスレッドに出る、
+// 「This file」の絞り込みが選んだファイルに合わせて変わる、
+// 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
+// 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
+// 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
+// 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない、まだ読んで
+// いないファイルのスレッドを開いても、開いたまま表示色の明暗を切り替えても対象の行の前後が見える、
+// 畳んだ帯にも未渡しの件数つきで渡すが出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -36,9 +46,9 @@ const waitFor = async (code) => {
   } catch (error) {
     const snapshot = await evaluate(`JSON.stringify({
       status: document.querySelector('#agent-status')?.dataset.status,
-      dock: document.querySelector('#agent-dock')?.hidden,
-      replies: document.querySelectorAll('.reply').length,
-      chat: document.querySelector('#chat')?.hidden,
+      conversation: document.querySelector('#conversation')?.dataset.open,
+      thread: !document.querySelector('#cv-thread')?.hidden,
+      replies: document.querySelectorAll('#cv-thread-body .cv-post').length,
       modal: document.querySelector('#modal-body')?.textContent,
     })`).catch(() => 'no snapshot');
     throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
@@ -47,10 +57,9 @@ const waitFor = async (code) => {
 
 const LINES = (count) => Array.from({ length: count }, (_, i) => `line ${i + 1}\n`);
 
-/** 1 ファイルの worktree の変更。3 行目・60 行目・100 行目を書き換える。 */
-async function makeFixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-'));
-  const git = (...args) => run('git', ['-C', dir, ...args], {
+/** 利用者の git の設定に左右されない git。 */
+function gitIn(dir) {
+  return (...args) => run('git', ['-C', dir, ...args], {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: join(dir, '.git-test-global'),
@@ -61,24 +70,49 @@ async function makeFixture() {
       GIT_COMMITTER_EMAIL: 'kemi@example.com',
     },
   });
+}
+
+/** worktree の変更。a.txt の 3 行目・60 行目・100 行目と、コメントの無い b.txt の 1 行目を書き換える。 */
+async function makeFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-'));
+  const git = gitIn(dir);
   await git('init', '-q');
   const lines = LINES(120);
   await writeFile(join(dir, 'a.txt'), lines.join(''));
-  await git('add', 'a.txt');
+  await writeFile(join(dir, 'b.txt'), LINES(5).join(''));
+  await git('add', 'a.txt', 'b.txt');
   await git('commit', '-q', '-m', 'base');
   for (const index of [2, 59, 99]) {
     lines[index] = `changed ${index + 1}\n`;
   }
   await writeFile(join(dir, 'a.txt'), lines.join(''));
+  await writeFile(join(dir, 'b.txt'), ['other\n', ...LINES(5).slice(1)].join(''));
   return dir;
+}
+
+/** コミット範囲。base の後に、c.txt を変える first と、d.txt を変える second の 2 コミット。 */
+async function makeRangeFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-range-'));
+  const git = gitIn(dir);
+  await git('init', '-q');
+  await writeFile(join(dir, 'c.txt'), LINES(5).join(''));
+  await writeFile(join(dir, 'd.txt'), LINES(5).join(''));
+  await git('add', 'c.txt', 'd.txt');
+  await git('commit', '-q', '-m', 'base');
+  const from = (await git('rev-parse', 'HEAD')).stdout.trim();
+  await writeFile(join(dir, 'c.txt'), ['first\n', ...LINES(5).slice(1)].join(''));
+  await git('commit', '-q', '-am', 'first');
+  await writeFile(join(dir, 'd.txt'), ['second\n', ...LINES(5).slice(1)].join(''));
+  await git('commit', '-q', '-am', 'second');
+  return { dir, from, git };
 }
 
 function environment(state) {
   return { ...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home'), LOCALAPPDATA: join(state, 'localappdata') };
 }
 
-async function startKemi(dir, state) {
-  const child = spawn(binary, ['--worktree', '--port', '0', '--no-open'], {
+async function startKemi(dir, state, source = ['--worktree']) {
+  const child = spawn(binary, [...source, '--port', '0', '--no-open'], {
     cwd: dir,
     env: environment(state),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -129,6 +163,17 @@ async function post(url, path, body) {
 
 const shown = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e !== null && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none'; })()`;
 const statusIs = (status) => `document.querySelector('#agent-status').dataset.status === ${JSON.stringify(status)}`;
+const panelOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
+const panelClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
+const chipC1 = `document.querySelector('#diff-content .cchip[data-id="c1"]')`;
+const threadOpen = (text) => `!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment')?.textContent.includes(${JSON.stringify(text)})`;
+const agentMessage = (text) => `Array.from(document.querySelectorAll('#cv-items .cv-msg[data-author="agent"]')).some(m => m.textContent.includes(${JSON.stringify(text)}))`;
+
+/** ツリーからファイルを選び、その差分が出るのを待つ。 */
+async function selectFile(name) {
+  await evaluate(`Array.from(document.querySelectorAll('#tree button.file')).find(b => b.textContent.includes(${JSON.stringify(name)})).click(); true`);
+  await waitFor(`document.querySelector('#file-header .path')?.textContent === ${JSON.stringify(name)} && document.querySelectorAll('[data-kemi-row]').length > 0`);
+}
 
 const fixture = await makeFixture();
 const state = await mkdtemp(join(tmpdir(), 'kemi-agent-state-'));
@@ -161,22 +206,50 @@ try {
   await browser('open', kemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
 
-  // (1) kemi wait を呼ぶ前から、返信の欄・解決・チャット欄の書く欄と状態（未接続）は出る。
-  // 「Hand to agent」だけが無い。
+  // (1) kemi wait を呼ぶ前から、返信の欄・解決・会話パネルの書く欄と状態（未接続）は出る。
+  // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いて
+  // そのスレッドになる。
+  assert.equal(await evaluate(panelClosed), true);
+  assert.equal(await evaluate(shown('#rail-hand')), false);
+  await evaluate(`${chipC1}.click(); true`);
+  await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);
   assert.equal(await evaluate(statusIs('unconnected')), true);
   assert.equal(await evaluate(shown('#btn-hand')), false);
-  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
-  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
-  assert.equal(await evaluate(shown('#diff-content .bal [data-focus-key="resolve:c1"]')), true);
-  assert.equal(await evaluate(shown('#btn-dock-chat')), true);
-  await browser('click', '#btn-dock-chat');
-  await waitFor(`!document.querySelector('#chat').hidden`);
-  assert.equal(await evaluate(shown('#chat .chat-form textarea')), true);
-  assert.equal(await evaluate(shown('#chat .chat-hand')), false);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
-  console.log('PASS kemi wait を呼ぶ前から返信・解決・チャット欄と未接続の状態が出て、「Hand to agent」だけが無い');
+  assert.equal(await evaluate(shown('#cv-reply-text')), true);
+  assert.equal(await evaluate(shown('#cv-thread-head .cv-resolve')), true);
+  // 解決すると札は解決済みの印つきで 1 行に縮み、取り消すと戻る。
+  await browser('click', '#cv-thread-head .cv-resolve');
+  await waitFor(`${chipC1}?.classList.contains('folded') && ${chipC1}.querySelector('.t-resolved-mark') !== null`);
+  await browser('click', '#cv-thread-head .cv-resolve');
+  await waitFor(`${chipC1} !== null && !${chipC1}.classList.contains('folded') && ${chipC1}.querySelector('.t-resolved-mark') === null`);
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  assert.equal(await evaluate(shown('#cv-message')), true);
+  console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」だけが無い。札を押すとパネルでスレッドが開き、解決できる');
+
+  // (1a) 会話パネルの幅は左の縁を掴んで変えられ、開閉と幅は読み込み直しても残る。
+  const widthBefore = await evaluate(`document.querySelector('#conversation').getBoundingClientRect().width`);
+  const edge = await evaluate(`JSON.stringify(document.querySelector('#cv-resizer').getBoundingClientRect())`).then(JSON.parse);
+  const edgeX = Math.round(edge.left + edge.width / 2);
+  const edgeY = Math.round(edge.top + edge.height / 2);
+  await browser('mouse', 'move', String(edgeX), String(edgeY));
+  await browser('mouse', 'down');
+  await browser('mouse', 'move', String(edgeX - 60), String(edgeY));
+  await browser('mouse', 'move', String(edgeX - 120), String(edgeY));
+  await browser('mouse', 'up');
+  await waitFor(`Math.abs(document.querySelector('#conversation').getBoundingClientRect().width - ${widthBefore + 120}) <= 2`);
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  assert.ok(Math.abs(await evaluate(`document.querySelector('#conversation').getBoundingClientRect().width`) - (widthBefore + 120)) <= 2, 'the width should be kept');
+  await browser('click', '#cv-close');
+  await waitFor(panelClosed);
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  assert.equal(await evaluate(panelClosed), true, 'the folded panel should stay folded');
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
+  console.log('PASS 会話パネルの開閉と幅は読み込み直しても残る');
 
   // (1b) ページが起動のために読んだ中身より後、通知につながるより前に kemi wait が呼ばれ、
   // kemi reply で発言されても、待機中と「Hand to agent」とその発言が出る。起動の api/review の応答を、サーバが返した後にページへ
@@ -199,16 +272,10 @@ try {
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
   await waitFor(statusIs('waiting'));
   assert.equal(await evaluate(shown('#btn-hand')), true);
-  await browser('click', '#btn-dock-chat');
-  await waitFor(`Array.from(document.querySelectorAll('#chat .chat-item[data-author="agent"]')).some(m => m.textContent.includes('Looking at it now.'))`);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
+  await waitFor(`${panelOpen} && ${agentMessage('Looking at it now.')}`);
   const loadingWaited = await loadingWait;
   assert.equal(loadingWaited.code, 3, `the wait should time out: ${JSON.stringify(loadingWaited)}`);
   await waitFor(statusIs('working'));
-  // 読み込み直しで閉じた、3 行目のコメントを開き直す（(3) が使う）。
-  await evaluate(`Array.from(document.querySelectorAll('#diff-content .cchip')).find(c => c.textContent.includes('rename this line')).click(); true`);
-  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
   console.log('PASS ページの起動中に kemi wait と kemi reply の発言が来ても、待機中と「Hand to agent」と発言が出る');
 
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
@@ -221,11 +288,15 @@ try {
   assert.equal(await evaluate(shown('#btn-hand')), true);
   console.log('PASS kemi wait を待たせると待機中、返った後は作業中に変わり、渡すが出る');
 
-  // (3) kemi reply の返信がスレッドに出て、スクロール位置が変わらない（コメントは (1) で開いた）。
-  await waitFor(`document.querySelector('#diff-content .bal .reply-box') !== null`);
+  // (3) 新着と追従。差分のスクロール位置はどの場合も変わらない（R-LIVE）。
+  // (3a) 会話パネルを畳んだまま kemi reply で返信が届くと、パネルは開かず、札に新着の印が付き、
+  //      畳んだ帯に新着の数（新着のスレッドと、畳んでいる間に届いた発言）が出る。
+  await browser('click', '#cv-close');
+  await waitFor(panelClosed);
   await evaluate(`document.querySelector('#diff-viewport').scrollTop = 30; true`);
   await waitFor(`document.querySelector('#diff-viewport').scrollTop === 30`);
   const before = await evaluate(`document.querySelector('#diff-viewport').scrollTop`);
+  const diffUnmoved = async () => assert.equal(await evaluate(`document.querySelector('#diff-viewport').scrollTop`), before, 'the diff must not move');
   const replied = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
     writes: [
       { type: 'reply', comment_id: 'c1', body: 'Renamed it.' },
@@ -235,44 +306,225 @@ try {
   assert.equal(replied.code, 0, replied.stderr);
   const { ids } = JSON.parse(replied.stdout);
   assert.equal(ids.length, 2);
-  await waitFor(`Array.from(document.querySelectorAll('#diff-content .reply[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
-  const after = await evaluate(`document.querySelector('#diff-viewport').scrollTop`);
-  assert.equal(after, before, 'the scroll position must not move');
-  console.log('PASS kemi reply の返信がスレッドに出て、スクロール位置が変わらない');
+  await waitFor(`${chipC1}?.querySelector('.unread-mark') !== null && document.querySelector('#cv-unread').textContent === '2' && !document.querySelector('#cv-unread').hidden`);
+  assert.equal(await evaluate(panelClosed), true, 'the panel must not open by itself');
+  // 畳んだ帯からも、未渡しの件数つきで「Hand to agent」を押せる。
+  const { unhanded } = (await (await fetch(new URL('api/review', kemi.url))).json()).agent;
+  assert.ok(unhanded > 0);
+  assert.equal(await evaluate(shown('#rail-hand')), true);
+  assert.equal(await evaluate(`document.querySelector('#rail-hand-count').textContent.trim()`), String(unhanded));
+  assert.equal(await evaluate(`document.querySelector('#rail-hand').disabled`), false);
+  await diffUnmoved();
+  // (3b) 札からスレッドを開くと返信が見え、新着の印が消える。
+  await evaluate(`${chipC1}.click(); true`);
+  await waitFor(`${threadOpen('rename this line')} && Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
+  await waitFor(`${chipC1}?.querySelector('.unread-mark') === null`);
+  await diffUnmoved();
+  console.log('PASS 畳んだまま返信が届くとパネルは開かず札と帯に新着が出て、スレッドを開くと消える');
+  // (3c) 一覧の一番下を見ているときに発言が届くと、並びが新しいものまで進む。
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  const fillers = Array.from({ length: 30 }, (_, index) => `Note ${index + 1} about the review.`);
+  const filled = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
+    writes: fillers.map((body) => ({ type: 'message', body })),
+  }));
+  assert.equal(filled.code, 0, filled.stderr);
+  const atBottom = `(() => { const list = document.querySelector('#cv-items'); return list.scrollHeight > list.clientHeight + 100 && list.scrollHeight - list.scrollTop - list.clientHeight <= 12; })()`;
+  await waitFor(`${agentMessage(fillers.at(-1))} && ${atBottom}`);
+  assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true);
+  await diffUnmoved();
+  // (3d) 上のほうを見ているときに届くと、並びの位置は変わらず、届いたことを示す印が出る。
+  await evaluate(`document.querySelector('#cv-items').scrollTop = 0; true`);
+  await waitFor(`document.querySelector('#cv-items').scrollTop === 0`);
+  const late = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
+    writes: [{ type: 'message', body: 'One more thing.' }],
+  }));
+  assert.equal(late.code, 0, late.stderr);
+  await waitFor(`${agentMessage('One more thing.')} && !document.querySelector('#cv-newer').hidden`);
+  assert.equal(await evaluate(`document.querySelector('#cv-items').scrollTop`), 0, 'the list must stay where it was read');
+  await diffUnmoved();
+  await browser('click', '#cv-newer');
+  await waitFor(`${atBottom} && document.querySelector('#cv-newer').hidden`);
+  console.log('PASS 一番下を見ているときだけ並びが新しいものについていき、上を見ているときは印が出て、差分は動かない');
 
-  // (4) kemi reply の発言がチャット欄に出る。
-  await browser('click', '#btn-dock-chat');
-  await waitFor(`Array.from(document.querySelectorAll('#chat .chat-item[data-author="agent"]')).some(m => m.textContent.includes('Both comments are addressed.'))`);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
-  console.log('PASS kemi reply の発言がチャット欄に出る');
+  // (4) kemi reply の発言が会話パネルに出る。
+  await waitFor(agentMessage('Both comments are addressed.'));
+  console.log('PASS kemi reply の発言が会話パネルに出る');
 
-  // (5) 幅 390px でも、チャット欄を開いて閉じられる。
+  // (4a) 一覧の項目からスレッドを開くとパネル全体がそのスレッドになり、返信を書くとスレッドに出る。
+  await evaluate(`document.querySelector('#cv-items .cv-card[data-id="c1"]').click(); true`);
+  await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-list').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('rename this line')`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(p => p.textContent.includes('Renamed it.'))`), true);
+  await browser('fill', '#cv-reply-text', 'Thanks, that works.');
+  await browser('click', '#cv-reply button[type="submit"]');
+  await waitFor(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="reviewer"]')).some(p => p.textContent.includes('Thanks, that works.')) && document.querySelector('#cv-reply-text').value === ''`);
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  console.log('PASS 一覧の項目からスレッドを開き、返信を書くとスレッドに出る');
+
+  // (4b) 「This file」で絞り込んだまま別のファイルを選ぶと、一覧はそのファイルのスレッドに変わる。
+  const cards = `Array.from(document.querySelectorAll('#cv-items .cv-card')).map(c => c.dataset.id).sort().join(',')`;
+  await browser('click', '#cv-filter button[data-filter="file"]');
+  await waitFor(`${cards} === 'c1,c2'`);
+  await selectFile('b.txt');
+  await waitFor(`${cards} === ''`);
+  await selectFile('a.txt');
+  await waitFor(`${cards} === 'c1,c2'`);
+  await browser('click', '#cv-filter button[data-filter="all"]');
+  console.log('PASS 「This file」の絞り込みは、選んだファイルに合わせて変わる');
+
+  // (5) 幅 390px でも、会話パネルを画面いっぱいのシートで開いて閉じられる。
   await browser('set', 'viewport', '390', '844');
-  await waitFor(`getComputedStyle(document.querySelector('#tree')).position === 'fixed'`);
-  await browser('click', '#btn-chat');
-  await waitFor(`!document.querySelector('#chat').hidden`);
-  await browser('click', '#chat .cl-close');
-  await waitFor(`document.querySelector('#chat').hidden`);
+  await waitFor(`getComputedStyle(document.querySelector('#tree')).position === 'fixed' && ${panelClosed}`);
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
+  const sheet = await evaluate(`JSON.stringify(document.querySelector('#conversation').getBoundingClientRect())`).then(JSON.parse);
+  assert.deepEqual([sheet.left, sheet.top, sheet.width, sheet.height].map(Math.round), [0, 0, 390, 844]);
+  await browser('click', '#cv-close');
+  await waitFor(panelClosed);
   await browser('set', 'viewport', '1280', '800');
-  await waitFor(`getComputedStyle(document.querySelector('#tree')).position !== 'fixed'`);
-  console.log('PASS 幅 390px でもチャット欄を開いて閉じられる');
+  await waitFor(`getComputedStyle(document.querySelector('#tree')).position !== 'fixed' && ${panelOpen}`);
+  console.log('PASS 幅 390px でも会話パネルのシートを開いて閉じられる');
 
   // (6) 未渡しを残して submit を押すと、確認に件数が出て、submit の JSON にそのコメントが入る。
   await browser('click', '#btn-approve');
   await waitFor(`!document.querySelector('#modal').hidden && document.querySelector('#unhanded-notice') !== null`);
   const notice = await evaluate(`document.querySelector('#unhanded-notice').textContent`);
-  assert.match(notice, /\b2\b/);
+  // 渡していないのは、画面で付けた 2 つのコメントと (4a) の返信。
+  assert.match(notice, /\b3\b/);
   await browser('click', '#modal-ok');
   const { code, stdout } = await kemi.exited;
   assert.equal(code, 0);
   const result = JSON.parse(stdout);
   assert.deepEqual(result.comments.map((comment) => comment.body), ['rename this line', 'and this one']);
   assert.equal(result.comments[0].replies[0].author, 'agent');
-  assert.deepEqual(result.messages.map((message) => message.body), ['Looking at it now.', 'Both comments are addressed.']);
+  assert.deepEqual(result.messages.map((message) => message.body), ['Looking at it now.', 'Both comments are addressed.', ...fillers, 'One more thing.']);
   console.log('PASS 未渡しを残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る');
 } finally {
   kemi.child.kill('SIGTERM');
   await kemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (7) 履歴の書き換えで消えたコミットのスレッドは、会話パネルを開いたまま更新バッジで読み直しても、
+// 開いたまま読み込み直しても「消えたコミット」と示され、その行へ移る操作が出ない（R-VIEW、R-LIVE）。
+const range = await makeRangeFixture();
+const rangeState = await mkdtemp(join(tmpdir(), 'kemi-agent-range-state-'));
+const rangeKemi = await startKemi(range.dir, rangeState, ['--from', range.from]);
+try {
+  // コミットごとの単位は、最初の api/review の後に裏で作られる。
+  for (;;) {
+    const current = await (await fetch(new URL('api/review', rangeKemi.url))).json();
+    if (current.units?.find((unit) => unit.unit === 'commit')?.state === 'ready') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const commitReview = await (await fetch(new URL('api/review?unit=commit', rangeKemi.url))).json();
+  const second = commitReview.groups.find((group) => group.title === 'second');
+  await post(rangeKemi.url, 'api/comment', { op: 'add', file_id: second.files[0].id, side: 'new', start_line: 1, end_line: 1, body: 'about the second commit' });
+  const card = `document.querySelector('#cv-items .cv-card[data-id="c1"]')`;
+  const vanished = `${card}?.querySelector('.cv-unit.vanished') !== null`;
+  await browser('open', rangeKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await browser('click', '#btn-comments');
+  await waitFor(`${panelOpen} && ${card} !== null`);
+  assert.equal(await evaluate(vanished), false);
+  await range.git('commit', '-q', '--amend', '-m', 'second, rewritten');
+  await waitFor(`!document.querySelector('#update-badge').hidden`);
+  await browser('click', '#update-badge');
+  await waitFor(vanished);
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  await waitFor(vanished);
+  await evaluate(`${card}.click(); true`);
+  await waitFor(threadOpen('about the second commit'));
+  assert.equal(await evaluate(`document.querySelector('#cv-thread-head .cv-go') === null`), true);
+  console.log('PASS 消えたコミットのスレッドは、開いたまま読み直しても読み込み直しても「消えたコミット」と示される');
+} finally {
+  rangeKemi.child.kill('SIGTERM');
+  await rangeKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (8) 「This file」で絞り込んだ一覧の上のほうを見ているまま別のファイルを選んでも、何も届いて
+// いないので、届いたことを示す印は出ない（R-AGENT-HAND）。前のファイルのスレッドより後に付いた
+// スレッドが、選んだファイルにある場合。
+const fileFixture = await makeFixture();
+const fileState = await mkdtemp(join(tmpdir(), 'kemi-agent-file-state-'));
+const fileKemi = await startKemi(fileFixture, fileState);
+try {
+  const files = (await (await fetch(new URL('api/review', fileKemi.url))).json()).groups[0].files;
+  const fileIdOf = (path) => files.find((file) => file.path === path).id;
+  for (let index = 0; index < 20; index += 1) {
+    await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('a.txt'), side: 'new', start_line: 3, end_line: 3, body: `note ${index + 1}` });
+  }
+  await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 1, end_line: 1, body: 'about b' });
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', fileKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await selectFile('a.txt');
+  await browser('click', '#btn-comments');
+  await waitFor(panelOpen);
+  await browser('click', '#cv-filter button[data-filter="file"]');
+  const list = `document.querySelector('#cv-items')`;
+  await waitFor(`${list}.querySelectorAll('.cv-card').length === 20 && ${list}.scrollHeight > ${list}.clientHeight + 100`);
+  await evaluate(`${list}.scrollTop = 0; true`);
+  await waitFor(`${list}.scrollTop === 0`);
+  await selectFile('b.txt');
+  await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21'`);
+  assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
+  console.log('PASS 「This file」で上のほうを見たまま別のファイルを選んでも、届いた印は出ない');
+
+  // (9) まだ読んでいないファイルのスレッドを開いても、対象の行の前後が見える（R-VIEW）。
+  // b.txt の 3 行目にスレッドを足して読み込み直し、a.txt を表示したまま一覧から開く。
+  await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 3, end_line: 3, body: 'about line 3 of b' });
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  await selectFile('a.txt');
+  await evaluate(`${list}.querySelector('.cv-card[data-id="c22"]').click(); true`);
+  await waitFor(threadOpen('about line 3 of b'));
+  const contextLines = `Array.from(document.querySelectorAll('#cv-thread-body .cv-context .cv-line'))`;
+  await waitFor(`${contextLines}.some(l => l.textContent === 'line 2') && ${contextLines}.some(l => l.textContent === 'line 4')`);
+  assert.deepEqual(await evaluate(`${contextLines}.filter(l => l.classList.contains('hit')).map(l => l.textContent)`), ['line 3']);
+  assert.equal(await evaluate(`document.querySelector('#file-header .path')?.textContent`), 'a.txt', 'the shown file stays');
+  // 表示色の明暗を切り替えて行を読み直しても、開いたままのスレッドの対象の行の前後が見える。
+  // 描き直した後の並びだと分かるよう、切り替える前の並びに印を付けておく。
+  await evaluate(`document.querySelector('#cv-thread-body .cv-context').dataset.before = '1'; true`);
+  await browser('click', '#btn-theme');
+  await browser('click', '#btn-theme');
+  await waitFor(`document.documentElement.dataset.theme === 'dark'`);
+  const freshLines = `Array.from(document.querySelectorAll('#cv-thread-body .cv-context:not([data-before]) .cv-line'))`;
+  await waitFor(`${freshLines}.some(l => l.textContent === 'line 2') && ${freshLines}.some(l => l.textContent === 'line 4')`);
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  console.log('PASS まだ読んでいないファイルのスレッドを開いても、表示色を切り替えても、対象の行の前後が見える');
+
+  // (10) 別のファイルを読めなかった後に、エージェントの状態が変わって描き直しても、届いた印は
+  // 出ない。読み込み直して b.txt をまだ読んでいない状態にし、b.txt の行データの取得を失敗させる。
+  await browser('reload');
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
+  await selectFile('a.txt');
+  await browser('click', '#cv-filter button[data-filter="file"]');
+  await waitFor(`${list}.querySelectorAll('.cv-card').length === 20 && ${list}.scrollHeight > ${list}.clientHeight + 100`);
+  await evaluate(`${list}.scrollTop = 0; true`);
+  await waitFor(`${list}.scrollTop === 0`);
+  await evaluate(`(() => {
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => String(input).startsWith(${JSON.stringify(`api/file/${encodeURIComponent(fileIdOf('b.txt'))}`)})
+      ? Promise.reject(new TypeError('Failed to fetch'))
+      : original(input, init);
+    return true;
+  })()`);
+  await evaluate(`Array.from(document.querySelectorAll('#tree button.file')).find(b => b.textContent.includes('b.txt')).click(); true`);
+  await waitFor(`!document.querySelector('#overlay').hidden`);
+  const failedWait = agentCommand(fileFixture, fileState, ['wait', fileKemi.id, '--timeout', '1']);
+  await waitFor(statusIs('waiting'));
+  await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21,c22'`);
+  assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
+  const failedWaited = await failedWait;
+  assert.equal(failedWaited.code, 3, `the wait should time out: ${JSON.stringify(failedWaited)}`);
+  console.log('PASS 別のファイルを読めなかった後に描き直しても、届いた印は出ない');
+} finally {
+  fileKemi.child.kill('SIGTERM');
+  await fileKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

@@ -111,6 +111,8 @@ pub struct SessionState {
     /// 最後に付けた返信と発言の番号。コメントと同じく再利用しない。
     pub last_reply: u32,
     pub last_message: u32,
+    /// 最後に振った通し番号。コメント・返信・発言で 1 本の列を使う（R-SESSION）。
+    pub last_seq: u32,
     /// エージェントとの往復の続き。
     pub channel: Channel,
 }
@@ -221,12 +223,17 @@ struct StateDto {
     #[serde(default)]
     last_message: u32,
     #[serde(default)]
+    last_seq: u32,
+    #[serde(default)]
     channel: ChannelDto,
 }
 
 #[derive(Serialize, Deserialize)]
 struct ReplyDto {
     id: String,
+    /// 版 2 と、通し番号を足す前の版 3 には無い。
+    #[serde(default)]
+    seq: Option<u32>,
     author: String,
     body: String,
 }
@@ -234,6 +241,8 @@ struct ReplyDto {
 #[derive(Serialize, Deserialize)]
 struct MessageDto {
     id: String,
+    #[serde(default)]
+    seq: Option<u32>,
     author: String,
     body: String,
 }
@@ -350,6 +359,8 @@ struct ApprovalDto {
 #[derive(Serialize, Deserialize)]
 struct CommentDto {
     id: String,
+    #[serde(default)]
+    seq: Option<u32>,
     file_id: String,
     group_id: String,
     group_title: String,
@@ -472,6 +483,7 @@ impl From<&SessionState> for StateDto {
             messages: state.messages.iter().map(MessageDto::from).collect(),
             last_reply: state.last_reply,
             last_message: state.last_message,
+            last_seq: state.last_seq,
             channel: ChannelDto::from(&state.channel),
         }
     }
@@ -479,7 +491,10 @@ impl From<&SessionState> for StateDto {
 
 impl StateDto {
     fn into_parts(self) -> Result<SessionState, String> {
-        Ok(SessionState {
+        let unnumbered = self.comments.iter().any(|comment| {
+            comment.seq.is_none() || comment.replies.iter().any(|reply| reply.seq.is_none())
+        }) || self.messages.iter().any(|message| message.seq.is_none());
+        let mut state = SessionState {
             comments: self
                 .comments
                 .into_iter()
@@ -495,9 +510,35 @@ impl StateDto {
                 .collect::<Result<Vec<_>, String>>()?,
             last_reply: self.last_reply,
             last_message: self.last_message,
+            last_seq: self.last_seq,
             channel: self.channel.into_channel()?,
-        })
+        };
+        if unnumbered {
+            number_in_creation_order(&mut state);
+        }
+        Ok(state)
     }
+}
+
+/// 通し番号の無い状態に、コメントを作成順に並べ、各コメントのすぐ後にその返信を作成順に
+/// 置いた順で番号を振る（R-SESSION の版 2 の読み方）。版 2 には発言が無い。通し番号を
+/// 足す前の版 3 の発言は、どこに挟まったかが分からないので、コメントと返信の後ろに置く。
+fn number_in_creation_order(state: &mut SessionState) {
+    let mut seq = 0;
+    let mut next = || {
+        seq += 1;
+        seq
+    };
+    for comment in &mut state.comments {
+        comment.seq = next();
+        for reply in &mut comment.replies {
+            reply.seq = next();
+        }
+    }
+    for message in &mut state.messages {
+        message.seq = next();
+    }
+    state.last_seq = seq;
 }
 
 fn author_dto(author: Author) -> String {
@@ -516,6 +557,7 @@ impl From<&Reply> for ReplyDto {
     fn from(reply: &Reply) -> Self {
         ReplyDto {
             id: reply.id.clone(),
+            seq: Some(reply.seq),
             author: author_dto(reply.author),
             body: reply.body.clone(),
         }
@@ -526,6 +568,7 @@ impl ReplyDto {
     fn into_reply(self) -> Result<Reply, String> {
         Ok(Reply {
             id: self.id,
+            seq: self.seq.unwrap_or_default(),
             author: parse_author(&self.author)?,
             body: self.body,
         })
@@ -536,6 +579,7 @@ impl From<&Message> for MessageDto {
     fn from(message: &Message) -> Self {
         MessageDto {
             id: message.id.clone(),
+            seq: Some(message.seq),
             author: author_dto(message.author),
             body: message.body.clone(),
         }
@@ -546,6 +590,7 @@ impl MessageDto {
     fn into_message(self) -> Result<Message, String> {
         Ok(Message {
             id: self.id,
+            seq: self.seq.unwrap_or_default(),
             author: parse_author(&self.author)?,
             body: self.body,
         })
@@ -677,6 +722,7 @@ impl From<&Comment> for CommentDto {
     fn from(comment: &Comment) -> Self {
         CommentDto {
             id: comment.id.clone(),
+            seq: Some(comment.seq),
             file_id: comment.file_id.clone(),
             group_id: comment.group_id.clone(),
             group_title: comment.group_title.clone(),
@@ -707,6 +753,7 @@ impl CommentDto {
         };
         Ok(Comment {
             id: self.id,
+            seq: self.seq.unwrap_or_default(),
             file_id: self.file_id,
             group_id: self.group_id,
             group_title: self.group_title,

@@ -476,8 +476,9 @@ button:disabled {
 /* ---------- レイアウト ---------- */
 
 .layout {
+  --tree-width: 330px;
   display: grid;
-  grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-columns: var(--tree-width) minmax(0, 1fr) auto;
   flex: 1;
   min-height: 0;
 }
@@ -1406,92 +1407,37 @@ ul.files ul {
 
 /* ---------- インラインコメント ---------- */
 
-/* 吹き出しは範囲の最後の行の直下で、コードの列の位置から始める（R-VIEW）。 */
-.bal-row {
+/* 札は範囲の最後の行の直下で、コードの列の位置から始める（R-VIEW）。 */
+.chip-row {
   position: relative;
-  padding: 4px 16px 8px calc(8.4em + 1px);
+  padding: 4px 16px 6px calc(8.4em + 1px);
   font-family: var(--sans);
   font-size: 13.5px;
   white-space: normal;
   line-height: 1.6;
 }
 
-.bal-row.mode-split.side-old {
+.chip-row.mode-split.side-old {
   padding-left: calc(4.8em + 1px);
 }
 
-.bal-row.mode-split.side-new {
+.chip-row.mode-split.side-new {
   padding-left: calc(50% + 4.8em);
 }
 
-.bal-row.floating {
+.chip-row.floating {
   padding: 4px 0;
 }
 
-.bal {
-  position: relative;
-  max-width: 72ch;
-  background: var(--note-bg);
-  border: 1px solid var(--note-line);
-  border-radius: 8px;
-  padding: 7px 12px 8px;
-  color: var(--ink);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--note-line) 40%, transparent);
-}
-
-/* 尾で対象の行を指す。 */
-.bal::before {
-  content: "";
-  position: absolute;
-  top: -7px;
-  left: 18px;
-  width: 12px;
-  height: 12px;
-  background: var(--note-bg);
-  border-left: 1px solid var(--note-line);
-  border-top: 1px solid var(--note-line);
-  transform: rotate(45deg);
-}
-
-.bal-row.floating .bal::before {
-  display: none;
-}
-
-.bal .bh {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--note-ink);
-}
-
-.bal .bh .where,
 .cchip .where {
   font-family: var(--mono);
 }
 
-.bal .bh .acts {
-  margin-left: auto;
-  display: flex;
-  gap: 10px;
-}
-
-.bal .bh .acts button {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--note-ink);
-  font-size: 12px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.bal.outdated,
 .cchip.outdated {
   border-style: dashed;
 }
 
-/* 既定の 1 行の札。本文の 1 行目を見せ、収まらなければ省略記号で切る。 */
+/* 1 行の札。本文の 1 行目を見せ、収まらなければ省略記号で切る。押すと会話パネルでスレッドを開く。 */
 .cchip {
   display: inline-flex;
   align-items: center;
@@ -1514,6 +1460,18 @@ ul.files ul {
   text-overflow: ellipsis;
 }
 
+/* 畳んだスレッドの札。場所と 1 行目だけに縮め、目立たせない。 */
+.cchip.folded {
+  height: 20px;
+  max-width: 48ch;
+  background: var(--panel);
+  font-size: 11.5px;
+}
+
+.cchip.folded .tx {
+  color: var(--ink-2);
+}
+
 .badge-suggest {
   flex: 0 0 auto;
   font-size: 11px;
@@ -1532,135 +1490,10 @@ ul.files ul {
   padding: 0 6px;
 }
 
-.t-body {
-  margin: 4px 0 0;
-  color: var(--ink);
-  white-space: pre-wrap;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-}
-
 /* 範囲の行には、行番号の欄の左端にコメントの色の線を付ける。 */
 .row.commented > .no-cell:first-child,
 .row.split.commented > .cell > .no-cell {
   box-shadow: inset 3px 0 0 var(--note-line);
-}
-
-/* コメントの一覧。上部の入口から開き、閉じると消える（常設パネルではない）。 */
-.comment-list {
-  position: fixed;
-  top: 56px;
-  right: 18px;
-  z-index: 30;
-  width: min(560px, calc(100vw - 36px));
-  max-height: 70vh;
-  overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-  font-size: 13px;
-}
-
-.cl-head {
-  position: sticky;
-  top: 0;
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-}
-
-.cl-close {
-  margin-left: auto;
-  background: none;
-  border: 0;
-  color: var(--accent);
-  font-size: 12.5px;
-}
-
-.cl-empty {
-  margin: 0;
-  padding: 12px;
-  color: var(--ink-3);
-}
-
-.cl-items {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-}
-
-.cl-item + .cl-item {
-  border-top: 1px solid var(--line-soft);
-}
-
-.cl-target {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 6px 8px;
-  background: none;
-  border: 0;
-  border-radius: 6px;
-  text-align: left;
-}
-
-.cl-target:hover:not(:disabled) {
-  background: var(--panel-2);
-}
-
-.cl-target:disabled {
-  opacity: 1;
-}
-
-.cl-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--ink-3);
-}
-
-.cl-unit {
-  color: var(--accent);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 6px;
-}
-
-.cl-unit.vanished {
-  color: var(--ink-2);
-  border-style: dashed;
-}
-
-.cl-path,
-.cl-where {
-  font-family: var(--mono);
-}
-
-.cl-subject {
-  font-size: 12px;
-  color: var(--ink-2);
-}
-
-.cl-first {
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cl-body {
-  margin: 0 8px 8px;
-  padding: 6px 10px;
-  background: var(--note-bg);
-  border: 1px dashed var(--note-line);
-  border-radius: 6px;
-  white-space: pre-wrap;
 }
 
 .t-suggestion {
@@ -1705,6 +1538,11 @@ ul.files ul {
   border-bottom: 1px solid var(--accent);
   font-family: var(--sans);
   font-size: 13.5px;
+}
+
+/* 入力欄の表示幅は約 72 文字まで（R-VIEW）。操作の並びも入力欄の右端に揃える。 */
+.editor > * {
+  max-width: 72ch;
 }
 
 .editor textarea {
@@ -2170,10 +2008,6 @@ ul.files ul {
   margin-bottom: 6px;
 }
 
-.kb-notes .bal::before {
-  display: none;
-}
-
 .kb-note-row > td {
   border: 0;
   padding: 0;
@@ -2265,7 +2099,7 @@ ul.files ul {
 
 /* ---------- エージェントとの往復（agent-channel.md） ---------- */
 
-/* 状態は点と言葉で、チャット欄の入口に添える。待機中は藍、作業中は付箋の色、応答なしは
+/* 状態は点と言葉で、会話パネルの見出しと畳んだ帯に添える。待機中は藍、作業中は付箋の色、応答なしは
    削除の色で目立たせる。 */
 .agent-status {
   display: inline-flex;
@@ -2301,143 +2135,8 @@ ul.files ul {
   color: var(--del-ink);
 }
 
-/* 往復の操作の置き場。上部バーの並びを変えないよう、ファイルツリーの下端に重ねる。
-   ツリーはその分だけ下に余白を足し、最後の項目が隠れないようにする。 */
-.agent-dock {
-  position: fixed;
-  left: 0;
-  bottom: 0;
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 330px;
-  padding: 10px 12px;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  border-right: 1px solid var(--line);
-}
-
-.agent-dock .agent-status {
-  margin-right: auto;
-}
-
-.tree {
-  padding-bottom: 110px;
-}
-
 .hand-count {
   font-weight: 600;
-}
-
-/* チャット欄。広い画面では往復の操作の上に開く箱、狭い画面では下から出すシート。 */
-.chat {
-  position: fixed;
-  left: 12px;
-  bottom: 62px;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  width: min(440px, calc(100vw - 36px));
-  max-height: 70vh;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-  font-size: 13px;
-}
-
-.chat-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  border-radius: 10px 10px 0 0;
-}
-
-.chat-items {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  list-style: none;
-  margin: 0;
-  padding: 8px 12px;
-}
-
-.chat-item + .chat-item {
-  margin-top: 8px;
-}
-
-.chat-form {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px 10px;
-  border-top: 1px solid var(--line-soft);
-}
-
-.chat-form textarea,
-.reply-box textarea {
-  width: 100%;
-  font: inherit;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 5px 7px;
-  resize: vertical;
-}
-
-.chat-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-/* スレッド。返信は書いた人を添えて作成順に並べ、エージェントの返信は藍の線で見分ける。 */
-.thread {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  border-top: 1px solid var(--note-line);
-}
-
-.reply {
-  padding: 6px 0 0 8px;
-  border-left: 2px solid transparent;
-  margin-top: 6px;
-}
-
-.reply[data-author="agent"],
-.chat-item[data-author="agent"] {
-  border-left: 2px solid var(--accent);
-  padding-left: 8px;
-}
-
-.reply-author {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--ink-2);
-}
-
-.reply[data-author="agent"] .reply-author,
-.chat-item[data-author="agent"] .reply-author {
-  color: var(--accent);
-}
-
-.reply-body {
-  margin: 2px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.reply-box {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 8px;
 }
 
 .reply-count,
@@ -2455,6 +2154,428 @@ ul.files ul {
   border-color: var(--add-ink);
 }
 
+/* ---------- 会話パネル（R-VIEW） ---------- */
+
+/* 右の列。開くと覚えた幅、畳むと細い帯。列なので、開いても差分の上に重ならない。 */
+.conversation {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13.5px;
+}
+
+/* 狭い画面の手前の幅でも差分の列が潰れないよう、ツリーの右の残りのうち、360px と半分の
+   少ないほうは差分に残す。 */
+.conversation[data-open="true"] {
+  width: min(
+    var(--cv-width, 440px),
+    60vw,
+    max((100vw - var(--tree-width)) / 2, 100vw - var(--tree-width) - 360px)
+  );
+}
+
+.conversation[data-open="false"] .cv-panel,
+.conversation[data-open="false"] .cv-resizer,
+.conversation[data-open="true"] .cv-rail-col {
+  display: none;
+}
+
+/* 畳んだ帯。上は開く操作、下に「Hand to agent」。 */
+.cv-rail-col {
+  display: flex;
+  flex-direction: column;
+  width: 36px;
+}
+
+.cv-rail {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+}
+
+.cv-rail-hand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: var(--accent);
+}
+
+.cv-rail-hand:disabled {
+  color: var(--ink-2);
+  opacity: 0.6;
+}
+
+.cv-rail-label {
+  writing-mode: vertical-rl;
+  font-size: 12.5px;
+}
+
+.cv-rail .agent-status {
+  font-size: 0;
+  gap: 0;
+}
+
+.cv-unread {
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ai-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* 左の縁を掴んで幅を変える。 */
+.cv-resizer {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.cv-resizer::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 2px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 1px;
+  background: var(--line);
+}
+
+.cv-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cv-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cv-close {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+.cv-list,
+.cv-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cv-filter {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.cv-filter button {
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.cv-filter button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cv-items {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.cv-empty {
+  padding: 12px;
+  color: var(--ink-3);
+}
+
+/* 発言と書き込み。吹き出しにせず、名前と本文の行にする。自分の書き込みは背景で見分ける。 */
+.cv-post {
+  padding: 6px 14px;
+  line-height: 1.55;
+}
+
+.cv-post[data-author="reviewer"] {
+  background: var(--panel-2);
+}
+
+.cv-who {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.cv-post[data-author="agent"] .cv-who,
+.cv-last[data-author="agent"] .cv-who {
+  color: var(--accent);
+}
+
+.cv-text {
+  margin: 1px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* スレッドの項目。場所と最後の書き込みの小さなカードで、畳むと場所の 1 行だけ。 */
+.cv-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: calc(100% - 24px);
+  margin: 6px 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--note-line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  text-align: left;
+}
+
+.cv-card:hover {
+  box-shadow: 0 0 0 1px var(--note-line);
+}
+
+.cv-card.folded {
+  padding: 2px 10px;
+  background: var(--panel);
+}
+
+.cv-card-head,
+.cv-place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--note-ink);
+}
+
+.cv-path,
+.cv-where {
+  font-family: var(--mono);
+}
+
+.cv-unit {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent);
+}
+
+.cv-unit.vanished {
+  border-style: dashed;
+  color: var(--ink-2);
+}
+
+.cv-subject {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.cv-last {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cv-first {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+/* 開いたスレッド。上に場所と操作と対象の行、下に本文・suggestion・返信。 */
+.cv-thread-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--note-bg);
+  color: var(--note-ink);
+  font-size: 13px;
+}
+
+.cv-thread-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cv-back {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.cv-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.cv-acts button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--note-ink);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cv-thread-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.cv-context {
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.cv-line {
+  min-height: 20px;
+  padding: 0 12px;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.cv-line.add {
+  background: var(--add-bg);
+}
+
+.cv-line.del {
+  background: var(--del-bg);
+}
+
+.cv-line.hit {
+  box-shadow: inset 3px 0 0 var(--note-line);
+}
+
+.cv-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 14px 0;
+}
+
+.cv-post .t-suggestion {
+  margin-top: 6px;
+}
+
+.cv-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.cv-form textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.cv-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.cv-actions #btn-hand {
+  margin-right: auto;
+}
+
+/* 並びの上のほうを見ている間に届いたことを示す印。並びの下端に重ね、押すと一番下へ送る。 */
+.cv-newer {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  margin: -34px 0 8px;
+  padding: 2px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ai-ink);
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+/* エージェントの返信が、スレッドを最後に開いた後に届いた印。 */
+.unread-mark {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ai-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 /* ---------- 狭い画面（R-NARROW） ---------- */
 
 /* 狭い画面でだけ使う要素。常に DOM にあり、広い画面では出さない。 */
@@ -2466,7 +2587,7 @@ ul.files ul {
    広い画面の規則はこの外にあり、ここでは上書きするだけで変えない。 */
 @media (max-width: 719.98px) {
   /* 上部バーは 2 段。既存の要素を order で並べ替え、.spacer を段の区切りにする。
-     1 段目: kemi、title、ツリーを開く操作、コメント一覧の入口、更新バッジ、「…」。
+     1 段目: kemi、title、ツリーを開く操作、会話パネルの入口、更新バッジ、「…」。
      2 段目: グループ単位の切り替え、見たの進捗、承認と変更要求。入りきらなければ
      進捗を数字だけにし（views/header.js が印を付ける）、それでも入らなければ折り返す。 */
   .topbar {
@@ -2705,42 +2826,25 @@ ul.files ul {
     overflow-wrap: anywhere;
   }
 
-  /* コメント一覧は画面いっぱいのシート。中身と閉じる操作は広い画面と同じ。 */
-  .comment-list {
-    inset: 0;
-    width: auto;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-
-  /* エージェントとの往復: 「Hand to agent」は上部バーに置かず、チャット欄の入口には状態の
-     点だけを出す。チャット欄は下から出すシートで、状態の言葉と渡す操作もここに入る。 */
-  .agent-dock {
+  /* 会話パネルは画面いっぱいのシート。閉じている間は帯も出さない。中身と閉じる操作は
+     広い画面と同じで、幅を変える縁は出さない。シートから出した失敗の知らせ（オーバーレイと
+     トースト）が隠れないよう、それらより下に重ねる。 */
+  .conversation {
     display: none;
   }
 
-  .tree {
-    padding-bottom: 48px;
-  }
-
-  #btn-chat {
-    order: 4;
-    display: inline-flex;
-    gap: 4px;
-  }
-
-  #btn-chat .agent-status {
-    font-size: 0;
-    gap: 0;
-  }
-
-  .chat {
-    inset: auto 0 0 0;
+  .conversation[data-open="true"] {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
     width: auto;
-    max-height: 75vh;
-    border-width: 1px 0 0;
-    border-radius: 12px 12px 0 0;
+    border: 0;
+    background: var(--bg);
+  }
+
+  .conversation[data-open="true"] .cv-resizer {
+    display: none;
   }
 
   /* ファイルツリーは左から重ねる引き出し。閉じている間は画面の外で、フォーカスも届かない。
@@ -2802,8 +2906,8 @@ ul.files ul {
     display: inline-flex;
   }
 
-  /* 吹き出しと入力欄は、行の位置からインデントせず本文の幅いっぱいから始める。 */
-  #diff-content .bal-row {
+  /* 札と入力欄は、行の位置からインデントせず本文の幅いっぱいから始める。 */
+  #diff-content .chip-row {
     padding-left: 0;
     padding-right: 8px;
   }
@@ -2835,5 +2939,6 @@ ul.files ul {
 
   #toast {
     right: 14px;
+    z-index: 31;
   }
 }

@@ -10,8 +10,8 @@
     <link rel="modulepreload" href="assets/api.js" />
     <link rel="modulepreload" href="assets/dom.js" />
     <link rel="modulepreload" href="assets/features/agent.js" />
-    <link rel="modulepreload" href="assets/features/comment-list.js" />
     <link rel="modulepreload" href="assets/features/comments.js" />
+    <link rel="modulepreload" href="assets/features/conversation.js" />
     <link rel="modulepreload" href="assets/features/display.js" />
     <link rel="modulepreload" href="assets/features/horizontal-scroll.js" />
     <link rel="modulepreload" href="assets/features/files.js" />
@@ -24,9 +24,8 @@
     <link rel="modulepreload" href="assets/model.js" />
     <link rel="modulepreload" href="assets/state.js" />
     <link rel="modulepreload" href="assets/storage.js" />
-    <link rel="modulepreload" href="assets/views/chat.js" />
-    <link rel="modulepreload" href="assets/views/comment-list.js" />
     <link rel="modulepreload" href="assets/views/comment.js" />
+    <link rel="modulepreload" href="assets/views/conversation.js" />
     <link rel="modulepreload" href="assets/views/diff-rows.js" />
     <link rel="modulepreload" href="assets/views/file-header.js" />
     <link rel="modulepreload" href="assets/views/header.js" />
@@ -128,16 +127,12 @@
         <button class="iconbtn" id="btn-theme" type="button" title="Switch theme">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>
         </button>
-        <button class="iconbtn" id="btn-comments" type="button" title="Comment list" aria-label="Comment list" aria-expanded="false">
+        <button class="iconbtn" id="btn-comments" type="button" title="Conversation" aria-label="Conversation" aria-expanded="false" aria-controls="conversation">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 3v-3h-2z"/></svg>
           <span id="comment-count">0</span>
         </button>
         <button id="update-badge" type="button" class="update-badge" hidden>
           Update available
-        </button>
-        <button class="iconbtn narrow-only" id="btn-chat" type="button" title="Chat with the agent" aria-label="Chat with the agent" aria-expanded="false">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 2.5h9v6h-5l-2.5 2v-2h-1.5z"/><path d="M12.5 5.5h2v6h-1.5v2l-2.5-2h-4v-1"/></svg>
-          <span class="agent-status" id="chat-status" data-status="unconnected"></span>
         </button>
         <button class="btn primary" id="btn-approve" type="button">Approve</button>
         <button class="btn secondary" id="btn-changes" type="button">Request changes</button>
@@ -189,9 +184,6 @@
       </div>
     </header>
 
-    <div class="comment-list" id="comment-list" role="dialog" aria-label="Comment list" hidden></div>
-    <div class="chat" id="chat" role="dialog" aria-label="Chat with the agent" hidden></div>
-
     <div class="layout">
       <aside class="tree" id="tree" aria-label="File tree"></aside>
       <div class="narrow-only" id="drawer-scrim"></div>
@@ -215,14 +207,54 @@
         </div>
         <div id="horizontal-scroll" tabindex="0" role="region" aria-label="Scroll both code panes horizontally" hidden><div id="horizontal-scroll-width"></div></div>
       </main>
-    </div>
-
-    <div class="agent-dock" id="agent-dock" role="group" aria-label="Agent">
-      <span class="agent-status" id="agent-status" data-status="unconnected" role="status"></span>
-      <button class="btn" id="btn-dock-chat" type="button" aria-expanded="false">Chat</button>
-      <button class="btn primary" id="btn-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
-        Hand to agent<span class="hand-count" id="hand-count"></span>
-      </button>
+      <aside class="conversation" id="conversation" aria-label="Conversation" data-open="false">
+        <div class="cv-resizer" id="cv-resizer" title="Drag to resize"></div>
+        <div class="cv-rail-col">
+          <button class="cv-rail" id="cv-rail" type="button" title="Open the conversation" aria-label="Open the conversation">
+            <span class="agent-status" id="rail-status" data-status="unconnected"></span>
+            <span class="cv-rail-label">Conversation</span>
+            <span class="cv-unread" id="cv-unread" hidden></span>
+          </button>
+          <button class="cv-rail-hand" id="rail-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
+            <span class="cv-rail-label">Hand to agent</span><span class="hand-count" id="rail-hand-count"></span>
+          </button>
+        </div>
+        <div class="cv-panel" id="cv-panel">
+          <div class="cv-head">
+            <b>Conversation</b>
+            <span class="agent-status" id="agent-status" data-status="unconnected" role="status"></span>
+            <button class="cv-close" id="cv-close" type="button">Close</button>
+          </div>
+          <div class="cv-list" id="cv-list">
+            <div class="cv-filter" id="cv-filter" role="group" aria-label="Show">
+              <button type="button" data-filter="all" aria-pressed="true">All</button>
+              <button type="button" data-filter="unresolved" aria-pressed="false">Unresolved</button>
+              <button type="button" data-filter="file" aria-pressed="false">This file</button>
+            </div>
+            <ol class="cv-items" id="cv-items"></ol>
+            <form class="cv-form" id="cv-compose">
+              <textarea id="cv-message" rows="2" placeholder="Write to the agent about the whole review (Cmd/Ctrl+Enter to post)"></textarea>
+              <div class="cv-actions" id="cv-compose-actions">
+                <button class="btn primary" type="submit">Post</button>
+              </div>
+            </form>
+          </div>
+          <div class="cv-thread" id="cv-thread" hidden>
+            <div class="cv-thread-head" id="cv-thread-head"></div>
+            <div class="cv-thread-body" id="cv-thread-body"></div>
+            <form class="cv-form" id="cv-reply">
+              <textarea id="cv-reply-text" rows="2" placeholder="Reply (Cmd/Ctrl+Enter to send)"></textarea>
+              <div class="cv-actions" id="cv-reply-actions">
+                <button class="btn primary" type="submit">Reply</button>
+              </div>
+            </form>
+          </div>
+          <button class="cv-newer" id="cv-newer" type="button" hidden></button>
+          <button class="btn" id="btn-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
+            Hand to agent<span class="hand-count" id="hand-count"></span>
+          </button>
+        </div>
+      </aside>
     </div>
 
     <div class="modal" id="modal" hidden>

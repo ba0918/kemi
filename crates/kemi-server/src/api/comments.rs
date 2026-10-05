@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::channel::notify_agent_state;
 use super::{ApiError, file_not_found, find_file, parse_side, side_lines, source_content};
-use crate::session::{comment_json, persist};
+use crate::session::{page_comment_json, persist};
 use crate::{AppState, Event, Notice};
 
 #[derive(Debug, Deserialize)]
@@ -87,7 +87,7 @@ pub(super) async fn comment_api(
                 .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
             comment.body = body;
             comment.suggestion = suggestion.map(|replacement| Suggestion { replacement });
-            let value = comment_json(comment);
+            let value = page_comment_json(comment);
             session.channel.note_comment(&id);
             drop(session);
             persist(&state);
@@ -119,13 +119,14 @@ pub(super) async fn comment_api(
             session.last_reply += 1;
             let reply = Reply {
                 id: format!("r{}", session.last_reply),
+                seq: session.next_seq(),
                 author: Author::Reviewer,
                 body,
             };
             session.channel.note_reply(&id, &reply.id);
             let comment = &mut session.comments[index];
             comment.replies.push(reply);
-            let value = comment_json(comment);
+            let value = page_comment_json(comment);
             drop(session);
             persist(&state);
             let _ = state.events.send(Event::Thread(value.clone()));
@@ -140,7 +141,7 @@ pub(super) async fn comment_api(
                 .find(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
             comment.resolved = resolved;
-            let value = comment_json(comment);
+            let value = page_comment_json(comment);
             drop(session);
             persist(&state);
             Ok(Json(value))
@@ -189,6 +190,7 @@ async fn add_comment(
     session.last_comment += 1;
     let comment = Comment {
         id: format!("c{}", session.last_comment),
+        seq: session.next_seq(),
         file_id,
         group_id: file.group_id.clone(),
         group_title,
@@ -215,7 +217,7 @@ async fn add_comment(
         side: comment.side,
         lines: comment.start_line.zip(comment.end_line),
     });
-    Ok(Json(comment_json(&comment)))
+    Ok(Json(page_comment_json(&comment)))
 }
 
 fn comment_not_found() -> ApiError {
