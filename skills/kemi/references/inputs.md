@@ -9,6 +9,7 @@ One input mode per run. Giving two is an error (exit `2`).
 | A range of commits | `kemi --from <base> [--to <head>]` | both groupings, see below |
 | The working tree | `kemi --worktree` | one group, untracked files included |
 | The index | `kemi --staged` | one group |
+| A running page and the working tree | `kemi --live <url\|file>` | the working tree, as `--worktree` |
 | Anything whose reasons only you know | `kemi <manifest.json>`, or `kemi -` to read it from stdin | the groups you write |
 
 `--to` defaults to `HEAD`. A commit range carries both of its groupings at once, and the page
@@ -45,6 +46,20 @@ The `--focus` file looks like this:
 A group id is `all` for the final form, the full commit sha for a per-commit group, `worktree`,
 `staged`, or an id you chose in a manifest. An id or a path that does not exist is an error
 (exit `2`); kemi never quietly ignores one.
+
+## Reviewing a running page
+
+`kemi --live <url|file>` puts a running page under review together with the working tree.
+The URL must be `http://` on `localhost` or `127.0.0.0/8` (a dev server or Storybook). A file
+must be a `.html` or `.htm` inside the git working tree kemi starts in, or inside the launch
+directory outside git; a symlink counts where it points, and nothing in `.git/` is served.
+Anything else is a usage error (exit `2`). The code view is the same as `--worktree`; outside
+a git repository there is none. `--live` combines only with `--port`, `--bind`, `--no-open`,
+`--live-port <n>`, `--focus`, and `--serve`. The review title is `Live review of <url>`, and
+for a file the URL is its path from that directory, such as `/docs/mock.html`.
+
+A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then, and
+it is kept only when it holds a comment, a reply, or a message.
 
 ## Surveying a large change first
 

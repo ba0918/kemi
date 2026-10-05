@@ -14,10 +14,11 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 
+use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
 use kemi_core::session::{SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis};
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
-use kemi_core::source::{FocusSource, ReviewSource};
+use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
 use kemi_server::{
     AgentParams, Asset, Assets, ResultSaveError, ResultSink, ServeControl, ServeOutcome,
     ServeParams, SessionSink, bind_agent_listener, detect_share_address, exposure_warning, serve,
@@ -31,6 +32,7 @@ kemi: usage:
   kemi --from <ref> [--to <ref>]          diff a commit range (--to defaults to HEAD)
   kemi --worktree                          review uncommitted changes
   kemi --staged                            review staged changes
+  kemi --live <url | file.html>            review a page on a loopback dev server, or a local HTML file
   kemi --result [--any | --workspace <path>]  print the JSON of the latest submitted result
   kemi wait <id> [--timeout <seconds>]    wait for what the reviewer hands over (agent)
   kemi reply <id>                          write replies and messages from stdin JSON (agent)
@@ -45,6 +47,7 @@ common flags:
   --serve            accepted for compatibility (serving is always on)
   --digest           print a digest to stdout and exit
   --digest-top <n>   number of top files in the digest (default 100)
+  --live-port <n>    listen port of the --live page (default 0 = pick a free one)
 
 flags used with --result:
   --any              print the latest result regardless of location
@@ -57,6 +60,9 @@ struct Cli {
     group_by: Option<String>,
     worktree: bool,
     staged: bool,
+    /// `--live` の値（URL かファイル）。
+    live: Option<String>,
+    live_port: Option<u16>,
     focus: Option<String>,
     base: PathBuf,
     port: u16,
@@ -85,6 +91,8 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
         group_by: None,
         worktree: false,
         staged: false,
+        live: None,
+        live_port: None,
         focus: None,
         base: PathBuf::from("."),
         port: 0,
@@ -122,6 +130,14 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
             "--group-by" => cli.group_by = Some(value(&mut index)?),
             "--worktree" => cli.worktree = true,
             "--staged" => cli.staged = true,
+            "--live" => cli.live = Some(value(&mut index)?),
+            "--live-port" => {
+                cli.live_port = Some(
+                    value(&mut index)?
+                        .parse()
+                        .map_err(|_| "--live-port requires a number".to_string())?,
+                )
+            }
             "--focus" => cli.focus = Some(value(&mut index)?),
             "--base" => cli.base = PathBuf::from(value(&mut index)?),
             "--port" => {
@@ -208,6 +224,56 @@ fn validate_resume_flags(cli: &Cli) -> Result<(), String> {
         return Err("--resume accepts only --port, --bind, --no-open and --serve".to_string());
     }
     Ok(())
+}
+
+/// `--live` と組めるフラグだけかを確かめる（R-PAGE-MODE）。`--live-port` は `--live` か
+/// `--resume` とだけ組める（R-INPUT-6）。
+fn validate_live_flags(cli: &Cli) -> Result<(), String> {
+    if cli.live.is_none() {
+        if cli.live_port.is_some() && cli.resume.is_none() {
+            return Err("--live-port requires --live or --resume".to_string());
+        }
+        return Ok(());
+    }
+    let allowed = [
+        "--live",
+        "--port",
+        "--bind",
+        "--no-open",
+        "--live-port",
+        "--focus",
+        "--serve",
+    ];
+    let others = cli
+        .flags
+        .iter()
+        .any(|flag| !allowed.contains(&flag.as_str()));
+    if others || cli.manifest.is_some() {
+        return Err(
+            "--live accepts only --port, --bind, --no-open, --live-port, --focus and --serve"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// `--live` の見る対象と配れる範囲の根を決める（R-PAGE-MODE）。根は起動したディレクトリが
+/// git の作業ツリーの中なら作業ツリーの根、外なら起動したディレクトリ。ファイルは
+/// シンボリックリンクを解決した実体の場所で判定する。
+fn live_target(value: &str) -> Result<(LivePage, PathBuf), String> {
+    let root = std::fs::canonicalize(workspace_root(Path::new(".")))
+        .map_err(|error| format!("cannot resolve the launch directory: {error}"))?;
+    if value.contains("://") {
+        let url = parse_live_url(value).map_err(|error| error.to_string())?;
+        return Ok((LivePage::Url(url.text), root));
+    }
+    let real =
+        std::fs::canonicalize(value).map_err(|error| format!("cannot read {value}: {error}"))?;
+    let path = served_path(&root, &real).map_err(|error| error.to_string())?;
+    if !is_html(&path) {
+        return Err(LiveError::NotHtml(value.to_string()).to_string());
+    }
+    Ok((LivePage::File(path), root))
 }
 
 /// 結果の置き場所を決める環境変数が無いときの理由（R-RESULT）。OS ごとに使う変数が違う。
@@ -312,9 +378,14 @@ async fn start_agent_channel(
 
 /// 起動時の入力から、セッションに記録する情報を組み立てる。コミット範囲は完全な sha に
 /// 解決しておく（R-SESSION）。
-fn session_info(cli: &Cli) -> Result<SessionInfo, String> {
+fn session_info(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Result<SessionInfo, String> {
     let workspace = workspace_root(Path::new("."));
-    let mode = if cli.worktree {
+    let mode = if let Some((page, root)) = live {
+        SessionMode::Live {
+            page: page.clone(),
+            root: root.clone(),
+        }
+    } else if cli.worktree {
         SessionMode::Worktree
     } else if cli.staged {
         SessionMode::Staged
@@ -349,7 +420,10 @@ fn session_info(cli: &Cli) -> Result<SessionInfo, String> {
 
 /// セッションの保存先を開く。決められない・開けないときは警告だけを出し、セッション
 /// なしでレビューを続ける。
-fn open_session(cli: &Cli) -> Option<Arc<session::StoredSession>> {
+fn open_session(
+    cli: &Cli,
+    live: Option<&(LivePage, PathBuf)>,
+) -> Option<Arc<session::StoredSession>> {
     let Some(dir) = sessions_dir() else {
         eprintln!(
             "kemi: cannot determine where to save sessions ({})",
@@ -357,7 +431,7 @@ fn open_session(cli: &Cli) -> Option<Arc<session::StoredSession>> {
         );
         return None;
     };
-    let info = match session_info(cli) {
+    let info = match session_info(cli, live) {
         Ok(info) => info,
         Err(message) => {
             eprintln!("kemi: cannot start a session: {message}");
@@ -450,7 +524,13 @@ fn group_by(cli: &Cli) -> Result<GroupBy, String> {
     }
 }
 
-fn build_source(cli: &Cli) -> Result<Box<dyn ReviewSource>, String> {
+fn build_source(
+    cli: &Cli,
+    live: Option<&(LivePage, PathBuf)>,
+) -> Result<Box<dyn ReviewSource>, String> {
+    if let Some((page, root)) = live {
+        return Ok(Box::new(LiveSource::new(page, root)));
+    }
     if let Some(manifest) = &cli.manifest {
         let source = ManifestSource::from_path(Path::new(manifest), &cli.base)
             .map_err(|error| error.to_string())?;
@@ -709,9 +789,18 @@ async fn run_resume(cli: &Cli) -> ! {
         Ok(stored) => stored,
         Err(error) => fail(&error.to_string()),
     };
-    let source = match stored.frozen_source() {
-        Some(source) => Arc::new(source) as Arc<dyn ReviewSource>,
-        None => fail(&format!("session {id} cannot be resumed")),
+    // `--live` は写しを持たず、今の作業ツリーを読み直す（R-PAGE-SESSION）。
+    let source = match stored.info().mode {
+        SessionMode::Live { page, root } => {
+            Arc::new(LiveSource::new(&page, &root)) as Arc<dyn ReviewSource>
+        }
+        SessionMode::Worktree
+        | SessionMode::Staged
+        | SessionMode::Manifest
+        | SessionMode::Range { .. } => match stored.frozen_source() {
+            Some(source) => Arc::new(source) as Arc<dyn ReviewSource>,
+            None => fail(&format!("session {id} cannot be resumed")),
+        },
     };
     let results_key = stored.info().workspace_key;
     run_review(cli, source, Some(Arc::new(stored)), results_key).await
@@ -822,6 +911,9 @@ async fn main() {
     if let Err(message) = validate_resume_flags(&cli) {
         fail(&message);
     }
+    if let Err(message) = validate_live_flags(&cli) {
+        fail(&message);
+    }
 
     if let Some(out) = &cli.out {
         fail(&format!(
@@ -838,6 +930,7 @@ async fn main() {
         cli.from.is_some(),
         cli.worktree,
         cli.staged,
+        cli.live.is_some(),
     ]
     .iter()
     .filter(|present| **present)
@@ -856,7 +949,12 @@ async fn main() {
         fail("--group-by requires --from");
     }
 
-    let source = match build_source(&cli).and_then(|source| with_focus(source, &cli)) {
+    let live = match cli.live.as_deref().map(live_target).transpose() {
+        Ok(live) => live,
+        Err(message) => fail(&message),
+    };
+    let source = match build_source(&cli, live.as_ref()).and_then(|source| with_focus(source, &cli))
+    {
         Ok(source) => source,
         Err(message) => fail(&message),
     };
@@ -878,7 +976,7 @@ async fn main() {
         }
     }
 
-    let stored_session = open_session(&cli);
+    let stored_session = open_session(&cli, live.as_ref());
     let results_key = result::workspace_key(&workspace_root(Path::new(".")));
     run_review(&cli, source, stored_session, results_key).await
 }

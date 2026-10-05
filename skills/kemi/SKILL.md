@@ -25,6 +25,7 @@ Use one input mode per run:
 | Commits since a base | `kemi --from <base> [--to <head>]` |
 | Working tree, including untracked files | `kemi --worktree` |
 | Staged changes | `kemi --staged` |
+| A running page on a loopback dev server, or a local HTML file, with the working tree | `kemi --live <url\|file>` |
 | Drafts or groups you define | `kemi <manifest.json>` or `kemi -` for stdin |
 
 Read [the input reference](references/inputs.md) when writing a manifest, choosing commit

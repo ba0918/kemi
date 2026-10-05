@@ -52,6 +52,8 @@ kemi --from main --group-by commit   # start with one group per commit in main..
 kemi --worktree                      # HEAD versus the working tree
 kemi --worktree --bind 0.0.0.0       # also reachable from other devices
 kemi --staged                        # HEAD versus the index
+kemi --live http://localhost:5173/   # a page on a loopback dev server, plus the working tree
+kemi --live docs/mock.html           # a local HTML file, plus the working tree
 kemi --from main --digest            # print the review map and exit
 kemi --result                        # print the last submitted result here and exit
 kemi --resume                        # pick an interrupted review (terminal only)
@@ -90,6 +92,8 @@ Useful flags:
 | `--any` | with `--result`: the latest result from anywhere |
 | `--workspace <path>` | with `--result`: the latest result for that place instead of the current one |
 | `--resume [<id>]` | continue an interrupted review; without an id, choose one (see [Sessions](#sessions)) |
+| `--live <url\|file>` | review a running page (see [Live review](#live-review)) |
+| `--live-port <n>` | listen port of the `--live` page (default `0`, pick a free one); with `--live` or `--resume` only |
 
 When the server starts, kemi prints one line to stderr. With the default
 `--bind 127.0.0.1` it looks like this:
@@ -104,6 +108,22 @@ kemi prints the JSON below to stdout and exits with 0
 130 (interrupted before submit). An interrupted review is kept as a session,
 so nothing you wrote on the page is lost; `kemi --resume` picks it up again
 when its frozen copy completed within the size limit (see [Sessions](#sessions)).
+
+### Live review
+
+`kemi --live <url|file>` reviews a page that is running, next to the code
+that makes it. The page is either an `http://` URL on a loopback host
+(`localhost` or `127.0.0.0/8`), such as a dev server or Storybook, or a
+`.html`/`.htm` file inside the directory kemi serves: the git working tree
+when kemi starts inside one, otherwise the launch directory. Symlinks count
+where they point, and nothing inside `.git/` is served. Anything else exits
+with 2.
+
+The code view is the same as `--worktree`. Outside a git repository there is
+no code view. `--live` takes only `--port`, `--bind`, `--no-open`,
+`--live-port`, `--focus`, and `--serve`. The review title is
+`Live review of <url>`; for a file the URL is its path from the served
+directory, such as `/docs/mock.html`.
 
 ### Talking with an agent before the submit
 
@@ -287,6 +307,10 @@ kemi --resume <id>     # continue a known session, from any directory
 - Without an id and without a terminal, kemi prints the resumable sessions as
   one tab-separated line each — id, last update, workspace, mode, seen/total —
   newest first, and exits with 0; with none it prints nothing and exits with 2.
+- A `--live` review keeps no frozen copy. Resuming reads the working tree as
+  it is now and keeps watching it. It is kept only when it holds a comment, a
+  reply, or a message; seen marks and folding alone are not kept. Its mode
+  column reads `live <url>`.
 - `--resume` accepts only `--port`, `--bind`, `--no-open`, and `--serve`.
   `--digest` and `--result` do not create sessions.
 
