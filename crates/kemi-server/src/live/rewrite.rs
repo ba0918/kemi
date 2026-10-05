@@ -1,4 +1,5 @@
-//! 中継の応答と要求の書き換え（R-PAGE-PROXY）。文字列だけを扱う純粋な関数。
+//! 中継の応答と要求の書き換え（R-PAGE-PROXY）と、モックの参照の書き換え（R-PAGE-MOCK）。
+//! 文字列だけを扱う純粋な関数。
 
 /// HTML に差し込むスクリプトの要素を入れる。`<head>` の直後、無ければ `<body>` の前、
 /// それも無ければ doctype の後ろ。doctype より前に入れると互換モードで描かれるため。
@@ -63,6 +64,175 @@ pub fn rewrite_csp(policy: &str, ancestors: &str, script_source: &str) -> String
         directives.push(format!("script-src {sources} {script_source}"));
     }
     directives.join("; ")
+}
+
+/// URL を持つ属性。`srcset` は候補ごとに URL を持つ。
+const URL_ATTRIBUTES: [&[u8]; 5] = [b"src", b"href", b"poster", b"action", b"srcset"];
+
+/// モックの HTML の中の、根からの参照（`/style.css`）をモックの URL（`prefix`）の下に向ける
+/// （R-PAGE-MOCK）。モックはレビュー画面のオリジンの `/m/<値>/` の下で配るので、根からの
+/// 参照はそのままではモックの範囲に届かない。タグの属性と、CSS の `url()`・`@import` を
+/// 書き換える。スクリプトが組み立てる URL は書き換えられない。
+pub fn root_relative_html(html: &[u8], prefix: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(html.len());
+    let mut index = 0;
+    while index < html.len() {
+        if html[index] == b'<' && html.get(index + 1).is_some_and(u8::is_ascii_alphabetic) {
+            let end = tag_end(html, index);
+            rewrite_tag(&html[index..end], prefix, &mut out);
+            index = end;
+        } else {
+            out.push(html[index]);
+            index += 1;
+        }
+    }
+    root_relative_css(&out, prefix)
+}
+
+/// 開始タグの終わり（`>` の次）。引用符の中の `>` は数えない。
+fn tag_end(html: &[u8], start: usize) -> usize {
+    let mut quote = None;
+    for (offset, &byte) in html[start..].iter().enumerate() {
+        match quote {
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if byte == b'"' || byte == b'\'' => quote = Some(byte),
+            None if byte == b'>' => return start + offset + 1,
+            None => {}
+        }
+    }
+    html.len()
+}
+
+/// 1 つのタグの属性を読み、URL を持つ属性の値だけを書き換えて `out` に足す。
+fn rewrite_tag(tag: &[u8], prefix: &str, out: &mut Vec<u8>) {
+    let len = tag.len();
+    let ends_name = |byte: u8| byte.is_ascii_whitespace() || b"=>/".contains(&byte);
+    let mut index = 1;
+    while index < len && !ends_name(tag[index]) {
+        index += 1;
+    }
+    out.extend_from_slice(&tag[..index]);
+    loop {
+        while index < len && (tag[index].is_ascii_whitespace() || tag[index] == b'/') {
+            out.push(tag[index]);
+            index += 1;
+        }
+        if index >= len || tag[index] == b'>' {
+            break;
+        }
+        let name_start = index;
+        while index < len && !ends_name(tag[index]) {
+            index += 1;
+        }
+        if index == name_start {
+            // 名前の無い `=` は飛ばす。
+            out.push(tag[index]);
+            index += 1;
+            continue;
+        }
+        let name = tag[name_start..index].to_ascii_lowercase();
+        out.extend_from_slice(&tag[name_start..index]);
+        let mut next = index;
+        while next < len && tag[next].is_ascii_whitespace() {
+            next += 1;
+        }
+        if next >= len || tag[next] != b'=' {
+            continue;
+        }
+        next += 1;
+        while next < len && tag[next].is_ascii_whitespace() {
+            next += 1;
+        }
+        let quote = tag
+            .get(next)
+            .copied()
+            .filter(|&byte| byte == b'"' || byte == b'\'');
+        if quote.is_some() {
+            next += 1;
+        }
+        out.extend_from_slice(&tag[index..next]);
+        let value_end = match quote {
+            Some(quote) => tag[next..]
+                .iter()
+                .position(|&byte| byte == quote)
+                .map_or(len, |found| next + found),
+            None => tag[next..]
+                .iter()
+                .position(|&byte| byte.is_ascii_whitespace() || byte == b'>')
+                .map_or(len, |found| next + found),
+        };
+        let value = &tag[next..value_end];
+        match name.as_slice() {
+            b"srcset" => rewrite_srcset(value, prefix, out),
+            name if URL_ATTRIBUTES.contains(&name) => push_url(value, prefix, out),
+            _ => out.extend_from_slice(value),
+        }
+        index = value_end;
+        if quote.is_some() && index < len {
+            out.push(tag[index]);
+            index += 1;
+        }
+    }
+    out.extend_from_slice(&tag[index..]);
+}
+
+/// 根からの参照（`//` で始まるものを除く）なら、前に `prefix` を付けて足す。
+fn push_url(url: &[u8], prefix: &str, out: &mut Vec<u8>) {
+    if url.starts_with(b"/") && !url.starts_with(b"//") {
+        out.extend_from_slice(prefix.as_bytes());
+    }
+    out.extend_from_slice(url);
+}
+
+/// `srcset` の候補ごとに URL を書き換える。data: の URL はコンマを含むので、あればそのまま。
+fn rewrite_srcset(value: &[u8], prefix: &str, out: &mut Vec<u8>) {
+    if value
+        .to_ascii_lowercase()
+        .windows(5)
+        .any(|window| window == b"data:")
+    {
+        out.extend_from_slice(value);
+        return;
+    }
+    for (position, candidate) in value.split(|&byte| byte == b',').enumerate() {
+        if position > 0 {
+            out.push(b',');
+        }
+        let blank = candidate
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count();
+        out.extend_from_slice(&candidate[..blank]);
+        push_url(&candidate[blank..], prefix, out);
+    }
+}
+
+/// モックの CSS の、根からの `url()` と `@import` をモックの URL（`prefix`）の下に向ける。
+pub fn root_relative_css(css: &[u8], prefix: &str) -> Vec<u8> {
+    let lower = css.to_ascii_lowercase();
+    let mut out = Vec::with_capacity(css.len());
+    let mut index = 0;
+    while index < css.len() {
+        let opened = [b"url(".as_slice(), b"@import".as_slice()]
+            .into_iter()
+            .find(|keyword| lower[index..].starts_with(keyword));
+        let Some(keyword) = opened else {
+            out.push(css[index]);
+            index += 1;
+            continue;
+        };
+        let mut next = index + keyword.len();
+        while next < css.len() && (css[next].is_ascii_whitespace() || b"\"'".contains(&css[next])) {
+            next += 1;
+        }
+        out.extend_from_slice(&css[index..next]);
+        if css[next..].starts_with(b"/") && !css[next..].starts_with(b"//") {
+            out.extend_from_slice(prefix.as_bytes());
+        }
+        index = next;
+    }
+    out
 }
 
 /// Cookie ヘッダから中継用の cookie を取り出す。返すのはその値と、残りの cookie
@@ -166,6 +336,52 @@ mod tests {
         assert_eq!(
             rewrite_csp("img-src 'self'", "http://h:1", "http://h:2/__kemi/page.js"),
             "img-src 'self'"
+        );
+    }
+
+    const MOCK: &str = "/m/secret";
+
+    fn html(text: &str) -> String {
+        String::from_utf8(root_relative_html(text.as_bytes(), MOCK)).unwrap()
+    }
+
+    fn css(text: &str) -> String {
+        String::from_utf8(root_relative_css(text.as_bytes(), MOCK)).unwrap()
+    }
+
+    #[test]
+    fn root_relative_references_in_a_mock_point_under_the_mock_url() {
+        assert_eq!(
+            html(
+                r#"<link rel="stylesheet" href="/style.css"><img src='/a.png'><a href=/next.html>x</a>"#
+            ),
+            r#"<link rel="stylesheet" href="/m/secret/style.css"><img src='/m/secret/a.png'><a href=/m/secret/next.html>x</a>"#
+        );
+        assert_eq!(
+            html(r#"<IMG SRC = "/a.png" srcset="/a.png 1x, /b.png 2x"><video poster="/p.png">"#),
+            r#"<IMG SRC = "/m/secret/a.png" srcset="/m/secret/a.png 1x, /m/secret/b.png 2x"><video poster="/m/secret/p.png">"#
+        );
+    }
+
+    #[test]
+    fn other_references_in_a_mock_are_kept() {
+        let kept = r##"<img src="a.png"><img src="//cdn.example/a.png"><a href="https://example.com/">x</a><a href="#top">y</a><p>src="/text"</p>"##;
+        assert_eq!(html(kept), kept);
+    }
+
+    #[test]
+    fn root_relative_urls_in_mock_css_point_under_the_mock_url() {
+        assert_eq!(
+            css(
+                r#"@import "/base.css"; a { background: URL( '/a.png' ) } b { background: url(/b.png) } c { background: url(//cdn/c.png) }"#
+            ),
+            r#"@import "/m/secret/base.css"; a { background: URL( '/m/secret/a.png' ) } b { background: url(/m/secret/b.png) } c { background: url(//cdn/c.png) }"#
+        );
+        assert_eq!(
+            html(
+                r#"<style>p { background: url("/a.png") }</style><p style="background: url(/b.png)">x</p>"#
+            ),
+            r#"<style>p { background: url("/m/secret/a.png") }</style><p style="background: url(/m/secret/b.png)">x</p>"#
         );
     }
 

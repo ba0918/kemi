@@ -4,6 +4,7 @@
 //! 値はレビューごとの推測できない値で、配れる範囲のファイルしか返さない（DC1）。モックは
 //! `sandbox="allow-scripts"` の枠に出すので不透明なオリジンで動き、中継用の cookie は
 //! 付かない。そこで中継のポートではなくレビュー画面のポートで、cookie を見ずに配る。
+//! 根からの参照（`/style.css`）は、配るときに `/m/<値>/` の下へ向け直す。
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use super::ApiError;
 use crate::AppState;
 use crate::live::LiveInfo;
 use crate::live::files::{clean_path, mime_for, resolve};
+use crate::live::rewrite::{root_relative_css, root_relative_html};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct MockRequest {
@@ -120,6 +122,14 @@ pub(crate) async fn mock_file(
     let bytes = match tokio::task::spawn_blocking(move || std::fs::read(real)).await {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(_)) | Err(_) => return not_found(),
+    };
+    let prefix = format!("/m/{}", live.mock_secret);
+    let bytes = if is_html(&relative) {
+        root_relative_html(&bytes, &prefix)
+    } else if relative.to_ascii_lowercase().ends_with(".css") {
+        root_relative_css(&bytes, &prefix)
+    } else {
+        bytes
     };
     // 直接開かれても、レビュー画面のオリジンでスクリプトを動かさない（R-PAGE-MOCK）。
     (

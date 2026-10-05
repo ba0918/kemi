@@ -4,7 +4,7 @@
 
 pub(crate) mod files;
 mod relay;
-mod rewrite;
+pub(crate) mod rewrite;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
