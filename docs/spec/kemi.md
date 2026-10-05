@@ -1,16 +1,21 @@
 # kemi 仕様
 
 - Status: 承認済み（2026-09-10）。UX 改訂 v2 承認済み（2026-09-11）。
-  セッション改訂 承認済み（2026-09-18）
+  セッション改訂 承認済み（2026-09-18）。ライブ改訂 草稿
 - 用語の定義: `CONTEXT.md`
+- 関連する仕様: [エージェントとのやりとり](agent-channel.md)、[動いているページのレビュー](live.md)
 - 改訂 v2 を一文で: 差分を「読む・変更間を移る・見終えたと分かる・結果を確実に受け取る」
   を速く確実にし、コミット範囲を最終形とコミットごとの両方で読めるようにする。
 - セッション改訂を一文で: submit せずに終えたレビューを当時の差分ごとディスクに残し、
   あとから続きを読めるようにする。
+- ライブ改訂を一文で: submit までの間にエージェントと返信と発言で往復できるようにし、
+  手元で動いているページにもコメントを付け、案を選べるようにする。作る順は、往復
+  （agent-channel.md）→ 動いているページ → 案。
 
 結果を一文で: **kemi は、変更をブラウザで快適に読ませ、人間が付けた行コメントと
 suggestion を実行ターミナルへ 1 つの JSON として返す、単一バイナリのローカルレビュー
-道具である。**
+道具である。** submit までの間のエージェントとの往復は [agent-channel.md](agent-channel.md)、
+動いているページのレビューは [live.md](live.md)。
 
 各要件には「成功条件」（機械または人が観測できる確認）と「反例」（その要件が破られて
 いると判定できる観測）を付ける。証拠の出所は `R-VERIFY` にまとめる。
@@ -57,7 +62,12 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
     `--resume` で続けられること（`R-SUBMIT`、`R-SESSION`）。入力モードの選び方と、
     `--group-by` の既定
     `file` とコミットごとを見せたいときの指定、`--no-open` / `--port` / `--bind` /
-    `--focus`（`R-INPUT`）。manifest の書き方 — グループの `why` / `watch`、差分の `old` / `new` と
+    `--focus`（`R-INPUT`）。エージェントとの往復 — `kemi: review <id>` の行、`kemi wait` を
+    裏で待たせて起きたことを読む、`kemi reply` で返信・発言・案を書く、`--timeout` と終了
+    コード、渡されたコメントへの対応のしかた（[agent-channel.md](agent-channel.md)）。
+    `--live` の使い方 — 対象はループバックの開発サーバ、ページとコードの 2 つの見方、
+    ページのコメントの場所の読み方と描き込みの画像、案の書き方と `applied`
+    （[live.md](live.md)）。manifest の書き方 — グループの `why` / `watch`、差分の `old` / `new` と
     `old_path` / `new_path`、`approval` の identity をエージェント自身が計算すること
     （`R-INPUT-1`）。結果 JSON の読み方 — 契約版 `kemi`、verdict、コメント、suggestion は
     エージェントが適用する、outdated の扱い、承認のときは identity を確かめてから進む
@@ -129,7 +139,7 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 
 ## R-INPUT 入力
 
-入力は 4 つのモードのいずれか。同時に複数与えられた場合はエラー（終了コード 2）と
+入力は 5 つのモードのいずれか。同時に複数与えられた場合はエラー（終了コード 2）と
 する。**グループの生成規則はモードごとに次のとおりで、`R-SUBMIT` / `R-DIGEST` /
 `R-INPUT-5` はこの規則に従う。**
 
@@ -140,13 +150,14 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 | コミット範囲・最終形 | 1 つだけ | `all` | `from...to` |
 | worktree | 1 つだけ | `worktree` | "Working tree changes" |
 | staged | 1 つだけ | `staged` | "Staged changes" |
+| `--live`（[live.md](live.md)） | ページ 1 つと、コード（worktree と同じ） | ページは `page`、コードは `worktree` | ページは "Page"、コードは "Working tree changes" |
 
 コミット範囲は「最終形」と「コミットごと」の 2 つのグループ単位を両方持ち、画面で
 切り替える（`R-UNIT`）。ほかのモードのグループ単位は 1 つだけ。
 
 レビューの `title` は、manifest は `title` キー（省略時 "Review of changes"）、
 コミット範囲は `from..to`、worktree は "Working tree changes"、staged は
-"Staged changes" とする。
+"Staged changes"、`--live` は "Live review of <URL>" とする。
 
 **成功条件**
 
@@ -317,23 +328,27 @@ focus と note を後付けする。パスは `--base` 相対。
 | `--any` | `--result` と一緒に使う。場所に関係なく最新の結果を選ぶ |
 | `--workspace <path>` | `--result` と一緒に使う。結果を探す場所を起動ディレクトリの代わりに指定する |
 | `--resume [<id>]` | 保留したセッションを復元する。`id` を省略すると対話で選ぶ（`R-SESSION`） |
+| `--live <url>` | 動いているページのレビュー。組めるフラグは [live.md](live.md#r-page-mode-起動) |
+| `--live-port <n>` | `--live` の中継の待ち受けポート（既定 0 = 空きを選ぶ） |
 
-- manifest を省略した場合、`--from` / `--worktree` / `--staged` / `--result` /
-  `--resume` のいずれかが必要。
+- manifest を省略した場合、`--from` / `--worktree` / `--staged` / `--live` / `--result` /
+  `--resume` のいずれかが必要。`kemi wait` と `kemi reply` はレビューを始めないサブコマンドで、
+  この規則の外（[agent-channel.md](agent-channel.md#r-agent-cli-kemi-wait-と-kemi-reply)）。
 - どれも無い場合は使い方を stderr に出して終了コード 2。
 - `--result` と一緒に使えるのは `--any` と `--workspace` だけで、それ以外のフラグや
-  入力モード（manifest / `--from` / `--worktree` / `--staged` / `--resume`）との同時指定、
+  入力モード（manifest / `--from` / `--worktree` / `--staged` / `--live` / `--resume`）との同時指定、
   `--result` なしの `--any` / `--workspace`、`--any` と `--workspace` の同時指定、
   `--from` なしの `--group-by` は、使い方の誤りとして終了コード 2。
-- `--resume` と一緒に使えるのは `--port` / `--bind` / `--no-open` / `--serve` だけで、
-  入力モード（manifest / `--from` / `--worktree` / `--staged`）と `--digest` /
+- `--resume` と一緒に使えるのは `--port` / `--bind` / `--no-open` / `--serve` /
+  `--live-port` だけで、入力モード（manifest / `--from` / `--worktree` / `--staged` / `--live`）と `--digest` /
   `--group-by` / `--base` / `--focus` / `--result` / `--any` / `--workspace` との
   同時指定は、使い方の誤りとして終了コード 2。
 - `--bind` の値は IPv4 アドレスのリテラルだけを受理する。ホスト名と IPv6 は
   使い方の誤りとして終了コード 2。`--digest` はサーブしないため値を使わないが、
   検査はサーブ時と同じに行う。
 - サーブ開始時に stderr へ `kemi: <url>` の 1 行を出す。この行は計測の
-  インターフェースとして契約とする（`R-VERIFY`）。
+  インターフェースとして契約とする（`R-VERIFY`）。続けて `kemi: review <id>` の 1 行を出す
+  （[agent-channel.md](agent-channel.md#r-agent-cli-kemi-wait-と-kemi-reply)）。
 
 **成功条件**
 
@@ -395,7 +410,8 @@ focus と note を後付けする。パスは `--base` 相対。
 - 公開が他端末から実際に届くかは OS とネットワークに依存し、kemi は関与しない
   （ファイアウォールや転送の設定を行わない）。
 - API は同じオリジンのページからの呼び出しだけを受理する（`Origin` と `Host` を
-  検証する）。クロスオリジンの `POST` は拒否する。`POST` の `Host` は port が
+  検証する）。例外はエージェント用の API で、ループバックからの `Origin` を持たない要求
+  だけを受理する（[agent-channel.md](agent-channel.md#r-agent-link-つなぎ先と安全)）。クロスオリジンの `POST` は拒否する。`POST` の `Host` は port が
   待ち受け port と一致し、ホスト部が `127.0.0.0/8`・バインドした具体アドレス・
   共有アドレスのいずれかであるときだけ受理し、`Origin` は `http://` + 受理した
   `Host` と完全一致することを要する。許可をこの 3 つに限るのは、公開の範囲を
@@ -409,7 +425,10 @@ focus と note を後付けする。パスは `--base` 相対。
   - `GET /s/<token>/api/file/<id>`: そのファイルの整列済み行データ。
   - `POST /s/<token>/api/comment`: コメントの追加・編集・削除・返信・解決（`R-COMMENT`）。
   - `POST /s/<token>/api/submit`: submit（`R-SUBMIT`）。
-  - `GET /s/<token>/api/events`: `R-LIVE` の通知（SSE）。
+  - `GET /s/<token>/api/events`: `R-LIVE` の通知と、エージェントの返信・発言・状態の通知（SSE）。
+  - エージェント用の API（`kemi wait` / `kemi reply` が使う）。受理の条件は
+    [agent-channel.md](agent-channel.md#r-agent-link-つなぎ先と安全)、URL の形は DA1。
+  - `--live` では中継のための 2 つ目のポートを持つ（[live.md](live.md#r-page-proxy-中継と安全)）。
   - `GET /s/<token>/api/image/...`: 画像のバイト列（`R-RENDER`）。2 種類あり、どちらも
     `GET` だけで、URL の形は D7。
     - レビュー対象の画像の旧・新: kemi がそのレビューで読んだバイト列をそのまま配る
@@ -423,7 +442,8 @@ focus と note を後付けする。パスは `--base` 相対。
       （sandbox の文書は別オリジン扱いになる）。
 - 内部 API の JSON 形（行データのフィールド名など）は実装が決める（D7）。
 - 複数の端末から見られていても、セッションは 1 つで、利用者は区別しない。コメントに
-  著者は付かない（利用者の認証を作らない。P5）。submit の受理は 1 回だけの既存の
+  著者は付かない（利用者の認証を作らない。P5）。返信と発言が持つ書いた人は「人間」か
+  「エージェント」かだけで、人間の中を区別しない（[agent-channel.md](agent-channel.md)）。submit の受理は 1 回だけの既存の
   契約のまま（`R-SUBMIT`）。
 - セッション状態（コメント、見た、折りたたみ、解決）はサーバのメモリに置き、
   変更のたびにセッションファイルへも書く（`R-SESSION`）。プロセス終了で失われるのは
@@ -455,7 +475,7 @@ focus と note を後付けする。パスは `--base` 相対。
 - `--bind 0.0.0.0` でブラウザを自動で開くとき、開かれる URL が `127.0.0.1` である
   （人による確認）。
 - 2 つのクライアントで同じ URL を使い、片方で付けたコメントと見たがもう片方から
-  見える。submit の JSON に著者のフィールドが無い。
+  見える。submit の JSON のコメントに著者のフィールドが無い。
 
 **反例**
 
@@ -1200,9 +1220,10 @@ Markdown の描画
   ファイル全体のコメントは行を持たない。描画表示（`R-RENDER`）から付けたコメントも、
   そのブロックの元の行レンジへの行コメントで、この節の規則と submit JSON の形は変わらない。
 - 行番号は 1 始まり、両端を含む。旧側の行番号は旧ファイルの行番号を指す。
-- 解決（resolve）と返信の UI は v1 では設けない。サーバの API はどちらも受理して
-  よいが、v1 の UI からは送られないため `replies` は常に空、`resolved` は常に
-  false になる。
+- 解決（resolve）と返信は画面から行える。返信は人間もエージェントも書け、解決は人間だけが
+  行える（[agent-channel.md](agent-channel.md#r-agent-hand-渡す)）。
+- `--live` のページへのコメントは、行レンジの代わりに要素・矢印・ペンの場所を持つ
+  （[live.md](live.md#r-page-comment-コメントの場所)）。
 - コメントにはファイル内容の変化に対する `outdated` 状態がある:
   - コメント作成時の行テキスト（`quote`）と、対象ファイルの内容ハッシュを保持する。
   - 内容ハッシュが変わっていたら「古いコメント」として表示する。
@@ -1227,7 +1248,7 @@ Markdown の描画
 **成功条件**
 
 - コメントを付けて submit すると、`R-SUBMIT` の JSON に、本文・解決状態・
-  `quote`・`outdated`・suggestion が入っている（`replies` は空配列でよい）。
+  `quote`・`outdated`・suggestion・返信が入っている。
 - コメント後にファイルを変更して submit すると、そのコメントの `outdated` が
   `true` になる。
 - 旧側（削除された行）にコメントでき、その suggestion は `null` になる。
@@ -1281,7 +1302,9 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
   キャンセルでは何もしない。
 - 確認ダイアログには、送るコメントの件数（うち suggestion 付きの件数、両方の
   グループ単位の合計）と、表示中のグループ単位の見たファイル数 / 全数を出す。
-  見ていないファイルがあるときは、その数を注意として出す。
+  見ていないファイルがあるときは、その数を注意として出す。一度でも `kemi wait` が呼ばれた
+  レビューでは、エージェントにまだ渡していないコメント・返信・発言の件数も出す
+  （[agent-channel.md](agent-channel.md#r-agent-hand-渡す)）。
 - 送信後の完了画面には、結果の JSON と、それをクリップボードへ写す操作、結果ファイル
   の保存先（`R-RESULT`）を出す。エージェントが反応しないときは、この JSON を会話へ
   貼れば済むと示す。承認のときは「閲」の印を出す。
@@ -1303,7 +1326,7 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
 
 ```json
 {
-  "kemi": 1,
+  "kemi": 2,
   "title": "…",
   "verdict": "approved" | "changes_requested",
   "approval": [{ "path": "…", "identity": "sha256:…" }],
@@ -1318,12 +1341,23 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
       "end_line": 14,
       "quote": ["コメント時の行テキスト", "…"],
       "body": "本文",
-      "replies": [],
+      "page": null,
+      "replies": [
+        {
+          "id": "r1",
+          "author": "agent" | "reviewer",
+          "body": "本文",
+          "variants": [{ "id": "A", "label": "案 A" }],
+          "chosen": "A",
+          "applied": { "reply_id": "r1", "variant_id": "A" }
+        }
+      ],
       "resolved": false,
       "outdated": false,
       "suggestion": { "replacement": "置換後の全文" }
     }
-  ]
+  ],
+  "messages": [{ "id": "m1", "author": "agent" | "reviewer", "body": "本文" }]
 }
 ```
 
@@ -1333,10 +1367,28 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
     `null`。
   - `quote` は `side` 側の対象行のテキスト（ファイル全体のコメントは `[]`）。
   - `suggestion` は無いとき `null`。旧側とファイル全体では常に `null`。
-  - `replies` と `resolved` は全コメントに必ずある（無い場合は `[]` / `false`）。
+  - `replies` と `resolved` は全コメントに必ずある（無い場合は `[]` / `false`）。`replies` は
+    作成順。`author` は書いた人で、人間は `"reviewer"`、エージェントは `"agent"`。
+    `variants`（案の `id` と `label` だけ。中身は入れない）、`chosen`（「これにする」で
+    選んだ案の `id`）、`applied`（エージェントが反映を知らせた案）は、無いとき `[]` /
+    `null` / `null`（[live.md](live.md#r-page-variant-案)）。
+  - `page` は `--live` のページへのコメントだけが持ち、それ以外は `null`。ページへの
+    コメントは `path` / `side` / `start_line` / `end_line` が `null`、`quote` が `[]`、
+    `suggestion` が `null` で、`page` は次の形:
+    `{ "url": "/products?x=1", "width": 390, "places": [{ "n": 1, "kind": "element" | "arrow" | "pen",
+    "points": [{ "x": 0, "y": 0 }], "elements": [{ "selector": "…", "text": "…",
+    "rect": { "x": 0, "y": 0, "w": 0, "h": 0 } }] }], "image": "/絶対パス.png" | null }`。
+    `places` は 1 つ以上で番号 `n` の順（番号は飛ぶことがある）。`points` は矢印とペンの点
+    （要素では `[]`）、座標はページの CSS ピクセル。`image` は
+    描き込みを重ねた画像（[live.md](live.md#r-page-comment-コメントの場所)）。submit の
+    確定でセッションと一緒に消えるので、submit の後は `null` にする。
+  - `messages` はレビュー全体への発言で、作成順。無い場合は `[]`。
+  - ページへのコメントの `outdated` は常に `false`（内容ハッシュを持たない）。
   - `approval` は入力をそのまま返す。無い場合は `[]`。
   - `group_id` は `R-INPUT` の表の値。`group_title` はそのグループの `title`。
-  - `comments` は作成順。`kemi` はこの契約の版（数値）。
+  - `comments` は作成順。`kemi` は結果 JSON の契約の版（数値）。ライブ改訂で `2` に上げた
+    （`replies` に中身が入り、`page` と `messages` が増えた）。読む側は契約の版を見て、知らない
+    契約の版を推測で読まない。
 
 **成功条件**
 
@@ -1347,6 +1399,8 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
   「resume with」の行のコマンドで同じレビューを続けられる（`R-SESSION`）。
 - ファイル全体へのコメントが `start_line: null` / `end_line: null` /
   `quote: []` で出る。
+- エージェントの返信と人間の返信が、`author` の違う 2 件として作成順に `replies` に入る。
+  エージェントの発言が `messages` に入る（e2e）。
 - 送信後、承認と変更要求のボタンが押せない（ブラウザ自動化で確認）。
 - 完了画面の JSON が stdout の JSON と同じ内容になる（人が確認）。
 
@@ -1390,7 +1444,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 - `kemi --result` は、今いるリポジトリ（識別の基準は上と同じ。`--workspace <path>`
   で場所を指定できる）の最新の結果ファイルの中身を stdout に出して終わる。終了コードは
   元の verdict と同じ（承認 0 / 変更要求 1）。該当する結果が無ければ、stdout に何も
-  出さず終了コード 2。`--any` を付けると場所に関係なく最新の結果を出す。
+  出さず終了コード 2。`--any` を付けると場所に関係なく最新の結果を出す。結果ファイルの中身は
+  書き換えずに出す（ライブ改訂の前に書いた、結果 JSON の契約の版 1 の結果もそのまま）。
 
 **成功条件**
 
@@ -1430,6 +1485,15 @@ submit の結果を、エージェントが受け取り損ねても後から読�
   - セッションの情報（`id`、作成と最終更新の時刻、元のワークスペースのパスと識別、
     入力モードと範囲、`title`、起動時に開く方のグループ単位の全ファイル数、写しの状態）。
     写しの状態は「未完成」「使える」「使えない（理由つき）」のどれか。
+- `--live` のセッションは写しを持たず、復元で動いているページにつなぎ直す。スナップショットと
+  描き込みの画像を `<id>.files/` に置く（[live.md](live.md#r-page-session-保留と復元)）。
+  写しの状態による一覧と復元の規則（下）の外で、一覧と復元の対象にする。1 セッション 20 MB の
+  上限は `<id>.files/` の大きさで判定し、全セッション合計の 500 MB には `<id>.files/` も数える。
+  エージェントとのつなぎ先は `<id>.endpoint`（[agent-channel.md](agent-channel.md#r-agent-link-つなぎ先と安全)）。
+  どちらもセッションと同じ権限で置き、セッションを消すときに一緒に消す。
+- セッション状態には返信・発言・案の選択と、往復の続きに要るもの（どこまで渡したか、
+  `kemi wait` がまだ受け取っていない起きたこと、`kemi wait` が一度でも呼ばれたか）も入る。セッション形式の版を 3 に上げ、セッション
+  形式の版 2 のセッションも読む（2 に無い項目は空として読む）。
 - 置き場所は結果ファイルと同じ根の下の `sessions/`（決め方は `R-RESULT` と同じ。
   unix では `$XDG_STATE_HOME/kemi/sessions/`）。ファイルとディレクトリの権限も
   `R-RESULT` と同じ（unix はファイル `0600`、ディレクトリ `0700`）。
@@ -1511,13 +1575,13 @@ submit の結果を、エージェントが受け取り損ねても後から読�
     起動時に開く方のグループ単位の値。並びは選択の画面と同じく最終更新の新しい順。
   - 選択の画面は、復元できるセッションだけを最終更新の新しい順に並べる。日時は
     ローカル時刻の `YYYY-MM-DD HH:MM`。モードは worktree / staged はその名前、
-    コミット範囲は元の `from..to`、manifest は `title`。取り消し（Esc と Ctrl+C）では
+    コミット範囲は元の `from..to`、manifest は `title`、`--live` は `live <URL>`。取り消し（Esc と Ctrl+C）では
     何も変えず終了コード 130。
   - 存在しない `id`、復元できないセッションの `id`、`R-INPUT-6` に反するフラグの
     組み合わせは、理由を stderr に出して終了コード 2。
 - 復元したレビューは次のとおり:
   - 差分はセッションの写しだけから作り、元の入力（コミット範囲、worktree、manifest）を
-    読み直さない。写しに無いファイルは作らない。
+    読み直さない。写しに無いファイルは作らない。`--live` は例外（[live.md](live.md#r-page-session-保留と復元)）。
   - 見た、折りたたみ、コメント、解決は続きから始まる。ライブリロード（監視と更新
     バッジ）は出さない。表示モードとテーマはセッションに保存せず、ブラウザの
     localStorage に任せる（URL と token が変わる復元では初期値に戻りうる）。
@@ -1577,6 +1641,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 - 復元したレビューに更新バッジが出ず、元の入力が変わってもページの内容とコメントが
   変わらない（ブラウザ自動化で確認）。
 - 読めないセッション形式の版のセッションを復元すると、理由を出して終了コード 2。
+- セッション形式の版 2 で保留したセッションを、ライブ改訂の kemi で復元できる（cargo test。
+  セッション形式の版 2 の `<id>.session` を固定のバイト列で置く）。
 - `kemi --digest` と `kemi --result` の前後で `sessions/` の内容が変わらない。
 - `kemi --resume` に `--digest` を付けると終了コード 2。復元できるセッションが 1 つも
   無い `kemi --resume` は理由を出して終了コード 2。
@@ -1669,7 +1735,10 @@ submit の結果を、エージェントが受け取り損ねても後から読�
   - コミット範囲: `--to` の ref（既定 `HEAD`）。ref の更新は検知の対象。
     それ以外の `.git` 内部の書き込みは無視する。
 - 変更を検知したら SSE でブラウザに「更新あり」を知らせ、バッジを表示する。
-- 再取得は人の操作で行う。勝手にスクロール位置や表示内容を変えない。
+- 再取得は人の操作で行う。勝手にスクロール位置や表示内容を変えない。例外は 2 つ:
+  `--live` のページの見方で、動いているページと案の差し替えはその場で変わる
+  （[live.md](live.md#r-page-view-ページの見方)）。エージェントの返信・発言・状態は届いたらその場で
+  出る（[agent-channel.md](agent-channel.md)）。どちらもスクロール位置は変えない。
 - 再取得後、内容が変わったファイルのコメントは `outdated` 表示にする（`R-COMMENT`）。
 - コミット範囲では、作ってあるグループ単位を両方とも取り直す。見たとコメントは
   グループとパスが同じファイルに引き継ぐ。新しいコミットは、コミットごとの単位に
@@ -1678,7 +1747,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
   付いていたコメントを submit JSON に元の `group_id` と `group_title` のまま
   `outdated: true` で入れる。画面では、コメント一覧に「消えたコミット」として出す。
 - 監視の追加・更新は debounce し、短期間の複数書き込みでバッジを点滅させない。
-- 復元したレビューでは監視も更新バッジも行わない（`R-SESSION`）。
+- 復元したレビューでは監視も更新バッジも行わない（`R-SESSION`）。例外は `--live` のコードの
+  見方で、復元時の作業ツリーを読み、監視も続ける（[live.md](live.md#r-page-session-保留と復元)）。
 
 **成功条件**
 
@@ -1805,6 +1875,8 @@ scripts/
 | 描画表示の画面 | ブラウザ自動化で `data-kemi-block` を数え、行レンジを照合する。復元した Markdown の描画表示と相対パス画像も同じ。描画側のコメントの操作感は人による確認 |
 | 狭い画面 | ブラウザ自動化（幅 390px と 1280px を指定して開く）。実機のスマホでの見た目と操作は人による確認 |
 | 表示と操作 | 人による確認。DOM 行数はブラウザ自動化（agent-browser 等）で `data-kemi-row` を数える |
+| エージェントとの往復 | e2e（`kemi wait` / `kemi reply` を別プロセスで呼び、画面の操作はサーバの API で代える）と、画面はブラウザ自動化 |
+| 動いているページ | 試験用の開発サーバ（ビルドの要らない静的ファイルと HMR 相当の通知を返す小さなサーバ）を相手に、ブラウザ自動化。操作感と見た目は人による確認（試作で詰める。[live.md](live.md)） |
 | 配布 | リリースワークフローの成果物と、別環境での mise インストールと `gh skill install`。Windows は zip の `kemi.exe` が `--version` を出すことを Windows マシンを持つ人が確認する |
 
 - `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` は、決定的な
@@ -1827,7 +1899,11 @@ scripts/
   対象外（許容する）。CI では余裕を持った閾値にし、マシン差を理由に失敗し
   続けないようにする。
 
-**成功条件**: 上のコマンドがすべて成功する。
+- ライブ改訂の後も、上の時間の上限は変えない。往復の機能（状態の表示、渡す、返信）は
+  全モードで読み込まれるが、この上限を守る。`--live` のコードの見方も `R-SERVE` の 1 秒を守る。
+
+**成功条件**: 上のコマンドがすべて成功する。`--live` でないレビューのページで、ページ用の
+ファイル（中継・スナップショット・案）が読み込まれない（ブラウザ自動化で読み込んだ URL を数える）。
 
 **反例**: 目標の規模で 1 秒を大きく超える、またはテストが環境依存で
 恒常的に不安定。
@@ -1845,14 +1921,15 @@ scripts/
 - P5 複数ユーザーと認証。
 - P6 crates.io への配布（まず自分で使い、必要になったら別途）。
 - P8 suggestion のブラウザからの適用。適用はエージェントが行う。
-- P9 LLM がコメントや返信を kemi に書き込む機能。作る場合は、ファイルあたり・
-  合計の件数上限を契約に含めること。
+- P9 LLM がコメントを立てる機能。返信・発言・案はライブ改訂で書けるようにした。件数の上限は
+  [agent-channel.md](agent-channel.md#r-agent-write-reply-の入力と上限) の契約。
 - P10 静的 HTML の書き出し（`--out`）。
 - P11 折りたたみ行の囲みの文脈（関数名など）。行数と行範囲だけを出す。
 - P12 スキルの plugin の定義ファイル（`.claude-plugin/plugin.json`、`marketplace.json`）。
   コピー経路だけで配る（`R17`）。
 - P13 レビューの read-only モードと、アクセス元（ループバックかどうか）で submit や
-  表示を変える機能。公開中は、URL を知る人は誰でも同じ操作ができる。
+  表示を変える機能。公開中は、URL を知る人は誰でも同じ操作ができる。これはページの操作の
+  話で、エージェント用の API をループバックに限ること（[agent-channel.md](agent-channel.md#r-agent-link-つなぎ先と安全)）とは別。
 - P14 写しを欠いたセッションの復元。内容の欠けたページを出さず、復元できないものとして
   案内する（`R-SESSION`）。
 - P15 `.rst` / AsciiDoc の描画。採用した描画器（ox-content）が対応していない。
