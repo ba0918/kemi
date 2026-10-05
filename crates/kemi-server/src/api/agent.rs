@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::extract::connect_info::ConnectInfo;
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -36,6 +36,10 @@ pub(crate) fn agent_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/a/{token}/wait", post(wait_api))
         .route("/a/{token}/reply", post(reply_api))
+        // 書き込みの上限は件数と本文ごとの大きさ（R-AGENT-WRITE）で、要求全体の大きさでは
+        // ない。上限の中の書き込みをまとめると既定の 2 MB を超えるので、本文の大きさでは
+        // 断らない。ここに届くのはトークンを持つ同じマシンの要求だけ（R-AGENT-LINK）。
+        .layer(DefaultBodyLimit::disable())
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, guard))
 }

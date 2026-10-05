@@ -4006,3 +4006,17 @@ async fn a_dropped_wait_connection_turns_the_status_to_working() {
 
     server.wait_until_status("working").await;
 }
+
+#[tokio::test]
+async fn a_large_batch_within_the_limits_is_written_whatever_its_size() {
+    let server = AgentServer::start().await;
+    // 1 件ずつは上限の中でも、まとめると 2 MB を超える書き込み。
+    let many: Vec<Value> = (0..40)
+        .map(|_| json!({ "type": "message", "body": "x".repeat(60 * 1024) }))
+        .collect();
+
+    let (status, answer) = server.reply(Value::Array(many)).await;
+
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["ids"].as_array().unwrap().len(), 40);
+}
