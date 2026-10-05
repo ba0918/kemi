@@ -188,11 +188,16 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
     onUpdate();
     agent.onMissed();
   });
-  // つながる前（や切れていた間）に届かなかった単位の状態と、返信・発言・エージェントの
-  // 状態を、つながった時点で読み直す。
+  // つながる前（や切れていた間）に届かなかった単位の状態を、つながった時点で読み直す。
+  // 返信・発言・エージェントの状態は、起動の直後の最初の接続では読み直さない（起動で
+  // 読んだばかりで、読み直すとコメントをすべて差し替える）。つなぎ直したときだけ読み直す。
+  let connected = false;
   events.addEventListener("open", () => {
     onUnit();
-    agent.onMissed();
+    if (connected) {
+      agent.onMissed();
+    }
+    connected = true;
   });
   return events;
 }
