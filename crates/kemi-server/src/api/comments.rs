@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment::{self, CommentError};
-use kemi_core::domain::review::{Comment, LineRange, Side, Suggestion};
+use kemi_core::domain::review::{Author, Comment, LineRange, Reply, Side, Suggestion};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -106,12 +106,19 @@ pub(super) async fn comment_api(
         }
         CommentRequest::Reply { id, body } => {
             let mut session = state.session.lock().expect("session poisoned");
-            let comment = session
+            let index = session
                 .comments
-                .iter_mut()
-                .find(|comment| comment.id == id)
+                .iter()
+                .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
-            comment.replies.push(body);
+            session.last_reply += 1;
+            let reply = Reply {
+                id: format!("r{}", session.last_reply),
+                author: Author::Reviewer,
+                body,
+            };
+            let comment = &mut session.comments[index];
+            comment.replies.push(reply);
             let value = comment_json(comment);
             drop(session);
             persist(&state);

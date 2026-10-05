@@ -74,6 +74,38 @@ pub struct Suggestion {
     pub replacement: String,
 }
 
+/// 返信と発言を書いた人。人間の中は区別しない（P5）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Author {
+    Reviewer,
+    Agent,
+}
+
+impl Author {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Author::Reviewer => "reviewer",
+            Author::Agent => "agent",
+        }
+    }
+}
+
+/// スレッドの中の書き込み。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reply {
+    pub id: String,
+    pub author: Author,
+    pub body: String,
+}
+
+/// どのコメントにも属さない、レビュー全体への書き込み。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Message {
+    pub id: String,
+    pub author: Author,
+    pub body: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     pub id: String,
@@ -87,7 +119,8 @@ pub struct Comment {
     pub end_line: Option<u32>,
     pub quote: Vec<String>,
     pub body: String,
-    pub replies: Vec<String>,
+    /// 作成順。
+    pub replies: Vec<Reply>,
     pub resolved: bool,
     pub outdated: bool,
     /// 作成時の内容ハッシュ。現在のハッシュと違えば outdated。

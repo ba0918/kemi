@@ -1829,6 +1829,7 @@ fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> Sess
         seen: ["f1".to_string()].into_iter().collect(),
         collapsed: BTreeMap::new(),
         last_comment: 1,
+        ..SessionState::default()
     })
     .unwrap();
     open.save_copy(session_copy()).unwrap();

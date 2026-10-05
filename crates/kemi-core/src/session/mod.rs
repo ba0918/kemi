@@ -1,7 +1,8 @@
 //! セッションの保存と復元（R-SESSION）。
 //!
-//! 未 submit のレビューを、当時の差分の写しと状態（コメント・見た・折りたたみ・解決）
-//! と一緒にディスクへ残し、`kemi --resume` で続きから開けるようにする。
+//! 未 submit のレビューを、当時の差分の写しと状態（コメント・見た・折りたたみ・解決・
+//! 返信・発言・エージェントとの往復の続き）と一緒にディスクへ残し、`kemi --resume` で
+//! 続きから開けるようにする。
 //!
 //! - 1 セッションは 2 つのファイル。`<id>.session` がセッションの情報と状態、
 //!   `<id>.payload` が写し（凍結したレビューのメタデータと変更ファイルの内容）
@@ -27,8 +28,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::domain::agent::{
+    AgentEvent, Channel, Handed, HandedComment, HandedReply, ReplyRef, Unhanded,
+};
 use crate::domain::review::{
-    Approval, Comment, FileEntry, Group, GroupBy, ReviewMeta, Side, Status, Suggestion,
+    Approval, Author, Comment, FileEntry, Group, GroupBy, Message, Reply, ReviewMeta, Side, Status,
+    Suggestion,
 };
 use crate::source::FileContent;
 
@@ -99,11 +104,22 @@ pub struct SessionState {
     /// 最後に付けたコメントの番号。削除では戻さず、復元しても次の番号から採番する
     /// （R-COMMENT は id を再利用しないと定める）。
     pub last_comment: u32,
+    /// レビュー全体への発言。作成順。
+    pub messages: Vec<Message>,
+    /// 最後に付けた返信と発言の番号。コメントと同じく再利用しない。
+    pub last_reply: u32,
+    pub last_message: u32,
+    /// エージェントとの往復の続き。
+    pub channel: Channel,
 }
 
 impl SessionState {
     pub fn is_empty(&self) -> bool {
-        self.comments.is_empty() && self.seen.is_empty() && self.collapsed.is_empty()
+        self.comments.is_empty()
+            && self.seen.is_empty()
+            && self.collapsed.is_empty()
+            && self.messages.is_empty()
+            && self.channel == Channel::default()
     }
 }
 
@@ -188,6 +204,7 @@ enum ModeDto {
     },
 }
 
+/// 版 2 に無い項目は `default` で空として読む。
 #[derive(Serialize, Deserialize)]
 struct StateDto {
     comments: Vec<CommentDto>,
@@ -195,6 +212,73 @@ struct StateDto {
     collapsed: BTreeMap<String, bool>,
     #[serde(default)]
     last_comment: u32,
+    #[serde(default)]
+    messages: Vec<MessageDto>,
+    #[serde(default)]
+    last_reply: u32,
+    #[serde(default)]
+    last_message: u32,
+    #[serde(default)]
+    channel: ChannelDto,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReplyDto {
+    id: String,
+    author: String,
+    body: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MessageDto {
+    id: String,
+    author: String,
+    body: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ChannelDto {
+    called: bool,
+    handed_comments: Vec<String>,
+    unhanded: UnhandedDto,
+    events: Vec<EventDto>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct UnhandedDto {
+    comments: Vec<String>,
+    replies: Vec<ReplyRefDto>,
+    messages: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReplyRefDto {
+    comment_id: String,
+    reply_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum EventDto {
+    Handed {
+        comments: Vec<HandedCommentDto>,
+        replies: Vec<HandedReplyDto>,
+        messages: Vec<MessageDto>,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+enum HandedCommentDto {
+    Added { comment: CommentDto },
+    Edited { comment: CommentDto },
+    Deleted { id: String },
+}
+
+#[derive(Serialize, Deserialize)]
+struct HandedReplyDto {
+    comment_id: String,
+    reply: ReplyDto,
 }
 
 /// 写しの状態だけ。「使える」写しの中身は `<id>.payload` にある。
@@ -273,7 +357,7 @@ struct CommentDto {
     end_line: Option<u32>,
     quote: Vec<String>,
     body: String,
-    replies: Vec<String>,
+    replies: Vec<ReplyDto>,
     resolved: bool,
     outdated: bool,
     content_hash: String,
@@ -383,6 +467,10 @@ impl From<&SessionState> for StateDto {
             seen: state.seen.clone(),
             collapsed: state.collapsed.clone(),
             last_comment: state.last_comment,
+            messages: state.messages.iter().map(MessageDto::from).collect(),
+            last_reply: state.last_reply,
+            last_message: state.last_message,
+            channel: ChannelDto::from(&state.channel),
         }
     }
 }
@@ -398,7 +486,188 @@ impl StateDto {
             seen: self.seen,
             collapsed: self.collapsed,
             last_comment: self.last_comment,
+            messages: self
+                .messages
+                .into_iter()
+                .map(MessageDto::into_message)
+                .collect::<Result<Vec<_>, String>>()?,
+            last_reply: self.last_reply,
+            last_message: self.last_message,
+            channel: self.channel.into_channel()?,
         })
+    }
+}
+
+fn author_dto(author: Author) -> String {
+    author.as_str().to_string()
+}
+
+fn parse_author(author: &str) -> Result<Author, String> {
+    match author {
+        "reviewer" => Ok(Author::Reviewer),
+        "agent" => Ok(Author::Agent),
+        other => Err(format!("unknown author: {other}")),
+    }
+}
+
+impl From<&Reply> for ReplyDto {
+    fn from(reply: &Reply) -> Self {
+        ReplyDto {
+            id: reply.id.clone(),
+            author: author_dto(reply.author),
+            body: reply.body.clone(),
+        }
+    }
+}
+
+impl ReplyDto {
+    fn into_reply(self) -> Result<Reply, String> {
+        Ok(Reply {
+            id: self.id,
+            author: parse_author(&self.author)?,
+            body: self.body,
+        })
+    }
+}
+
+impl From<&Message> for MessageDto {
+    fn from(message: &Message) -> Self {
+        MessageDto {
+            id: message.id.clone(),
+            author: author_dto(message.author),
+            body: message.body.clone(),
+        }
+    }
+}
+
+impl MessageDto {
+    fn into_message(self) -> Result<Message, String> {
+        Ok(Message {
+            id: self.id,
+            author: parse_author(&self.author)?,
+            body: self.body,
+        })
+    }
+}
+
+impl From<&Channel> for ChannelDto {
+    fn from(channel: &Channel) -> Self {
+        ChannelDto {
+            called: channel.called,
+            handed_comments: channel.handed_comments.clone(),
+            unhanded: UnhandedDto {
+                comments: channel.unhanded.comments.clone(),
+                replies: channel
+                    .unhanded
+                    .replies
+                    .iter()
+                    .map(|reference| ReplyRefDto {
+                        comment_id: reference.comment_id.clone(),
+                        reply_id: reference.reply_id.clone(),
+                    })
+                    .collect(),
+                messages: channel.unhanded.messages.clone(),
+            },
+            events: channel.events.iter().map(EventDto::from).collect(),
+        }
+    }
+}
+
+impl ChannelDto {
+    fn into_channel(self) -> Result<Channel, String> {
+        Ok(Channel {
+            called: self.called,
+            handed_comments: self.handed_comments,
+            unhanded: Unhanded {
+                comments: self.unhanded.comments,
+                replies: self
+                    .unhanded
+                    .replies
+                    .into_iter()
+                    .map(|reference| ReplyRef {
+                        comment_id: reference.comment_id,
+                        reply_id: reference.reply_id,
+                    })
+                    .collect(),
+                messages: self.unhanded.messages,
+            },
+            events: self
+                .events
+                .into_iter()
+                .map(EventDto::into_event)
+                .collect::<Result<Vec<_>, String>>()?,
+        })
+    }
+}
+
+impl From<&AgentEvent> for EventDto {
+    fn from(event: &AgentEvent) -> Self {
+        match event {
+            AgentEvent::Handed(handed) => EventDto::Handed {
+                comments: handed
+                    .comments
+                    .iter()
+                    .map(|change| match change {
+                        HandedComment::Added(comment) => HandedCommentDto::Added {
+                            comment: CommentDto::from(comment),
+                        },
+                        HandedComment::Edited(comment) => HandedCommentDto::Edited {
+                            comment: CommentDto::from(comment),
+                        },
+                        HandedComment::Deleted(id) => HandedCommentDto::Deleted { id: id.clone() },
+                    })
+                    .collect(),
+                replies: handed
+                    .replies
+                    .iter()
+                    .map(|handed| HandedReplyDto {
+                        comment_id: handed.comment_id.clone(),
+                        reply: ReplyDto::from(&handed.reply),
+                    })
+                    .collect(),
+                messages: handed.messages.iter().map(MessageDto::from).collect(),
+            },
+        }
+    }
+}
+
+impl EventDto {
+    fn into_event(self) -> Result<AgentEvent, String> {
+        match self {
+            EventDto::Handed {
+                comments,
+                replies,
+                messages,
+            } => Ok(AgentEvent::Handed(Handed {
+                comments: comments
+                    .into_iter()
+                    .map(|change| {
+                        Ok(match change {
+                            HandedCommentDto::Added { comment } => {
+                                HandedComment::Added(comment.into_comment()?)
+                            }
+                            HandedCommentDto::Edited { comment } => {
+                                HandedComment::Edited(comment.into_comment()?)
+                            }
+                            HandedCommentDto::Deleted { id } => HandedComment::Deleted(id),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+                replies: replies
+                    .into_iter()
+                    .map(|handed| {
+                        Ok(HandedReply {
+                            comment_id: handed.comment_id,
+                            reply: handed.reply.into_reply()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+                messages: messages
+                    .into_iter()
+                    .map(MessageDto::into_message)
+                    .collect::<Result<Vec<_>, String>>()?,
+            })),
+        }
     }
 }
 
@@ -415,7 +684,7 @@ impl From<&Comment> for CommentDto {
             end_line: comment.end_line,
             quote: comment.quote.clone(),
             body: comment.body.clone(),
-            replies: comment.replies.clone(),
+            replies: comment.replies.iter().map(ReplyDto::from).collect(),
             resolved: comment.resolved,
             outdated: comment.outdated,
             content_hash: comment.content_hash.clone(),
@@ -445,7 +714,11 @@ impl CommentDto {
             end_line: self.end_line,
             quote: self.quote,
             body: self.body,
-            replies: self.replies,
+            replies: self
+                .replies
+                .into_iter()
+                .map(ReplyDto::into_reply)
+                .collect::<Result<Vec<_>, String>>()?,
             resolved: self.resolved,
             outdated: self.outdated,
             content_hash: self.content_hash,
@@ -618,6 +891,18 @@ fn parse_unit(unit: Option<String>) -> Result<Option<GroupBy>, String> {
 }
 
 impl MetaDto {
+    /// `<id>.session` の meta を、セッション形式の版に合わせて読む。読み手のある版は
+    /// `encoding::is_readable` が決め、ここに来るのはその版だけ。
+    pub(crate) fn decode(version: u8, meta: &[u8]) -> Result<Self, String> {
+        if version == 2 {
+            let mut value: Value =
+                serde_json::from_slice(meta).map_err(|error| error.to_string())?;
+            upgrade_version_2(&mut value)?;
+            return serde_json::from_value(value).map_err(|error| error.to_string());
+        }
+        serde_json::from_slice(meta).map_err(|error| error.to_string())
+    }
+
     /// info と状態だけを取り出す（一覧のための軽い読み）。
     pub(crate) fn summary(&self) -> (SessionInfo, usize) {
         let info = SessionInfo {
@@ -636,4 +921,36 @@ impl MetaDto {
     pub(crate) fn is_resumable(&self) -> bool {
         matches!(self.copy, CopyMetaDto::Ready)
     }
+}
+
+/// 版 2 の状態を版 3 の形に直す。版 2 の返信は本文の文字列の並びで、版 2 の画面からは
+/// 返信を書けず API で書けたのも画面の側（人間）だけなので、人間の返信として読む。
+/// id はコメントの順・返信の順に振り、採番をその続きから始める。2 に無い項目は
+/// `StateDto` の `default` が空にする。
+fn upgrade_version_2(meta: &mut Value) -> Result<(), String> {
+    let state = meta
+        .get_mut("state")
+        .ok_or_else(|| "no state".to_string())?;
+    let mut last_reply = 0u32;
+    if let Some(comments) = state.get_mut("comments").and_then(Value::as_array_mut) {
+        for comment in comments {
+            let Some(replies) = comment.get_mut("replies").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for reply in replies.iter_mut() {
+                let body = reply
+                    .as_str()
+                    .ok_or_else(|| "a version 2 reply is not a string".to_string())?
+                    .to_string();
+                last_reply += 1;
+                *reply = serde_json::json!({
+                    "id": format!("r{last_reply}"),
+                    "author": Author::Reviewer.as_str(),
+                    "body": body,
+                });
+            }
+        }
+    }
+    state["last_reply"] = Value::from(last_reply);
+    Ok(())
 }

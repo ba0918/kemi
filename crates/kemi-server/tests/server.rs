@@ -2174,7 +2174,14 @@ async fn session_state_is_saved_on_every_change() {
 
     let state = sink.last_state();
     assert_eq!(state.comments.len(), 1);
-    assert_eq!(state.comments[0].replies, vec!["reply".to_string()]);
+    assert_eq!(
+        state.comments[0].replies,
+        vec![kemi_core::domain::review::Reply {
+            id: "r1".to_string(),
+            author: kemi_core::domain::review::Author::Reviewer,
+            body: "reply".to_string(),
+        }]
+    );
     assert!(state.comments[0].resolved);
     assert!(state.seen.contains("f1"));
     assert_eq!(state.collapsed.get("f1"), Some(&true));
@@ -2588,7 +2595,11 @@ async fn session_initial_state_is_restored() {
         end_line: Some(1),
         quote: vec!["x".to_string()],
         body: "復元されたコメント".to_string(),
-        replies: vec!["返信".to_string()],
+        replies: vec![kemi_core::domain::review::Reply {
+            id: "r1".to_string(),
+            author: kemi_core::domain::review::Author::Reviewer,
+            body: "返信".to_string(),
+        }],
         resolved: true,
         outdated: false,
         content_hash: "hash".to_string(),
@@ -2600,6 +2611,8 @@ async fn session_initial_state_is_restored() {
         seen: ["f1".to_string()].into_iter().collect(),
         collapsed: [("f1".to_string(), true)].into_iter().collect(),
         last_comment: 7,
+        last_reply: 1,
+        ..SessionState::default()
     });
     let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink).await;
 
@@ -2610,6 +2623,29 @@ async fn session_initial_state_is_restored() {
     assert_eq!(review["comments"][0]["resolved"], true);
     assert_eq!(file["seen"], true);
     assert_eq!(file["collapsed"], true);
+}
+
+#[tokio::test]
+async fn session_restored_replies_continue_their_numbering() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    server.add_new_side_comment().await;
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "first"}))
+        .await;
+    let mut saved = sink.last_state();
+    // 返信を消しても、復元した後の返信は消した番号を使わない。
+    saved.comments[0].replies.clear();
+    let restored = Arc::new(RecordingSink::default());
+    *restored.initial.lock().unwrap() = Some(saved);
+    let server =
+        TestServer::start_with_session(Arc::new(FakeSource::new()), restored.clone()).await;
+
+    server
+        .comment(json!({"op": "reply", "id": "c1", "body": "second"}))
+        .await;
+
+    assert_eq!(restored.last_state().comments[0].replies[0].id, "r2");
 }
 
 // ---- R-RENDER（描画のエンドポイントと api/file の描画表示の情報） ----
