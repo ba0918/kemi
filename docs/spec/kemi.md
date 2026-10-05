@@ -65,7 +65,8 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
     `--focus`（`R-INPUT`）。エージェントとの往復 — `kemi: review <id>` の行、`kemi wait` を
     裏で待たせて起きたことを読む、`kemi reply` で返信・発言・案を書く、`--timeout` と終了
     コード、渡されたコメントへの対応のしかた（[agent-channel.md](agent-channel.md)）。
-    `--live` の使い方 — 対象はループバックの開発サーバ、ページとコードの 2 つの見方、
+    `--live` の使い方 — 対象はループバックの開発サーバか手元の HTML ファイル、ページとコードの 2 つの見方、
+    比べる相手（スナップショットとモック。[live-compare.md](live-compare.md)）、
     ページのコメントの場所の読み方と描き込みの画像、案の書き方と `applied`
     （[live.md](live.md)）。manifest の書き方 — グループの `why` / `watch`、差分の `old` / `new` と
     `old_path` / `new_path`、`approval` の identity をエージェント自身が計算すること
@@ -157,7 +158,8 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 
 レビューの `title` は、manifest は `title` キー（省略時 "Review of changes"）、
 コミット範囲は `from..to`、worktree は "Working tree changes"、staged は
-"Staged changes"、`--live` は "Live review of <URL>" とする。
+"Staged changes"、`--live` は "Live review of <URL>" とする（`<ファイル>` のときの URL は
+[live.md](live.md#r-page-mode-起動) の配れる範囲の根からの相対パス）。
 
 **成功条件**
 
@@ -328,7 +330,7 @@ focus と note を後付けする。パスは `--base` 相対。
 | `--any` | `--result` と一緒に使う。場所に関係なく最新の結果を選ぶ |
 | `--workspace <path>` | `--result` と一緒に使う。結果を探す場所を起動ディレクトリの代わりに指定する |
 | `--resume [<id>]` | 保留したセッションを復元する。`id` を省略すると対話で選ぶ（`R-SESSION`） |
-| `--live <url>` | 動いているページのレビュー。組めるフラグは [live.md](live.md#r-page-mode-起動) |
+| `--live <url\|ファイル>` | 動いているページか手元の HTML ファイルのレビュー。組めるフラグは [live.md](live.md#r-page-mode-起動) |
 | `--live-port <n>` | `--live` の中継の待ち受けポート（既定 0 = 空きを選ぶ） |
 
 - manifest を省略した場合、`--from` / `--worktree` / `--staged` / `--live` / `--result` /
@@ -1583,7 +1585,7 @@ submit の結果を、エージェントが受け取り損ねても後から読�
     起動時に開く方のグループ単位の値。並びは選択の画面と同じく最終更新の新しい順。
   - 選択の画面は、復元できるセッションだけを最終更新の新しい順に並べる。日時は
     ローカル時刻の `YYYY-MM-DD HH:MM`。モードは worktree / staged はその名前、
-    コミット範囲は元の `from..to`、manifest は `title`、`--live` は `live <URL>`。取り消し（Esc と Ctrl+C）では
+    コミット範囲は元の `from..to`、manifest は `title`、`--live` は `live <URL>`（`<ファイル>` のときの URL は題と同じ）。取り消し（Esc と Ctrl+C）では
     何も変えず終了コード 130。
   - 存在しない `id`、復元できないセッションの `id`、`R-INPUT-6` に反するフラグの
     組み合わせは、理由を stderr に出して終了コード 2。
@@ -1742,9 +1744,12 @@ submit の結果を、エージェントが受け取り損ねても後から読�
   - worktree / manifest の `new_path`: 対象ファイル
   - コミット範囲: `--to` の ref（既定 `HEAD`）。ref の更新は検知の対象。
     それ以外の `.git` 内部の書き込みは無視する。
+  - `--live <ファイル>`: コードの見方は worktree と同じ。これとは別に、ページの見方のために
+    配れる範囲のファイルを見張る（[live.md](live.md#r-page-mode-起動)）。
 - 変更を検知したら SSE でブラウザに「更新あり」を知らせ、バッジを表示する。
 - 再取得は人の操作で行う。勝手にスクロール位置や表示内容を変えない。例外は 2 つ:
-  `--live` のページの見方で、動いているページと案の差し替えはその場で変わる
+  `--live` のページの見方で、動いているページ（`<ファイル>` のときは保存での読み込み直しを含む）と
+  案の差し替えはその場で変わる
   （[live.md](live.md#r-page-view-ページの見方)）。エージェントの返信・発言・状態は届いたらその場で
   出る（[agent-channel.md](agent-channel.md)）。どちらもスクロール位置は変えない。ただし
   会話パネルの並びは、一番下を見ているときだけ新しいものについていく
