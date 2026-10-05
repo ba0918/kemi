@@ -259,12 +259,20 @@ impl SessionStore {
         })
     }
 
+    /// そのセッションのレビューが今動いているか（ロックが生きているか）。`<id>.endpoint` が
+    /// 強制終了で残っていても、ロックが死んでいれば無いものとして扱うために使う
+    /// （R-AGENT-LINK）。
+    pub fn is_running(&self, id: &str) -> bool {
+        checked_id(id).is_ok() && is_locked(&self.dir, id)
+    }
+
     /// セッションのファイルを消す。
     pub fn delete(&self, id: &str) -> Result<(), SessionError> {
         checked_id(id)?;
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         remove_if_present(&self.path(id))?;
-        remove_if_present(&self.payload_path(id))
+        remove_if_present(&self.payload_path(id))?;
+        remove_if_present(&super::endpoint_path(&self.dir, id))
     }
 
     fn path(&self, id: &str) -> PathBuf {
@@ -321,7 +329,7 @@ fn payload_path(dir: &Path, id: &str) -> PathBuf {
 
 /// 公開の入口で id を検証する（R-SESSION）。ULID でない id は存在しない id と同じ
 /// 理由にし、保存領域の外へパスを組み立てない。
-fn checked_id(id: &str) -> Result<&str, SessionError> {
+pub(crate) fn checked_id(id: &str) -> Result<&str, SessionError> {
     if super::is_valid_id(id) {
         Ok(id)
     } else {
@@ -390,7 +398,8 @@ impl OpenSession {
         self.deleted = true;
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         self.remove_file()?;
-        self.remove_payload_file()
+        self.remove_payload_file()?;
+        remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))
     }
 
     pub(crate) fn save_state_at(
@@ -543,7 +552,7 @@ impl Drop for SessionLock {
 
 /// 一時ファイルへ書いてから rename する。一時ファイルの名前は、掃除が見る接尾辞
 /// （`.session` と `.payload`）で終わらせない。
-fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
+pub(crate) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
     create_private_dir(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let temporary = dir.join(format!(".{name}.tmp"));
@@ -560,7 +569,7 @@ fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionErro
 }
 
 /// あれば消す。無いのは成功と同じに扱う。
-fn remove_if_present(path: &Path) -> Result<(), SessionError> {
+pub(crate) fn remove_if_present(path: &Path) -> Result<(), SessionError> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -582,6 +591,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
     // `<id>.session` の中身は読まない（R-SESSION）。
     let mut sessions: BTreeMap<String, u64> = BTreeMap::new();
     let mut payloads: BTreeMap<String, u64> = BTreeMap::new();
+    let mut endpoints: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -592,7 +602,14 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
             sessions.insert(id.to_string(), size);
         } else if let Some(id) = name.strip_suffix(".payload") {
             payloads.insert(id.to_string(), size);
+        } else if let Some(id) = name.strip_suffix(".endpoint") {
+            endpoints.push(id.to_string());
         }
+    }
+    // 動いていないレビューのつなぎ先は、強制終了で残ったもの。消したセッションのものも
+    // 含め、ロックの生死だけで片付ける（R-AGENT-LINK）。
+    for id in endpoints.iter().filter(|id| !is_locked(dir, id)) {
+        let _ = std::fs::remove_file(super::endpoint_path(dir, id));
     }
     // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
     prune_orphan_locks(dir, Duration::from_secs(60));
@@ -1797,5 +1814,94 @@ mod tests {
             Err(SessionError::UnsupportedVersion { version: 99, .. })
         ));
         assert!(store.has_unreadable_version());
+    }
+
+    #[test]
+    fn endpoint_roundtrips_and_is_owner_only() {
+        use crate::session::{Endpoint, read_endpoint, write_endpoint};
+        let scratch = Scratch::new();
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let endpoint = Endpoint {
+            port: 41234,
+            token: "secret".to_string(),
+        };
+
+        write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
+
+        assert_eq!(read_endpoint(&scratch.dir(), id).unwrap(), Some(endpoint));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(crate::session::endpoint_path(&scratch.dir(), id))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        assert_eq!(
+            read_endpoint(&scratch.dir(), "01HF7YAT00BBBBBBBBBBBBBBBB").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn endpoint_is_removed_with_the_session() {
+        use crate::session::{Endpoint, endpoint_path, write_endpoint};
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+        let id = open.id().to_string();
+        let endpoint = Endpoint {
+            port: 1,
+            token: "t".to_string(),
+        };
+        write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
+
+        open.delete().unwrap();
+
+        assert!(!endpoint_path(&scratch.dir(), &id).exists());
+        drop(open);
+        write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
+        store.delete(&id).unwrap();
+        assert!(!endpoint_path(&scratch.dir(), &id).exists());
+    }
+
+    #[test]
+    fn a_running_session_is_told_apart_from_a_dead_one() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let open = store.create(info(id, 100)).unwrap();
+
+        assert!(store.is_running(id));
+        drop(open);
+        assert!(!store.is_running(id));
+        assert!(!store.is_running("not-an-id"));
+    }
+
+    #[test]
+    fn cleanup_removes_an_endpoint_left_by_a_review_that_is_gone() {
+        use crate::session::{Endpoint, endpoint_path, write_endpoint};
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let endpoint = Endpoint {
+            port: 1,
+            token: "t".to_string(),
+        };
+        let stale = "01HF7YAT00BBBBBBBBBBBBBBBB";
+        write_endpoint(&scratch.dir(), stale, &endpoint).unwrap();
+        let mut running = store
+            .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        write_endpoint(&scratch.dir(), running.id(), &endpoint).unwrap();
+
+        running.save_state_at(state_with_comment(), 200).unwrap();
+
+        assert!(!endpoint_path(&scratch.dir(), stale).exists());
+        assert!(endpoint_path(&scratch.dir(), running.id()).exists());
     }
 }

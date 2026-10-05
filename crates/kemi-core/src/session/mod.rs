@@ -13,9 +13,11 @@
 //! - 起動中のレビューはロックを取り、`--resume` の二重起動を防ぐ。
 
 mod encoding;
+mod endpoint;
 mod store;
 mod ulid;
 
+pub use endpoint::{Endpoint, endpoint_path, read_endpoint, remove_endpoint, write_endpoint};
 pub use store::{
     COPY_LIMIT, KEEP_BYTES, KEEP_SESSIONS, OpenSession, SessionError, SessionLock, SessionStore,
     StoredSession,
