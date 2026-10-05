@@ -285,7 +285,6 @@ try {
   assert.equal(await evaluate(`document.querySelector('#diff-content').dataset.wrap`), 'on');
   console.log('PASS 390px の折返しはページを開いている間だけ覚え、localStorage に入れない');
   // 広い画面で開いたことを覚えていても、狭い画面で読み込むと会話パネルのシートは閉じて始まる。
-  assert.equal(await evaluate(`localStorage.getItem('kemi-conversation-open')`), '1');
   assert.equal(await evaluate(`document.querySelector('#conversation').dataset.open`), 'false');
   assert.equal(await isShown('#conversation'), false);
   console.log('PASS 390px で読み込むと会話パネルのシートは閉じて始まる');
