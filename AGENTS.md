@@ -19,7 +19,6 @@
 | design | ba0918-reuse |
 | diff-review | ba0918-diff-review |
 | document | ba0918-documents |
-| gui | ba0918-gui-structure |
 | implement | ba0918-tdd |
 | mutation | ba0918-mutation-testing |
 | release | ba0918-release |
