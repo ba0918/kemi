@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use kemi_core::domain::agent::Channel;
+use kemi_core::domain::agent::{AgentEvent, Channel, HandedComment};
 use kemi_core::domain::review::{Comment, Message, Reply};
 use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
@@ -119,6 +119,30 @@ pub fn message_json(message: &Message) -> serde_json::Value {
         "author": message.author.as_str(),
         "body": message.body,
     })
+}
+
+/// `kemi wait` が返す起きたこと 1 つ（R-AGENT-EVENTS）。コメント・返信・発言の形は
+/// submit の結果と同じ。削除したコメントは id だけを持つ。
+pub fn agent_event_json(event: &AgentEvent) -> serde_json::Value {
+    match event {
+        AgentEvent::Handed(handed) => json!({
+            "type": "handed",
+            "comments": handed.comments.iter().map(|change| match change {
+                HandedComment::Added(comment) => {
+                    json!({ "change": "added", "comment": comment_json(comment) })
+                }
+                HandedComment::Edited(comment) => {
+                    json!({ "change": "edited", "comment": comment_json(comment) })
+                }
+                HandedComment::Deleted(id) => json!({ "change": "deleted", "comment": { "id": id } }),
+            }).collect::<Vec<_>>(),
+            "replies": handed.replies.iter().map(|handed| json!({
+                "comment_id": handed.comment_id,
+                "reply": reply_json(&handed.reply),
+            })).collect::<Vec<_>>(),
+            "messages": handed.messages.iter().map(message_json).collect::<Vec<_>>(),
+        }),
+    }
 }
 
 /// 今の状態を保存先へ書く。失敗は警告だけで、レビューは終わらせない（R-SESSION）。

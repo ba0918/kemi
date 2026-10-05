@@ -18,8 +18,9 @@ use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
 use kemi_server::{
-    Asset, Assets, ResultSaveError, ResultSink, ServeOutcome, ServeParams, SessionSink,
-    detect_share_address, exposure_warning, serve, session_host, session_url,
+    AgentParams, Asset, Assets, ResultSaveError, ResultSink, ServeOutcome, ServeParams,
+    SessionSink, bind_agent_listener, detect_share_address, exposure_warning, serve, session_host,
+    session_url,
 };
 use tokio::net::TcpListener;
 
@@ -532,6 +533,21 @@ async fn run_review(
         open_browser(&browser_url);
     }
 
+    // エージェントとの往復はセッションの id に頼るので、セッションのあるレビューだけ
+    // （R-AGENT-CLI）。
+    let agent = match &stored_session {
+        Some(_) => match bind_agent_listener().await {
+            Ok(listener) => Some(AgentParams {
+                listener,
+                token: random_token(),
+            }),
+            Err(error) => {
+                eprintln!("kemi: cannot listen for kemi wait and kemi reply: {error}");
+                None
+            }
+        },
+        None => None,
+    };
     let params = ServeParams {
         source,
         assets: Arc::new(WebAssets),
@@ -542,6 +558,7 @@ async fn run_review(
             .map(|session| session as Arc<dyn SessionSink>),
         notices: Arc::new(notice::StderrNotices),
         share_address,
+        agent,
     };
     #[cfg(unix)]
     let outcome = tokio::select! {

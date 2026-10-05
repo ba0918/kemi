@@ -2,6 +2,7 @@
 //!
 //! 内部 API の JSON 形は D7 として、この階層（`api` と子モジュール）で決める。
 
+mod agent;
 mod channel;
 mod comments;
 mod file;
@@ -29,6 +30,8 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
+pub(crate) use self::agent::agent_router;
+pub(crate) use self::channel::start_status_ticker;
 use self::channel::{agent_json, hand_api, message_api};
 use self::comments::comment_api;
 use self::file::file_api;

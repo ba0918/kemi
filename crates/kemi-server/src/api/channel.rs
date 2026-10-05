@@ -55,6 +55,9 @@ pub(super) async fn hand_api(
     };
     // 渡すものが無くても、書いて消したコメントの記録は片付いているので保存する。
     persist(&state);
+    if handed {
+        state.wake.notify_waiters();
+    }
     notify_agent_state(&state);
     Ok(Json(json!({ "handed": handed })))
 }
@@ -87,3 +90,30 @@ pub(crate) fn agent_json(state: &AppState) -> Value {
 pub(crate) fn notify_agent_state(state: &AppState) {
     let _ = state.events.send(Event::Agent(agent_json(state)));
 }
+
+/// 作業中のまま時間がたって応答なしになったことを、ページへ知らせる（R-AGENT-STATE）。
+/// 状態は時刻だけでも変わるので、要求を待たずに見に行く。
+pub(crate) fn start_status_ticker(state: &Arc<AppState>) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let mut shutdown = state.shutdown.subscribe();
+        let mut last = agent_json(&state)["status"].clone();
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(STATUS_TICK) => {}
+                _ = shutdown.changed() => return,
+            }
+            if *shutdown.borrow() {
+                return;
+            }
+            let agent = agent_json(&state);
+            if agent["status"] != last {
+                last = agent["status"].clone();
+                let _ = state.events.send(Event::Agent(agent));
+            }
+        }
+    });
+}
+
+/// 応答なしの 10 分に対して、表示が遅れても気にならない間隔。
+const STATUS_TICK: std::time::Duration = std::time::Duration::from_secs(15);
