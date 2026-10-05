@@ -6,6 +6,7 @@ import { currentEntry, flatten, state, unitLabel } from "../state.js";
 import { unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { applyReview, jumpToEntry } from "./files.js";
+import { renderConversation } from "../views/conversation.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import { renderHeader, renderUnitSwitch } from "../views/header.js";
 import { openModal, showOverlay, showToast } from "../views/overlay.js";
@@ -73,6 +74,7 @@ export async function switchUnit(unit, jump) {
     renderFileHeader();
     renderNotice();
     renderDiff();
+    renderConversation();
     return;
   }
   const entry = state.entries[index];

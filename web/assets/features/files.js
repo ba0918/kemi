@@ -28,6 +28,7 @@ import {
   scheduleRender,
 } from "./display.js";
 import { applyPendingJump, revealInTree } from "./navigation.js";
+import { renderConversation } from "../views/conversation.js";
 import { renderFileHeader, renderGroupHeader, renderNotice } from "../views/file-header.js";
 import {
   renderHeader,
@@ -122,6 +123,7 @@ export async function refresh() {
     renderGroupHeader();
     renderFileHeader();
     renderNotice();
+    renderConversation();
     return;
   }
   if (keep) {
@@ -234,6 +236,8 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   renderNotice();
   renderFloating();
   renderDiff();
+  // 会話パネルの「This file」の絞り込みと、開いたスレッドの対象の行は表示中のファイルで決まる。
+  renderConversation();
   // 描画表示で見るファイルは、取得して出してから移り先へ送る（R-RENDER）。
   await actions.applyRenderedView(entry);
   if (generation !== state.selectGeneration) {

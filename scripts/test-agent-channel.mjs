@@ -11,6 +11,7 @@
 // スレッドを開くと消える、一番下を見ているときだけ並びが新しいものについていき、上を見ている
 // ときは届いた印が出て、どちらでも差分のスクロール位置が変わらない、
 // kemi reply の発言が会話パネルに出る、一覧の項目からスレッドを開いて返信を書くとスレッドに出る、
+// 「This file」の絞り込みが選んだファイルに合わせて変わる、
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
 // 出て、submit の JSON にそのコメントが入る。
 import assert from 'node:assert/strict';
@@ -52,7 +53,7 @@ const waitFor = async (code) => {
 
 const LINES = (count) => Array.from({ length: count }, (_, i) => `line ${i + 1}\n`);
 
-/** 1 ファイルの worktree の変更。3 行目・60 行目・100 行目を書き換える。 */
+/** worktree の変更。a.txt の 3 行目・60 行目・100 行目と、コメントの無い b.txt の 1 行目を書き換える。 */
 async function makeFixture() {
   const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-'));
   const git = (...args) => run('git', ['-C', dir, ...args], {
@@ -69,12 +70,14 @@ async function makeFixture() {
   await git('init', '-q');
   const lines = LINES(120);
   await writeFile(join(dir, 'a.txt'), lines.join(''));
-  await git('add', 'a.txt');
+  await writeFile(join(dir, 'b.txt'), LINES(5).join(''));
+  await git('add', 'a.txt', 'b.txt');
   await git('commit', '-q', '-m', 'base');
   for (const index of [2, 59, 99]) {
     lines[index] = `changed ${index + 1}\n`;
   }
   await writeFile(join(dir, 'a.txt'), lines.join(''));
+  await writeFile(join(dir, 'b.txt'), ['other\n', ...LINES(5).slice(1)].join(''));
   return dir;
 }
 
@@ -139,6 +142,12 @@ const panelClosed = `document.querySelector('#conversation').dataset.open === 'f
 const chipC1 = `document.querySelector('#diff-content .cchip[data-id="c1"]')`;
 const threadOpen = (text) => `!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-thread-body .cv-comment')?.textContent.includes(${JSON.stringify(text)})`;
 const agentMessage = (text) => `Array.from(document.querySelectorAll('#cv-items .cv-msg[data-author="agent"]')).some(m => m.textContent.includes(${JSON.stringify(text)}))`;
+
+/** ツリーからファイルを選び、その差分が出るのを待つ。 */
+async function selectFile(name) {
+  await evaluate(`Array.from(document.querySelectorAll('#tree button.file')).find(b => b.textContent.includes(${JSON.stringify(name)})).click(); true`);
+  await waitFor(`document.querySelector('#file-header .path')?.textContent === ${JSON.stringify(name)} && document.querySelectorAll('[data-kemi-row]').length > 0`);
+}
 
 const fixture = await makeFixture();
 const state = await mkdtemp(join(tmpdir(), 'kemi-agent-state-'));
@@ -319,6 +328,17 @@ try {
   await browser('click', '#cv-thread-head .cv-back');
   await waitFor(`!document.querySelector('#cv-list').hidden`);
   console.log('PASS 一覧の項目からスレッドを開き、返信を書くとスレッドに出る');
+
+  // (4b) 「This file」で絞り込んだまま別のファイルを選ぶと、一覧はそのファイルのスレッドに変わる。
+  const cards = `Array.from(document.querySelectorAll('#cv-items .cv-card')).map(c => c.dataset.id).sort().join(',')`;
+  await browser('click', '#cv-filter button[data-filter="file"]');
+  await waitFor(`${cards} === 'c1,c2'`);
+  await selectFile('b.txt');
+  await waitFor(`${cards} === ''`);
+  await selectFile('a.txt');
+  await waitFor(`${cards} === 'c1,c2'`);
+  await browser('click', '#cv-filter button[data-filter="all"]');
+  console.log('PASS 「This file」の絞り込みは、選んだファイルに合わせて変わる');
 
   // (5) 幅 390px でも、会話パネルを画面いっぱいのシートで開いて閉じられる。
   await browser('set', 'viewport', '390', '844');
