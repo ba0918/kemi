@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::{ApiError, find_file, side_lines, source_content};
 use crate::session::{comment_json, delete_stored};
-use crate::{AppState, Stop, SubmitState};
+use crate::{AppState, Notice, Stop, SubmitState};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct SubmitRequest {
@@ -61,7 +61,7 @@ pub(super) async fn submit_api(
 }
 
 /// 確定した結果を結果ファイルに残す。失敗しても submit の結果と終了コードは変えず、
-/// stderr に警告を出して完了画面に知らせるだけにする（R-RESULT）。
+/// 起動側に知らせて完了画面に出すだけにする（R-RESULT）。
 fn save_result(state: &AppState, document: &Value) -> Value {
     let Some(sink) = &state.results else {
         return json!({ "dir": null, "path": null, "error": null });
@@ -79,8 +79,9 @@ fn save_result(state: &AppState, document: &Value) -> Value {
             "error": null,
         }),
         Err(error) => {
-            eprintln!("kemi: could not save the result file: {error}");
-            json!({ "dir": sink.location(), "path": null, "error": error })
+            let saved = json!({ "dir": sink.location(), "path": null, "error": error.to_string() });
+            state.notices.notify(Notice::ResultNotSaved(error));
+            saved
         }
     }
 }

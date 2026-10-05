@@ -1,6 +1,7 @@
 //! kemi の CLI（R-INPUT-6, R-SUBMIT）。stdout は submit の JSON だけに使う。
 
 mod local_time;
+mod notice;
 mod result;
 mod session;
 
@@ -17,8 +18,8 @@ use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, ReviewSource};
 use kemi_server::{
-    Asset, Assets, ResultSink, ServeOutcome, ServeParams, SessionSink, detect_share_address,
-    exposure_warning, serve, session_host, session_url,
+    Asset, Assets, ResultSaveError, ResultSink, ServeOutcome, ServeParams, SessionSink,
+    detect_share_address, exposure_warning, serve, session_host, session_url,
 };
 use tokio::net::TcpListener;
 
@@ -340,19 +341,21 @@ struct ResultStore {
 }
 
 impl ResultSink for ResultStore {
-    fn save(&self, text: &str) -> Result<PathBuf, String> {
-        let dir = self.dir.as_ref().ok_or_else(|| {
-            format!(
-                "cannot determine where to store results ({})",
-                results_unset_reason()
-            )
-        })?;
+    fn save(&self, text: &str) -> Result<PathBuf, ResultSaveError> {
+        let dir = self
+            .dir
+            .as_ref()
+            .ok_or_else(|| ResultSaveError::Unlocated(results_unset_reason().to_string()))?;
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_millis())
             .unwrap_or(0);
-        result::save(dir, &self.key, text, millis, std::process::id())
-            .map_err(|error| format!("{}: {error}", dir.display()))
+        result::save(dir, &self.key, text, millis, std::process::id()).map_err(|source| {
+            ResultSaveError::Write {
+                dir: dir.clone(),
+                source,
+            }
+        })
     }
 
     fn location(&self) -> Option<String> {
@@ -537,6 +540,7 @@ async fn run_review(
         session: stored_session
             .clone()
             .map(|session| session as Arc<dyn SessionSink>),
+        notices: Arc::new(notice::StderrNotices),
         share_address,
     };
     #[cfg(unix)]

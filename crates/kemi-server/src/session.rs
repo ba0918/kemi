@@ -11,7 +11,7 @@ use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
 use serde_json::json;
 
-use crate::AppState;
+use crate::{AppState, Notice};
 
 #[derive(Default)]
 pub struct Session {
@@ -82,7 +82,7 @@ pub(crate) fn persist(state: &AppState) {
         }
     };
     if let Err(error) = sink.save_state(snapshot) {
-        eprintln!("kemi: could not save the session: {error}");
+        state.notices.notify(Notice::SessionNotSaved(error));
     }
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn delete_stored(state: &AppState) {
         return;
     };
     if let Err(error) = sink.delete() {
-        eprintln!("kemi: could not delete the session: {error}");
+        state.notices.notify(Notice::SessionNotDeleted(error));
     }
 }
 
@@ -178,7 +178,7 @@ async fn freeze(state: Arc<AppState>) {
                         contents,
                     };
                     if let Err(error) = sink.save_copy(copy) {
-                        eprintln!("kemi: could not save the session: {error}");
+                        state.notices.notify(Notice::SessionNotSaved(error));
                     }
                 }
                 return;
@@ -201,7 +201,7 @@ async fn freeze(state: Arc<AppState>) {
     if let Some(sink) = &state.session_sink {
         let reason = format!("cannot read the review contents: {last_error}");
         if let Err(error) = sink.mark_unresumable(&reason) {
-            eprintln!("kemi: could not save the session: {error}");
+            state.notices.notify(Notice::SessionNotSaved(error));
         }
     }
 }

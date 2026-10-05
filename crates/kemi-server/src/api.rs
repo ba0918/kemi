@@ -34,7 +34,7 @@ use self::rendered::{render_file, repository_image, review_image};
 use self::submit::submit_api;
 use crate::session::{Session, comment_json, persist, start_freeze};
 use crate::units::{self, Unavailable};
-use crate::{AppState, Event, ServerError, stop_with_error};
+use crate::{AppState, Event, Notice, ServerError, stop_with_error};
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -387,8 +387,8 @@ async fn origin(
         Ok(Ok(origin)) => origin,
         // 内容の計画が差し替わる途中の食い違い（source_content と同じ）。
         Ok(Err(SourceError::UnknownFileId(_))) => return Err(file_not_found()),
-        Ok(Err(error)) => Some(unknown_origin(&file.path, error)),
-        Err(error) => Some(unknown_origin(&file.path, error)),
+        Ok(Err(error)) => Some(unknown_origin(&state, &file.path, error)),
+        Err(error) => Some(unknown_origin(&state, &file.path, error)),
     };
     Ok(Json(match origin {
         Some(origin) => origin_json(&id, &origin),
@@ -397,8 +397,11 @@ async fn origin(
 }
 
 /// 計算に失敗したファイルの由来。変更ブロックもコミットも 1 つも持たない。
-fn unknown_origin(path: &str, error: impl std::fmt::Display) -> FileOrigin {
-    eprintln!("kemi: cannot compute the origin of {path}: {error}");
+fn unknown_origin(state: &AppState, path: &str, error: impl std::fmt::Display) -> FileOrigin {
+    state.notices.notify(Notice::OriginUnknown {
+        path: path.to_string(),
+        reason: error.to_string(),
+    });
     FileOrigin {
         enabled: true,
         blocks: Vec::new(),

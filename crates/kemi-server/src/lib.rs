@@ -1,6 +1,7 @@
 //! HTTP / SSE サーバ（R-SERVE, R-SUBMIT, R-LIVE）。
 
 #![forbid(unsafe_code)]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod api;
 mod highlight;
@@ -13,6 +14,8 @@ use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex, RwLock};
 
+use kemi_core::domain::review::Side;
+use kemi_core::session::SessionError;
 use kemi_core::source::ReviewSource;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, watch as shutdown_watch};
@@ -62,10 +65,71 @@ pub(crate) enum Stop {
     Failed(String),
 }
 
+/// 結果ファイルを残せなかった理由（R-RESULT）。完了画面には Display の文を出す。
+#[derive(Debug)]
+pub enum ResultSaveError {
+    /// 保存先のディレクトリを決められない。中身は決められない理由。
+    Unlocated(String),
+    /// 保存先に書けない。
+    Write {
+        dir: std::path::PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl std::fmt::Display for ResultSaveError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResultSaveError::Unlocated(reason) => {
+                write!(
+                    formatter,
+                    "cannot determine where to store results ({reason})"
+                )
+            }
+            ResultSaveError::Write { dir, source } => {
+                write!(formatter, "{}: {source}", dir.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for ResultSaveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ResultSaveError::Unlocated(_) => None,
+            ResultSaveError::Write { source, .. } => Some(source),
+        }
+    }
+}
+
+/// サーバが起動側に知らせること。ライブラリは stderr に書かず、書き方は起動側が決める。
+#[derive(Debug)]
+pub enum Notice {
+    /// コメントを足した。`lines` は開始行と終了行で、ファイル全体のコメントでは None。
+    CommentAdded {
+        path: String,
+        side: Side,
+        lines: Option<(u32, u32)>,
+    },
+    /// 結果ファイルを残せなかった。submit の結果と終了コードは変わらない（R-RESULT）。
+    ResultNotSaved(ResultSaveError),
+    /// セッションを保存できなかった。レビューは続く（R-SESSION）。
+    SessionNotSaved(SessionError),
+    /// submit の後にセッションを消せなかった（R-SESSION）。
+    SessionNotDeleted(SessionError),
+    /// ファイルの由来を計算できなかった。由来は「特定できない」になる（R-ORIGIN）。
+    OriginUnknown { path: String, reason: String },
+}
+
+/// [`Notice`] の受け取り先。
+pub trait NoticeSink: Send + Sync {
+    fn notify(&self, notice: Notice);
+}
+
 /// submit を確定した結果を残す先（R-RESULT）。
 pub trait ResultSink: Send + Sync {
     /// stdout に出すのと同じ JSON の文字列を残し、書いたファイルを返す。
-    fn save(&self, text: &str) -> Result<std::path::PathBuf, String>;
+    fn save(&self, text: &str) -> Result<std::path::PathBuf, ResultSaveError>;
     /// 保存先のディレクトリ。完了画面に出す。決められなければ None。
     fn location(&self) -> Option<String>;
 }
@@ -84,13 +148,13 @@ pub trait SessionSink: Send + Sync {
     /// サーブ開始時。起動時の単位の題と全ファイル数。
     fn describe_review(&self, title: &str, total_files: usize);
     /// 状態が変わるたび。空の状態と写しだけで、書くべきものが無ければ何もしない。
-    fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), String>;
+    fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), SessionError>;
     /// 凍結が完成したとき。写しの上限は実装が判定する。
-    fn save_copy(&self, copy: kemi_core::session::SessionCopy) -> Result<(), String>;
+    fn save_copy(&self, copy: kemi_core::session::SessionCopy) -> Result<(), SessionError>;
     /// 凍結できなかったとき。状態と情報だけを残す。
-    fn mark_unresumable(&self, reason: &str) -> Result<(), String>;
+    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError>;
     /// submit の確定後。
-    fn delete(&self) -> Result<(), String>;
+    fn delete(&self) -> Result<(), SessionError>;
 }
 
 pub struct ServeParams {
@@ -100,6 +164,8 @@ pub struct ServeParams {
     pub results: Option<Arc<dyn ResultSink>>,
     /// セッションの保存先。無ければ保存しない（R-SESSION）。
     pub session: Option<Arc<dyn SessionSink>>,
+    /// 警告や進み具合の知らせを受け取る先。
+    pub notices: Arc<dyn NoticeSink>,
     /// LAN に案内する共有アドレス。`--bind 0.0.0.0` のときだけ意味を持ち、
     /// 特定できなければ `None`（R-SERVE）。URL と警告は起動側が組み立てる。
     pub share_address: Option<Ipv4Addr>,
@@ -126,6 +192,7 @@ pub(crate) struct AppState {
     pub assets: Arc<dyn Assets>,
     pub results: Option<Arc<dyn ResultSink>>,
     pub session_sink: Option<Arc<dyn SessionSink>>,
+    pub notices: Arc<dyn NoticeSink>,
     pub token: String,
     /// POST を受理する Host の範囲（R-SERVE）。
     pub allowed: AllowedHosts,
@@ -192,6 +259,7 @@ pub async fn serve(
         assets: params.assets,
         results: params.results,
         session_sink: params.session,
+        notices: params.notices,
         token: params.token,
         allowed,
         review: RwLock::new(units::ReviewState::new(&units, review)),

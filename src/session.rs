@@ -73,36 +73,26 @@ impl SessionSink for StoredSession {
             .describe(title, total_files);
     }
 
-    fn save_state(&self, state: SessionState) -> Result<(), String> {
+    fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.open
             .lock()
             .expect("session poisoned")
             .save_state(state)
-            .map_err(|error| error.to_string())
     }
 
-    fn save_copy(&self, copy: SessionCopy) -> Result<(), String> {
-        self.open
-            .lock()
-            .expect("session poisoned")
-            .save_copy(copy)
-            .map_err(|error| error.to_string())
+    fn save_copy(&self, copy: SessionCopy) -> Result<(), SessionError> {
+        self.open.lock().expect("session poisoned").save_copy(copy)
     }
 
-    fn mark_unresumable(&self, reason: &str) -> Result<(), String> {
+    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
         self.open
             .lock()
             .expect("session poisoned")
             .mark_unresumable(reason)
-            .map_err(|error| error.to_string())
     }
 
-    fn delete(&self) -> Result<(), String> {
-        self.open
-            .lock()
-            .expect("session poisoned")
-            .delete()
-            .map_err(|error| error.to_string())
+    fn delete(&self) -> Result<(), SessionError> {
+        self.open.lock().expect("session poisoned").delete()
     }
 }
 

@@ -14,7 +14,10 @@ use std::time::Duration;
 use kemi_core::domain::content::AUTO_MAX_BYTES;
 use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
-use kemi_server::{Asset, Assets, ServeOutcome, ServeParams, serve, session_host, session_url};
+use kemi_server::{
+    Asset, Assets, Notice, NoticeSink, ResultSaveError, ResultSink, ServeOutcome, ServeParams,
+    serve, session_host, session_url,
+};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -323,7 +326,26 @@ struct TestServer {
     origin: String,
     port: u16,
     source: Arc<FakeSource>,
+    notices: Arc<RecordingNotices>,
     task: JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
+}
+
+/// サーバが起動側に知らせたことを記録する。
+#[derive(Default)]
+struct RecordingNotices {
+    notices: std::sync::Mutex<Vec<Notice>>,
+}
+
+impl NoticeSink for RecordingNotices {
+    fn notify(&self, notice: Notice) {
+        self.notices.lock().unwrap().push(notice);
+    }
+}
+
+impl RecordingNotices {
+    fn any(&self, predicate: impl Fn(&Notice) -> bool) -> bool {
+        self.notices.lock().unwrap().iter().any(predicate)
+    }
 }
 
 impl TestServer {
@@ -346,12 +368,14 @@ impl TestServer {
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
         let origin = url.split("/s/").next().unwrap().to_string();
+        let notices = Arc::new(RecordingNotices::default());
         let params = ServeParams {
             source: source.clone(),
             assets: Arc::new(FakeAssets),
             token: "test-token".to_string(),
             results: None,
             session: None,
+            notices: notices.clone(),
             share_address,
         };
         let task = tokio::spawn(serve(listener, params));
@@ -360,6 +384,7 @@ impl TestServer {
             origin,
             port,
             source,
+            notices,
             task,
         }
     }
@@ -1032,6 +1057,7 @@ impl Drop for TempRepo {
 
 struct LiveServer {
     port: u16,
+    notices: Arc<RecordingNotices>,
     task: JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
 }
 
@@ -1039,18 +1065,24 @@ impl LiveServer {
     async fn start(source: Arc<dyn ReviewSource>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let notices = Arc::new(RecordingNotices::default());
         let params = ServeParams {
             source,
             assets: Arc::new(FakeAssets),
             token: "live-token".to_string(),
             results: None,
             session: None,
+            notices: notices.clone(),
             share_address: None,
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。
         tokio::time::sleep(Duration::from_millis(400)).await;
-        LiveServer { port, task }
+        LiveServer {
+            port,
+            notices,
+            task,
+        }
     }
 
     fn stop(self) {
@@ -1676,6 +1708,11 @@ async fn origin_git_failure_keeps_review_and_comments_submittable() {
         json!({}),
         "no commit may be named: {origin}"
     );
+    assert!(
+        server
+            .notices
+            .any(|notice| matches!(notice, Notice::OriginUnknown { path, .. } if path == "a.txt"))
+    );
     let response = server
         .post(
             "api/comment",
@@ -1926,7 +1963,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Condvar, Mutex};
 
 use kemi_core::session::{
-    OpenSession, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
+    OpenSession, SessionCopy, SessionError, SessionInfo, SessionMode, SessionState, SessionStore,
 };
 use kemi_server::SessionSink;
 
@@ -1970,26 +2007,29 @@ impl SessionSink for RecordingSink {
         *self.total_files.lock().unwrap() = total_files;
     }
 
-    fn save_state(&self, state: SessionState) -> Result<(), String> {
+    fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.states.lock().unwrap().push(state);
         if self.fail.load(Ordering::SeqCst) {
-            Err("disk is full".to_string())
+            Err(SessionError::Io {
+                path: std::path::PathBuf::from("sessions/x.session"),
+                source: std::io::Error::other("disk is full"),
+            })
         } else {
             Ok(())
         }
     }
 
-    fn save_copy(&self, copy: SessionCopy) -> Result<(), String> {
+    fn save_copy(&self, copy: SessionCopy) -> Result<(), SessionError> {
         self.copies.lock().unwrap().push(copy);
         Ok(())
     }
 
-    fn mark_unresumable(&self, reason: &str) -> Result<(), String> {
+    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
         self.unusable.lock().unwrap().push(reason.to_string());
         Ok(())
     }
 
-    fn delete(&self) -> Result<(), String> {
+    fn delete(&self) -> Result<(), SessionError> {
         self.deleted.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -2039,7 +2079,7 @@ impl SlowSink {
 impl SessionSink for SlowSink {
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
-    fn save_state(&self, state: SessionState) -> Result<(), String> {
+    fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
         if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
             self.entered.notify_one();
             let opened = self.gate.lock().unwrap();
@@ -2052,31 +2092,41 @@ impl SessionSink for SlowSink {
         Ok(())
     }
 
-    fn save_copy(&self, _copy: SessionCopy) -> Result<(), String> {
+    fn save_copy(&self, _copy: SessionCopy) -> Result<(), SessionError> {
         Ok(())
     }
 
-    fn mark_unresumable(&self, _reason: &str) -> Result<(), String> {
+    fn mark_unresumable(&self, _reason: &str) -> Result<(), SessionError> {
         Ok(())
     }
 
-    fn delete(&self) -> Result<(), String> {
+    fn delete(&self) -> Result<(), SessionError> {
         Ok(())
     }
 }
 
 impl TestServer {
     async fn start_with_session(source: Arc<FakeSource>, sink: Arc<dyn SessionSink>) -> Self {
+        TestServer::start_with_sinks(source, Some(sink), None).await
+    }
+
+    async fn start_with_sinks(
+        source: Arc<FakeSource>,
+        session: Option<Arc<dyn SessionSink>>,
+        results: Option<Arc<dyn ResultSink>>,
+    ) -> Self {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
         let origin = url.split("/s/").next().unwrap().to_string();
+        let notices = Arc::new(RecordingNotices::default());
         let params = ServeParams {
             source: source.clone(),
             assets: Arc::new(FakeAssets),
             token: "test-token".to_string(),
-            results: None,
-            session: Some(sink),
+            results,
+            session,
+            notices: notices.clone(),
             share_address: None,
         };
         let task = tokio::spawn(serve(listener, params));
@@ -2085,6 +2135,7 @@ impl TestServer {
             origin,
             port,
             source,
+            notices,
             task,
         }
     }
@@ -2260,6 +2311,7 @@ async fn session_copy_waits_for_both_units() {
         token: "test-token".to_string(),
         results: None,
         session: Some(sink.clone()),
+        notices: Arc::new(RecordingNotices::default()),
         share_address: None,
     };
     tokio::spawn(serve(listener, params));
@@ -2367,12 +2419,59 @@ async fn session_sink_failure_does_not_stop_the_review() {
     let review = server.get("api/review").await;
     assert_eq!(review.status(), 200);
 
+    assert!(
+        server
+            .notices
+            .any(|notice| matches!(notice, Notice::SessionNotSaved(_))),
+        "a failed save must be reported to the caller"
+    );
+
     let response = server
         .post("api/submit", json!({"verdict": "changes_requested"}))
         .await;
     assert_eq!(response.status(), 200);
     let document = server.finish().await;
     assert_eq!(document["comments"].as_array().unwrap().len(), 1);
+}
+
+/// 書けない結果ファイルを装う。
+struct FailingResults;
+
+impl ResultSink for FailingResults {
+    fn save(&self, _text: &str) -> Result<std::path::PathBuf, ResultSaveError> {
+        Err(ResultSaveError::Unlocated("no home directory".to_string()))
+    }
+
+    fn location(&self) -> Option<String> {
+        None
+    }
+}
+
+#[tokio::test]
+async fn result_save_failure_is_reported_and_shown_without_changing_the_submit() {
+    let server = TestServer::start_with_sinks(
+        Arc::new(FakeSource::new()),
+        None,
+        Some(Arc::new(FailingResults)),
+    )
+    .await;
+
+    let response = server
+        .post("api/submit", json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(
+        body["saved"]["error"],
+        "cannot determine where to store results (no home directory)"
+    );
+    assert!(
+        server
+            .notices
+            .any(|notice| matches!(notice, Notice::ResultNotSaved(_)))
+    );
+    let document = server.finish().await;
+    assert_eq!(document["verdict"], "approved");
 }
 
 /// 一時ディレクトリのセッションを実際に書く sink。上限の扱いを core に任せる。
@@ -2383,36 +2482,20 @@ struct StoreSink {
 impl SessionSink for StoreSink {
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
-    fn save_state(&self, state: SessionState) -> Result<(), String> {
-        self.open
-            .lock()
-            .unwrap()
-            .save_state(state)
-            .map_err(|error| error.to_string())
+    fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_state(state)
     }
 
-    fn save_copy(&self, copy: SessionCopy) -> Result<(), String> {
-        self.open
-            .lock()
-            .unwrap()
-            .save_copy(copy)
-            .map_err(|error| error.to_string())
+    fn save_copy(&self, copy: SessionCopy) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_copy(copy)
     }
 
-    fn mark_unresumable(&self, reason: &str) -> Result<(), String> {
-        self.open
-            .lock()
-            .unwrap()
-            .mark_unresumable(reason)
-            .map_err(|error| error.to_string())
+    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
+        self.open.lock().unwrap().mark_unresumable(reason)
     }
 
-    fn delete(&self) -> Result<(), String> {
-        self.open
-            .lock()
-            .unwrap()
-            .delete()
-            .map_err(|error| error.to_string())
+    fn delete(&self) -> Result<(), SessionError> {
+        self.open.lock().unwrap().delete()
     }
 }
 
@@ -2947,4 +3030,37 @@ async fn relative_images_are_frames_when_the_source_cannot_read_the_repository()
     );
     assert!(html.contains("kb-img-frame"), "{html}");
     assert!(html.contains("img/other.png"), "{html}");
+}
+
+#[tokio::test]
+async fn adding_a_comment_reports_its_path_side_and_lines() {
+    let server = TestServer::start().await;
+
+    let line = server
+        .comment(json!({"op": "add", "file_id": "f1", "side": "old", "start_line": 11, "end_line": 11, "body": "x"}))
+        .await;
+    assert_eq!(line.status(), 200);
+    let whole = server
+        .comment(json!({"op": "add", "file_id": "f1", "side": "new", "body": "y"}))
+        .await;
+    assert_eq!(whole.status(), 200);
+
+    let notices = server.notices.notices.lock().unwrap();
+    let added: Vec<_> = notices
+        .iter()
+        .filter_map(|notice| {
+            if let Notice::CommentAdded { path, side, lines } = notice {
+                Some((path.clone(), *side, *lines))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        added,
+        vec![
+            ("src/a.rs".to_string(), Side::Old, Some((11, 11))),
+            ("src/a.rs".to_string(), Side::New, None),
+        ]
+    );
 }

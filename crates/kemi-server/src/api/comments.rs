@@ -10,8 +10,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{ApiError, file_not_found, find_file, parse_side, side_lines, source_content};
-use crate::AppState;
 use crate::session::{comment_json, persist};
+use crate::{AppState, Notice};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
@@ -193,16 +193,11 @@ async fn add_comment(
     drop(session);
     persist(state);
 
-    let location = match (comment.start_line, comment.end_line) {
-        (Some(start), Some(end)) => format!("{start}-{end}"),
-        _ => "file-wide".to_string(),
-    };
-    eprintln!(
-        "kemi: comment {} {} {}",
-        comment.path,
-        comment.side.as_str(),
-        location
-    );
+    state.notices.notify(Notice::CommentAdded {
+        path: comment.path.clone(),
+        side: comment.side,
+        lines: comment.start_line.zip(comment.end_line),
+    });
     Ok(Json(comment_json(&comment)))
 }
 
