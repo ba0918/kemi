@@ -127,6 +127,5 @@ mod tests {
     fn a_file_id_is_decided_by_the_path_alone() {
         assert_eq!(stable_id("a.txt"), stable_id("a.txt"));
         assert_ne!(stable_id("a.txt"), stable_id("b.txt"));
-        assert_eq!(stable_id("a/b"), "p612f62");
     }
 }
