@@ -17,6 +17,8 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
+use kemi_core::domain::live::url_path;
+
 use crate::Assets;
 
 /// 中継の待ち受けと相手（R-PAGE-PROXY）。
@@ -163,7 +165,7 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
     let port = params.listener.local_addr()?.port();
     let (start, display) = match &params.target {
         LiveTarget::Url { start, display, .. } => (start.clone(), display.clone()),
-        LiveTarget::File { path, .. } => (format!("/{path}"), format!("/{path}")),
+        LiveTarget::File { path, .. } => (format!("/{}", url_path(path)), format!("/{path}")),
     };
     let info = LiveInfo {
         port,

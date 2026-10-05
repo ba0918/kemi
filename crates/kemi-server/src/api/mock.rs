@@ -11,14 +11,14 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use kemi_core::domain::live::{LiveError, is_html, served_path};
+use kemi_core::domain::live::{LiveError, is_html, served_path, url_path};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ApiError;
 use crate::AppState;
 use crate::live::LiveInfo;
-use crate::live::files::{mime_for, requested_path, resolve};
+use crate::live::files::{clean_path, mime_for, resolve};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct MockRequest {
@@ -38,7 +38,7 @@ fn mock_json(live: &LiveInfo, page: &str, path: &str) -> Value {
     json!({
         "page": page,
         "path": path,
-        "url": format!("/m/{}/{path}", live.mock_secret),
+        "url": format!("/m/{}/{}", live.mock_secret, url_path(path)),
     })
 }
 
@@ -110,7 +110,8 @@ pub(crate) async fn mock_file(
     if secret != live.mock_secret {
         return not_found();
     }
-    let Some(relative) = requested_path(&path) else {
+    // パスは Path がもう復号している。もう一度復号すると `%25` を含む名前が別の名前になる。
+    let Some(relative) = clean_path(&path) else {
         return not_found();
     };
     let Some(real) = resolve(&live.root, &relative) else {

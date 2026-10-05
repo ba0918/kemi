@@ -393,6 +393,19 @@ async fn a_file_page_is_served_with_the_page_script_and_its_css() {
 }
 
 #[tokio::test]
+async fn a_file_page_whose_name_needs_percent_encoding_opens_at_its_start_url() {
+    let root = Scratch::new("encoded-page");
+    root.write("50% #1 ページ.html", "<p>encoded page</p>");
+    let running = start_file_review(&root, "50% #1 ページ.html").await;
+    let review = get_review_json(&running, "api/review").await;
+
+    let page = get_with_cookie(&running, review["live"]["start"].as_str().unwrap()).await;
+
+    assert_eq!(page.status(), StatusCode::OK);
+    assert!(page.text().await.unwrap().contains("encoded page"));
+}
+
+#[tokio::test]
 async fn a_file_review_needs_the_relay_cookie_too() {
     let root = Scratch::new("cookie");
     root.write("page.html", "<p>file page</p>");
@@ -629,6 +642,40 @@ async fn a_removed_mock_is_no_longer_listed() {
     assert_eq!(removed.status(), StatusCode::OK);
     let list = get_review_json(&running, "api/mocks").await;
     assert_eq!(list["mocks"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn a_mock_whose_name_needs_percent_encoding_is_served_at_its_url() {
+    let root = Scratch::new("encoded-mock");
+    root.write("page.html", "<p>page</p>");
+    root.write("mocks/50% #1.html", "<p>encoded mock</p>");
+    root.write("mocks/50%25.html", "<p>other mock</p>");
+    let running = start_file_review(&root, "page.html").await;
+    let base = running
+        .review
+        .trim_end_matches("/s/test-token/")
+        .to_string();
+
+    for (path, content) in [
+        ("mocks/50% #1.html", "encoded mock"),
+        ("mocks/50%25.html", "other mock"),
+    ] {
+        let assigned: serde_json::Value = post_review(
+            &running,
+            "api/mock",
+            serde_json::json!({ "page": "/page.html", "path": path }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+        let mock = reqwest::get(format!("{base}{}", assigned["url"].as_str().unwrap()))
+            .await
+            .unwrap();
+
+        assert_eq!(mock.status(), StatusCode::OK, "{path}");
+        assert!(mock.text().await.unwrap().contains(content), "{path}");
+    }
 }
 
 #[tokio::test]

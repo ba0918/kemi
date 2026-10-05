@@ -152,6 +152,20 @@ pub fn served_path(root: &Path, real: &Path) -> Result<String, LiveError> {
     Ok(parts.join("/"))
 }
 
+/// 配れる範囲の相対パス（`/` 区切り）を、URL のパスに入れられる形にする。区切りの `/` と
+/// 予約されていない文字のほかはパーセント符号化する（`%`・`#`・`?` を含む名前のため）。
+pub fn url_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 /// `.html` か `.htm` か（大文字小文字を問わない）。
 pub fn is_html(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();

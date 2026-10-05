@@ -14,7 +14,11 @@ use super::{LiveState, relay, rewrite};
 /// 要求のパスを、配れる範囲の根からの相対パスにする。`..` を含むものは断る（パーセント
 /// 符号化されていても）。
 pub(crate) fn requested_path(raw: &str) -> Option<String> {
-    let decoded = percent_decode(raw)?;
+    clean_path(&percent_decode(raw)?)
+}
+
+/// 復号済みのパスを、配れる範囲の根からの相対パスにする。`..` を含むものは断る。
+pub(crate) fn clean_path(decoded: &str) -> Option<String> {
     let mut parts = Vec::new();
     for segment in decoded.split('/') {
         match segment {

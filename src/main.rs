@@ -658,9 +658,10 @@ impl LiveRun {
                     url.path_and_query,
                 ))
             }
-            LivePage::File(path) => {
-                Some((LiveTarget::File { path: path.clone() }, format!("/{path}")))
-            }
+            LivePage::File(path) => Some((
+                LiveTarget::File { path: path.clone() },
+                format!("/{}", kemi_core::domain::live::url_path(path)),
+            )),
         }
     }
 }
