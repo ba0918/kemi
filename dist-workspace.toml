@@ -15,6 +15,14 @@ targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-ap
 pr-run-mode = "upload"
 # Where to host releases
 hosting = "github"
+# 配布の job でビルドのキャッシュを復元しない（pr-run-mode = "upload" だと既定で有効になる）
+cache-builds = false
 
 [dist.github-custom-runners]
 aarch64-apple-darwin = "macos-15"
+
+# 生成する release.yml の actions をコミットで固定する。版はコメントに残す
+[dist.github-action-commits]
+"actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803"  # v6.1.0
+"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"  # v8.0.1
+"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"  # v7.0.1
