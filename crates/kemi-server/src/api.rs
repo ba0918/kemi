@@ -245,7 +245,14 @@ async fn index(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
 ) -> Result<Response, ApiError> {
-    serve_asset(&state, "index.html")
+    let mut response = serve_asset(&state, "index.html")?;
+    // トークンの URL を開いた人にだけ、中継のポートを通す cookie を入れる（R-PAGE-PROXY）。
+    if let Some(live) = &state.live {
+        response
+            .headers_mut()
+            .insert(header::SET_COOKIE, live.set_cookie());
+    }
+    Ok(response)
 }
 
 async fn asset(
@@ -310,6 +317,7 @@ async fn review(
         body
     };
     body["agent"] = agent_json(&state);
+    body["live"] = state.live.as_ref().map_or(Value::Null, |live| live.json());
     // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
     units::start_if_waiting(&state);
     // 応答を返した後に、写しの凍結を裏で始める（R-SESSION）。

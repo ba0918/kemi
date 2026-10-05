@@ -58,8 +58,13 @@ a git repository there is none. `--live` combines only with `--port`, `--bind`, 
 `--live-port <n>`, `--focus`, and `--serve`. The review title is `Live review of <url>`, and
 for a file the URL is its path from that directory, such as `/docs/mock.html`.
 
-A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then, and
-it is kept only when it holds a comment, a reply, or a message.
+kemi prints `kemi: live <url>` after the review line: the page relayed through a second port
+(`--live-port`, default a free one). It opens only in a browser that opened the review URL first,
+so send the person the review URL, not this one. When the dev server is not running, the page
+says so and waits for it.
+
+A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
+connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
 
 ## Surveying a large change first
 

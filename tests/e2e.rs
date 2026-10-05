@@ -3283,3 +3283,138 @@ async fn wait_returns_the_comment_handed_in_a_live_review() {
     );
     kemi.kill();
 }
+
+/// 開発サーバの代わり。どの要求にも同じ HTML を返し、1 回ごとに接続を閉じる。
+async fn start_static_dev_server(body: &'static str) -> (u16, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    (port, task)
+}
+
+impl Kemi {
+    /// `kemi: live <url>` の行を待つ。
+    fn live_url(&mut self) -> String {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.stderr.read_line(&mut line).unwrap();
+            assert!(read > 0, "kemi printed no live line");
+            if let Some(url) = line.trim().strip_prefix("kemi: live ") {
+                return url.to_string();
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_page_is_read_through_the_live_url_after_opening_the_review_url() {
+    let (port, _dev) =
+        start_static_dev_server("<html><head></head><body>dev page body</body></html>").await;
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let page = format!("http://127.0.0.1:{port}/start");
+    let mut kemi = Kemi::spawn(&dir.path, &["--live", &page, "--no-open"]);
+    kemi.review_id();
+    let live = kemi.live_url();
+    assert!(live.starts_with("http://127.0.0.1:"), "{live}");
+    assert!(live.ends_with("/start"), "{live}");
+
+    let client = reqwest::Client::new();
+    let refused = client.get(&live).send().await.unwrap();
+    let opened = client.get(&kemi.url).send().await.unwrap();
+    let cookie = opened
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let body = client
+        .get(&live)
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert_eq!(refused.status(), 403);
+    assert!(body.contains("dev page body"), "{body}");
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn live_bind_wildcard_warns_after_the_url_with_the_lan_prefix() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi = Kemi::spawn(
+        &dir.path,
+        &["--live", LIVE_URL, "--bind", "0.0.0.0", "--no-open"],
+    );
+
+    let mut warning = String::new();
+    kemi.stderr.read_line(&mut warning).unwrap();
+
+    assert!(
+        warning.starts_with("kemi: exposed on the LAN;"),
+        "{warning}"
+    );
+    kemi.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resume_of_a_live_review_accepts_a_live_port_and_listens_there() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    kemi.wait_serving().await;
+    kemi.add_comment(1, "keep").await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = free.local_addr().unwrap().port();
+    drop(free);
+
+    let port_text = port.to_string();
+    let mut resumed = Kemi::spawn_with_state(
+        &dir.path,
+        &["--resume", &id, "--live-port", &port_text, "--no-open"],
+        &state.path,
+    );
+
+    assert_eq!(resumed.live_url(), format!("http://127.0.0.1:{port}/app"));
+    resumed.kill();
+}

@@ -41,6 +41,13 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
   （起動したディレクトリが git の作業ツリーの中ならその根、外なら起動したディレクトリ）の中の
   `.html` / `.htm` を見る対象にし、コードの見方は `--worktree` と同じ差分になる（git の外では
   無い）。組めるフラグは `--port`・`--bind`・`--no-open`・`--live-port`・`--focus`・`--serve`。
+  kemi は開発サーバのオリジンを 2 つ目のポート（`--live-port`、既定は空き）で中継し、レビューの
+  行の後に `kemi: live <url>` を出す。中継のポートは、レビューの URL を開いたときに入る
+  `HttpOnly`・`SameSite=Strict` の cookie を持つ要求だけを通し、その cookie を開発サーバへは
+  送らない。WebSocket（HMR など）は中身を見ずに通す。`X-Frame-Options` を外し、CSP の
+  `frame-ancestors` をレビュー画面だけに、`script-src` に kemi のスクリプトだけを足す。開発サーバに
+  つながらないときはそのことを出して待つ。`--bind` で公開したときの警告に、開発中のページも
+  見られることが入る。`--resume` に `--live-port` を付けられる。
   `--live` のセッションは写しを持たず、復元すると今の作業ツリーを読み、コメント・返信・発言が
   無ければ保留しても残らない。復元の一覧のモードの列は `live <URL>`。
 

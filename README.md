@@ -119,6 +119,24 @@ when kemi starts inside one, otherwise the launch directory. Symlinks count
 where they point, and nothing inside `.git/` is served. Anything else exits
 with 2.
 
+kemi relays the dev server's origin on a second port and prints its URL after
+the review line:
+
+```
+kemi: live http://127.0.0.1:<port>/<path>
+```
+
+The relayed page runs on its own origin and talks to the review page only
+through `postMessage`, so the page under development cannot reach kemi's API.
+The relay port answers only a browser that has opened the review URL first:
+opening it sets an `HttpOnly`, `SameSite=Strict` cookie, which kemi removes
+before forwarding a request to the dev server. WebSocket traffic, such as hot
+module reloading, passes through unchanged. kemi drops `X-Frame-Options` and
+narrows the CSP `frame-ancestors` to the review page, adding only its own
+script to `script-src`. When the dev server is not running, the page says so
+and waits; it loads once the server starts. `--bind` applies to the relay
+too, and its LAN warning adds that the page under development is visible.
+
 The code view is the same as `--worktree`. Outside a git repository there is
 no code view. `--live` takes only `--port`, `--bind`, `--no-open`,
 `--live-port`, `--focus`, and `--serve`. The review title is
@@ -217,7 +235,8 @@ forwarding settings on the Windows side also matter. kemi never configures
 firewalls or forwarding itself. Pass a fixed `--port` when you expose kemi
 repeatedly, so the URL and any forwarding rule stay stable. The review page
 and the API are plain HTTP: anyone who can reach the port and knows the URL
-can read the diff and submit.
+can read the diff and submit. With `--live`, they can also see the page under
+development.
 
 On a narrow screen (a viewport narrower than 720px, such as a phone) the page
 rearranges itself: the file tree becomes a drawer opened from the top bar, the
@@ -311,7 +330,10 @@ kemi --resume <id>     # continue a known session, from any directory
   it is now and keeps watching it. It is kept only when it holds a comment, a
   reply, or a message; seen marks and folding alone are not kept. Its mode
   column reads `live <url>`.
-- `--resume` accepts only `--port`, `--bind`, `--no-open`, and `--serve`.
+- A resumed `--live` review connects to the same URL again and prints a new
+  `kemi: live` line.
+- `--resume` accepts only `--port`, `--bind`, `--no-open`, `--serve`, and
+  `--live-port`.
   `--digest` and `--result` do not create sessions.
 
 The `kemi: resume with: kemi --resume <id>` line on stderr is how a script

@@ -37,6 +37,14 @@ pub fn exposure_warning(bind: Ipv4Addr, share_address: Option<Ipv4Addr>) -> Opti
     Some(text.to_string())
 }
 
+/// `--live` で非ループバックに待つときの警告行（live.md の R-PAGE-PROXY）。URL を知る人は
+/// 開発中のページも見られることを足す。ループバックなら None。
+pub fn live_exposure_warning(bind: Ipv4Addr, share_address: Option<Ipv4Addr>) -> Option<String> {
+    exposure_warning(bind, share_address).map(|warning| {
+        format!("{warning} Anyone with the URL can also see the page under development.")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
@@ -85,5 +93,20 @@ mod tests {
         assert!(warning.contains("read the diff"), "{warning}");
         assert!(warning.contains("submit"), "{warning}");
         assert!(warning.contains("plain HTTP"), "{warning}");
+    }
+
+    #[test]
+    fn live_exposure_warning_adds_that_the_page_under_development_is_visible() {
+        for (bind, share) in [
+            (Ipv4Addr::new(192, 168, 1, 5), None),
+            (Ipv4Addr::UNSPECIFIED, None),
+        ] {
+            let warning = live_exposure_warning(bind, share).expect("must warn");
+            let plain = exposure_warning(bind, share).expect("must warn");
+
+            assert!(warning.starts_with(&plain), "{warning}");
+            assert!(warning.contains("page under development"), "{warning}");
+        }
+        assert_eq!(live_exposure_warning(Ipv4Addr::LOCALHOST, None), None);
     }
 }

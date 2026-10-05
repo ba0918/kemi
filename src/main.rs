@@ -20,9 +20,9 @@ use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
 use kemi_server::{
-    AgentParams, Asset, Assets, ResultSaveError, ResultSink, ServeControl, ServeOutcome,
-    ServeParams, SessionSink, bind_agent_listener, detect_share_address, exposure_warning, serve,
-    session_host, session_url,
+    AgentParams, Asset, Assets, LiveParams, LiveTarget, ResultSaveError, ResultSink, ServeControl,
+    ServeOutcome, ServeParams, SessionSink, bind_agent_listener, detect_share_address,
+    exposure_warning, live_exposure_warning, serve, session_host, session_url,
 };
 use tokio::net::TcpListener;
 
@@ -209,19 +209,28 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
-/// `--resume` と一緒に使えるのは `--port` / `--bind` / `--no-open` / `--serve` だけ
-/// （R-INPUT-6）。
+/// `--resume` と一緒に使えるのは `--port` / `--bind` / `--no-open` / `--serve` /
+/// `--live-port` だけ（R-INPUT-6）。
 fn validate_resume_flags(cli: &Cli) -> Result<(), String> {
     if cli.resume.is_none() {
         return Ok(());
     }
-    let allowed = ["--resume", "--port", "--bind", "--no-open", "--serve"];
+    let allowed = [
+        "--resume",
+        "--port",
+        "--bind",
+        "--no-open",
+        "--serve",
+        "--live-port",
+    ];
     let others = cli
         .flags
         .iter()
         .any(|flag| !allowed.contains(&flag.as_str()));
     if others || cli.manifest.is_some() {
-        return Err("--resume accepts only --port, --bind, --no-open and --serve".to_string());
+        return Err(
+            "--resume accepts only --port, --bind, --no-open, --serve and --live-port".to_string(),
+        );
     }
     Ok(())
 }
@@ -628,6 +637,54 @@ fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
     }
 }
 
+/// `--live` の見る対象と配れる範囲の根（R-PAGE-MODE）。
+struct LiveRun {
+    page: LivePage,
+    root: PathBuf,
+}
+
+impl LiveRun {
+    /// 中継の相手。ファイルの配信はまだ無いので、URL のときだけ中継する。
+    fn target(&self) -> Option<(LiveTarget, String)> {
+        match &self.page {
+            LivePage::Url(text) => {
+                let url = parse_live_url(text).ok()?;
+                Some((
+                    LiveTarget::Url {
+                        authority: url.authority,
+                        start: url.path_and_query.clone(),
+                        display: url.text,
+                    },
+                    url.path_and_query,
+                ))
+            }
+            LivePage::File(_) => None,
+        }
+    }
+}
+
+/// 中継のリスナーを立て、`kemi: live <url>` を出す（R-PAGE-MODE）。`--bind` に従い、
+/// `--live-port` で固定できる（R-PAGE-PROXY）。
+async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LiveParams> {
+    let (target, start) = live.target()?;
+    let port = cli.live_port.unwrap_or(0);
+    let listener = match TcpListener::bind((cli.bind, port)).await {
+        Ok(listener) => listener,
+        Err(error) => fail(&format!("cannot listen on {}:{port}: {error}", cli.bind)),
+    };
+    let actual = match listener.local_addr() {
+        Ok(address) => address.port(),
+        Err(error) => fail(&format!("cannot listen on {}:{port}: {error}", cli.bind)),
+    };
+    eprintln!("kemi: live http://{host}:{actual}{start}");
+    Some(LiveParams {
+        listener,
+        target,
+        cookie: random_token(),
+        code_view: kemi_core::source::git::repo_root(&live.root).is_ok(),
+    })
+}
+
 /// 保留で待っている kemi wait に理由を返すのに待つ上限。返し終えればすぐ終わる。
 const SUSPEND_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -637,6 +694,7 @@ async fn run_review(
     source: Arc<dyn ReviewSource>,
     stored_session: Option<Arc<session::StoredSession>>,
     results_key: String,
+    live: Option<LiveRun>,
 ) -> ! {
     // --serve は互換のための受理のみ。既定で常にサーブする。
     let _ = cli.serve;
@@ -669,7 +727,12 @@ async fn run_review(
         Err(error) => fail(&error.to_string()),
     };
     eprintln!("kemi: {url}");
-    if let Some(warning) = exposure_warning(cli.bind, share_address) {
+    let warning = if live.is_some() {
+        live_exposure_warning(cli.bind, share_address)
+    } else {
+        exposure_warning(cli.bind, share_address)
+    };
+    if let Some(warning) = warning {
         eprintln!("{warning}");
     }
     let results = ResultStore {
@@ -687,6 +750,10 @@ async fn run_review(
     let (agent, endpoint) = match start_agent_channel(stored_session.as_deref(), &control).await {
         Some((agent, endpoint)) => (Some(agent), Some(endpoint)),
         None => (None, None),
+    };
+    let live = match &live {
+        Some(live) => start_live(cli, live, session_host(cli.bind, share_address)).await,
+        None => None,
     };
     let remove_endpoint = || {
         if let Some(endpoint) = &endpoint {
@@ -713,6 +780,7 @@ async fn run_review(
         notices: Arc::new(notice::StderrNotices),
         share_address,
         agent,
+        live,
     };
     // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
     // シグナルを受けても捨てない。
@@ -789,10 +857,14 @@ async fn run_resume(cli: &Cli) -> ! {
         Ok(stored) => stored,
         Err(error) => fail(&error.to_string()),
     };
-    // `--live` は写しを持たず、今の作業ツリーを読み直す（R-PAGE-SESSION）。
+    // `--live` は写しを持たず、今の作業ツリーを読み直し、同じページにつなぎ直す
+    // （R-PAGE-SESSION）。
+    let mut live = None;
     let source = match stored.info().mode {
         SessionMode::Live { page, root } => {
-            Arc::new(LiveSource::new(&page, &root)) as Arc<dyn ReviewSource>
+            let source = Arc::new(LiveSource::new(&page, &root)) as Arc<dyn ReviewSource>;
+            live = Some(LiveRun { page, root });
+            source
         }
         SessionMode::Worktree
         | SessionMode::Staged
@@ -803,7 +875,7 @@ async fn run_resume(cli: &Cli) -> ! {
         },
     };
     let results_key = stored.info().workspace_key;
-    run_review(cli, source, Some(Arc::new(stored)), results_key).await
+    run_review(cli, source, Some(Arc::new(stored)), results_key, live).await
 }
 
 /// `id` なしの起動。端末なら選択画面、端末でなければ一覧を出して終わる（R-SESSION）。
@@ -978,5 +1050,6 @@ async fn main() {
 
     let stored_session = open_session(&cli, live.as_ref());
     let results_key = result::workspace_key(&workspace_root(Path::new(".")));
-    run_review(&cli, source, stored_session, results_key).await
+    let live = live.map(|(page, root)| LiveRun { page, root });
+    run_review(&cli, source, stored_session, results_key, live).await
 }

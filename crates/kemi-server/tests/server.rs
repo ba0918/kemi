@@ -378,6 +378,7 @@ impl TestServer {
             notices: notices.clone(),
             share_address,
             agent: None,
+            live: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -1090,6 +1091,7 @@ impl LiveServer {
             notices: notices.clone(),
             share_address: None,
             agent: None,
+            live: None,
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。
@@ -2153,6 +2155,7 @@ impl TestServer {
             notices: notices.clone(),
             share_address: None,
             agent: None,
+            live: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -2347,6 +2350,7 @@ async fn session_copy_waits_for_both_units() {
         notices: Arc::new(RecordingNotices::default()),
         share_address: None,
         agent: None,
+        live: None,
     };
     tokio::spawn(serve(listener, params));
 
@@ -3475,6 +3479,7 @@ impl AgentServer {
                 token: "agent-secret".to_string(),
                 control: kemi_server::ServeControl::new(),
             }),
+            live: None,
         };
         let task = tokio::spawn(serve(listener, params));
         AgentServer {
