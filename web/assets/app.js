@@ -211,6 +211,11 @@ async function boot() {
     } else {
       renderNotice();
     }
+    // ページの見方は `--live` のレビューでだけ読み込む（R-VERIFY）。modulepreload にも載せない。
+    if (state.review?.live) {
+      const { startLive } = await import("./features/live.js");
+      startLive(state.review.live);
+    }
   } catch (error) {
     failed = true;
     held = null;

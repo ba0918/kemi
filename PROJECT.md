@@ -37,12 +37,12 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `app.js` | 結線と起動だけ。すべてを import してよい唯一のモジュール |
 | `features/` | 状態を変え、`api.js` を呼び、描き直す |
 | `views/` | 要素を作る。`api.js` を除く leaf と、ほかの `views/` を import してよい（循環させない）。`api.js`・`features/`・`app.js` は import しない |
-| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物） |
+| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読み） |
 
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
 - `features/` の中の順番は
-  `horizontal-scroll → display → navigation → files → rendered → theme → comments → agent → units → conversation → narrow → submit` で、
+  `horizontal-scroll → display → navigation → files → rendered → theme → comments → agent → units → conversation → narrow → submit → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
 - `state.js` は `storage.js` と `model.js` を import してよい。ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
@@ -51,6 +51,12 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   ESM は依存を 1 段ずつ発見するため。実測で読み込み完了が約 2 割短くなった）。
   モジュールを足したり改名したりしたら、その一覧も直す。ズレても壊れず、ブラウザの
   コンソールに警告が出るだけなので、機械的な検査は無い。
+- 例外は `--live` のページの見方（`features/live.js`・`views/live.js`・`live-model.js`・
+  `live.css`）。`--live` でないレビューはページ用のファイルを読み込まない約束（`R-VERIFY`）
+  なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
+- `web/live/page.js` は、中継したページに差し込むスクリプト。レビュー画面の層の外で、開発中の
+  ページの中で動き、レビュー画面とは `postMessage` だけで話す。中継のポートの `/__kemi/page.js`
+  で配る。
 
 ## Commands
 
