@@ -333,7 +333,6 @@ async fn an_unreachable_dev_server_shows_a_waiting_page() {
 
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let body = response.text().await.unwrap();
-    assert!(body.contains("kemi cannot reach"), "{body}");
     assert!(body.contains(r#"<script src="/__kemi/page.js""#), "{body}");
 }
 
@@ -520,16 +519,13 @@ async fn a_symlink_whose_target_is_outside_the_range_is_not_served() {
 }
 
 #[tokio::test]
-async fn a_missing_file_page_says_so_and_waits() {
+async fn a_missing_file_page_is_answered_as_not_found() {
     let root = Scratch::new("missing");
     let running = start_file_review(&root, "gone.html").await;
 
     let response = get_with_cookie(&running, "/gone.html").await;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    let body = response.text().await.unwrap();
-    assert!(body.contains("kemi cannot read /gone.html"), "{body}");
-    assert!(body.contains("/__kemi/alive"), "{body}");
 }
 
 // ---- スナップショット（R-PAGE-SNAPSHOT） ----

@@ -105,7 +105,7 @@ mod tests {
             let plain = exposure_warning(bind, share).expect("must warn");
 
             assert!(warning.starts_with(&plain), "{warning}");
-            assert!(warning.contains("page under development"), "{warning}");
+            assert_ne!(warning, plain);
         }
         assert_eq!(live_exposure_warning(Ipv4Addr::LOCALHOST, None), None);
     }

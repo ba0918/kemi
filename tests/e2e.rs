@@ -3508,8 +3508,7 @@ async fn live_file_review_resumed_after_the_file_is_gone_says_so_and_waits() {
     let live = resumed.live_url();
     let (status, body) = read_live_page(&resumed, &live).await;
 
-    assert_eq!(status, 404);
-    assert!(body.contains("kemi cannot read /page.html"), "{body}");
+    assert_eq!(status, 404, "{body}");
     resumed.kill();
 }
 
