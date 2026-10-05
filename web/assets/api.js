@@ -200,6 +200,11 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
     }
     connected = true;
   });
+  // 最初の接続に失敗しても起動は中身を読む。後でつながったときは読み直す（失敗した後に
+  // 起きたことは届いていない）。
+  events.addEventListener("error", () => {
+    connected = true;
+  });
   // サーバは通知の購読を始めてから応答のヘッダを返すので、open の後に起きたことは届く。
   return new Promise((resolve) => {
     events.addEventListener("open", () => resolve(), { once: true });

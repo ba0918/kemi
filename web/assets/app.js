@@ -161,12 +161,17 @@ async function boot() {
   // 描き終えてから届いた順に取り込む（先に取り込むと、読んだ中身で上書きされる）。
   /** @type {(() => void)[] | null} */
   let held = [];
+  // 起動に失敗したページには通知を取り込まない（溜め続けもしない）。
+  let failed = false;
   /**
    * @template {any[]} A
    * @param {(...args: A) => void} handler
    * @returns {(...args: A) => void}
    */
   const afterBoot = (handler) => (...args) => {
+    if (failed) {
+      return;
+    }
     if (held) {
       held.push(() => handler(...args));
     } else {
@@ -186,14 +191,20 @@ async function boot() {
       onMissed: afterBoot(receiveMissed),
     },
   );
-  applyReview(await api.getReview(false), true);
-  renderHeader();
-  renderAgent();
-  renderTree();
-  if (state.visible.length > 0) {
-    await selectIndex(0, { scrollTop: true });
-  } else {
-    renderNotice();
+  try {
+    applyReview(await api.getReview(false), true);
+    renderHeader();
+    renderAgent();
+    renderTree();
+    if (state.visible.length > 0) {
+      await selectIndex(0, { scrollTop: true });
+    } else {
+      renderNotice();
+    }
+  } catch (error) {
+    failed = true;
+    held = null;
+    throw error;
   }
   const tasks = held;
   held = null;
