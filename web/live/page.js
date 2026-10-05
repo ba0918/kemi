@@ -181,7 +181,10 @@
       if (rel.some((value) => ['preload', 'modulepreload', 'prefetch'].includes(value))) return null;
     }
     if (tag === 'style') {
-      copy.textContent = await inlineCss(original.textContent ?? '', document.baseURI);
+      // 中身の文字列ではなく今の規則から写す。insertRule などで足した規則は文字列に出ない。
+      const sheet = /** @type {HTMLStyleElement} */ (original).sheet;
+      const css = sheet ? sheetText(sheet) : (original.textContent ?? '');
+      copy.textContent = await inlineCss(css, document.baseURI);
       return copy;
     }
     if (tag === 'canvas') {
