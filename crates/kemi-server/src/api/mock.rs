@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::ApiError;
 use crate::AppState;
 use crate::live::LiveInfo;
-use crate::live::files::{clean_path, mime_for, resolve};
+use crate::live::files::{clean_path, content_type, resolve};
 use crate::live::rewrite::{root_relative_css, root_relative_html};
 
 #[derive(Debug, Deserialize)]
@@ -134,10 +134,13 @@ pub(crate) async fn mock_file(
     // 直接開かれても、レビュー画面のオリジンでスクリプトを動かさない（R-PAGE-MOCK）。
     (
         [
-            (header::CONTENT_TYPE, mime_for(&relative)),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts"),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_TYPE, content_type(&relative, &bytes)),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "sandbox allow-scripts".to_string(),
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
         ],
         bytes,
     )

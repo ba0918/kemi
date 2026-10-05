@@ -74,16 +74,14 @@ pub(super) async fn serve(state: &LiveState, root: &Path, request: Request) -> R
     if let Some(watch) = &state.served {
         watch.served(real.clone());
     }
-    let mime = mime_for(&relative);
     let headers = [
-        (header::CONTENT_TYPE, mime),
-        (header::CACHE_CONTROL, "no-store"),
+        (header::CONTENT_TYPE, content_type(&relative, &bytes)),
+        (header::CACHE_CONTROL, "no-store".to_string()),
     ];
     if is_html(&relative) {
         let host = relay::request_host(request.headers());
-        let text = String::from_utf8_lossy(&bytes);
         let tag = relay::script_tag(state, &host, &[], true, None);
-        return (headers, rewrite::inject_script(&text, &tag)).into_response();
+        return (headers, rewrite::inject_script(&bytes, &tag)).into_response();
     }
     (headers, bytes).into_response()
 }
@@ -102,14 +100,25 @@ fn waiting_for_the_file(state: &LiveState, host: &str, relative: &str) -> Respon
     )
 }
 
-pub(crate) fn mime_for(path: &str) -> &'static str {
+/// 配るファイルの Content-Type。HTML と CSS は、中身が UTF-8 として読めるときだけ
+/// `charset=utf-8` を付ける。ほかの文字コードのものはファイル自身の宣言（`<meta charset>`
+/// や `@charset`）に任せる。見出しの charset はファイルの宣言より優先されるため。
+pub(crate) fn content_type(path: &str, bytes: &[u8]) -> String {
+    let mime = mime_for(path);
+    if matches!(mime, "text/html" | "text/css") && std::str::from_utf8(bytes).is_ok() {
+        return format!("{mime}; charset=utf-8");
+    }
+    mime.to_string()
+}
+
+fn mime_for(path: &str) -> &'static str {
     let extension = path
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "html" | "htm" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "json" => "application/json",
         "svg" => "image/svg+xml",

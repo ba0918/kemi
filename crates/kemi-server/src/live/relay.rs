@@ -94,9 +94,8 @@ pub(super) async fn forward(
                 .into_response();
         }
     };
-    let text = String::from_utf8_lossy(&bytes);
     let injected = rewrite::inject_script(
-        &text,
+        &bytes,
         &script_tag(state, &host, &rewrote, true, Some(&nonce)),
     );
     parts.headers.remove(header::CONTENT_LENGTH);

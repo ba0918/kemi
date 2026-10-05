@@ -440,6 +440,31 @@ async fn a_file_page_whose_name_needs_percent_encoding_opens_at_its_start_url() 
 }
 
 #[tokio::test]
+async fn a_file_page_in_another_encoding_is_served_with_its_own_bytes_and_declaration() {
+    let root = Scratch::new("shift-jis");
+    // Shift_JIS の「日本」。UTF-8 としては読めない。
+    let mut html = br#"<html><head><meta charset="shift_jis"></head><body>"#.to_vec();
+    html.extend_from_slice(&[0x93, 0xfa, 0x96, 0x7b]);
+    html.extend_from_slice(b"</body></html>");
+    std::fs::write(root.0.join("page.html"), &html).unwrap();
+    let running = start_file_review(&root, "page.html").await;
+
+    let page = get_with_cookie(&running, "/page.html").await;
+
+    let content_type = page.headers()[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(!content_type.contains("utf-8"), "{content_type}");
+    let body = page.bytes().await.unwrap();
+    assert!(
+        body.windows(4)
+            .any(|window| window == [0x93, 0xfa, 0x96, 0x7b]),
+        "{body:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_file_review_needs_the_relay_cookie_too() {
     let root = Scratch::new("cookie");
     root.write("page.html", "<p>file page</p>");

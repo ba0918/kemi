@@ -3,29 +3,39 @@
 
 /// HTML に差し込むスクリプトの要素を入れる。`<head>` の直後、無ければ `<body>` の前、
 /// それも無ければ doctype の後ろ。doctype より前に入れると互換モードで描かれるため。
-pub fn inject_script(html: &str, tag: &str) -> String {
+/// バイト列のまま扱う。探すのは ASCII のタグだけなので、ページの文字コードを問わない。
+pub fn inject_script(html: &[u8], tag: &str) -> Vec<u8> {
     let lower = html.to_ascii_lowercase();
-    let at = find_tag(&lower, "head")
-        .and_then(|start| lower[start..].find('>').map(|end| start + end + 1))
-        .or_else(|| find_tag(&lower, "body"))
+    let after_open = |start: usize| {
+        lower[start..]
+            .iter()
+            .position(|&byte| byte == b'>')
+            .map(|end| start + end + 1)
+    };
+    let at = find_tag(&lower, b"head")
+        .and_then(after_open)
+        .or_else(|| find_tag(&lower, b"body"))
         .or_else(|| {
             lower
-                .starts_with("<!doctype")
-                .then(|| lower.find('>').map(|end| end + 1))
+                .starts_with(b"<!doctype")
+                .then(|| after_open(0))
                 .flatten()
         })
         .unwrap_or(0);
-    format!("{}{tag}{}", &html[..at], &html[at..])
+    [&html[..at], tag.as_bytes(), &html[at..]].concat()
 }
 
 /// `<name` で始まり、名前がそこで切れる開始タグの位置（`<header>` を `<head>` にしない）。
-fn find_tag(lower: &str, name: &str) -> Option<usize> {
-    let needle = format!("<{name}");
+fn find_tag(lower: &[u8], name: &[u8]) -> Option<usize> {
+    let needle = [b"<", name].concat();
     let mut from = 0;
-    while let Some(found) = lower[from..].find(&needle) {
+    while let Some(found) = lower[from..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+    {
         let start = from + found;
-        let next = lower[start + needle.len()..].chars().next();
-        if next.is_some_and(|character| character == '>' || character.is_ascii_whitespace()) {
+        let next = lower.get(start + needle.len());
+        if next.is_some_and(|&byte| byte == b'>' || byte.is_ascii_whitespace()) {
             return Some(start);
         }
         from = start + needle.len();
@@ -289,12 +299,31 @@ mod tests {
 
     const TAG: &str = r#"<script src="/__kemi/page.js"></script>"#;
 
+    fn inject(html: &str) -> String {
+        String::from_utf8(inject_script(html.as_bytes(), TAG)).unwrap()
+    }
+
+    #[test]
+    fn a_page_in_another_encoding_keeps_its_bytes() {
+        // Shift_JIS の「日本」と、UTF-8 として読めないバイト。
+        let mut html = b"<html><head><meta charset=\"shift_jis\">".to_vec();
+        html.extend_from_slice(&[0x93, 0xfa, 0x96, 0x7b, 0xff]);
+        html.extend_from_slice(b"</head><body></body></html>");
+
+        let injected = inject_script(&html, TAG);
+
+        let mut expected = b"<html><head>".to_vec();
+        expected.extend_from_slice(TAG.as_bytes());
+        expected.extend_from_slice(&html[b"<html><head>".len()..]);
+        assert_eq!(injected, expected);
+    }
+
     #[test]
     fn the_script_goes_right_after_the_head_tag() {
         let html =
             "<!doctype html><html><HEAD lang=\"en\"><title>x</title></head><body></body></html>";
         assert_eq!(
-            inject_script(html, TAG),
+            inject(html),
             format!(
                 "<!doctype html><html><HEAD lang=\"en\">{TAG}<title>x</title></head><body></body></html>"
             )
@@ -305,7 +334,7 @@ mod tests {
     fn without_a_head_the_script_goes_before_the_body() {
         let html = "<!doctype html><body><p>x</p></body>";
         assert_eq!(
-            inject_script(html, TAG),
+            inject(html),
             format!("<!doctype html>{TAG}<body><p>x</p></body>")
         );
     }
@@ -313,17 +342,17 @@ mod tests {
     #[test]
     fn without_head_or_body_the_script_follows_the_doctype() {
         assert_eq!(
-            inject_script("<!DOCTYPE html><p>x</p>", TAG),
+            inject("<!DOCTYPE html><p>x</p>"),
             format!("<!DOCTYPE html>{TAG}<p>x</p>")
         );
-        assert_eq!(inject_script("<p>x</p>", TAG), format!("{TAG}<p>x</p>"));
+        assert_eq!(inject("<p>x</p>"), format!("{TAG}<p>x</p>"));
     }
 
     #[test]
     fn a_header_named_like_head_is_not_taken_for_the_head() {
         let html = "<header>x</header><body></body>";
         assert_eq!(
-            inject_script(html, TAG),
+            inject(html),
             format!("<header>x</header>{TAG}<body></body>")
         );
     }
