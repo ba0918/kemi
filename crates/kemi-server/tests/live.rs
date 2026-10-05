@@ -273,6 +273,43 @@ async fn a_page_that_refuses_frames_is_rewritten_and_gets_the_page_script() {
     assert!(body.contains("dev page"), "{body}");
 }
 
+/// `Sec-Fetch-Dest` を付けて中継の `path` を取る（ブラウザが要求の行き先に付ける見出し）。
+async fn get_as(running: &Running, path: &str, dest: &str) -> String {
+    reqwest::Client::new()
+        .get(format!("{}{path}", running.live))
+        .header(header::COOKIE, relay_cookie(running))
+        .header("sec-fetch-dest", dest)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn html_fetched_by_the_page_scripts_is_relayed_without_the_page_script() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let fetched = get_as(&running, "/", "empty").await;
+    let document = get_as(&running, "/", "document").await;
+    let framed = get_as(&running, "/", "iframe").await;
+
+    assert_eq!(
+        fetched,
+        "<!doctype html><html><head><title>dev</title></head><body>dev page</body></html>"
+    );
+    assert!(
+        document.contains(r#"<script src="/__kemi/page.js""#),
+        "{document}"
+    );
+    assert!(
+        framed.contains(r#"<script src="/__kemi/page.js""#),
+        "{framed}"
+    );
+}
+
 #[tokio::test]
 async fn a_page_that_allows_scripts_by_nonce_lets_the_page_script_run_by_its_own_nonce() {
     let (authority, _dev) = start_dev_server().await;
@@ -423,6 +460,23 @@ async fn a_file_page_is_served_with_the_page_script_and_its_css() {
             .starts_with("text/css")
     );
     assert_eq!(css.text().await.unwrap(), "p { color: red; }");
+}
+
+#[tokio::test]
+async fn an_html_file_fetched_by_the_page_scripts_is_served_without_the_page_script() {
+    let root = Scratch::new("fetched");
+    root.write("page.html", "<html><body>page</body></html>");
+    root.write("part.html", "<p>part</p>");
+    let running = start_file_review(&root, "page.html").await;
+
+    let fetched = get_as(&running, "/part.html", "empty").await;
+    let framed = get_as(&running, "/page.html", "iframe").await;
+
+    assert_eq!(fetched, "<p>part</p>");
+    assert!(
+        framed.contains(r#"<script src="/__kemi/page.js""#),
+        "{framed}"
+    );
 }
 
 #[tokio::test]

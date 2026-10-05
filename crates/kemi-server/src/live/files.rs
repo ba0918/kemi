@@ -78,7 +78,7 @@ pub(super) async fn serve(state: &LiveState, root: &Path, request: Request) -> R
         (header::CONTENT_TYPE, content_type(&relative, &bytes)),
         (header::CACHE_CONTROL, "no-store".to_string()),
     ];
-    if is_html(&relative) {
+    if is_html(&relative) && relay::opened_as_page(request.headers()) {
         let host = relay::request_host(request.headers());
         let tag = relay::script_tag(state, &host, &[], true, None);
         return (headers, rewrite::inject_script(&bytes, &tag)).into_response();

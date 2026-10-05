@@ -30,6 +30,7 @@ pub(super) async fn forward(
     request: Request,
 ) -> Response {
     let host = request_host(request.headers());
+    let page = opened_as_page(request.headers());
     let stream = match TcpStream::connect(authority).await {
         Ok(stream) => stream,
         Err(_) => return waiting_page(state, &host, display),
@@ -81,7 +82,13 @@ pub(super) async fn forward(
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/html"));
-    if !html {
+    if html {
+        // 同じ URL でも行き先によって中身が変わるので、キャッシュに区別させる。
+        parts
+            .headers
+            .append(header::VARY, HeaderValue::from_static("sec-fetch-dest"));
+    }
+    if !html || !page {
         return Response::from_parts(parts, Body::new(body));
     }
     let bytes = match axum::body::to_bytes(Body::new(body), HTML_LIMIT).await {
@@ -101,6 +108,16 @@ pub(super) async fn forward(
     parts.headers.remove(header::CONTENT_LENGTH);
     parts.headers.remove(header::TRANSFER_ENCODING);
     Response::from_parts(parts, Body::from(injected))
+}
+
+/// ページとして開かれる要求か（文書としての移動か iframe への読み込み）。ページの
+/// スクリプトが fetch などで取る要求はブラウザが `Sec-Fetch-Dest: empty` を付ける。
+/// 見出しを送らない古いブラウザでもページが動くよう、無ければページとして扱う。
+pub(super) fn opened_as_page(headers: &HeaderMap) -> bool {
+    headers
+        .get("sec-fetch-dest")
+        .and_then(|value| value.to_str().ok())
+        .is_none_or(|dest| matches!(dest, "document" | "iframe" | "frame"))
 }
 
 /// `X-Frame-Options` を外し、CSP を書き換え、開発サーバ自身への転送先を中継の中に向ける。
