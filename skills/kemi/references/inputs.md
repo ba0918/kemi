@@ -68,9 +68,8 @@ The page has a **Page** view (the running page beside what it is compared with, 
 from 320 to 3840) and a **Code** view (the working-tree diff). What the page is compared with is a
 snapshot — a script-free copy kemi takes at the start, at each hand-over to you, and on
 **Record now** — or a mock, an HTML file in the served directory the person assigns to the page.
-They can be shown side by side or overlaid with adjustable opacity. When you change a page, say
-which page and width to look at. Handing over is the person's action: their next hand-over (or
-**Record now**) takes a fresh snapshot.
+They can be shown side by side or overlaid with adjustable opacity. Handing over is the person's
+action: their next hand-over (or **Record now**) takes a fresh snapshot.
 
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
 connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
