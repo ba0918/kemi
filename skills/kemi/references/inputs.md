@@ -61,7 +61,8 @@ for a file the URL is its path from that directory, such as `/docs/mock.html`.
 kemi prints `kemi: live <url>` after the review line: the page relayed through a second port
 (`--live-port`, default a free one). It opens only in a browser that opened the review URL first,
 so send the person the review URL, not this one. When the dev server is not running, the page
-says so and waits for it.
+says so and waits for it. A file page is served on that port too, reloads when it or a file it
+loaded is saved, and waits when the file is missing.
 
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
 connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.

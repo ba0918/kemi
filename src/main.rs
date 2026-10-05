@@ -644,7 +644,7 @@ struct LiveRun {
 }
 
 impl LiveRun {
-    /// 中継の相手。ファイルの配信はまだ無いので、URL のときだけ中継する。
+    /// 中継の相手と、最初に開くパス。
     fn target(&self) -> Option<(LiveTarget, String)> {
         match &self.page {
             LivePage::Url(text) => {
@@ -658,7 +658,13 @@ impl LiveRun {
                     url.path_and_query,
                 ))
             }
-            LivePage::File(_) => None,
+            LivePage::File(path) => Some((
+                LiveTarget::File {
+                    root: self.root.clone(),
+                    path: path.clone(),
+                },
+                format!("/{path}"),
+            )),
         }
     }
 }

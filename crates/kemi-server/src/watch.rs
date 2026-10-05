@@ -64,6 +64,67 @@ pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<Event>) {
     });
 }
 
+/// 配れる範囲のうち、配ったファイルを見張る（R-LIVE の `--live <ファイル>`）。範囲を
+/// 再帰で見張ると大きな作業ツリーで監視が破綻するので、配ったファイルの親ディレクトリ
+/// だけを見張り、配ったファイルの変更だけを知らせる。
+pub(crate) struct ServedWatch {
+    sender: std::sync::mpsc::Sender<RangeMessage>,
+}
+
+enum RangeMessage {
+    Served(PathBuf),
+    Changed(notify::Result<notify::Event>),
+}
+
+impl ServedWatch {
+    /// 配ったファイル（実体の場所）を見張りに足す。
+    pub(crate) fn served(&self, file: PathBuf) {
+        let _ = self.sender.send(RangeMessage::Served(file));
+    }
+}
+
+/// 配ったファイルが変わったら `reload` に知らせる。
+pub(crate) fn start_served(reload: broadcast::Sender<()>) -> ServedWatch {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let events = sender.clone();
+    std::thread::spawn(move || {
+        let Ok(mut watcher) = notify::recommended_watcher(move |event| {
+            let _ = events.send(RangeMessage::Changed(event));
+        }) else {
+            return;
+        };
+        let mut files: HashSet<PathBuf> = HashSet::new();
+        let mut directories: HashSet<PathBuf> = HashSet::new();
+        let mut debounce = Debounce::new(DEBOUNCE);
+        loop {
+            let received = match debounce.remaining(Instant::now()) {
+                None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                Some(wait) => receiver.recv_timeout(wait),
+            };
+            match received {
+                Ok(RangeMessage::Served(file)) => {
+                    let file = canonical(file);
+                    if let Some(parent) = file.parent()
+                        && directories.insert(parent.to_path_buf())
+                    {
+                        let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
+                    }
+                    files.insert(file);
+                }
+                Ok(RangeMessage::Changed(Ok(event))) if changes_a_watched_file(&event, &files) => {
+                    debounce.note(Instant::now());
+                }
+                Ok(RangeMessage::Changed(_)) | Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+            if debounce.take_due(Instant::now()) {
+                let _ = reload.send(());
+            }
+        }
+    });
+    ServedWatch { sender }
+}
+
 fn changes_a_watched_file(event: &notify::Event, files: &HashSet<PathBuf>) -> bool {
     if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
         return false;

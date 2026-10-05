@@ -405,12 +405,12 @@ pub async fn serve(
         servers.push(Box::pin(agent.into_future()));
     }
     if let Some((live_listener, info, target)) = live {
-        let live_state = Arc::new(live::LiveState {
+        let live_state = Arc::new(live::LiveState::new(
             info,
             target,
-            assets: state.assets.clone(),
-            review_port: address.port(),
-        });
+            state.assets.clone(),
+            address.port(),
+        ));
         let relay = axum::serve(live_listener, live::router(live_state));
         let stop = stopping(&state);
         // 中継は開発サーバの長く続く応答（SSE など）を抱えうるので、graceful shutdown で

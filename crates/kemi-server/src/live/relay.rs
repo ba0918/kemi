@@ -13,18 +13,24 @@ use super::{LiveState, LiveTarget, rewrite};
 /// 書き換える HTML の上限。これより大きい HTML は書き換えずに断る。
 const HTML_LIMIT: usize = 32 * 1024 * 1024;
 
-pub(super) async fn reachable(target: &LiveTarget) -> bool {
+/// 開発サーバにつながるか、配るファイルがあるか（待っているページが確かめる）。
+pub(super) async fn reachable(target: &LiveTarget, path: Option<&str>) -> bool {
     match target {
         LiveTarget::Url { authority, .. } => TcpStream::connect(authority.as_str()).await.is_ok(),
+        LiveTarget::File { root, .. } => path
+            .and_then(|path| path.strip_prefix('/'))
+            .is_some_and(|relative| super::files::resolve(root, relative).is_some()),
     }
 }
 
-pub(super) async fn forward(state: &LiveState, request: Request) -> Response {
-    let LiveTarget::Url {
-        authority, display, ..
-    } = &state.target;
+pub(super) async fn forward(
+    state: &LiveState,
+    authority: &str,
+    display: &str,
+    request: Request,
+) -> Response {
     let host = request_host(request.headers());
-    let stream = match TcpStream::connect(authority.as_str()).await {
+    let stream = match TcpStream::connect(authority).await {
         Ok(stream) => stream,
         Err(_) => return waiting_page(state, &host, display),
     };
@@ -136,7 +142,7 @@ fn rewrite_headers(
 }
 
 /// 要求の `Host`。HTML の属性と CSP に入れるので、アドレスとポートに使う文字だけを通す。
-fn request_host(headers: &HeaderMap) -> String {
+pub(super) fn request_host(headers: &HeaderMap) -> String {
     headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -156,32 +162,59 @@ fn review_origin(state: &LiveState, host: &str) -> String {
     format!("http://{name}:{}", state.review_port)
 }
 
-fn script_tag(state: &LiveState, host: &str, rewrote: &[&str], reachable: bool) -> String {
+/// 差し込むスクリプトの要素。`data-kemi-watch` はファイルの保存で読み込み直すページの印。
+pub(super) fn script_tag(
+    state: &LiveState,
+    host: &str,
+    rewrote: &[&str],
+    reachable: bool,
+) -> String {
+    let watch = matches!(state.target, LiveTarget::File { .. });
     format!(
-        r#"<script src="/__kemi/page.js" data-kemi-review="{}" data-kemi-rewrote="{}" data-kemi-reachable="{reachable}"></script>"#,
+        r#"<script src="/__kemi/page.js" data-kemi-review="{}" data-kemi-rewrote="{}" data-kemi-reachable="{reachable}" data-kemi-watch="{watch}"></script>"#,
         review_origin(state, host),
         rewrote.join(" "),
     )
 }
 
+pub(super) fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 /// 開発サーバにつながらないときのページ（R-PAGE-MODE）。つながるまで確かめ続け、
 /// つながったら読み込み直す。
 fn waiting_page(state: &LiveState, host: &str, display: &str) -> Response {
-    let shown = display
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;");
+    waiting_response(
+        StatusCode::BAD_GATEWAY,
+        state,
+        host,
+        &format!(
+            "kemi cannot reach {}. Waiting for the dev server to start&hellip;",
+            escape(display)
+        ),
+    )
+}
+
+/// つながるまで（ファイルが戻るまで）待ち、戻ったら読み込み直すページ。`message` は HTML。
+pub(super) fn waiting_response(
+    status: StatusCode,
+    state: &LiveState,
+    host: &str,
+    message: &str,
+) -> Response {
     let html = format!(
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>Waiting for the page</title>{}
 <style>body {{ font: 15px/1.5 system-ui, sans-serif; margin: 2rem; color: #444; }}</style>
 </head><body>
-<p id="kemi-unreachable">kemi cannot reach {shown}. Waiting for the dev server to start&hellip;</p>
+<p id="kemi-unreachable">{message}</p>
 <script>
 setInterval(async () => {{
   try {{
-    const response = await fetch('/__kemi/alive', {{ cache: 'no-store' }});
+    const response = await fetch('/__kemi/alive?path=' + encodeURIComponent(location.pathname), {{ cache: 'no-store' }});
     if (response.ok) location.reload();
   }} catch {{}}
 }}, 500);
@@ -191,7 +224,7 @@ setInterval(async () => {{
         script_tag(state, host, &[], false)
     );
     (
-        StatusCode::BAD_GATEWAY,
+        status,
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),

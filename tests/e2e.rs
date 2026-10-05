@@ -3418,3 +3418,72 @@ async fn resume_of_a_live_review_accepts_a_live_port_and_listens_there() {
     assert_eq!(resumed.live_url(), format!("http://127.0.0.1:{port}/app"));
     resumed.kill();
 }
+
+/// レビューの URL を開いて中継用の cookie を受け取り、中継の URL を読む。
+async fn read_live_page(kemi: &Kemi, live: &str) -> (u16, String) {
+    let client = reqwest::Client::new();
+    let opened = client.get(&kemi.url).send().await.unwrap();
+    let cookie = opened.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let response = client
+        .get(live)
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.text().await.unwrap())
+}
+
+#[tokio::test]
+async fn live_file_outside_git_is_read_through_the_live_url() {
+    let dir = TempDir::new();
+    dir.write(
+        "site/page.html",
+        "<html><head></head><body>local file page</body></html>",
+    );
+    let mut kemi = Kemi::spawn(&dir.path, &["--live", "site/page.html", "--no-open"]);
+    kemi.review_id();
+    let live = kemi.live_url();
+    assert!(live.ends_with("/site/page.html"), "{live}");
+
+    let (status, body) = read_live_page(&kemi, &live).await;
+
+    assert_eq!(status, 200);
+    assert!(body.contains("local file page"), "{body}");
+    kemi.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_file_review_resumed_after_the_file_is_gone_says_so_and_waits() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    dir.write("page.html", "<p>page</p>");
+    let mut kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &["--live", "page.html", "--no-open"],
+        &state.path,
+    );
+    let id = kemi.review_id();
+    kemi.wait_serving().await;
+    kemi.add_comment(1, "keep").await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+    std::fs::remove_file(dir.path.join("page.html")).unwrap();
+
+    let mut resumed =
+        Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let live = resumed.live_url();
+    let (status, body) = read_live_page(&resumed, &live).await;
+
+    assert_eq!(status, 404);
+    assert!(body.contains("kemi cannot read /page.html"), "{body}");
+    resumed.kill();
+}

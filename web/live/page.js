@@ -4,6 +4,12 @@
 // 済むようにするため。
 (() => {
   const script = /** @type {HTMLScriptElement | null} */ (document.currentScript);
+  // 手元の HTML ファイルは、配った範囲のファイルが保存されたら読み込み直す（R-LIVE の例外）。
+  if (script?.dataset.kemiWatch === 'true') {
+    const events = new EventSource('/__kemi/events');
+    events.addEventListener('reload', () => location.reload());
+  }
+
   const review = script?.dataset.kemiReview;
   if (!review || window.parent === window) return;
 

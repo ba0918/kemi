@@ -112,6 +112,15 @@ impl Drop for Running {
 }
 
 async fn start_review(authority: &str) -> Running {
+    start_review_of(LiveTarget::Url {
+        authority: authority.to_string(),
+        start: "/".to_string(),
+        display: format!("http://{authority}/"),
+    })
+    .await
+}
+
+async fn start_review_of(target: LiveTarget) -> Running {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let review_port = listener.local_addr().unwrap().port();
     let live_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -127,11 +136,7 @@ async fn start_review(authority: &str) -> Running {
         agent: None,
         live: Some(LiveParams {
             listener: live_listener,
-            target: LiveTarget::Url {
-                authority: authority.to_string(),
-                start: "/".to_string(),
-                display: format!("http://{authority}/"),
-            },
+            target,
             cookie: RELAY.to_string(),
             code_view: false,
         }),
@@ -308,4 +313,141 @@ async fn the_review_tells_the_page_where_the_relay_listens() {
     assert_eq!(review["live"]["start"], "/");
     assert_eq!(review["live"]["page"], format!("http://{authority}/"));
     assert_eq!(review["live"]["code"], false);
+}
+
+// ---- 手元の HTML ファイル（R-PAGE-MODE の <ファイル>） ----
+
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("kemi-live-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        Scratch(std::fs::canonicalize(path).unwrap())
+    }
+
+    fn write(&self, relative: &str, content: &str) {
+        let full = self.0.join(relative);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, content).unwrap();
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+async fn start_file_review(root: &Scratch, path: &str) -> Running {
+    start_review_of(LiveTarget::File {
+        root: root.0.clone(),
+        path: path.to_string(),
+    })
+    .await
+}
+
+async fn get_with_cookie(running: &Running, path: &str) -> reqwest::Response {
+    reqwest::Client::new()
+        .get(format!("{}{path}", running.live))
+        .header(header::COOKIE, relay_cookie(running))
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_file_page_is_served_with_the_page_script_and_its_css() {
+    let root = Scratch::new("served");
+    root.write(
+        "docs/page.html",
+        "<html><head><link rel=stylesheet href=style.css></head><body>file page</body></html>",
+    );
+    root.write("docs/style.css", "p { color: red; }");
+    let running = start_file_review(&root, "docs/page.html").await;
+
+    let page = get_with_cookie(&running, "/docs/page.html").await;
+    let css = get_with_cookie(&running, "/docs/style.css").await;
+
+    assert_eq!(page.status(), StatusCode::OK);
+    let body = page.text().await.unwrap();
+    assert!(body.contains("file page"), "{body}");
+    assert!(body.contains(r#"<script src="/__kemi/page.js""#), "{body}");
+    assert_eq!(css.status(), StatusCode::OK);
+    assert!(
+        css.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/css")
+    );
+    assert_eq!(css.text().await.unwrap(), "p { color: red; }");
+}
+
+#[tokio::test]
+async fn a_file_review_needs_the_relay_cookie_too() {
+    let root = Scratch::new("cookie");
+    root.write("page.html", "<p>file page</p>");
+    let running = start_file_review(&root, "page.html").await;
+
+    let response = reqwest::get(format!("{}/page.html", running.live))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn paths_outside_the_range_and_inside_dot_git_are_not_served() {
+    let root = Scratch::new("range");
+    root.write("site/page.html", "<p>inside</p>");
+    root.write("site/.git/config", "[core]");
+    root.write("secret.html", "<p>secret</p>");
+    let range = Scratch(root.0.join("site"));
+    let running = start_file_review(&range, "page.html").await;
+
+    for path in [
+        "/%2e%2e/secret.html",
+        "/..%2fsecret.html",
+        "/.git/config",
+        "/missing.css",
+    ] {
+        let response = get_with_cookie(&running, path).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        let body = response.text().await.unwrap();
+        assert!(
+            !body.contains("<p>secret</p>") && !body.contains("[core]"),
+            "{path}: {body}"
+        );
+    }
+    std::mem::forget(range);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlink_whose_target_is_outside_the_range_is_not_served() {
+    let root = Scratch::new("link");
+    root.write("site/page.html", "<p>inside</p>");
+    root.write("secret.html", "<p>secret</p>");
+    std::os::unix::fs::symlink(root.0.join("secret.html"), root.0.join("site/link.html")).unwrap();
+    let range = Scratch(root.0.join("site"));
+    let running = start_file_review(&range, "page.html").await;
+
+    let response = get_with_cookie(&running, "/link.html").await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    std::mem::forget(range);
+}
+
+#[tokio::test]
+async fn a_missing_file_page_says_so_and_waits() {
+    let root = Scratch::new("missing");
+    let running = start_file_review(&root, "gone.html").await;
+
+    let response = get_with_cookie(&running, "/gone.html").await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("kemi cannot read /gone.html"), "{body}");
+    assert!(body.contains("/__kemi/alive"), "{body}");
 }

@@ -134,7 +134,13 @@ before forwarding a request to the dev server. WebSocket traffic, such as hot
 module reloading, passes through unchanged. kemi drops `X-Frame-Options` and
 narrows the CSP `frame-ancestors` to the review page, adding only its own
 script to `script-src`. When the dev server is not running, the page says so
-and waits; it loads once the server starts. `--bind` applies to the relay
+and waits; it loads once the server starts.
+
+A file page is served on the same port, together with the other files in the
+served directory that it references. Saving the page or any file it loaded
+reloads it, and a link to another HTML file there moves to that page. Paths
+outside the directory, symlinks pointing outside, and `.git/` return 404. If
+the file is gone, the page says so and waits for it. `--bind` applies to the relay
 too, and its LAN warning adds that the page under development is visible.
 
 The code view is the same as `--worktree`. Outside a git repository there is

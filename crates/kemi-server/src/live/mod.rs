@@ -2,6 +2,7 @@
 //! 中継し、HTML にページ用のスクリプトを差し込む。中継のポートは中継用の cookie を持つ
 //! 要求だけを通す。cookie はレビュー画面のトークンの URL を開いたときに入れる。
 
+mod files;
 mod relay;
 mod rewrite;
 
@@ -35,6 +36,12 @@ pub enum LiveTarget {
         authority: String,
         start: String,
         display: String,
+    },
+    /// 配れる範囲の HTML ファイル。`root` は範囲の根（実体の場所）、`path` はそこからの
+    /// 相対パス（`/` 区切り）。
+    File {
+        root: std::path::PathBuf,
+        path: String,
     },
 }
 
@@ -76,6 +83,33 @@ pub(crate) struct LiveState {
     pub assets: Arc<dyn Assets>,
     /// レビュー画面の待ち受けポート。`frame-ancestors` に入れる。
     pub review_port: u16,
+    /// 配ったファイルの見張り（`<ファイル>` のときだけ）。
+    pub served: Option<crate::watch::ServedWatch>,
+    /// 配ったファイルが保存されたときの知らせ。ページは読み込み直す（R-LIVE の例外）。
+    pub reload: tokio::sync::broadcast::Sender<()>,
+}
+
+impl LiveState {
+    pub fn new(
+        info: Arc<LiveInfo>,
+        target: LiveTarget,
+        assets: Arc<dyn Assets>,
+        review_port: u16,
+    ) -> Self {
+        let (reload, _) = tokio::sync::broadcast::channel(16);
+        let served = match &target {
+            LiveTarget::Url { .. } => None,
+            LiveTarget::File { .. } => Some(crate::watch::start_served(reload.clone())),
+        };
+        LiveState {
+            info,
+            target,
+            assets,
+            review_port,
+            served,
+            reload,
+        }
+    }
 }
 
 /// 中継のリスナーを分けて、レビュー画面と中継の両方が持つ情報を作る。
@@ -83,6 +117,7 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
     let port = params.listener.local_addr()?.port();
     let (start, display) = match &params.target {
         LiveTarget::Url { start, display, .. } => (start.clone(), display.clone()),
+        LiveTarget::File { path, .. } => (format!("/{path}"), format!("/{path}")),
     };
     let info = LiveInfo {
         port,
@@ -124,14 +159,19 @@ async fn handle(State(state): State<Arc<LiveState>>, mut request: Request) -> Re
     }
     let path = request.uri().path().to_string();
     if let Some(own) = path.strip_prefix("/__kemi/") {
-        return own_file(&state, own).await;
+        return own_file(&state, own, request.uri().query()).await;
     }
-    relay::forward(&state, request).await
+    match &state.target {
+        LiveTarget::Url {
+            authority, display, ..
+        } => relay::forward(&state, authority, display, request).await,
+        LiveTarget::File { root, .. } => files::serve(&state, root, request).await,
+    }
 }
 
 /// 中継のポートで kemi 自身が配るもの。差し込むスクリプトと、開発サーバに
 /// つながるかの確かめ（待っているページが使う）。
-async fn own_file(state: &LiveState, path: &str) -> Response {
+async fn own_file(state: &LiveState, path: &str, query: Option<&str>) -> Response {
     match path {
         "page.js" => match state.assets.get("live/page.js") {
             Some(asset) => (
@@ -142,14 +182,35 @@ async fn own_file(state: &LiveState, path: &str) -> Response {
             None => StatusCode::NOT_FOUND.into_response(),
         },
         "alive" => {
-            if relay::reachable(&state.target).await {
+            let page = query
+                .and_then(|query| query.strip_prefix("path="))
+                .and_then(files::percent_decode);
+            if relay::reachable(&state.target, page.as_deref()).await {
                 StatusCode::NO_CONTENT.into_response()
             } else {
                 StatusCode::BAD_GATEWAY.into_response()
             }
         }
+        "events" => reload_events(state),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// 配ったファイルが保存されたら `reload` を送る SSE（R-LIVE の `--live <ファイル>`）。
+fn reload_events(state: &LiveState) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
+    let stream = tokio_stream::wrappers::BroadcastStream::new(state.reload.subscribe()).filter_map(
+        |received| async move {
+            // data の無いイベントはブラウザが配らないので、中身の無い印を入れる。
+            received.ok().map(|()| {
+                Ok::<_, std::convert::Infallible>(Event::default().event("reload").data("saved"))
+            })
+        },
+    );
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// 長さと中身を、早く抜けずに比べる。

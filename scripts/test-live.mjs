@@ -7,6 +7,7 @@
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
 //   まま新しく起動しても、止めたまま復元しても、つながらない旨が出て、開発サーバを起動すると
 //   つながる。
+// - 手元の HTML ファイル: 参照する CSS を保存し直すと読み込み直される。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -180,10 +181,34 @@ async function waitsForTheDevServer(repository) {
   }
 }
 
+/** 手元の HTML ファイル（R-PAGE-MODE、R-LIVE）: 参照する CSS を保存し直すと読み込み直される。 */
+async function fileReloadsWhenItsCssIsSaved(repository) {
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(join(repository, 'site'), { recursive: true });
+  await writeFile(join(repository, 'site', 'page.html'), '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><p class="box">file page</p></body></html>\n');
+  await writeFile(join(repository, 'site', 'style.css'), '.box { color: rgb(255, 0, 0); }\n');
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', 'site/page.html']);
+  try {
+    assert.match(kemi.live, /\/site\/page\.html$/);
+    await browser('open', kemi.url);
+    await browser('open', kemi.live);
+    const color = `getComputedStyle(document.querySelector('.box')).color`;
+    await waitFor(`${color} === 'rgb(255, 0, 0)'`);
+    await evaluate(`window.__kemiBeforeReload = true; true`);
+    await writeFile(join(repository, 'site', 'style.css'), '.box { color: rgb(0, 128, 0); }\n');
+    await waitFor(`${color} === 'rgb(0, 128, 0)' && window.__kemiBeforeReload === undefined`);
+    console.log('PASS 手元の HTML ファイルが参照する CSS を保存し直すと、ページが読み込み直される');
+  } finally {
+    await stop(kemi);
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
   await waitsForTheDevServer(repository);
+  await fileReloadsWhenItsCssIsSaved(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
