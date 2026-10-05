@@ -41,7 +41,10 @@ export function applyMessage(message) {
   }
 }
 
-/** 通知を取りこぼした。スレッド・発言・状態を取り直す（コメントの増減は更新バッジに任せる）。 */
+/**
+ * 通知が届かなかった（取りこぼしたか、つながっていなかった）。スレッド・発言・状態を取り直す
+ * （コメントの増減は更新バッジに任せる）。
+ */
 export async function resyncAgent() {
   try {
     const review = await api.getReview(false, state.unit);

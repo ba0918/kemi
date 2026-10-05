@@ -158,14 +158,14 @@ export function submit(verdict) {
  *   onThread: (comment: any) => void,
  *   onMessage: (message: any) => void,
  *   onAgent: (agent: any) => void,
- *   onLagged: () => void,
+ *   onMissed: () => void,
  * }} AgentHandlers
  */
 
 /**
  * @param {() => void} onUpdate 新側の供給元が変わった（更新バッジ）
  * @param {() => void} onUnit もう片方のグループ単位の作成の状態が変わった
- * @param {AgentHandlers} agent 返信・発言・エージェントの状態の通知と、取りこぼし
+ * @param {AgentHandlers} agent 返信・発言・エージェントの状態の通知と、届かなかった通知の取り直し
  * @returns {EventSource}
  */
 export function subscribeEvents(onUpdate, onUnit, agent) {
@@ -186,9 +186,13 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
   // どの通知を取りこぼしたかは分からない。更新があったものとして扱い、往復の中身も取り直す。
   events.addEventListener("lagged", () => {
     onUpdate();
-    agent.onLagged();
+    agent.onMissed();
   });
-  // つながる前（や切れていた間）に届かなかった状態の変化を、つながった時点で読み直す。
-  events.addEventListener("open", onUnit);
+  // つながる前（や切れていた間）に届かなかった単位の状態と、返信・発言・エージェントの
+  // 状態を、つながった時点で読み直す。
+  events.addEventListener("open", () => {
+    onUnit();
+    agent.onMissed();
+  });
   return events;
 }

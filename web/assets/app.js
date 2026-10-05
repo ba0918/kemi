@@ -173,7 +173,7 @@ async function boot() {
       onThread: applyThread,
       onMessage: applyMessage,
       onAgent: applyAgent,
-      onLagged: () => void resyncAgent(),
+      onMissed: () => void resyncAgent(),
     },
   );
 }
