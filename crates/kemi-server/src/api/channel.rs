@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ApiError;
-use crate::session::{message_json, persist};
+use crate::session::{page_message_json, persist};
 use crate::{AppState, Event};
 
 #[derive(Debug, Deserialize)]
@@ -30,11 +30,12 @@ pub(super) async fn message_api(
         session.last_message += 1;
         let message = Message {
             id: format!("m{}", session.last_message),
+            seq: session.next_seq(),
             author: Author::Reviewer,
             body: request.body,
         };
         session.channel.note_message(&message.id);
-        let value = message_json(&message);
+        let value = page_message_json(&message);
         session.messages.push(message);
         value
     };

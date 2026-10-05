@@ -94,6 +94,8 @@ impl Author {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reply {
     pub id: String,
+    /// 書いた順をレビュー全体で比べる通し番号（R-SESSION）。
+    pub seq: u32,
     pub author: Author,
     pub body: String,
 }
@@ -102,6 +104,8 @@ pub struct Reply {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
+    /// 書いた順をレビュー全体で比べる通し番号（R-SESSION）。
+    pub seq: u32,
     pub author: Author,
     pub body: String,
 }
@@ -109,6 +113,8 @@ pub struct Message {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     pub id: String,
+    /// 書いた順をレビュー全体で比べる通し番号（R-SESSION）。作成のときにだけ振る。
+    pub seq: u32,
     pub file_id: String,
     pub group_id: String,
     pub group_title: String,

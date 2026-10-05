@@ -1780,6 +1780,7 @@ fn session_info(id: &str, mode: SessionMode, title: &str, workspace: &Path) -> S
 fn session_comment() -> kemi_core::domain::review::Comment {
     kemi_core::domain::review::Comment {
         id: "c1".to_string(),
+        seq: 1,
         file_id: "f1".to_string(),
         group_id: "worktree".to_string(),
         group_title: "Working tree changes".to_string(),

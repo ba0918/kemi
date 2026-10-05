@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 
 use super::ApiError;
 use super::channel::notify_agent_state;
-use crate::session::{agent_event_json, comment_json, message_json, persist};
+use crate::session::{agent_event_json, page_comment_json, page_message_json, persist};
 use crate::{AppState, Event, Stop, SubmitState};
 
 pub(crate) fn agent_router(state: Arc<AppState>) -> Router {
@@ -369,6 +369,7 @@ async fn reply_api(
                     session.last_reply += 1;
                     let reply = Reply {
                         id: format!("r{}", session.last_reply),
+                        seq: session.next_seq(),
                         author: Author::Agent,
                         body,
                     };
@@ -388,11 +389,12 @@ async fn reply_api(
                     session.last_message += 1;
                     let message = Message {
                         id: format!("m{}", session.last_message),
+                        seq: session.next_seq(),
                         author: Author::Agent,
                         body,
                     };
                     ids.push(message.id.clone());
-                    messages.push(message_json(&message));
+                    messages.push(page_message_json(&message));
                     session.messages.push(message);
                 }
             }
@@ -400,7 +402,7 @@ async fn reply_api(
         let threads: Vec<Value> = touched
             .iter()
             .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
-            .map(comment_json)
+            .map(page_comment_json)
             .collect();
         (ids, threads, messages)
     };

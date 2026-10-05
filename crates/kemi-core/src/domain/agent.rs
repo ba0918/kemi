@@ -308,6 +308,7 @@ mod tests {
     fn comment(id: &str, body: &str) -> Comment {
         Comment {
             id: id.to_string(),
+            seq: 0,
             file_id: "f1".to_string(),
             group_id: "g1".to_string(),
             group_title: "group".to_string(),
@@ -328,6 +329,7 @@ mod tests {
     fn message(id: &str, body: &str) -> Message {
         Message {
             id: id.to_string(),
+            seq: 0,
             author: Author::Reviewer,
             body: body.to_string(),
         }
@@ -441,6 +443,7 @@ mod tests {
         channel.hand(&comments, &[]);
         let reply = Reply {
             id: "r1".to_string(),
+            seq: 0,
             author: Author::Reviewer,
             body: "also the caller".to_string(),
         };
@@ -479,6 +482,7 @@ mod tests {
         let mut comments = vec![comment("c1", "one")];
         comments[0].replies.push(Reply {
             id: "r1".to_string(),
+            seq: 0,
             author: Author::Reviewer,
             body: "more".to_string(),
         });
@@ -539,6 +543,7 @@ mod tests {
         (0..count)
             .map(|n| Reply {
                 id: format!("r{n}"),
+                seq: 0,
                 author: Author::Agent,
                 body: "x".to_string(),
             })
@@ -609,6 +614,7 @@ mod tests {
         // 人間の返信は数えない。
         comments[0].replies.push(Reply {
             id: "r99".to_string(),
+            seq: 0,
             author: Author::Reviewer,
             body: "x".to_string(),
         });
@@ -635,6 +641,7 @@ mod tests {
         let mut messages: Vec<Message> = (0..199)
             .map(|n| Message {
                 id: format!("m{n}"),
+                seq: 0,
                 author: Author::Agent,
                 body: "x".to_string(),
             })
