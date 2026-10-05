@@ -61,8 +61,11 @@ document with everything that happened since the previous `kemi wait` returned:
 | `2` | No running review with that id (it may have been submitted: read it with `kemi --result`), the review was suspended or failed while you waited, another `kemi wait` is already waiting, or a usage error. The reason is on stderr |
 | `3` | `--timeout` passed with nothing to report; stdout is empty |
 
-Only one `kemi wait` may wait on a review at a time. Nothing is lost between calls: what
-happens while you are working is kept until the next `kemi wait` collects it.
+Only one `kemi wait` may wait on a review at a time. What the person hands over while you are
+working is kept until the next `kemi wait` collects it. A submit is different: if the person
+submits while no `kemi wait` is waiting, the review ends at once, and the next `kemi wait` exits
+`2` because the review is no longer running. The result is then the JSON the main `kemi` process
+printed when it exited, also available from `kemi --result`.
 
 ## Answering in the page
 
@@ -97,8 +100,10 @@ open a comment or resolve one; only the person does that.
    before they submit.
 3. When it returns with `handed`, address the comments within the scope the person asked for,
    then answer with `kemi reply <id>`: say what you changed, or why you did not.
-4. Start `kemi wait <id>` again. Repeat until an event of type `submitted` arrives, then handle
-   the result as usual.
+4. Start `kemi wait <id>` again. Repeat until an event of type `submitted` arrives, or until
+   `kemi wait` exits `2` because the review is no longer running (the person submitted while
+   you were working, or the main `kemi` process exited). Then handle the result as usual: take
+   it from the main process's stdout, or from `kemi --result`.
 
 The page shows whether you are waiting, working, or not responding (working for 10 minutes with
 neither `kemi wait` nor `kemi reply`). **Hand to agent** appears only once `kemi wait` has been
