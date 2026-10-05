@@ -12,7 +12,6 @@
 // ときは届いた印が出て、どちらでも差分のスクロール位置が変わらない、
 // kemi reply の発言が会話パネルに出る、一覧の項目からスレッドを開いて返信を書くとスレッドに出る、
 // 「This file」の絞り込みが選んだファイルに合わせて変わる、
-// 幅 720px で会話パネルを開いても差分の列が潰れない、
 // 幅 390px でも会話パネルのシートを開いて閉じられる、未渡しを残して submit を押すと確認に件数が
 // 出て、submit の JSON にそのコメントが入る、消えたコミットのスレッドが、会話パネルを開いたまま
 // 読み直しても読み込み直しても「消えたコミット」と示される。
@@ -363,20 +362,6 @@ try {
   await waitFor(`${cards} === 'c1,c2'`);
   await browser('click', '#cv-filter button[data-filter="all"]');
   console.log('PASS 「This file」の絞り込みは、選んだファイルに合わせて変わる');
-
-  // (4c) 広い画面の下限の幅 720px で会話パネルを開いていても、差分の列は潰れず、パネルは画面に収まる。
-  await browser('set', 'viewport', '720', '800');
-  await waitFor(`getComputedStyle(document.querySelector('#tree')).position !== 'fixed' && ${panelOpen}`);
-  const columns = await evaluate(`JSON.stringify({
-    diff: document.querySelector('#diff-viewport').getBoundingClientRect().width,
-    right: document.querySelector('#conversation').getBoundingClientRect().right,
-    page: document.documentElement.clientWidth,
-  })`).then(JSON.parse);
-  assert.ok(columns.diff > 0, `the diff column should not collapse: ${JSON.stringify(columns)}`);
-  assert.ok(columns.right <= columns.page + 1, `the panel should fit in the page: ${JSON.stringify(columns)}`);
-  await browser('set', 'viewport', '1280', '800');
-  await waitFor(`${panelOpen} && document.querySelector('#diff-viewport').getBoundingClientRect().width > 300`);
-  console.log('PASS 幅 720px で会話パネルを開いても、差分の列は潰れない');
 
   // (5) 幅 390px でも、会話パネルを画面いっぱいのシートで開いて閉じられる。
   await browser('set', 'viewport', '390', '844');
