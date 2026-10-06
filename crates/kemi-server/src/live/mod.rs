@@ -143,6 +143,7 @@ impl LiveState {
         target: LiveTarget,
         assets: Arc<dyn Assets>,
         review_port: u16,
+        notices: Arc<dyn crate::NoticeSink>,
     ) -> Self {
         let (reload, _) = tokio::sync::broadcast::channel(16);
         let served = match &target {
@@ -150,6 +151,7 @@ impl LiveState {
             LiveTarget::File { .. } => Some(crate::watch::start_served(
                 info.root.clone(),
                 reload.clone(),
+                notices,
             )),
         };
         LiveState {

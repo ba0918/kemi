@@ -10,13 +10,14 @@
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher};
 use tokio::sync::broadcast;
 
-use crate::Event;
+use crate::{Event, Notice, NoticeSink};
 
 /// 短期間の複数書き込みを 1 回の通知にまとめる debounce 値（D6）。
 const DEBOUNCE: Duration = Duration::from_millis(500);
@@ -83,8 +84,13 @@ impl ServedWatch {
     }
 }
 
-/// 範囲の中のファイルが変わったら `reload` に知らせる。
-pub(crate) fn start_served(root: PathBuf, reload: broadcast::Sender<()>) -> ServedWatch {
+/// 範囲の中のファイルが変わったら `reload` に知らせる。配ったファイルのディレクトリを
+/// 見張れなかったときは `notices` に知らせる。
+pub(crate) fn start_served(
+    root: PathBuf,
+    reload: broadcast::Sender<()>,
+    notices: Arc<dyn NoticeSink>,
+) -> ServedWatch {
     let (sender, receiver) = std::sync::mpsc::channel();
     let events = sender.clone();
     std::thread::spawn(move || {
@@ -114,8 +120,12 @@ pub(crate) fn start_served(root: PathBuf, reload: broadcast::Sender<()>) -> Serv
                     let file = canonical(file);
                     if let Some(parent) = file.parent()
                         && directories.insert(parent.to_path_buf())
+                        && let Err(error) = watcher.watch(parent, RecursiveMode::NonRecursive)
                     {
-                        let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
+                        notices.notify(Notice::ServedNotWatched {
+                            directory: parent.to_path_buf(),
+                            reason: error.to_string(),
+                        });
                     }
                     files.insert(file);
                 }

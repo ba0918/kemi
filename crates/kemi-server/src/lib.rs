@@ -123,6 +123,12 @@ pub enum Notice {
     SessionNotDeleted(SessionError),
     /// ファイルの由来を計算できなかった。由来は「特定できない」になる（R-ORIGIN）。
     OriginUnknown { path: String, reason: String },
+    /// `--live <ファイル>` で、配ったファイルのディレクトリを見張れなかった。そこのファイルを
+    /// 保存してもページは読み込み直さない（R-LIVE）。
+    ServedNotWatched {
+        directory: std::path::PathBuf,
+        reason: String,
+    },
 }
 
 /// [`Notice`] の受け取り先。
@@ -410,6 +416,7 @@ pub async fn serve(
             target,
             state.assets.clone(),
             address.port(),
+            state.notices.clone(),
         ));
         let relay = axum::serve(live_listener, live::router(live_state));
         let stop = stopping(&state);
