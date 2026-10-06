@@ -194,8 +194,8 @@ You can comment on the page itself. The tools **Element**, **Arrow**, and
 compared with; while overlaid, a click reaches the page underneath), and
 **Interact** uses the page as usual. An element place is the element you
 click, and clicking it again takes it away; an arrow names the element at its
-head; a pen line names up to five elements it encloses, largest overlap
-first, leaving out elements that contain the whole line (a line drawn inside
+head; a pen line names up to five elements that overlap the area it
+encloses, even partly, largest overlap first, leaving out elements that contain the whole line (a line drawn inside
 one element names that element). Places are numbered from 1 on the page and
 in the comment box below it, so the comment can refer to them; removing one,
 undoing the last, or pressing Esc while drawing never renumbers the rest. The
