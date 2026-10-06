@@ -1087,6 +1087,31 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
 }
 
 /**
+ * 文字列を HTML として読む API を Trusted Types で止める CSP のページでも、スナップショットが撮れて変化の一覧が出る
+ * （R-PAGE-SNAPSHOT。R-PAGE-PROXY は script-src のほかの CSP を変えない）。
+ */
+async function snapshotsAreTakenUnderTrustedTypes(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?tt=1`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    console.log("PASS require-trusted-types-for 'script' の CSP を返すページでも、スナップショットが撮れて変化の一覧が出る");
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * HTML として読み直すと要素の並びが変わるページでも、消えた要素の印がスナップショットのその要素に付く
  * （R-PAGE-VIEW の変わったところに必ず印）。スクリプトが tbody を挟まずに組んだ表の後ろの兄弟を消す。
  */
@@ -1225,6 +1250,7 @@ try {
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
+  await snapshotsAreTakenUnderTrustedTypes(repository);
   await removedMarksSurviveReparsing(repository);
   await scrollingMakesNoChangeAndMarksStay(repository);
   await manyElementsAreRecordedAndCompared(repository);

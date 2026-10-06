@@ -733,7 +733,7 @@
     const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
     const map = elementMap(doctype + root.outerHTML);
     eachElement(root, (element) => element.removeAttribute(ELEMENT_STAMP));
-    if (head) {
+    if (head && map !== null) {
       const meta = owner.createElement('meta');
       meta.setAttribute('name', ELEMENT_MAP);
       meta.setAttribute('content', map);
@@ -767,12 +767,21 @@
 
   /**
    * 目印を付けた HTML を読み直し、記述の番号と読み直した文書での要素の位置の対応を返す。続いて並ぶ
-   * ものは「位置,番号,個数」にまとめ、空白で区切る。
+   * ものは「位置,番号,個数」にまとめ、空白で区切る。読み直せないページでは null を返し、スナップショットは
+   * 対応を持たずに撮る（消えた要素の印は付かない）。
    * @param {string} html
-   * @returns {string}
+   * @returns {string | null}
    */
   function elementMap(html) {
-    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    /** @type {Document} */
+    let parsed;
+    try {
+      parsed = new DOMParser().parseFromString(html, 'text/html');
+    } catch {
+      // ページの CSP の require-trusted-types-for は文字列を読む DOMParser を止める。中継はその CSP を
+      // 緩めない（R-PAGE-PROXY）ので、対応を諦めてスナップショットのほうを撮る。
+      return null;
+    }
     /** @type {number[][]} */
     const runs = [];
     let position = 0;

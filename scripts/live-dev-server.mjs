@@ -25,7 +25,8 @@
 //   /changing.html  同じ URL のまま中身が変わるページ（差分の確かめに使う）。兄弟の並び（#items の li）と、
 //                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
 //                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
-//                 `?csp=1` を付けると `style-src 'self'`（インラインのスタイルを止める CSP）を返す
+//                 `?csp=1` を付けると `style-src 'self'`（インラインのスタイルを止める CSP）を、`?tt=1` を付けると
+//                 `require-trusted-types-for 'script'`（文字列を HTML として読む API を止める CSP）を返す
 //   /table.html   先頭にスクリプトが tbody を挟まずに組む表と、その下の兄弟の並び（#items の li）を持つ。
 //                 table.html を書き換えると読み込み直さずに body を差し替え、表は組み直す。中身は tablePage、
 //                 大きさは TABLE_GEOMETRY
@@ -428,6 +429,9 @@ export async function startDevServer({ port = 0, dir } = {}) {
     const headers = { 'Content-Type': TYPES[extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' };
     if (name === 'changing.html' && url.searchParams.get('csp') === '1') {
       headers['Content-Security-Policy'] = "style-src 'self'";
+    }
+    if (name === 'changing.html' && url.searchParams.get('tt') === '1') {
+      headers['Content-Security-Policy'] = "require-trusted-types-for 'script'";
     }
     if (name === 'framed.html') {
       headers['X-Frame-Options'] = 'DENY';
