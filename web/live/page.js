@@ -31,6 +31,18 @@
       drawMarks(Array.isArray(message.marks) ? message.marks : []);
       return;
     }
+    if (message.type === 'place') {
+      post({ type: 'placed', id: message.id, ...resolvePlace(String(message.kind), Array.isArray(message.points) ? message.points : []) });
+      return;
+    }
+    if (message.type === 'places') {
+      drawPlaceSets(Array.isArray(message.sets) ? message.sets : []);
+      return;
+    }
+    if (message.type === 'scroll-by') {
+      scrollBy(finite(message.x), finite(message.y));
+      return;
+    }
     if (message.type === 'image') {
       try {
         const image = await placesImage(message.rect ?? null, Array.isArray(message.places) ? message.places : []);
@@ -252,8 +264,41 @@
 
   /** @type {HTMLElement | null} */
   let marksHost = null;
-  /** @type {ShadowRoot | null} */
-  let marksRoot = null;
+  /** 印の層（変わったところの枠）。 */
+  /** @type {HTMLElement | null} */
+  let marksLayer = null;
+  /** コメントの場所の層（描き込みと番号）。文書の座標で描き、ページのスクロールの分だけ戻す。 */
+  /** @type {HTMLElement | null} */
+  let placesLayer = null;
+
+  /**
+   * 印と場所を描く層を作り、文書に置く。ページの見た目を変えないよう、画面の左上に大きさ 0 で固定し、閉じた
+   * shadow root の中に描く。
+   * @returns {{ marks: HTMLElement, places: HTMLElement }}
+   */
+  function layers() {
+    if (!marksHost || !marksLayer || !placesLayer) {
+      marksHost = document.createElement('div');
+      setStyles(marksHost, {
+        position: 'fixed', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
+        overflow: 'visible', 'pointer-events': 'none', 'z-index': '2147483647',
+      });
+      const root = marksHost.attachShadow({ mode: 'closed' });
+      marksLayer = document.createElement('div');
+      placesLayer = document.createElement('div');
+      for (const layer of [marksLayer, placesLayer]) {
+        setStyles(layer, { position: 'absolute', left: '0', top: '0', width: '0', height: '0', overflow: 'visible', 'pointer-events': 'none' });
+      }
+      root.append(marksLayer, placesLayer);
+    }
+    if (!marksHost.isConnected) document.documentElement.append(marksHost);
+    return { marks: marksLayer, places: placesLayer };
+  }
+
+  /** どちらの層も空なら、層を文書から外す。 */
+  function releaseLayers() {
+    if (marksLayer?.childElementCount === 0 && placesLayer?.childElementCount === 0) marksHost?.remove();
+  }
   /** 描いている印と、その要素と枠の線と、要素を切って見せる祖先（中身をはみ出させない箱）。 */
   /** @type {{ box: HTMLElement, element: Element, border: string, clippers: Element[] }[]} */
   let shownMarks = [];
@@ -267,19 +312,11 @@
     const previous = shownMarks;
     shownMarks = [];
     if (marks.length === 0) {
-      marksRoot?.replaceChildren();
-      marksHost?.remove();
+      marksLayer?.replaceChildren();
+      releaseLayers();
       return;
     }
-    if (!marksHost || !marksRoot) {
-      marksHost = document.createElement('div');
-      setStyles(marksHost, {
-        position: 'fixed', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
-        overflow: 'visible', 'pointer-events': 'none', 'z-index': '2147483647',
-      });
-      marksRoot = marksHost.attachShadow({ mode: 'closed' });
-    }
-    if (!marksHost.isConnected) document.documentElement.append(marksHost);
+    const { marks: layer } = layers();
     /** @type {Map<Element, boolean>} */
     const clips = new Map();
     /** @type {{ element: Element, border: string }[]} */
@@ -299,7 +336,7 @@
       if (!unchanged) setStyles(box, { position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border });
       return { box, element, border, clippers: clippersOf(element, clips) };
     });
-    if (!unchanged) marksRoot.replaceChildren(...shownMarks.map((mark) => mark.box));
+    if (!unchanged) layer.replaceChildren(...shownMarks.map((mark) => mark.box));
     placeMarks();
   }
 
@@ -334,6 +371,7 @@
 
   /** 印を今の要素の位置に置き直す。先にすべて測ってから書き込む（測るたびに配置を計算し直させない）。 */
   function placeMarks() {
+    placePlaces();
     if (!marksHost || shownMarks.length === 0) return;
     const origin = marksHost.getBoundingClientRect();
     const placed = shownMarks.map(({ element, clippers }) => {
@@ -366,7 +404,7 @@
 
   let placeQueued = false;
   const placeMarksSoon = () => {
-    if (placeQueued || shownMarks.length === 0) return;
+    if (placeQueued || (shownMarks.length === 0 && (placesLayer?.childElementCount ?? 0) === 0)) return;
     placeQueued = true;
     requestAnimationFrame(() => {
       placeQueued = false;
@@ -385,6 +423,242 @@
     if (record.target === marksHost) return true;
     const nodes = [...record.addedNodes, ...record.removedNodes];
     return record.type === 'childList' && nodes.length > 0 && nodes.every((node) => node === marksHost);
+  }
+
+  // ---- コメントの場所（R-PAGE-COMMENT） ----
+  // 押す・描く操作はレビュー画面が枠の上に重ねた層で受け（ページのスクリプトに横取りされないように）、画面の座標を
+  // 送ってくる。ここではそれを文書の座標にし、指している要素を決める。場所の描き込みと番号も印と同じ層に描くので、
+  // 記述・スナップショット・見張りには入らない。
+
+  /** ペンで囲んだ範囲と重なる要素として渡す数の上限。 */
+  const ENCLOSED_LIMIT = 5;
+  /** 要素の文字として渡す長さの上限。 */
+  const TEXT_LIMIT = 200;
+  /** 場所の要素として選ばない要素（ページ全体を覆う）。 */
+  const UNPLACED = new Set(['html', 'body']);
+
+  /**
+   * 画面の座標のその点にある要素。開いている shadow root の中まで下りる。
+   * @param {number} x
+   * @param {number} y
+   * @returns {Element | null}
+   */
+  function elementAt(x, y) {
+    let element = document.elementFromPoint(x, y);
+    while (element?.shadowRoot) {
+      const inner = element.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === element) break;
+      element = inner;
+    }
+    return element;
+  }
+
+  /**
+   * 要素をその root（文書か shadow root）の中で 1 つに決めるセレクタ。id が root の中で 1 つならそれを根にし、
+   * 無ければ兄弟の中の同じ名前の何番目かでたどる。shadow root の中の要素は、持ち主のセレクタと ` >>> ` でつなぐ
+   * （文書の querySelector は shadow root の中に届かないため）。
+   * @param {Element} element
+   * @returns {string}
+   */
+  function selectorOf(element) {
+    const root = /** @type {Document | ShadowRoot} */ (element.getRootNode());
+    /** @type {string[]} */
+    const parts = [];
+    /** @type {Element | null} */
+    let current = element;
+    while (current) {
+      if (current.id && root.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
+        parts.unshift(`#${CSS.escape(current.id)}`);
+        break;
+      }
+      if (current === document.documentElement) {
+        parts.unshift('html');
+        break;
+      }
+      /** @type {Element | null} */
+      const parent = current.parentElement;
+      const siblings = parent ? [...parent.children] : [...root.children];
+      const name = current.localName;
+      const same = siblings.filter((sibling) => sibling.localName === name);
+      parts.unshift(same.length > 1 ? `${CSS.escape(name)}:nth-of-type(${same.indexOf(current) + 1})` : CSS.escape(name));
+      current = parent;
+    }
+    const selector = parts.join(' > ');
+    return root instanceof ShadowRoot ? `${selectorOf(root.host)} >>> ${selector}` : selector;
+  }
+
+  /**
+   * エージェントに渡す要素の情報。位置と大きさは文書の座標（ページのスクロールに依存しない）。
+   * @param {Element} element
+   */
+  function placeElement(element) {
+    const rect = element.getBoundingClientRect();
+    const text = (element instanceof HTMLElement ? element.innerText : element.textContent) ?? '';
+    return {
+      selector: selectorOf(element),
+      text: text.replace(/\s+/g, ' ').trim().slice(0, TEXT_LIMIT),
+      rect: { x: round(rect.left + scrollX), y: round(rect.top + scrollY), w: round(rect.width), h: round(rect.height) },
+    };
+  }
+
+  /**
+   * 文書の要素を、開いている shadow root の中も含めてたどる。kemi の層は除く。
+   * @param {(element: Element) => void} visit
+   */
+  function eachPageElement(visit) {
+    /** @param {Element} element */
+    const walk = (element) => {
+      if (element === marksHost || UNDESCRIBED.has(element.localName)) return;
+      visit(element);
+      if (element.shadowRoot) for (const child of element.shadowRoot.children) walk(child);
+      for (const child of element.children) walk(child);
+    };
+    walk(document.documentElement);
+  }
+
+  /**
+   * ペンで囲んだ範囲（線の外接矩形）と重なる要素を、重なる面積の大きい順に上限まで。画面の座標で比べる。
+   * @param {{ x: number, y: number }[]} points 画面の座標
+   */
+  function enclosedElements(points) {
+    const left = Math.min(...points.map((point) => point.x));
+    const right = Math.max(...points.map((point) => point.x));
+    const top = Math.min(...points.map((point) => point.y));
+    const bottom = Math.max(...points.map((point) => point.y));
+    /** @type {{ element: Element, area: number }[]} */
+    const found = [];
+    eachPageElement((element) => {
+      if (UNPLACED.has(element.localName)) return;
+      const rect = element.getBoundingClientRect();
+      const width = Math.min(right, rect.right) - Math.max(left, rect.left);
+      const height = Math.min(bottom, rect.bottom) - Math.max(top, rect.top);
+      if (width > 0 && height > 0) found.push({ element, area: width * height });
+    });
+    found.sort((a, b) => b.area - a.area);
+    return found.slice(0, ENCLOSED_LIMIT).map(({ element }) => placeElement(element));
+  }
+
+  /**
+   * 置いた場所を決める。点は画面の座標で届き、文書の座標にして返す。要素は 1 つ、矢印は先端の要素、ペンは
+   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。
+   * @param {string} kind
+   * @param {unknown[]} requested
+   */
+  function resolvePlace(kind, requested) {
+    const points = requested.map((point) => {
+      const { x, y } = /** @type {{ x: unknown, y: unknown }} */ (point ?? {});
+      return { x: finite(x), y: finite(y) };
+    });
+    if (points.length === 0) return { error: 'no point' };
+    const toDocument = (/** @type {{ x: number, y: number }} */ point) => ({ x: round(point.x + scrollX), y: round(point.y + scrollY) });
+    if (kind === 'pen') {
+      return { kind, points: points.map(toDocument), elements: enclosedElements(points) };
+    }
+    const at = kind === 'arrow' ? points[points.length - 1] : points[0];
+    const element = elementAt(at.x, at.y);
+    const elements = element && !UNPLACED.has(element.localName) ? [placeElement(element)] : [];
+    if (kind === 'arrow') return { kind, points: points.map(toDocument), elements };
+    if (elements.length === 0) return { error: 'no element there' };
+    return { kind: 'element', points: [], elements };
+  }
+
+  /** 場所の描き込みの見た目。書いている途中と、目立たせる保存したものは濃く、ほかの保存したものは控えめに。 */
+  /** @type {Record<string, { width: number, opacity: string, numbers: boolean }>} */
+  const PLACE_LOOKS = {
+    draft: { width: 2, opacity: '1', numbers: true },
+    focus: { width: 2, opacity: '1', numbers: true },
+    saved: { width: 1, opacity: '0.55', numbers: true },
+  };
+  const SVG = 'http://www.w3.org/2000/svg';
+
+  /**
+   * 場所の組を描く。前に描いたものは消す。座標は文書の座標で、層ごとページのスクロールの分だけ戻す。
+   * @param {unknown[]} sets 各組は `{ places, look }`
+   */
+  function drawPlaceSets(sets) {
+    const drawn = [];
+    for (const set of sets) {
+      const { places, look } = /** @type {{ places: unknown, look: unknown }} */ (set ?? {});
+      const style = PLACE_LOOKS[String(look)] ?? PLACE_LOOKS.saved;
+      drawn.push(...placeShapes(readPlaces(Array.isArray(places) ? places : []), style));
+    }
+    if (drawn.length === 0) {
+      placesLayer?.replaceChildren();
+      releaseLayers();
+      return;
+    }
+    layers().places.replaceChildren(...drawn);
+    placePlaces();
+  }
+
+  /**
+   * 1 組の場所の描き込みの要素。
+   * @param {ImagePlace[]} places
+   * @param {{ width: number, opacity: string, numbers: boolean }} style
+   * @returns {Element[]}
+   */
+  function placeShapes(places, style) {
+    /** @type {Element[]} */
+    const drawn = [];
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('width', '1');
+    svg.setAttribute('height', '1');
+    svg.setAttribute('overflow', 'visible');
+    svg.setAttribute('opacity', style.opacity);
+    setStyles(/** @type {any} */ (svg), { position: 'absolute', left: '0', top: '0', overflow: 'visible' });
+    for (const place of places) {
+      if (place.kind === 'element') {
+        for (const { rect } of place.elements) {
+          const box = document.createElementNS(SVG, 'rect');
+          for (const [name, value] of Object.entries({ x: rect.x - 2, y: rect.y - 2, width: rect.w + 4, height: rect.h + 4 })) box.setAttribute(name, String(value));
+          box.setAttribute('fill', 'none');
+          box.setAttribute('stroke', PLACE_COLOR);
+          box.setAttribute('stroke-width', String(style.width));
+          svg.append(box);
+        }
+      } else if (place.points.length > 0) {
+        const line = document.createElementNS(SVG, 'polyline');
+        line.setAttribute('points', place.points.map((point) => `${point.x},${point.y}`).join(' '));
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', PLACE_COLOR);
+        line.setAttribute('stroke-width', String(style.width));
+        line.setAttribute('stroke-linejoin', 'round');
+        line.setAttribute('stroke-linecap', 'round');
+        svg.append(line);
+        const from = place.points.at(-2);
+        const to = place.points.at(-1);
+        if (place.kind === 'arrow' && from && to) {
+          const angle = Math.atan2(to.y - from.y, to.x - from.x);
+          const head = document.createElementNS(SVG, 'polygon');
+          const corner = (/** @type {number} */ turn) => `${to.x - 12 * Math.cos(angle + turn)},${to.y - 12 * Math.sin(angle + turn)}`;
+          head.setAttribute('points', `${to.x},${to.y} ${corner(-0.45)} ${corner(0.45)}`);
+          head.setAttribute('fill', PLACE_COLOR);
+          svg.append(head);
+        }
+      }
+    }
+    drawn.push(svg);
+    if (style.numbers) {
+      for (const place of places) {
+        const anchor = place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
+        if (!anchor) continue;
+        const badge = document.createElement('div');
+        badge.textContent = String(place.n);
+        setStyles(badge, {
+          position: 'absolute', left: `${Math.max(0, anchor.x - 10)}px`, top: `${Math.max(0, anchor.y - 10)}px`, width: '20px', height: '20px',
+          'border-radius': '50%', background: PLACE_COLOR, color: 'rgb(255, 255, 255)', font: 'bold 11px/20px sans-serif',
+          'text-align': 'center', opacity: style.opacity, 'box-sizing': 'border-box', margin: '0', padding: '0',
+        });
+        drawn.push(badge);
+      }
+    }
+    return drawn;
+  }
+
+  /** 場所の層をページのスクロールに合わせて置き直す（描き込みは文書の座標で描いてある）。 */
+  function placePlaces() {
+    if (!placesLayer || placesLayer.childElementCount === 0) return;
+    setStyles(placesLayer, { transform: `translate(${-scrollX}px, ${-scrollY}px)` });
   }
 
   // ---- ページの変化の見張り ----
@@ -994,7 +1268,8 @@
     for (const place of places) {
       const anchor = place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
       if (!anchor) continue;
-      drawNumber(context, place.n, anchor.x, anchor.y);
+      // 文書の左上の端の場所でも、番号が切れないように内側へ寄せる。
+      drawNumber(context, place.n, Math.max(10, anchor.x), Math.max(10, anchor.y));
     }
   }
 

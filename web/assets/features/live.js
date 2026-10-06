@@ -8,19 +8,34 @@
 import { actions } from "../actions.js";
 import * as api from "../api.js";
 import { dom } from "../dom.js";
+import { state } from "../state.js";
 import {
+  addPlace,
   buildPageTree,
   chooseReference,
   fitScale,
   liveOrigin,
   overlayPlacement,
   pageKey,
+  emptyDraft,
   parseWidth,
+  removePlace,
   snapshotLabel,
   snapshotOptions,
+  undoPlace,
 } from "../live-model.js";
 import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
-import { buildShell, markRemovedInSnapshot, renderChanges, renderCompareOptions, renderPageTree } from "../views/live.js";
+import {
+  buildShell,
+  markRemovedInSnapshot,
+  renderChanges,
+  renderCompareOptions,
+  renderPageTree,
+  renderPlaces,
+} from "../views/live.js";
+import { renderConversation } from "../views/conversation.js";
+import { renderHeader } from "../views/header.js";
+import { refreshCommentBadges } from "../views/tree.js";
 
 /**
  * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
@@ -40,6 +55,15 @@ const CAPTURE_TIMEOUT = 15000;
 
 /** ページが記述を返すまで待つ上限。 */
 const DESCRIBE_TIMEOUT = 5000;
+
+/** ページが置いた場所を決めて返すまで待つ上限。ペンは要素をすべて測るので長めに。 */
+const PLACE_TIMEOUT = 5000;
+
+/** ページがコメントの画像を返すまで待つ上限。過ぎたら画像なしで保存する。 */
+const IMAGE_TIMEOUT = 15000;
+
+/** これより短い矢印とペンの線は、押しただけとみなして場所にしない（画面のピクセル）。 */
+const MIN_STROKE = 4;
 
 const live = {
   /** @type {LiveInfo | null} */
@@ -117,7 +141,20 @@ const live = {
   shiftedOpen: false,
   /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
   listed: { main: 0, shifted: 0 },
+  /** 選んでいる道具（R-PAGE-COMMENT）。「操作」ではページを普通に触れる。 */
+  /** @type {"element" | "arrow" | "pen" | "interact"} */
+  tool: "interact",
+  /** 書いているコメントの場所。 */
+  draft: emptyDraft("/", DEFAULT_WIDTH),
+  /** コメントを保存している途中。 */
+  saving: false,
+  /** 書く欄に出す知らせ（場所を置けなかった、保存できなかった）。 */
+  composeError: "",
 };
+
+/** 描いている途中の線。点は枠の中の画面の座標（ページの CSS ピクセル）と、重ねた層の中の座標。 */
+/** @type {{ pointer: number, points: { x: number, y: number }[], drawn: { x: number, y: number }[] } | null} */
+let drawing = null;
 
 /** @type {import("../views/live.js").LiveShell | null} */
 let shell = null;
@@ -130,11 +167,12 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe"} type
+ * @param {"capture" | "describe" | "place" | "image"} type
  * @param {number} timeout
+ * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
  */
-async function ask(frame, type, timeout) {
+async function ask(frame, type, timeout, details = {}) {
   const id = nextCapture++;
   const answer = await new Promise((resolve) => {
     const timer = setTimeout(() => resolve({ error: "the page did not answer" }), timeout);
@@ -142,7 +180,7 @@ async function ask(frame, type, timeout) {
       clearTimeout(timer);
       resolve(message);
     });
-    frame.postMessage({ kemi: "live", type, id }, live.origin);
+    frame.postMessage({ kemi: "live", ...details, type, id }, live.origin);
   });
   pendingCaptures.delete(id);
   return answer;
@@ -227,6 +265,7 @@ export function startLive(info) {
     render();
   });
   shell.recordButton.addEventListener("click", () => void capture("manual"));
+  startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
   new ResizeObserver(() => layoutFrames()).observe(shell.stage);
@@ -284,6 +323,7 @@ function setView(view) {
 function setWidth(width) {
   live.width = width;
   forgetFailures();
+  sendPlaces();
   if (shell) {
     shell.widthInput.value = "";
     shell.widthError.hidden = true;
@@ -334,7 +374,7 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (message.type === "captured" || message.type === "described") {
+  if (["captured", "described", "placed", "imaged"].includes(message.type)) {
     pendingCaptures.get(Number(message.id))?.(message);
     return;
   }
@@ -381,6 +421,8 @@ function receive(event) {
   }
   render();
   takeStartSnapshot();
+  // 読み込み直した文書には前の描き込みが無いので、描き直させる。
+  sendPlaces();
 }
 
 /** 入れたパスのモックを、表示中のページに割り当てる。断られたら理由を出す（R-PAGE-MOCK）。 */
@@ -432,6 +474,213 @@ export async function captureBeforeHand() {
   await capture("handed");
 }
 
+// ---- ページへのコメント（live.md の R-PAGE-COMMENT） ----
+// 道具を選んでいる間は、動いているページの枠の上に重ねた層で押す・描く操作を受け、枠の中の座標をページに送る。
+// どの要素を指すかと文書の座標はページの中（page.js）が決める（別のオリジンで、レビュー画面からは読めない）。
+// 重ねた層は動いているページの枠の上にだけあるので、比べる相手の側では場所を置けない。重ねて透かしている間は
+// 比べる相手が操作を受けないので、下の層が受け、見る対象の要素が場所になる（live-compare.md の R-PAGE-REF）。
+
+/**
+ * @param {import("../views/live.js").LiveShell} shell
+ */
+function startComposing(shell) {
+  shell.toolSeg.addEventListener("click", (event) => {
+    const tool = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.tool;
+    if (tool === "element" || tool === "arrow" || tool === "pen" || tool === "interact") {
+      cancelStroke();
+      live.tool = tool;
+      live.composeError = "";
+      render();
+    }
+  });
+  const layer = shell.capture;
+  layer.addEventListener("pointerdown", (event) => {
+    if (live.tool === "interact" || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    layer.setPointerCapture(event.pointerId);
+    drawing = { pointer: event.pointerId, points: [], drawn: [] };
+    extendStroke(event);
+  });
+  layer.addEventListener("pointermove", (event) => {
+    if (drawing?.pointer === event.pointerId && live.tool !== "element") {
+      extendStroke(event);
+    }
+  });
+  layer.addEventListener("pointerup", (event) => {
+    if (drawing?.pointer === event.pointerId) {
+      void finishStroke();
+    }
+  });
+  layer.addEventListener("pointercancel", cancelStroke);
+  // 道具を選んでいる間もページをスクロールできるよう、ホイールはページに送る。
+  layer.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? layer.clientHeight : 1;
+      shell.liveFrame.contentWindow?.postMessage(
+        { kemi: "live", type: "scroll-by", x: event.deltaX * unit, y: event.deltaY * unit },
+        live.origin,
+      );
+    },
+    { passive: false },
+  );
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && drawing) {
+      cancelStroke();
+    }
+  });
+  const compose = shell.compose;
+  compose.undo.addEventListener("click", () => setDraft(undoPlace(live.draft)));
+  compose.cancel.addEventListener("click", () => {
+    compose.body.value = "";
+    live.composeError = "";
+    setDraft(emptyDraft(live.page, live.width));
+  });
+  compose.save.addEventListener("click", () => void savePageComment());
+  compose.body.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void savePageComment();
+    }
+  });
+  compose.body.addEventListener("input", () => renderCompose());
+}
+
+/**
+ * 描いている線に点を足す。枠の中の座標はページの CSS ピクセルに戻す（枠は縮めて描いている）。
+ * @param {PointerEvent} event
+ */
+function extendStroke(event) {
+  if (!shell || !drawing) {
+    return;
+  }
+  const frame = shell.liveFrame.getBoundingClientRect();
+  const layer = shell.capture.getBoundingClientRect();
+  drawing.points.push({ x: (event.clientX - frame.left) / live.scale, y: (event.clientY - frame.top) / live.scale });
+  drawing.drawn.push({ x: event.clientX - layer.left, y: event.clientY - layer.top });
+  shell.stroke.setAttribute("points", drawing.drawn.map((point) => `${point.x},${point.y}`).join(" "));
+}
+
+/** 描いている途中の線を取りやめる。 */
+function cancelStroke() {
+  drawing = null;
+  shell?.stroke.setAttribute("points", "");
+}
+
+/** 線を描き終えた（押し終えた）。ページに場所を決めてもらい、書いているコメントに足す。 */
+async function finishStroke() {
+  const stroke = drawing;
+  cancelStroke();
+  const frame = shell?.liveFrame.contentWindow;
+  if (!stroke || !frame || live.tool === "interact") {
+    return;
+  }
+  const kind = live.tool;
+  const first = stroke.drawn[0];
+  const length = stroke.drawn.reduce((most, point) => Math.max(most, Math.hypot(point.x - first.x, point.y - first.y)), 0);
+  if (kind !== "element" && length < MIN_STROKE) {
+    return;
+  }
+  const answer = await ask(frame, "place", PLACE_TIMEOUT, {
+    kind,
+    points: kind === "element" ? stroke.points.slice(0, 1) : stroke.points,
+  });
+  if (answer.kind !== kind) {
+    live.composeError = `The place was not put: ${answer.error ?? "the page did not answer"}`;
+    renderCompose();
+    return;
+  }
+  live.composeError = "";
+  setDraft(addPlace(live.draft, { kind, points: answer.points ?? [], elements: answer.elements ?? [] }, live.page, live.width));
+}
+
+/**
+ * 書いているコメントの場所を差し替え、書く欄とページの上の描き込みを描き直す。
+ * @param {import("../live-model.js").PlaceDraft} draft
+ */
+function setDraft(draft) {
+  live.draft = draft;
+  renderCompose();
+  sendPlaces();
+}
+
+/** ページの上に場所を描かせる。書いているコメントの場所は、そのページ・その幅を見ているときだけ。 */
+function sendPlaces() {
+  const frame = shell?.liveFrame.contentWindow;
+  if (!frame) {
+    return;
+  }
+  const draft = live.draft;
+  const shown = draft.url === live.page && draft.width === live.width ? draft.places : [];
+  frame.postMessage(
+    { kemi: "live", type: "places", sets: shown.length > 0 ? [{ places: shown, look: "draft" }] : [] },
+    live.origin,
+  );
+}
+
+function renderCompose() {
+  if (!shell) {
+    return;
+  }
+  const compose = shell.compose;
+  const places = live.draft.places;
+  compose.box.hidden =
+    live.view !== "page" || (live.tool === "interact" && places.length === 0 && compose.body.value === "");
+  renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)));
+  compose.undo.disabled = places.length === 0;
+  compose.save.disabled = places.length === 0 || live.saving || compose.body.value.trim() === "" || state.submitted;
+  compose.error.hidden = live.composeError === "";
+  compose.error.textContent = live.composeError;
+}
+
+/**
+ * 書いたコメントを保存する。ページに場所の周りの画像を作らせ、コメントと 1 回で送る。画像を作れなければ
+ * 画像なしで保存する（R-PAGE-COMMENT の画像は作れないこともある）。保存した後は場所を変えない。
+ */
+async function savePageComment() {
+  if (!shell || live.saving || state.submitted) {
+    return;
+  }
+  const draft = live.draft;
+  const body = shell.compose.body.value.trim();
+  if (draft.places.length === 0 || body === "") {
+    return;
+  }
+  live.saving = true;
+  renderCompose();
+  const frame = shell.liveFrame.contentWindow;
+  let image = null;
+  if (frame && draft.url === live.page && draft.width === live.width) {
+    const answer = await ask(frame, "image", IMAGE_TIMEOUT, { places: draft.places });
+    image = typeof answer.png === "string" ? answer.png : null;
+  }
+  try {
+    const comment = await api.postComment({
+      op: "add_page",
+      page: { url: draft.url, width: draft.width, places: draft.places },
+      body,
+      image,
+    });
+    const before = state.allComments;
+    state.allComments = [...state.allComments, comment];
+    refreshCommentBadges(before);
+    renderHeader();
+    renderConversation();
+    shell.compose.body.value = "";
+    live.composeError = "";
+    live.draft = emptyDraft(live.page, live.width);
+    sendPlaces();
+  } catch (error) {
+    live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    live.saving = false;
+    renderCompose();
+  }
+}
+
 /**
  * 表示中のページのスナップショットを取り、預ける。2 MB を超えるものは取らず、そのことを
  * 出す。比べる相手は 1 つ前のまま（R-PAGE-SNAPSHOT）。
@@ -481,6 +730,7 @@ async function capture(kind) {
 
 function render() {
   renderBand();
+  renderCompose();
   renderReference();
   refreshChanges();
   renderTree();
@@ -754,6 +1004,12 @@ function renderBand() {
   shell.mockRemove.hidden = mock === null;
   shell.mockReload.hidden = mock === null;
   shell.recordButton.disabled = !live.reachable;
+  for (const choice of shell.toolSeg.querySelectorAll("button")) {
+    choice.setAttribute("aria-pressed", String(choice.dataset.tool === live.tool));
+    choice.disabled = state.submitted && choice.dataset.tool !== "interact";
+  }
+  shell.capture.hidden = live.tool === "interact" || state.submitted;
+  shell.capture.dataset.tool = live.tool;
   shell.liveLabel.textContent = `${live.page} · ${live.width}${live.scale < 1 ? ` · ×${live.scale.toFixed(2)}` : ""}`;
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {

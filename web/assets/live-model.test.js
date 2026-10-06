@@ -3,7 +3,11 @@ import { test } from "node:test";
 
 import {
   WIDTH_CHOICES,
+  addPlace,
   buildPageTree,
+  emptyDraft,
+  removePlace,
+  undoPlace,
   chooseReference,
   chooseSnapshot,
   fitScale,
@@ -131,4 +135,64 @@ test("a short page is still drawn as tall as the pane", () => {
     overlayPlacement({ scale: 1, viewportHeight: 700, scrollX: 10, scrollY: 0, contentHeight: 300 }),
     { height: 700, transform: "translate(-10px, 0px) scale(1)" },
   );
+});
+
+/**
+ * @param {"element" | "arrow" | "pen"} kind
+ * @param {string} [selector]
+ * @returns {import("./live-model.js").NewPlace}
+ */
+const place = (kind, selector = "#a") => ({
+  kind,
+  points: kind === "element" ? [] : [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+  elements: [{ selector, text: "", rect: { x: 0, y: 0, w: 10, h: 10 } }],
+});
+
+/** @param {import("./live-model.js").PlaceDraft} draft */
+const numbers = (draft) => draft.places.map((item) => item.n);
+
+test("places of a comment are numbered from 1 in the order they are added", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("arrow"), "/", 390);
+  draft = addPlace(draft, place("pen"), "/", 390);
+  assert.deepEqual(numbers(draft), [1, 2, 3]);
+  assert.deepEqual(draft.places.map((item) => item.kind), ["element", "arrow", "pen"]);
+});
+
+test("removing a place keeps the other numbers and its number is not given again", () => {
+  let draft = emptyDraft("/", 390);
+  for (const kind of /** @type {const} */ (["element", "arrow", "pen"])) draft = addPlace(draft, place(kind, `#${kind}`), "/", 390);
+  draft = removePlace(draft, 2);
+  assert.deepEqual(numbers(draft), [1, 3]);
+  draft = addPlace(draft, place("arrow"), "/", 390);
+  assert.deepEqual(numbers(draft), [1, 3, 4]);
+});
+
+test("choosing the same element again takes its place away", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("element", "#b"), "/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  assert.deepEqual(draft.places.map((item) => [item.n, item.elements[0].selector]), [[2, "#b"]]);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  assert.deepEqual(numbers(draft), [2, 3]);
+});
+
+test("undo takes away the place added last", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("pen"), "/", 390);
+  draft = undoPlace(draft);
+  assert.deepEqual(numbers(draft), [1]);
+  assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
+});
+
+test("a place on another page or at another width starts the places over", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  const moved = addPlace(draft, place("arrow"), "/other", 390);
+  assert.deepEqual([moved.url, moved.width, numbers(moved)], ["/other", 390, [1]]);
+  const resized = addPlace(draft, place("arrow"), "/", 1280);
+  assert.deepEqual([resized.url, resized.width, numbers(resized)], ["/", 1280, [1]]);
 });

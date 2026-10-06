@@ -187,3 +187,59 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
   const y = -scrollY * scale;
   return { height, transform: `translate(${x === 0 ? 0 : x}px, ${y === 0 ? 0 : y}px) scale(${scale})` };
 }
+
+/**
+ * 書いている途中のページへのコメントの場所（live.md の R-PAGE-COMMENT）。場所は見ている URL と表示幅の
+ * ものなので、それも覚える。`next` は次に振る番号で、消しても戻さない（本文が番号で指すため）。
+ * @typedef {{ selector: string, text: string, rect: { x: number, y: number, w: number, h: number } }} PlaceElement
+ * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[] }} NewPlace
+ * @typedef {NewPlace & { n: number }} Place
+ * @typedef {{ url: string, width: number, places: Place[], next: number }} PlaceDraft
+ */
+
+/**
+ * @param {string} url
+ * @param {number} width
+ * @returns {PlaceDraft}
+ */
+export function emptyDraft(url, width) {
+  return { url, width, places: [], next: 1 };
+}
+
+/**
+ * 場所を足す。同じ要素をもう一度選んだら、その要素の場所を外す。別の URL か表示幅で足すと、前の場所は
+ * 捨てて数え直す（場所の座標と要素はそのページ・その幅のもの）。
+ * @param {PlaceDraft} draft
+ * @param {NewPlace} place
+ * @param {string} url
+ * @param {number} width
+ * @returns {PlaceDraft}
+ */
+export function addPlace(draft, place, url, width) {
+  const base = draft.url === url && draft.width === width ? draft : emptyDraft(url, width);
+  const selector = place.kind === "element" ? place.elements[0]?.selector : undefined;
+  const chosen = base.places.find((item) => item.kind === "element" && selector !== undefined && item.elements[0]?.selector === selector);
+  if (chosen) {
+    return removePlace(base, chosen.n);
+  }
+  return { ...base, places: [...base.places, { ...place, n: base.next }], next: base.next + 1 };
+}
+
+/**
+ * @param {PlaceDraft} draft
+ * @param {number} n
+ * @returns {PlaceDraft}
+ */
+export function removePlace(draft, n) {
+  return { ...draft, places: draft.places.filter((item) => item.n !== n) };
+}
+
+/**
+ * 最後に足した場所を外す。
+ * @param {PlaceDraft} draft
+ * @returns {PlaceDraft}
+ */
+export function undoPlace(draft) {
+  const last = Math.max(0, ...draft.places.map((item) => item.n));
+  return removePlace(draft, last);
+}

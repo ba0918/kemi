@@ -1480,6 +1480,140 @@ async function commentImagesLookLikeThePage(repository) {
   }
 }
 
+/** 枠の中の点を順にたどって描く（押して、動かして、離す）。 */
+async function dragInPane(pane, points) {
+  const box = await evaluate(`(() => { const r = document.querySelector('${pane} .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
+  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+  const at = ([x, y]) => [String(Math.round(box.x + x * scale)), String(Math.round(box.y + y * scale))];
+  await browser('mouse', 'move', ...at(points[0]));
+  await browser('mouse', 'down');
+  for (const point of points.slice(1)) await browser('mouse', 'move', ...at(point));
+  await browser('mouse', 'up');
+}
+
+/** 書いている途中のコメントの場所の番号。 */
+const draftNumbers = `JSON.stringify(Array.from(document.querySelectorAll('#live-compose .lv-place')).map((row) => Number(row.dataset.n)))`;
+
+/** 道具を選ぶ。 */
+async function chooseTool(tool) {
+  await browser('click', `.lv-tools button[data-tool="${tool}"]`);
+  await waitFor(`document.querySelector('.lv-tools button[data-tool="${tool}"]').getAttribute('aria-pressed') === 'true'`);
+}
+
+/** kemi の API からレビューを読む（ページへのコメントを確かめる）。 */
+async function reviewJson(kemi) {
+  return (await fetch(new URL('api/review', kemi.url))).json();
+}
+
+/** ページの中の描き込み（画面モックの紫）。 */
+const isPlaceInk = ([r, g, b]) => r > 95 && r < 160 && g > 50 && g < 120 && b > 170;
+
+/**
+ * ページへのコメントの場所（R-PAGE-COMMENT、R-PAGE-REF）: 要素・矢印・ペンで場所を置き、2 番目を消して保存すると
+ * 番号が 1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かして
+ * いる間に要素を選ぶと見る対象の要素が場所になる。保存した後も画面は例外を出さない。
+ */
+async function pageCommentPlacesArePutAndSaved(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await evaluate(`window.__kemiErrors = []; addEventListener('error', (event) => window.__kemiErrors.push(String(event.message))); addEventListener('unhandledrejection', (event) => window.__kemiErrors.push(String(event.reason))); true`);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await new Promise((done) => setTimeout(done, 500));
+
+    await chooseTool('element');
+    await clickInPane(refPane, 150, 250);
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(await evaluate(draftNumbers), '[]', 'a click on the reference adds no place');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await chooseTool('pen');
+    await dragInPane(livePane, [[20, 90], [260, 90], [260, 140], [20, 140], [20, 92]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await chooseTool('arrow');
+    await dragInPane(livePane, [[340, 160], [260, 210], [150, 250]]);
+    await waitFor(`${draftNumbers} === '[1,2,3]'`);
+    await new Promise((done) => setTimeout(done, 300));
+    const drawn = await shot(`${livePane} .lv-frame`, shots, 'places-drawn');
+    // 押した要素（左上 (0, 200) の 300×100 のボタン）の周りに描いた枠。
+    assert.ok(countPixels(drawn, [0, 195, 305, 305], isPlaceInk) > 0, `the places are drawn on the page: ${join(shots, 'places-drawn.png')}`);
+    console.log('PASS 要素・ペン・矢印で場所を置くと、1 から番号が振られ、ページの上に描かれる。並べた比べる相手の側を押しても場所は増えない');
+
+    await browser('click', '#live-compose .lv-place[data-n="2"] .lv-place-remove');
+    await waitFor(`${draftNumbers} === '[1,3]'`);
+    await browser('fill', '#live-compose .lv-compose-body', '1 and 3 point at the button');
+    await browser('click', '#live-compose .lv-compose-save');
+    await waitFor(`${draftNumbers} === '[]'`);
+    const review = await reviewJson(kemi);
+    const comment = review.comments.at(-1);
+    assert.equal(comment.body, '1 and 3 point at the button');
+    assert.deepEqual(comment.page.places.map((place) => [place.n, place.kind]), [[1, 'element'], [3, 'arrow']]);
+    assert.equal(comment.page.url, '/rich.html');
+    assert.equal(comment.page.width, 390);
+    assert.equal(comment.page.places[0].elements[0].selector, '#button');
+    console.log('PASS 2 番目の場所を消してから保存すると、場所の番号が 1 と 3 のまま残る');
+    assert.equal(comment.page.places[1].elements[0].selector, '#button', 'the arrow points at the element at its head');
+    const head = comment.page.places[1].points.at(-1);
+    assert.ok(Math.abs(head.x - 150) <= 1 && Math.abs(head.y - 250) <= 1, `the arrow ends where it was drawn: ${JSON.stringify(head)}`);
+    console.log('PASS 矢印の先の要素が、矢印の先端の位置にある要素と一致する');
+
+    await browser('click', '.lv-mode button[data-compare="overlay"]');
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay'`);
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    assert.equal(await evaluate(`document.querySelector('#live-compose .lv-place[data-n="1"]').dataset.selector`), '#button');
+    console.log('PASS 重ねて透かしている間に要素を選ぶと、下の見る対象の要素が場所になる');
+
+    await browser('click', '#cv-rail');
+    await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
+    await new Promise((done) => setTimeout(done, 300));
+    assert.deepEqual(JSON.parse(await evaluate('JSON.stringify(window.__kemiErrors)')), [], 'the review page raises no error with a page comment');
+    console.log('PASS ページへのコメントを保存した後も、会話パネルを開いて例外が出ない');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）。 */
+async function placesMakeNoChange(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0' && ${changeList}?.dataset.shifted === '0'`);
+    await chooseTool('element');
+    await clickInPane(livePane, 100, 150);
+    await chooseTool('pen');
+    await dragInPane(livePane, [[5, 5], [150, 5], [150, 100], [5, 100]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await new Promise((done) => setTimeout(done, 1200));
+    assert.equal(await evaluate(`${changeList}?.dataset.main + ',' + ${changeList}?.dataset.shifted`), '0,0', 'drawing places changes nothing');
+    await browser('fill', '#live-compose .lv-compose-body', 'no change');
+    await browser('click', '#live-compose .lv-compose-save');
+    await waitFor(`${draftNumbers} === '[]'`);
+    await new Promise((done) => setTimeout(done, 1200));
+    assert.equal(await evaluate(`${changeList}?.dataset.main + ',' + ${changeList}?.dataset.shifted`), '0,0', 'saving a page comment changes nothing');
+    console.log('PASS 場所を描いている間と保存した後で、変化の一覧の数が変わらない');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -1503,6 +1637,8 @@ try {
   await cssomChangesAreFollowed(repository);
   await widthSwitchesWithoutResizingTheDocument(repository);
   await manyElementsAreRecordedAndCompared(repository);
+  await pageCommentPlacesArePutAndSaved(repository);
+  await placesMakeNoChange(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
