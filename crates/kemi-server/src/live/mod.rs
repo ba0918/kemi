@@ -74,6 +74,9 @@ pub(crate) struct Snapshot {
     pub width: u32,
     pub kind: SnapshotKind,
     pub html: String,
+    /// 写した時点のページの要素の記述（live.md の DL3）。差分の比べる相手の側に使う。
+    /// 形はページ用のスクリプトが決め、kemi は中身を読まずに持って返す。
+    pub description: Option<Value>,
 }
 
 /// 取った時点（R-PAGE-SNAPSHOT）。
