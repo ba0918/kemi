@@ -3780,3 +3780,79 @@ async fn submitting_removes_the_files_of_the_session() {
     assert_eq!(status.code(), Some(1));
     assert!(!files.exists());
 }
+
+impl Kemi {
+    /// 開始時のスナップショットを API で取る（ページ用のスクリプトの代わり）。
+    async fn take_start_snapshot(&self) -> serde_json::Value {
+        let response = self
+            .post(
+                "api/snapshot",
+                serde_json::json!({
+                    "page": "/", "width": 390, "kind": "start",
+                    "html": "<p>at the start</p>", "description": "H4sIdescribed",
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_start_snapshot_taken_before_the_first_comment_comes_back_after_resuming() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    let taken = kemi.take_start_snapshot().await;
+    // コメント無しで見たの印を付けても、開始時のスナップショットは残る。
+    let response = kemi
+        .post(
+            "api/state",
+            serde_json::json!({ "file_id": kemi.first_file_id().await, "seen": true }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    kemi.add_live_comment("keep").await;
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let listed = resumed.get_json("api/snapshots").await;
+    let snapshot = resumed
+        .get_json(&format!("api/snapshot/{}", taken["id"].as_str().unwrap()))
+        .await;
+
+    assert_eq!(listed["snapshots"].as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(listed["snapshots"][0]["id"], taken["id"]);
+    assert_eq!(listed["snapshots"][0]["kind"], "start");
+    assert_eq!(snapshot["html"], "<p>at the start</p>");
+    assert_eq!(snapshot["description"], "H4sIdescribed");
+    resumed.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_live_review_suspended_without_a_comment_leaves_neither_its_session_nor_its_files() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    kemi.take_start_snapshot().await;
+    assert!(
+        sessions_dir(&state.path)
+            .join(format!("{id}.files"))
+            .is_dir()
+    );
+
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(session_dir_files(&state.path).is_empty());
+    assert!(
+        !sessions_dir(&state.path)
+            .join(format!("{id}.files"))
+            .exists()
+    );
+}

@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use kemi_core::domain::review::ReviewMeta;
+use kemi_core::session::{FilesWrite, OpenSession, PageSnapshot, SessionError, SnapshotKind};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
 use kemi_server::{
     Asset, Assets, LiveParams, LiveTarget, Notice, NoticeSink, ServeParams, SessionSink, serve,
@@ -149,6 +150,16 @@ async fn start_review_with_session(
     root: std::path::PathBuf,
     session: Option<Arc<dyn SessionSink>>,
 ) -> Running {
+    start_restored_review(target, root, session, Vec::new()).await
+}
+
+/// 復元したレビューのように、保存してあったスナップショットを持って始める。
+async fn start_restored_review(
+    target: LiveTarget,
+    root: std::path::PathBuf,
+    session: Option<Arc<dyn SessionSink>>,
+    snapshots: Vec<PageSnapshot>,
+) -> Running {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let review_port = listener.local_addr().unwrap().port();
     let live_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -169,6 +180,7 @@ async fn start_review_with_session(
             cookie: RELAY.to_string(),
             mock_secret: MOCK_SECRET.to_string(),
             code_view: false,
+            snapshots,
         }),
     };
     let task = tokio::spawn(serve(listener, params));
@@ -1121,12 +1133,25 @@ impl SessionSink for InterruptedImageSink {
         self.open.lock().unwrap().delete()
     }
 
-    fn save_file(
+    fn save_snapshot(
         &self,
-        name: &str,
+        snapshot: &PageSnapshot,
+        comments: &std::collections::BTreeSet<String>,
+    ) -> FilesWrite {
+        self.open.lock().unwrap().save_snapshot(snapshot, comments)
+    }
+
+    fn save_image(
+        &self,
+        comment_id: &str,
         bytes: &[u8],
-    ) -> Result<std::path::PathBuf, kemi_core::session::SessionError> {
-        let path = self.open.lock().unwrap().save_file(name, bytes)?;
+        comments: &std::collections::BTreeSet<String>,
+    ) -> FilesWrite {
+        let written = self
+            .open
+            .lock()
+            .unwrap()
+            .save_image(comment_id, bytes, comments);
         let interruption = self.interruption.lock().unwrap().take();
         if let Some(interrupt) = interruption {
             let answer = interrupt();
@@ -1148,18 +1173,22 @@ impl SessionSink for InterruptedImageSink {
             };
             *self.answer.lock().unwrap() = Some(answer);
         }
-        Ok(path)
+        written
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_page_comment_keeps_its_image_when_the_session_is_emptied_while_the_image_is_written() {
+async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_a_deleted_comments_image()
+ {
     use kemi_core::session::{SessionInfo, SessionMode, SessionStore};
 
     let (authority, _dev) = start_dev_server().await;
     let sessions = Scratch::new("interrupted-image-sessions");
     let root = Scratch::new("interrupted-image");
+    // 画像とスナップショットが並んでは入らない上限。画像を削除したコメントのものと
+    // 見誤れば、スナップショットのために画像が消える。
     let open = SessionStore::new(sessions.0.clone())
+        .with_files_limit(2000)
         .create(SessionInfo {
             id: "01HF7YAT00PAGE000000000000".to_string(),
             created: 1,
@@ -1190,16 +1219,9 @@ async fn a_page_comment_keeps_its_image_when_the_session_is_emptied_while_the_im
         Some(sink.clone()),
     )
     .await;
-    let first: serde_json::Value =
-        add_page_comment(&running, serde_json::json!([page_place(1, "element")]))
-            .await
-            .json()
-            .await
-            .unwrap();
-    // 画像を書いた後、コメントが入る前に、ただ 1 つのコメントを消してセッションを空にする。
+    // 画像を書いた後、コメントが状態に入る前に、スナップショットを取る。
     let review = running.review.clone();
     let origin = review.trim_end_matches("/s/test-token/").to_string();
-    let id = first["id"].clone();
     *sink.interruption.lock().unwrap() = Some(Box::new(move || {
         let (send, answer) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -1209,9 +1231,12 @@ async fn a_page_comment_keeps_its_image_when_the_session_is_emptied_while_the_im
                 .unwrap();
             let status = runtime.block_on(async {
                 reqwest::Client::new()
-                    .post(format!("{review}api/comment"))
+                    .post(format!("{review}api/snapshot"))
                     .header(header::ORIGIN, origin)
-                    .json(&serde_json::json!({ "op": "delete", "id": id }))
+                    .json(&serde_json::json!({
+                        "page": "/", "width": 390, "kind": "manual",
+                        "html": incompressible_text(1200, 1),
+                    }))
                     .send()
                     .await
                     .unwrap()
@@ -1222,27 +1247,295 @@ async fn a_page_comment_keeps_its_image_when_the_session_is_emptied_while_the_im
         answer
     }));
 
-    let second = post_review(
-        &running,
-        "api/comment",
-        serde_json::json!({
-            "op": "add_page",
-            "page": { "url": "/", "width": 390, "places": [page_place(1, "element")] },
-            "body": "second",
-            "image": "AAAA",
-        }),
-    )
-    .await;
+    let added = add_page_comment_with_image(&running, incompressible_image(1200)).await;
 
-    assert_eq!(second.status(), StatusCode::OK);
     let answer = sink.answer.lock().unwrap().take().unwrap();
     assert_eq!(answer.recv().unwrap(), StatusCode::OK);
+    assert!(added.get("image_unsaved").is_none(), "{added}");
     let open = sink.open.lock().unwrap();
     let saved = &open.state().comments;
-    assert_eq!(saved.len(), 1);
     let kemi_core::domain::review::CommentTarget::Page(page) = &saved[0].target else {
         panic!("{saved:?}");
     };
     let image = page.image.as_deref().unwrap();
-    assert_eq!(std::fs::read(image).unwrap(), vec![0u8; 3], "{image}");
+    assert!(std::path::Path::new(image).exists(), "{image}");
+}
+
+// ---- スナップショットとコメントの画像の保存（R-PAGE-SESSION の 20 MB の規則） ----
+
+/// 実際のセッションに書く sink。`<id>.files/` の上限を小さくして規則を確かめる。
+struct StoreSink {
+    open: std::sync::Mutex<OpenSession>,
+}
+
+impl SessionSink for StoreSink {
+    fn describe_review(&self, _title: &str, _total_files: usize) {}
+
+    fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_state(state)
+    }
+
+    fn save_copy(&self, copy: kemi_core::session::SessionCopy) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_copy(copy)
+    }
+
+    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
+        self.open.lock().unwrap().mark_unresumable(reason)
+    }
+
+    fn delete(&self) -> Result<(), SessionError> {
+        self.open.lock().unwrap().delete()
+    }
+
+    fn save_image(
+        &self,
+        comment_id: &str,
+        bytes: &[u8],
+        comments: &std::collections::BTreeSet<String>,
+    ) -> FilesWrite {
+        self.open
+            .lock()
+            .unwrap()
+            .save_image(comment_id, bytes, comments)
+    }
+
+    fn save_snapshot(
+        &self,
+        snapshot: &PageSnapshot,
+        comments: &std::collections::BTreeSet<String>,
+    ) -> FilesWrite {
+        self.open.lock().unwrap().save_snapshot(snapshot, comments)
+    }
+}
+
+/// `<id>.files/` の上限を `files_limit` にしたセッションで、`--live` のレビューを始める。
+async fn start_stored_review(
+    authority: &str,
+    sessions: &Scratch,
+    files_limit: u64,
+    snapshots: Vec<PageSnapshot>,
+) -> Running {
+    use kemi_core::session::{SessionInfo, SessionMode, SessionStore};
+    let open = SessionStore::new(sessions.0.clone())
+        .with_files_limit(files_limit)
+        .create(SessionInfo {
+            id: "01HF7YAT00PAGE000000000000".to_string(),
+            created: 1,
+            updated: 1,
+            workspace: sessions.0.clone(),
+            workspace_key: "00000000000000aa".to_string(),
+            mode: SessionMode::Live {
+                page: kemi_core::domain::live::LivePage::Url(format!("http://{authority}/")),
+                root: sessions.0.clone(),
+            },
+            title: "live".to_string(),
+            total_files: 0,
+        })
+        .unwrap();
+    start_restored_review(
+        LiveTarget::Url {
+            authority: authority.to_string(),
+            start: "/".to_string(),
+            display: format!("http://{authority}/"),
+        },
+        sessions.0.clone(),
+        Some(Arc::new(StoreSink {
+            open: std::sync::Mutex::new(open),
+        })),
+        snapshots,
+    )
+    .await
+}
+
+/// gzip でほとんど縮まない文字列（`seed` ごとに違う）。
+fn incompressible_text(size: usize, seed: u64) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ seed.wrapping_mul(0x1234_5678_9abc_def1);
+    (0..size)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            char::from(ALPHABET[(state % 64) as usize])
+        })
+        .collect()
+}
+
+/// 縮まないバイト列を base64 にしたもの（コメントの画像の代わり）。
+fn incompressible_image(size: usize) -> String {
+    use base64::Engine;
+    let bytes: Vec<u8> = incompressible_text(size * 2, 99)
+        .bytes()
+        .collect::<Vec<u8>>()
+        .chunks(2)
+        .map(|pair| pair[0].wrapping_mul(31) ^ pair[1].wrapping_mul(7))
+        .collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+async fn take_snapshot(running: &Running, kind: &str, html: &str) -> serde_json::Value {
+    let taken = post_review(
+        running,
+        "api/snapshot",
+        serde_json::json!({ "page": "/", "width": 390, "kind": kind, "html": html }),
+    )
+    .await;
+    assert_eq!(taken.status(), StatusCode::OK);
+    taken.json().await.unwrap()
+}
+
+async fn listed_ids(running: &Running) -> Vec<String> {
+    get_review_json(running, "api/snapshots").await["snapshots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|snapshot| snapshot["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+async fn add_page_comment_with_image(running: &Running, image: String) -> serde_json::Value {
+    let added = post_review(
+        running,
+        "api/comment",
+        serde_json::json!({
+            "op": "add_page",
+            "page": { "url": "/", "width": 390, "places": [page_place(1, "element")] },
+            "body": "with an image",
+            "image": image,
+        }),
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::OK);
+    added.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn a_snapshot_taken_near_the_limit_drops_the_oldest_handed_one_from_the_choices() {
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("snapshot-limit-sessions");
+    let running = start_stored_review(&authority, &sessions, 3000, Vec::new()).await;
+    take_snapshot(&running, "start", &incompressible_text(1000, 1)).await;
+    let handed = take_snapshot(&running, "handed", &incompressible_text(1000, 2)).await;
+    let manual = take_snapshot(&running, "manual", &incompressible_text(1000, 3)).await;
+
+    let newest = take_snapshot(&running, "manual", &incompressible_text(1000, 4)).await;
+
+    let ids = listed_ids(&running).await;
+    assert!(
+        !ids.contains(&handed["id"].as_str().unwrap().to_string()),
+        "{ids:?}"
+    );
+    assert!(
+        ids.contains(&manual["id"].as_str().unwrap().to_string()),
+        "{ids:?}"
+    );
+    assert_eq!(newest["unsaved"], false, "{newest}");
+}
+
+#[tokio::test]
+async fn a_snapshot_with_no_room_beside_the_start_one_and_current_images_stays_usable_and_marked_unsaved()
+ {
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("snapshot-no-room-sessions");
+    let running = start_stored_review(&authority, &sessions, 3000, Vec::new()).await;
+    take_snapshot(&running, "start", &incompressible_text(1200, 1)).await;
+    add_page_comment_with_image(&running, incompressible_image(1200)).await;
+
+    let taken = take_snapshot(&running, "manual", &incompressible_text(1200, 2)).await;
+
+    let listed = get_review_json(&running, "api/snapshots").await;
+    let entry = listed["snapshots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|snapshot| snapshot["id"] == taken["id"])
+        .cloned()
+        .unwrap();
+    assert_eq!(taken["unsaved"], true, "{taken}");
+    assert_eq!(entry["unsaved"], true, "{entry}");
+    let body = get_review_json(
+        &running,
+        &format!("api/snapshot/{}", taken["id"].as_str().unwrap()),
+    )
+    .await;
+    assert_eq!(body["html"], incompressible_text(1200, 2));
+}
+
+#[tokio::test]
+async fn a_comment_image_with_no_room_is_reported_in_the_answer() {
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("image-no-room-sessions");
+    let running = start_stored_review(&authority, &sessions, 1000, Vec::new()).await;
+
+    let added = add_page_comment_with_image(&running, incompressible_image(1200)).await;
+
+    assert_eq!(added["image_unsaved"], true, "{added}");
+}
+
+/// SSE を読み、`event: <name>` が届くまで待つ。届かなければ false。
+async fn receive_event(events: &mut reqwest::Response, name: &str) -> bool {
+    let wanted = format!("event: {name}");
+    let mut received = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !received.contains(&wanted) {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, events.chunk()).await {
+            Ok(Ok(Some(chunk))) => received.push_str(&String::from_utf8_lossy(&chunk)),
+            Ok(Ok(None) | Err(_)) | Err(_) => return false,
+        }
+    }
+    true
+}
+
+#[tokio::test]
+async fn a_comment_image_that_pushes_a_snapshot_out_tells_the_page_to_read_the_choices_again() {
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("image-pushes-sessions");
+    let running = start_stored_review(&authority, &sessions, 2500, Vec::new()).await;
+    take_snapshot(&running, "start", &incompressible_text(900, 1)).await;
+    let manual = take_snapshot(&running, "manual", &incompressible_text(900, 2)).await;
+    let mut events = reqwest::get(format!("{}api/events", running.review))
+        .await
+        .unwrap();
+
+    add_page_comment_with_image(&running, incompressible_image(1200)).await;
+
+    assert!(receive_event(&mut events, "snapshots").await);
+    let ids = listed_ids(&running).await;
+    assert!(
+        !ids.contains(&manual["id"].as_str().unwrap().to_string()),
+        "{ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_snapshot_taken_after_restoring_gets_an_id_no_restored_one_has() {
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("restored-ids-sessions");
+    let restored = |number, kind| PageSnapshot {
+        number,
+        kind,
+        page: "/".to_string(),
+        width: 390,
+        html: "<p>restored</p>".to_string(),
+        description: None,
+    };
+    let running = start_stored_review(
+        &authority,
+        &sessions,
+        kemi_core::session::FILES_LIMIT,
+        vec![
+            restored(1, SnapshotKind::Start),
+            restored(3, SnapshotKind::Manual),
+        ],
+    )
+    .await;
+
+    let taken = take_snapshot(&running, "manual", "<p>new</p>").await;
+
+    assert_eq!(
+        listed_ids(&running).await,
+        vec!["s1", "s3", taken["id"].as_str().unwrap()]
+    );
+    assert!(taken["id"] != "s1" && taken["id"] != "s3", "{taken}");
 }

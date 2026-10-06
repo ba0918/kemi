@@ -427,28 +427,6 @@ impl OpenSession {
         remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))
     }
 
-    /// セッションに添えるファイル（コメントの画像。live.md の R-PAGE-SESSION）を `<id>.files/` に
-    /// 書き、その絶対パスを返す。名前は呼ぶ側（サーバ）が決めたもので、要求の値から組まない。
-    pub fn save_file(&self, name: &str, bytes: &[u8]) -> Result<PathBuf, SessionError> {
-        if self.deleted {
-            return Err(SessionError::Io {
-                path: files_path(&self.dir, &self.info.id),
-                source: std::io::Error::other("the session is already deleted"),
-            });
-        }
-        let dir = files_path(&self.dir, &self.info.id);
-        create_private_dir(&dir)?;
-        let path = std::path::absolute(dir.join(name)).map_err(|source| SessionError::Io {
-            path: dir.join(name),
-            source,
-        })?;
-        write_private_file(&path, bytes).map_err(|source| SessionError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        Ok(path)
-    }
-
     /// スナップショットを `<id>.files/` に書く。書く前に 20 MB の規則で場所を空ける
     /// （R-PAGE-SESSION）。`comments` は今あるコメントの id で、その画像は消さない。
     pub fn save_snapshot(
@@ -1342,7 +1320,7 @@ mod tests {
             .unwrap();
         open.save_state_at(state_with_comment(), 200).unwrap();
 
-        let path = open.save_file("c1.png", b"png").unwrap();
+        let path = saved_path(&open.save_image("c1", b"png", &no_comments()));
 
         assert_eq!(path, files_dir(&scratch, open.id()).join("c1.png"));
         assert!(path.is_absolute());
@@ -1364,7 +1342,7 @@ mod tests {
             .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
             .unwrap();
         open.save_state_at(state_with_comment(), 200).unwrap();
-        open.save_file("c1.png", b"png").unwrap();
+        saved_path(&open.save_image("c1", b"png", &no_comments()));
         let id = open.id().to_string();
 
         open.delete().unwrap();
@@ -1380,7 +1358,7 @@ mod tests {
             .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
             .unwrap();
         open.save_state_at(state_with_comment(), 200).unwrap();
-        open.save_file("c1.png", b"png").unwrap();
+        saved_path(&open.save_image("c1", b"png", &no_comments()));
         let id = open.id().to_string();
         open.save_state_at(SessionState::default(), 300).unwrap();
 
@@ -1495,7 +1473,7 @@ mod tests {
         let open = store
             .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
             .unwrap();
-        let html = |seed: u8| String::from_utf8(incompressible_text(900, seed)).unwrap();
+        let html = |seed: u8| String::from_utf8(incompressible_text(1000, seed)).unwrap();
         open.save_snapshot(
             &page_snapshot(1, SnapshotKind::Start, &html(1)),
             &no_comments(),
@@ -1614,7 +1592,7 @@ mod tests {
         ] {
             let mut open = store.create(live_info(id, updated)).unwrap();
             open.save_state_at(state_with_comment(), updated).unwrap();
-            open.save_file("c1.png", b"png").unwrap();
+            saved_path(&open.save_image("c1", b"png", &no_comments()));
             drop(open);
         }
 
@@ -1632,7 +1610,7 @@ mod tests {
             .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
             .unwrap();
         open.save_state_at(state_with_comment(), 200).unwrap();
-        open.save_file("c1.png", b"png").unwrap();
+        saved_path(&open.save_image("c1", b"png", &no_comments()));
         let id = open.id().to_string();
         drop(open);
 

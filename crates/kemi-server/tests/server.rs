@@ -2038,6 +2038,17 @@ impl RecordingSink {
     }
 }
 
+/// ファイルを持たない sink の書き込みの結果。
+fn keeps_no_files() -> kemi_core::session::FilesWrite {
+    kemi_core::session::FilesWrite {
+        written: kemi_core::session::FileWritten::Failed(SessionError::Io {
+            path: std::path::PathBuf::from("files"),
+            source: std::io::Error::other("this sink keeps no files"),
+        }),
+        removed_snapshots: Vec::new(),
+    }
+}
+
 impl SessionSink for RecordingSink {
     fn initial_state(&self) -> SessionState {
         self.initial.lock().unwrap().clone().unwrap_or_default()
@@ -2079,11 +2090,21 @@ impl SessionSink for RecordingSink {
         Ok(())
     }
 
-    fn save_file(&self, _name: &str, _bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
-        Err(SessionError::Io {
-            path: std::path::PathBuf::from("files"),
-            source: std::io::Error::other("this sink keeps no files"),
-        })
+    fn save_image(
+        &self,
+        _comment_id: &str,
+        _bytes: &[u8],
+        _comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite {
+        keeps_no_files()
+    }
+
+    fn save_snapshot(
+        &self,
+        _snapshot: &kemi_core::session::PageSnapshot,
+        _comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite {
+        keeps_no_files()
     }
 }
 
@@ -2156,11 +2177,21 @@ impl SessionSink for SlowSink {
         Ok(())
     }
 
-    fn save_file(&self, _name: &str, _bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
-        Err(SessionError::Io {
-            path: std::path::PathBuf::from("files"),
-            source: std::io::Error::other("this sink keeps no files"),
-        })
+    fn save_image(
+        &self,
+        _comment_id: &str,
+        _bytes: &[u8],
+        _comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite {
+        keeps_no_files()
+    }
+
+    fn save_snapshot(
+        &self,
+        _snapshot: &kemi_core::session::PageSnapshot,
+        _comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite {
+        keeps_no_files()
     }
 }
 
@@ -2569,8 +2600,24 @@ impl SessionSink for StoreSink {
         self.open.lock().unwrap().delete()
     }
 
-    fn save_file(&self, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
-        self.open.lock().unwrap().save_file(name, bytes)
+    fn save_image(
+        &self,
+        comment_id: &str,
+        bytes: &[u8],
+        comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite {
+        self.open
+            .lock()
+            .unwrap()
+            .save_image(comment_id, bytes, comments)
+    }
+
+    fn save_snapshot(
+        &self,
+        snapshot: &kemi_core::session::PageSnapshot,
+        comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite {
+        self.open.lock().unwrap().save_snapshot(snapshot, comments)
     }
 }
 

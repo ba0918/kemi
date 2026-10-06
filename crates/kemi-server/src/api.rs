@@ -594,6 +594,7 @@ async fn events(
                 Ok(Event::Thread(comment)) => ("thread", comment.to_string()),
                 Ok(Event::Message(message)) => ("message", message.to_string()),
                 Ok(Event::Agent(agent)) => ("agent", agent.to_string()),
+                Ok(Event::Snapshots) => ("snapshots", "{}".to_string()),
                 // 取りこぼした通知は、どれだったか分からない。ページは更新があったもの
                 // として扱い、スレッドと発言とエージェントの状態を取り直す。
                 Err(_) => ("lagged", "{}".to_string()),

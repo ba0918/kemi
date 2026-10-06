@@ -15,7 +15,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
-use kemi_core::session::{SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis};
+use kemi_core::session::{
+    PageSnapshot, SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis,
+};
 use kemi_core::source::git::{GitMode, GitSource, GroupBy};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
@@ -641,6 +643,8 @@ fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
 struct LiveRun {
     page: LivePage,
     root: PathBuf,
+    /// 復元で戻すスナップショット（R-PAGE-SESSION）。新しいレビューでは空。
+    snapshots: Vec<PageSnapshot>,
 }
 
 impl LiveRun {
@@ -687,6 +691,7 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
         cookie: random_token(),
         mock_secret: random_token(),
         code_view: kemi_core::source::git::repo_root(&live.root).is_ok(),
+        snapshots: live.snapshots.clone(),
     })
 }
 
@@ -821,6 +826,7 @@ async fn run_review(
             std::process::exit(code);
         }
         Some(Err(error)) => {
+            close_suspended(stored_session.as_deref());
             // 実行時エラーでも、復元できるセッションが残るなら案内を出す（R-SESSION）。
             print_resume_hint(stored_session.as_deref());
             fail(&error.to_string());
@@ -837,10 +843,23 @@ async fn run_review(
                 serving.abort();
                 let _ = serving.await;
             }
+            // サーブのタスクが終わってから片付ける。処理中のスナップショットが後から
+            // `<id>.files/` に書き足さないように。
+            close_suspended(stored_session.as_deref());
             print_resume_hint(stored_session.as_deref());
             drop(stored_session);
             std::process::exit(130);
         }
+    }
+}
+
+/// 保留か実行時エラーで終わるとき、会話の無い `--live` のセッションの `<id>.files/` を消す
+/// （R-PAGE-SESSION）。失敗は警告だけにする（R-SESSION）。
+fn close_suspended(stored_session: Option<&session::StoredSession>) {
+    if let Some(stored_session) = stored_session
+        && let Err(error) = stored_session.close_suspended()
+    {
+        eprintln!("kemi: could not remove the session files: {error}");
     }
 }
 
@@ -868,7 +887,11 @@ async fn run_resume(cli: &Cli) -> ! {
     let source = match stored.info().mode {
         SessionMode::Live { page, root } => {
             let source = Arc::new(LiveSource::new(&page, &root)) as Arc<dyn ReviewSource>;
-            live = Some(LiveRun { page, root });
+            live = Some(LiveRun {
+                page,
+                root,
+                snapshots: restored_snapshots(&stored),
+            });
             source
         }
         SessionMode::Worktree
@@ -881,6 +904,21 @@ async fn run_resume(cli: &Cli) -> ! {
     };
     let results_key = stored.info().workspace_key;
     run_review(cli, source, Some(Arc::new(stored)), results_key, live).await
+}
+
+/// `<id>.files/` のスナップショットを読み戻す。読めないものは飛ばして警告し、復元は続ける。
+fn restored_snapshots(stored: &session::StoredSession) -> Vec<PageSnapshot> {
+    stored
+        .read_snapshots()
+        .into_iter()
+        .filter_map(|read| match read {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                eprintln!("kemi: could not restore a snapshot: {error}");
+                None
+            }
+        })
+        .collect()
 }
 
 /// `id` なしの起動。端末なら選択画面、端末でなければ一覧を出して終わる（R-SESSION）。
@@ -1055,6 +1093,10 @@ async fn main() {
 
     let stored_session = open_session(&cli, live.as_ref());
     let results_key = result::workspace_key(&workspace_root(Path::new(".")));
-    let live = live.map(|(page, root)| LiveRun { page, root });
+    let live = live.map(|(page, root)| LiveRun {
+        page,
+        root,
+        snapshots: Vec::new(),
+    });
     run_review(&cli, source, stored_session, results_key, live).await
 }
