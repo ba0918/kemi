@@ -25,6 +25,7 @@
 //   /changing.html  同じ URL のまま中身が変わるページ（差分の確かめに使う）。兄弟の並び（#items の li）と、
 //                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
 //                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
+//                 `?csp=1` を付けると `style-src 'self'`（インラインのスタイルを止める CSP）を返す
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
 //                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
@@ -330,6 +331,9 @@ export async function startDevServer({ port = 0, dir } = {}) {
       return;
     }
     const headers = { 'Content-Type': TYPES[extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' };
+    if (name === 'changing.html' && url.searchParams.get('csp') === '1') {
+      headers['Content-Security-Policy'] = "style-src 'self'";
+    }
     if (name === 'framed.html') {
       headers['X-Frame-Options'] = 'DENY';
       headers['Content-Security-Policy'] = "frame-ancestors 'none'; script-src 'self'";

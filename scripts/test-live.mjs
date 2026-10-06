@@ -27,6 +27,7 @@
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。印を付け直しても比べる相手の枠のスクロール位置は変わらない。
+//   インラインのスタイルを止める CSP のページでも印が付く。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -997,6 +998,35 @@ async function marksFollowTheChanges(repository) {
 }
 
 /**
+ * インラインのスタイルを止める CSP のページでも印が付く（R-PAGE-VIEW の変わったところに必ず印。
+ * R-PAGE-PROXY は script-src のほかの CSP を変えない）。
+ */
+async function marksAreDrawnUnderAStrictStylePolicy(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?csp=1`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    await new Promise((done) => setTimeout(done, 400));
+    const image = await shot(`${livePane} .lv-frame`, shots, 'csp-marks');
+    assert.ok(countPixels(image, changingRegions(false).button, isRed) > 0, `the changed button is marked: ${join(shots, 'csp-marks.png')}`);
+    console.log("PASS style-src 'self' の CSP を返すページでも、変わった要素に印が付く");
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 要素の多いページ（R-PAGE-SNAPSHOT の 2 MB は HTML に掛ける）: HTML が 2 MB 未満のページは、要素の記述が
  * 大きくても取れて、変化の一覧が出る。
  */
@@ -1036,6 +1066,7 @@ try {
   await overlayFollowsTheScrollAndTheOpacity(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
+  await marksAreDrawnUnderAStrictStylePolicy(repository);
   await manyElementsAreRecordedAndCompared(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});

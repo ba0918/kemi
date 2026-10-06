@@ -196,14 +196,24 @@
   // 変わった要素に枠を重ねる層。ページの見た目を変えないよう、文書の左上に大きさ 0 で置き、閉じた
   // shadow root の中に描く。この層は記述にもスナップショットにも入れず、見張りも反応させない
   // （入れると、印そのものが変化として出て、付け直しが繰り返す）。
+  // 見た目は <style> や style 属性の文字列ではなく、スクリプトから要素のスタイルの値を 1 つずつ入れる。
+  // ページの CSP の style-src がインラインのスタイルを止めていても効くようにするため。
 
-  /** 印の色。主な変化は赤、増えたは緑、ずれただけは控えめに薄い紫の破線。 */
-  const MARK_STYLE = `
-    div { position: absolute; box-sizing: border-box; pointer-events: none; }
-    div[data-kind="main"] { border: 2px solid rgb(214, 69, 69); }
-    div[data-kind="added"] { border: 2px solid rgb(26, 154, 74); }
-    div[data-kind="shifted"] { border: 1px dashed rgb(185, 166, 217); }
-  `;
+  /** 印の枠の色と線。主な変化は赤、増えたは緑、ずれただけは控えめに薄い紫の破線。 */
+  /** @type {Record<string, string>} */
+  const MARK_BORDERS = {
+    main: '2px solid rgb(214, 69, 69)',
+    added: '2px solid rgb(26, 154, 74)',
+    shifted: '1px dashed rgb(185, 166, 217)',
+  };
+
+  /**
+   * @param {HTMLElement} element
+   * @param {Record<string, string>} styles
+   */
+  function setStyles(element, styles) {
+    for (const [property, value] of Object.entries(styles)) element.style.setProperty(property, value);
+  }
 
   /** @type {HTMLElement | null} */
   let marksHost = null;
@@ -221,26 +231,30 @@
     }
     if (!marksHost || !marksRoot) {
       marksHost = document.createElement('div');
-      marksHost.style.cssText = 'position: absolute; left: 0; top: 0; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: visible; pointer-events: none; z-index: 2147483647;';
+      setStyles(marksHost, {
+        position: 'absolute', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
+        overflow: 'visible', 'pointer-events': 'none', 'z-index': '2147483647',
+      });
       marksRoot = marksHost.attachShadow({ mode: 'closed' });
     }
     if (!marksHost.isConnected) document.documentElement.append(marksHost);
     const origin = marksHost.getBoundingClientRect();
-    const style = document.createElement('style');
-    style.textContent = MARK_STYLE;
     /** @type {HTMLElement[]} */
     const boxes = [];
     for (const mark of marks) {
       const { index, kind } = /** @type {{ index: unknown, kind: unknown }} */ (mark ?? {});
       const element = typeof index === 'number' ? described[index] : undefined;
-      if (!element?.isConnected || !['main', 'added', 'shifted'].includes(String(kind))) continue;
+      const border = Object.hasOwn(MARK_BORDERS, String(kind)) ? MARK_BORDERS[String(kind)] : undefined;
+      if (!element?.isConnected || border === undefined) continue;
       const rect = element.getBoundingClientRect();
       const box = document.createElement('div');
-      box.dataset.kind = String(kind);
-      box.style.cssText = `left: ${rect.left - origin.left}px; top: ${rect.top - origin.top}px; width: ${rect.width}px; height: ${rect.height}px;`;
+      setStyles(box, {
+        position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border,
+        left: `${rect.left - origin.left}px`, top: `${rect.top - origin.top}px`, width: `${rect.width}px`, height: `${rect.height}px`,
+      });
       boxes.push(box);
     }
-    marksRoot.replaceChildren(style, ...boxes);
+    marksRoot.replaceChildren(...boxes);
   }
 
   /**
