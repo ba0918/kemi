@@ -176,6 +176,18 @@ What the page is compared with is chosen per page (path and query):
   changing the width or the way of comparing, or **Reload mock**), not when
   the file changes.
 
+When the page is compared with a snapshot, kemi matches the two element by
+element and lists the changes under the shown page in the page list, with
+their count. Main changes come first: a change of look (color, font size,
+corner radius, and the like, with the value before and after), of text, or
+an element added or removed. Elements that only moved or resized are folded
+below. An element inserted between siblings does not turn the siblings after
+it into changes, and elements with an `id` are matched by it. Each change is
+marked on the page: red for a main change, green for an added element, and a
+light dashed outline for one that only moved; a removed element is marked on
+the snapshot. The list and the marks follow the page as it changes. A page
+compared with a mock gets neither.
+
 **Side by side** puts the two next to each other. **Overlay** lays what the
 page is compared with over the page at the same width, with an opacity
 slider; it follows the page's scroll and lets clicks through to the page

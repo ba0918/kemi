@@ -22,6 +22,22 @@
 //                 外部の画像へ referrer を送るかの確かめ）
 //   /tall.html    高さ 3000px の色の帯（スクロールをそろえる確かめに使う。#band-<n> で移れる）
 //   /other.html   別のページ（ページの移動に使う）
+//   /changing.html  同じ URL のまま中身が変わるページ（差分の確かめに使う）。兄弟の並び（#items の li）と、
+//                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
+//                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
+//                 `?csp=1` を付けると `style-src 'self'`（インラインのスタイルを止める CSP）を、`?tt=1` を付けると
+//                 `require-trusted-types-for 'script'`（文字列を HTML として読む API を止める CSP）を返す
+//   /table.html   先頭にスクリプトが tbody を挟まずに組む表と、その下の兄弟の並び（#items の li）を持つ。
+//                 table.html を書き換えると読み込み直さずに body を差し替え、表は組み直す。中身は tablePage、
+//                 大きさは TABLE_GEOMETRY
+//   /scrolling.html  スクロールで位置の変わる要素を持つページ。上に張り付く見出し（#bar）、中でスクロールする箱
+//                 （#box の中の #row-1〜#row-10）、画面に固定した札（#badge）、高い余白と #start・#end の目印を持つ。
+//                 scrolling.css を書き換えると HMR の知らせで差し替える。大きさは SCROLLING_GEOMETRY
+//   /wide.html    <html> に min-width: 1024px を持つページ（表示幅を 1024px より狭くしても文書の幅が変わらない）
+//   /adopted.html  構築したスタイルシート（adoptedStyleSheets）だけで見た目を付けるページ。adopted.css を書き換えると、
+//                 DOM を変えずにそのシートの中身を replaceSync で差し替える
+//   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
+//                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -44,6 +60,14 @@ socket.addEventListener('message', (event) => {
     }
   }
   document.documentElement.dataset.hmr = String(change.version);
+});
+// HTML の書き換えは、読み込み直さずに body を差し替える（フレームワークの HMR が DOM を直すのに当たる）。
+socket.addEventListener('message', async (event) => {
+  const change = JSON.parse(event.data);
+  if (change.type !== 'html' || change.path !== location.pathname) return;
+  const html = await (await fetch(location.href, { cache: 'no-store' })).text();
+  document.body.innerHTML = new DOMParser().parseFromString(html, 'text/html').body.innerHTML;
+  document.documentElement.dataset.hmrHtml = String(change.version);
 });
 socket.addEventListener('open', () => { document.documentElement.dataset.hmrConnected = 'true'; });
 `;
@@ -106,6 +130,194 @@ ${Array.from({ length: 10 }, (_, index) => `<div class="band" id="band-${index +
 <body><h1 id="other">Other page</h1><a id="to-index" href="/">Back</a></body></html>
 `,
 };
+
+/** /changing.html の兄弟の並び。 */
+export const CHANGING_ITEMS = ['one', 'two', 'three', 'four'];
+
+/** /changing.html のボタンの背景色。 */
+export const CHANGING_BUTTON = 'rgb(49, 89, 214)';
+
+/**
+ * /changing.html の要素の高さ（左上は 0, 0 から縦に並ぶ）。兄弟 1 つ、ボタン（幅も）、文、末尾の余白。
+ * 末尾の余白は、スナップショットの枠をスクロールできる高さにするため。
+ */
+export const CHANGING_GEOMETRY = { item: 30, button: { width: 200, height: 60 }, note: 40 };
+const CHANGING_TAIL = 2000;
+
+/**
+ * /changing.html の中身。`items` の順に兄弟を並べる。
+ * @param {string[]} [items]
+ */
+export function changingPage(items = CHANGING_ITEMS) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Changing</title>
+<link rel="stylesheet" href="/changing.css">
+<script type="module" src="/__hmr.js"></script>
+</head><body>
+<ul id="items">${items.map((item) => `<li class="item">${item}</li>`).join('')}</ul>
+<button id="buy" class="buy">Buy</button>
+<p class="note">Below the button</p>
+<div class="tail"></div>
+</body></html>
+`;
+}
+
+/**
+ * /changing.html の CSS。`button` はボタンの背景色。
+ * @param {string} [button]
+ */
+export function changingCss(button = CHANGING_BUTTON) {
+  return `body { margin: 0; font: 16px sans-serif; }
+ul { margin: 0; padding: 0; list-style: none; }
+.item { height: ${CHANGING_GEOMETRY.item}px; }
+.buy { display: block; width: ${CHANGING_GEOMETRY.button.width}px; height: ${CHANGING_GEOMETRY.button.height}px; border: 0; color: rgb(255, 255, 255); background: ${button}; }
+.note { margin: 0; height: ${CHANGING_GEOMETRY.note}px; }
+.tail { height: ${CHANGING_TAIL}px; }
+`;
+}
+
+/**
+ * /scrolling.html の要素の大きさと位置（ページの左上から）。箱は見出しのすぐ下にあり、行は箱の中で縦に並ぶ。
+ * 行は scroll-margin-top を持ち、目印へ移ると箱の上端から `scrollMargin` 下に来る。
+ */
+export const SCROLLING_GEOMETRY = {
+  bar: 40,
+  box: { top: 40, height: 160 },
+  row: 40,
+  rows: 10,
+  scrollMargin: 40,
+  badge: { left: 250, top: 400, width: 100, height: 40 },
+};
+
+/**
+ * /scrolling.html の CSS。`badge` は札の、`row` は 6 行目の背景色。
+ * @param {{ badge?: string, row?: string }} [colors]
+ */
+export function scrollingCss({ badge = 'rgb(120, 120, 120)', row = 'rgb(235, 235, 235)' } = {}) {
+  const { bar, box, row: height, scrollMargin, badge: place } = SCROLLING_GEOMETRY;
+  return `body { margin: 0; font: 16px sans-serif; }
+#bar { position: sticky; top: 0; height: ${bar}px; background: rgb(220, 220, 220); }
+#box { height: ${box.height}px; overflow: auto; }
+.row { height: ${height}px; scroll-margin-top: ${scrollMargin}px; }
+#row-6 { background: ${row}; }
+#badge { position: fixed; left: ${place.left}px; top: ${place.top}px; width: ${place.width}px; height: ${place.height}px; background: ${badge}; }
+.spacer { height: 3000px; }
+`;
+}
+
+PAGES['scrolling.css'] = scrollingCss();
+PAGES['scrolling.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Scrolling</title>
+<link rel="stylesheet" href="/scrolling.css">
+<script type="module" src="/__hmr.js"></script>
+</head><body><div id="start"></div>
+<header id="bar">Bar</header>
+<div id="box">${Array.from({ length: SCROLLING_GEOMETRY.rows }, (_, index) => `<div class="row" id="row-${index + 1}">Row ${index + 1}</div>`).join('')}</div>
+<div id="badge">Badge</div>
+<div class="spacer"></div>
+<div id="end">End</div>
+</body></html>
+`;
+PAGES['changing.html'] = changingPage();
+PAGES['changing.css'] = changingCss();
+
+/** /table.html の要素の高さ（左上は 0, 0 から縦に並ぶ）。スクリプトで組む表の 1 行と、その下の兄弟 1 つ。 */
+export const TABLE_GEOMETRY = { row: 40, item: 30 };
+
+/**
+ * /table.html の中身。先頭にスクリプトが DOM で表を組み（tbody を挟まずに tr を足すので、HTML として
+ * 読み直すと tbody が足されて要素の並びが変わる）、その下に `items` の順に兄弟を並べる。
+ * @param {string[]} [items]
+ */
+export function tablePage(items = CHANGING_ITEMS) {
+  const { row, item } = TABLE_GEOMETRY;
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Table</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  table { border-collapse: collapse; border-spacing: 0; }
+  td { height: ${row}px; padding: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  .item { height: ${item}px; }
+  .tail { height: 2000px; }
+</style>
+<script type="module" src="/__hmr.js"></script>
+<script type="module">
+  // body を差し替える HMR の後も組み直す。
+  const build = () => {
+    const slot = document.getElementById('table-slot');
+    if (!slot || slot.firstChild) return;
+    const table = document.createElement('table');
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.textContent = 'Built by script';
+    tr.append(td);
+    table.append(tr);
+    slot.append(table);
+  };
+  build();
+  new MutationObserver(build).observe(document.body, { childList: true });
+</script>
+</head><body>
+<div id="table-slot"></div>
+<ul id="items">${items.map((name) => `<li class="item">${name}</li>`).join('')}</ul>
+<div class="tail"></div>
+</body></html>
+`;
+}
+
+PAGES['table.html'] = tablePage();
+/**
+ * /many.html の CSS。`button` はボタンの背景色。
+ * @param {string} [button]
+ */
+export function manyCss(button = CHANGING_BUTTON) {
+  return `.cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px; } .card { width: 160px; border: 1px solid rgb(220, 220, 220); border-radius: 8px; padding: 8px; } .card button { background: ${button}; color: rgb(255, 255, 255); }\n`;
+}
+
+PAGES['many.css'] = manyCss();
+
+/**
+ * /adopted.css の中身（/adopted.html が構築したスタイルシートに入れる）。`button` はボタンの背景色。
+ * @param {string} [button]
+ */
+export function adoptedCss(button = CHANGING_BUTTON) {
+  return `body { margin: 0; } .buy { display: block; width: 200px; height: 60px; border: 0; color: rgb(255, 255, 255); background: ${button}; }\n`;
+}
+
+PAGES['wide.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Wide</title>
+<style>html { min-width: 1024px; } body { margin: 0; } .box { height: 100px; background: rgb(200, 200, 200); }</style>
+</head><body><div class="box">Wide</div></body></html>
+`;
+PAGES['adopted.css'] = adoptedCss();
+// /__hmr.js は読まない。その HMR は CSS を差し替えるたびに <html> の属性を変え、DOM の変化として見張りに掛かる。
+PAGES['adopted.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Adopted</title>
+<script type="module">
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(${JSON.stringify(adoptedCss())});
+document.adoptedStyleSheets = [sheet];
+const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/__hmr');
+socket.addEventListener('message', async (event) => {
+  if (JSON.parse(event.data).path !== '/adopted.css') return;
+  sheet.replaceSync(await (await fetch('/adopted.css', { cache: 'no-store' })).text());
+});
+</script>
+</head><body><button id="buy" class="buy">Buy</button></body></html>
+`;
+
+/** @param {number} cards */
+function manyPage(cards) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Many</title>
+<link rel="stylesheet" href="/many.css">
+<script type="module" src="/__hmr.js"></script>
+</head><body><div class="cards">
+${Array.from({ length: cards }, (_, index) => `<div class="card"><h3>Item ${index + 1}</h3><p>Description of item ${index + 1}</p><button>Buy</button></div>`).join('\n')}
+</div></body></html>
+`;
+}
 
 /** /resources.html の箱。名前・左上の位置・色。色の画像は `<名前>.svg` で配る。 */
 export const RESOURCE_BOXES = [
@@ -226,6 +438,11 @@ export async function startDevServer({ port = 0, dir } = {}) {
       response.end(siblingsPage(url.searchParams.get('extra') === '1'));
       return;
     }
+    if (url.pathname === '/many.html') {
+      response.writeHead(200, { 'Content-Type': TYPES['.html'] });
+      response.end(manyPage(Math.min(100_000, Math.max(1, Number(url.searchParams.get('cards')) || 1250))));
+      return;
+    }
     if (url.pathname === '/referrer.html') {
       response.writeHead(200, { 'Content-Type': TYPES['.html'] });
       response.end(referrerPage(url.searchParams.get('image') ?? ''));
@@ -243,6 +460,12 @@ export async function startDevServer({ port = 0, dir } = {}) {
       return;
     }
     const headers = { 'Content-Type': TYPES[extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' };
+    if (name === 'changing.html' && url.searchParams.get('csp') === '1') {
+      headers['Content-Security-Policy'] = "style-src 'self'";
+    }
+    if (name === 'changing.html' && url.searchParams.get('tt') === '1') {
+      headers['Content-Security-Policy'] = "require-trusted-types-for 'script'";
+    }
     if (name === 'framed.html') {
       headers['X-Frame-Options'] = 'DENY';
       headers['Content-Security-Policy'] = "frame-ancestors 'none'; script-src 'self'";
@@ -260,9 +483,10 @@ export async function startDevServer({ port = 0, dir } = {}) {
     socket.on('close', () => clients.delete(client));
   });
   const watcher = watch(root, (_, file) => {
-    if (file !== 'style.css') return;
+    const type = file?.endsWith('.css') ? 'css' : file?.endsWith('.html') ? 'html' : null;
+    if (!type) return;
     version += 1;
-    for (const client of clients) client.send(JSON.stringify({ type: 'css', path: '/style.css', version }));
+    for (const client of clients) client.send(JSON.stringify({ type, path: `/${file}`, version }));
   });
   await new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(undefined)));
   const address = server.address();

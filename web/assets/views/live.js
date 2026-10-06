@@ -7,6 +7,18 @@ import { button, el, textEl } from "../dom.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 
 /**
+ * 表示中のページの変化の一覧の中身。`unmarked` は、消えた要素をスナップショットの側に印で示せないこと。
+ * @typedef {{
+ *   list: import("../live-diff.js").Change[],
+ *   shiftedOpen: boolean,
+ *   listed: { main: number, shifted: number },
+ *   unmarked: boolean,
+ * }} ChangeListState
+ * 比べられないときに一覧の代わりに出す知らせ。
+ * @typedef {{ notice: string }} ChangeNotice
+ */
+
+/**
  * @typedef {{
  *   band: HTMLElement,
  *   viewSeg: HTMLElement,
@@ -268,12 +280,18 @@ export function renderCompareOptions(select, options, chosen) {
 
 /**
  * ページのツリー（R-PAGE-VIEW）。ページを押すとそのページへ、表示幅の札を押すとその幅で
- * そのページへ移る。
+ * そのページへ移る。表示中のページの下には、比べた結果があれば変化の一覧を出す。
  * @param {HTMLElement} container
  * @param {import("../live-model.js").PageTreeItem[]} items
- * @param {{ onPage: (page: string) => void, onWidth: (page: string, width: number) => void }} handlers
+ * @param {{
+ *   onPage: (page: string) => void,
+ *   onWidth: (page: string, width: number) => void,
+ *   onShifted: (open: boolean) => void,
+ *   onListed: (group: "main" | "shifted", count: number) => void,
+ * }} handlers
+ * @param {ChangeListState | ChangeNotice | null} changes
  */
-export function renderPageTree(container, items, handlers) {
+export function renderPageTree(container, items, handlers, changes) {
   container.textContent = "";
   container.append(textEl("div", "lv-tree-head", `Pages ${items.length}`));
   const list = el("ul", "lv-pages");
@@ -301,7 +319,229 @@ export function renderPageTree(container, items, handlers) {
       tags.append(textEl("span", "lv-mock-tag", "mock"));
     }
     row.append(tags);
+    if (item.current && changes !== null) {
+      row.append(changeList(changes, handlers));
+    }
     list.append(row);
   }
   container.append(list);
+}
+
+/** 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。 */
+const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-change-show", ".lv-change-shifted .lv-change-show"];
+
+/**
+ * 表示中のページの下の変化の一覧だけを描き直す（R-PAGE-DIFF）。ページの行とその操作は作り直さない（動き続ける
+ * ページで比べ直すたびに、押そうとしている操作やフォーカスが入れ替わらないように）。一覧の中の操作に
+ * フォーカスがあれば、描き直した一覧の同じ操作に移す。表示中のページの行がまだ無ければ何もしない
+ * （renderPageTree が描く）。
+ * @param {HTMLElement} container renderPageTree で描いたツリー
+ * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
+ * @param {ChangeListState | ChangeNotice | null} changes
+ */
+export function renderChanges(container, handlers, changes) {
+  const row = container.querySelector('.lv-page[data-current="true"]');
+  if (!row) {
+    return;
+  }
+  const old = row.querySelector(":scope > .lv-changes");
+  const active = container.ownerDocument.activeElement;
+  const focused = old && active && old.contains(active) ? FOCUSABLE_IN_CHANGES.find((selector) => active.matches(selector)) : undefined;
+  if (changes === null) {
+    old?.remove();
+    return;
+  }
+  const box = changeList(changes, handlers);
+  if (old) {
+    old.replaceWith(box);
+  } else {
+    row.append(box);
+  }
+  if (focused) {
+    /** @type {HTMLElement | null} */ (box.querySelector(focused))?.focus();
+  }
+}
+
+/**
+ * 一覧に一度に足す項目の数。大きなページで描き直しが重くならないよう、最初はこの数だけ並べ、
+ * 残りは続きを出す操作で足す。
+ */
+const LISTED_CHANGES = 300;
+
+/**
+ * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。比べられないときは、
+ * 一覧の代わりにそのことを出す（R-PAGE-VIEW）。
+ * @param {ChangeListState | ChangeNotice} state
+ * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
+ */
+function changeList(state, handlers) {
+  if ("notice" in state) {
+    const box = el("div", "lv-changes lv-changes-failed");
+    box.append(textEl("p", "lv-changes-notice", state.notice));
+    return box;
+  }
+  const changes = state.list;
+  const main = changes.filter((change) => change.kind !== "shifted");
+  const shifted = changes.filter((change) => change.kind === "shifted");
+  const box = el("div", "lv-changes");
+  box.dataset.main = String(main.length);
+  box.dataset.shifted = String(shifted.length);
+  const head = el("div", "lv-changes-head");
+  head.append(
+    textEl("span", "", `Changes ${main.length}`),
+    textEl("span", "", `${main.length} main · ${shifted.length} shifted`),
+  );
+  box.append(head);
+  if (state.unmarked) {
+    box.append(textEl("p", "lv-changes-unmarked", "Not marked: removed elements cannot be located in the snapshot"));
+  }
+  if (changes.length === 0) {
+    box.append(textEl("p", "lv-changes-none", "No changes from the snapshot"));
+    return box;
+  }
+  if (main.length > 0) {
+    box.append(changeItems("lv-change-main", main, state.listed.main, (count) => handlers.onListed("main", count)));
+  }
+  if (shifted.length > 0) {
+    const details = /** @type {HTMLDetailsElement} */ (el("details", "lv-shifted"));
+    const shiftedItems = () =>
+      changeItems("lv-change-shifted", shifted, state.listed.shifted, (count) => handlers.onListed("shifted", count));
+    details.open = state.shiftedOpen;
+    details.append(textEl("summary", "", `Shifted only ${shifted.length}`));
+    if (state.shiftedOpen) {
+      details.append(shiftedItems());
+    }
+    // 畳んでいる間は項目を作らない（ずれただけは数が多くなりやすい）。
+    details.addEventListener("toggle", () => {
+      handlers.onShifted(details.open);
+      if (details.open && !details.querySelector(".lv-change-shifted")) {
+        details.append(shiftedItems());
+      }
+    });
+    box.append(details);
+  }
+  return box;
+}
+
+/**
+ * 変化の項目を `listed` 個まで並べ、残りがあれば続きを出す操作を置く。押すと次の LISTED_CHANGES 個を足し、
+ * 並べた数を `onListed` に知らせる（描き直しても同じ数まで並べるため）。
+ * @param {string} className
+ * @param {import("../live-diff.js").Change[]} changes
+ * @param {number} listed
+ * @param {(count: number) => void} onListed
+ */
+function changeItems(className, changes, listed, onListed) {
+  const list = el("ul", `lv-change-list ${className}`);
+  let shown = 0;
+  const more = el("li", "lv-change-more");
+  const remaining = textEl("span", "", "");
+  const showMore = button("lv-change-show");
+  showMore.textContent = "Show more";
+  more.append(remaining, showMore);
+  /** @param {number} count */
+  const showUpTo = (count) => {
+    const items = changes.slice(shown, count).map((change) => {
+      const item = el("li", "lv-change");
+      item.dataset.kind = change.kind;
+      const what = el("span", "lv-change-what");
+      what.append(...changeWhat(change));
+      item.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", change.label));
+      return item;
+    });
+    more.before(...items);
+    shown = Math.min(count, changes.length);
+    remaining.textContent = `${changes.length - shown} more `;
+    more.hidden = shown >= changes.length;
+  };
+  list.append(more);
+  showUpTo(Math.max(listed, LISTED_CHANGES));
+  showMore.addEventListener("click", () => {
+    showUpTo(shown + LISTED_CHANGES);
+    onListed(shown);
+  });
+  return list;
+}
+
+/**
+ * 変化の中身の文。見た目と文字は前後の値を並べる。
+ * @param {import("../live-diff.js").Change} change
+ * @returns {(Node | string)[]}
+ */
+function changeWhat(change) {
+  switch (change.kind) {
+    case "visual":
+      return [`${change.property} `, textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+    case "text":
+      return ["Text ", textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+    case "added":
+      return [change.is === "" ? "Added" : `Added: ${change.is}`];
+    case "removed":
+      return [change.was === "" ? "Removed" : `Removed: ${change.was}`];
+    case "shifted":
+      return ["Moved or resized"];
+  }
+}
+
+/** 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。 */
+const REMOVED_MARK_STYLE = "[data-kemi-removed] { outline: 2px solid rgb(214, 69, 69) !important; outline-offset: -2px !important; }";
+
+/** 記述の番号と HTML を読み直した文書での要素の位置の対応を入れる <meta> の name（web/live/page.js の ELEMENT_MAP）。 */
+const ELEMENT_MAP = "kemi-elements";
+
+/**
+ * 比べる相手の側の印（消えた要素）を付けたスナップショットの HTML。HTML を読み直すと要素の並びが DOM と
+ * 変わることがあるので、ページがスナップショットに添えた対応（記述の番号ごとの、読み直した文書での要素の
+ * 位置。web/live/page.js の elementMap）で要素を探し、属性を付ける。位置は対応の <meta> を外してから、
+ * 要素を文書の順に（<template> は中身を）数える。shadow root の中には文書の <style> が効かないので、
+ * 印を付けた shadow root ごとにも <style> を足す。`mapped` は、ページが対応を添えていたか（無ければ印は付けられない）。
+ * @param {string} html
+ * @param {number[]} indices 印を付ける要素の記述の番号
+ * @returns {{ html: string, mapped: boolean }}
+ */
+export function markRemovedInSnapshot(html, indices) {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const map = parsed.head.querySelector(`meta[name="${ELEMENT_MAP}"]`);
+  const runs = (map?.getAttribute("content") ?? "")
+    .split(" ")
+    .filter((run) => run !== "")
+    .map((run) => run.split(",").map(Number));
+  map?.remove();
+  /** @type {Set<number>} */
+  const wanted = new Set();
+  for (const index of indices) {
+    const run = runs.find(([, first, count]) => index >= first && index < first + count);
+    if (run) {
+      wanted.add(run[0] + index - run[1]);
+    }
+  }
+  /** @type {Element[]} */
+  const marked = [];
+  let position = 0;
+  /** @param {Element} element */
+  const visit = (element) => {
+    if (wanted.has(position)) {
+      marked.push(element);
+    }
+    position += 1;
+    const children = element instanceof HTMLTemplateElement ? element.content.children : element.children;
+    for (const child of [...children]) {
+      visit(child);
+    }
+  };
+  visit(parsed.documentElement);
+  /** @type {Set<Node>} */
+  const styled = new Set();
+  for (const element of marked) {
+    element.setAttribute("data-kemi-removed", "");
+    const root = element.getRootNode();
+    if (!styled.has(root)) {
+      styled.add(root);
+      const style = parsed.createElement("style");
+      style.textContent = REMOVED_MARK_STYLE;
+      (root instanceof DocumentFragment ? root : parsed.head).append(style);
+    }
+  }
+  const doctype = parsed.doctype ? `<!doctype ${parsed.doctype.name}>` : "";
+  return { html: doctype + parsed.documentElement.outerHTML, mapped: map !== null };
 }

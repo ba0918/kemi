@@ -744,6 +744,56 @@ async fn a_snapshot_over_two_megabytes_is_refused_and_not_kept() {
 }
 
 #[tokio::test]
+async fn a_snapshot_keeps_the_element_description_and_returns_it_with_the_body() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+    let description = serde_json::json!({
+        "width": 1280,
+        "height": 800,
+        "styles": [{ "color": "rgb(0, 0, 0)" }],
+        "elements": [{ "parent": -1, "tag": "html", "id": "", "cls": "", "text": "", "box": [0, 0, 1280, 800], "style": 0 }],
+    });
+
+    let taken = post_review(
+        &running,
+        "api/snapshot",
+        serde_json::json!({ "page": "/", "width": 1280, "kind": "manual", "html": "<p>then</p>", "description": description }),
+    )
+    .await;
+    assert_eq!(taken.status(), StatusCode::OK);
+    let taken: serde_json::Value = taken.json().await.unwrap();
+    let one = get_review_json(
+        &running,
+        &format!("api/snapshot/{}", taken["id"].as_str().unwrap()),
+    )
+    .await;
+
+    assert_eq!(one["description"], description);
+}
+
+#[tokio::test]
+async fn the_two_megabyte_limit_counts_the_html_and_not_the_description() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+    let element = serde_json::json!({ "parent": 0, "tag": "div", "id": "", "cls": "", "text": "x".repeat(100), "box": [0, 0, 10, 10], "style": 0 });
+    let description = serde_json::json!({
+        "width": 1280,
+        "height": 800,
+        "styles": [{}],
+        "elements": vec![element; 10_000],
+    });
+
+    let taken = post_review(
+        &running,
+        "api/snapshot",
+        serde_json::json!({ "page": "/", "width": 1280, "kind": "manual", "html": "x".repeat(2 * 1024 * 1024 - 1024), "description": description }),
+    )
+    .await;
+
+    assert_eq!(taken.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn a_snapshot_of_an_unknown_kind_is_refused() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;

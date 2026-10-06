@@ -25,6 +25,9 @@ pub(super) struct SnapshotRequest {
     width: u32,
     kind: String,
     html: String,
+    /// 2 MB の上限は HTML（DOM と CSS の記録）にだけ掛け、記述には掛けない。
+    #[serde(default)]
+    description: Option<Value>,
 }
 
 fn live(state: &AppState) -> Result<&LiveInfo, ApiError> {
@@ -61,6 +64,7 @@ pub(super) async fn take_snapshot(
         width: request.width,
         kind,
         html: request.html,
+        description: request.description,
     };
     let value = summary(&snapshot);
     snapshots.push(snapshot);
@@ -90,5 +94,6 @@ pub(super) async fn get_snapshot(
         .ok_or_else(|| ApiError::not_found("no such snapshot"))?;
     let mut value = summary(snapshot);
     value["html"] = json!(snapshot.html);
+    value["description"] = snapshot.description.clone().unwrap_or(Value::Null);
     Ok(Json(value))
 }

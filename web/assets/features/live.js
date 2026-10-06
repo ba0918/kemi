@@ -19,11 +19,14 @@ import {
   snapshotLabel,
   snapshotOptions,
 } from "../live-model.js";
-import { buildShell, renderCompareOptions, renderPageTree } from "../views/live.js";
+import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
+import { buildShell, markRemovedInSnapshot, renderChanges, renderCompareOptions, renderPageTree } from "../views/live.js";
 
 /**
  * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
  * @typedef {import("../live-model.js").SnapshotSummary} SnapshotSummary
+ * @typedef {import("../live-diff.js").Description} Description
+ * @typedef {import("../live-diff.js").Change} Change
  */
 
 /** 表示幅の既定。 */
@@ -34,6 +37,9 @@ const SNAPSHOT_LIMIT = 2 * 1024 * 1024;
 
 /** ページが写しを返すまで待つ上限。 */
 const CAPTURE_TIMEOUT = 15000;
+
+/** ページが記述を返すまで待つ上限。 */
+const DESCRIBE_TIMEOUT = 5000;
 
 const live = {
   /** @type {LiveInfo | null} */
@@ -65,6 +71,10 @@ const live = {
   bodies: new Map(),
   /** 比べる相手の枠に今出しているスナップショット。 */
   shownSnapshot: "",
+  /** 比べる相手の枠に今入れている中身（スナップショットの id と、印を付けた消えた要素の番号）。 */
+  shownFrame: "",
+  /** @type {Map<string, boolean>} スナップショットが要素の対応を持つか（id → 持つか）。枠に出したときに分かる。 */
+  mapped: new Map(),
   /** @type {Map<string, { path: string, url: string }>} ページごとのモックの割り当て */
   mocks: new Map(),
   /** モックを出し始めたときの条件。変わったら読み直す（R-PAGE-MOCK の読むきっかけ）。 */
@@ -78,15 +88,65 @@ const live = {
   opacity: 50,
   /** 見る対象のスクロールの位置と中身の高さ（中継したページが知らせる）。 */
   scroll: { x: 0, y: 0, height: 0 },
+  /** @type {Map<string, Description | null>} スナップショットの記述（id → 記述。無ければ null） */
+  descriptions: new Map(),
+  /** 動いているページの最後の記述と、そのページ（パスとクエリ）。 */
+  /** @type {{ page: string, description: Description } | null} */
+  now: null,
+  /** ページが変わったと知らせてきた回数。記述を頼んだ時点の回数と違えば、その記述は古い。 */
+  pageChanges: 0,
+  /** 最後の記述を頼んだ時点の pageChanges。 */
+  describedAt: -1,
+  /** 記述を頼んで返事を待っている。 */
+  describing: false,
+  /** 最後に頼んだ記述が返らなかった・読めなかったときの知らせ。次のきっかけ（ページの変化、読み込み、表示幅）まで頼み直さない。 */
+  describeFailure: "",
+  /** @type {Set<string>} 取り寄せられなかったスナップショット（id）。次のきっかけまで取りに行かない。 */
+  unloadable: new Set(),
+  /** ページが読み込みを知らせてきた回数。 */
+  pageLoads: 0,
+  /** 表示中のページの変化の一覧。比べていなければ null（R-PAGE-DIFF）。 */
+  /** @type {Change[] | null} */
+  changes: null,
+  /** 変化の一覧を計算したときの比べる相手と記述。変わらなければ計算し直さない。 */
+  /** @type {{ snapshot: string, now: Description } | null} */
+  changesFrom: null,
+  /** 比べられないときに一覧の代わりに出す知らせ（R-PAGE-VIEW）。比べられたら空。 */
+  changesNotice: "",
+  /** ずれただけを開いているか。同じページの間だけ保ち、ページを移ったら畳む。 */
+  shiftedOpen: false,
+  /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
+  listed: { main: 0, shifted: 0 },
 };
 
 /** @type {import("../views/live.js").LiveShell | null} */
 let shell = null;
 
-/** 写しを頼んで返事を待っているもの。 */
+/** 写しか記述を頼んで返事を待っているもの。 */
 /** @type {Map<number, (message: any) => void>} */
 const pendingCaptures = new Map();
 let nextCapture = 1;
+
+/**
+ * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
+ * @param {Window} frame
+ * @param {"capture" | "describe"} type
+ * @param {number} timeout
+ * @returns {Promise<any>}
+ */
+async function ask(frame, type, timeout) {
+  const id = nextCapture++;
+  const answer = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ error: "the page did not answer" }), timeout);
+    pendingCaptures.set(id, (message) => {
+      clearTimeout(timer);
+      resolve(message);
+    });
+    frame.postMessage({ kemi: "live", type, id }, live.origin);
+  });
+  pendingCaptures.delete(id);
+  return answer;
+}
 
 /**
  * ページの見方を始める。
@@ -223,6 +283,7 @@ function setView(view) {
  */
 function setWidth(width) {
   live.width = width;
+  forgetFailures();
   if (shell) {
     shell.widthInput.value = "";
     shell.widthError.hidden = true;
@@ -251,6 +312,10 @@ function openPage(page) {
   if (!shell) {
     return;
   }
+  if (page !== live.page) {
+    live.shiftedOpen = false;
+    live.listed = { main: 0, shifted: 0 };
+  }
   live.page = page;
   shell.liveFrame.src = live.origin + page;
   render();
@@ -269,8 +334,14 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (message.type === "captured") {
+  if (message.type === "captured" || message.type === "described") {
     pendingCaptures.get(Number(message.id))?.(message);
+    return;
+  }
+  if (message.type === "changed") {
+    live.pageChanges += 1;
+    forgetFailures();
+    refreshChanges();
     return;
   }
   if (message.type === "scroll") {
@@ -286,12 +357,28 @@ function receive(event) {
     return;
   }
   const page = pageKey(String(message.path ?? "/"));
-  if (page !== live.page) {
+  const moved = page !== live.page;
+  if (moved) {
     live.refNotice = "";
+    live.shiftedOpen = false;
+    live.listed = { main: 0, shifted: 0 };
   }
   live.page = page;
+  live.pageChanges += 1;
+  live.pageLoads += 1;
+  live.describing = false;
+  forgetFailures();
   live.reachable = message.reachable !== false;
   live.rewrote = Array.isArray(message.rewrote) ? message.rewrote.map(String) : [];
+  // 移った後の文書の記述が届くまで、前のページと比べた一覧と印は出さない（前のページの一覧が新しいページの
+  // 下に、前の印が新しい比べる相手の上に残らないように）。同じページを読み込み直しただけなら、新しい記述が
+  // 届くまで今の一覧と印を残す: 消すと消えた要素の印が一度外れて付き直し、比べる相手の枠が作り直されて
+  // スクロールが先頭に戻る。比べる相手が別のスナップショットに変われば、refreshChanges が消す。
+  // 読み込み直した文書の記述が返らなければ、残した一覧は前の文書のものなので、describeNow が比べられないことに替える。
+  live.now = null;
+  if (moved) {
+    setChanges(null, null);
+  }
   render();
   takeStartSnapshot();
 }
@@ -360,19 +447,9 @@ async function capture(kind) {
     }
     return;
   }
-  const id = nextCapture++;
   const page = live.page;
   const width = live.width;
-  /** @type {any} */
-  const answer = await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve({ error: "the page did not answer" }), CAPTURE_TIMEOUT);
-    pendingCaptures.set(id, (message) => {
-      clearTimeout(timer);
-      resolve(message);
-    });
-    frame.postMessage({ kemi: "live", type: "capture", id }, live.origin);
-  });
-  pendingCaptures.delete(id);
+  const answer = await whileLaidOut(() => ask(frame, "capture", CAPTURE_TIMEOUT));
   if (typeof answer.html !== "string") {
     live.refNotice = `Not recorded: ${answer.error ?? "the page could not be copied"}`;
     render();
@@ -383,15 +460,18 @@ async function capture(kind) {
     render();
     return;
   }
+  const description = await readUploadedDescription(answer.description);
   try {
     const taken = await api.takeSnapshot({
       page: pageKey(String(answer.path ?? page)),
       width,
       kind,
       html: answer.html,
+      description: description === null ? null : answer.description,
     });
     live.snapshots.push(taken);
     live.bodies.set(taken.id, answer.html);
+    live.descriptions.set(taken.id, description);
     live.refNotice = "";
   } catch (error) {
     live.refNotice = `Not recorded: ${error instanceof Error ? error.message : String(error)}`;
@@ -401,9 +481,245 @@ async function capture(kind) {
 
 function render() {
   renderBand();
-  renderTree();
   renderReference();
+  refreshChanges();
+  renderTree();
   layoutFrames();
+}
+
+/**
+ * スナップショットと一緒に預けた記述（gzip で縮めた base64 の文字列）を読む。読めなければ null（比べない）。
+ * @param {unknown} value
+ * @returns {Promise<Description | null>}
+ */
+async function readUploadedDescription(value) {
+  if (typeof value !== "string" || value === "") {
+    return null;
+  }
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    return unpackDescription(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+/** 表示中のページの比べる相手。 */
+function currentReference() {
+  return chooseReference({
+    snapshots: live.snapshots,
+    mock: live.mocks.get(live.page)?.path ?? null,
+    page: live.page,
+    width: live.width,
+    chosen: live.chosen.get(live.page),
+  });
+}
+
+/**
+ * 変化の一覧を今に合わせる（R-PAGE-DIFF）。比べる相手がスナップショットのときだけ比べる。
+ * 動いているページの記述が古い（ページが変わった、移った、表示幅が違う）ときは頼み直し、
+ * 届いてから比べる。どちらの記述も変わっていなければ計算し直さない。
+ */
+function refreshChanges() {
+  const reference = currentReference();
+  if (reference.type !== "snapshot" || !live.reachable) {
+    setChanges(null, null);
+    return;
+  }
+  const id = reference.snapshot.id;
+  // 比べる相手が別のスナップショットに変わったら、前のものと比べた一覧は新しい結果が出るまで出さない。
+  if (live.changesFrom !== null && live.changesFrom.snapshot !== id) {
+    setChanges(null, null);
+  }
+  if (live.unloadable.has(id)) {
+    setChanges(null, null, "Not compared: the snapshot could not be loaded");
+    return;
+  }
+  if (!live.descriptions.has(id)) {
+    void loadSnapshot(id).then(
+      () => refreshChanges(),
+      () => {
+        live.unloadable.add(id);
+        refreshChanges();
+      },
+    );
+    return;
+  }
+  const before = live.descriptions.get(id) ?? null;
+  if (before === null) {
+    setChanges(null, null, "Not compared: the snapshot has no element description");
+    return;
+  }
+  const now = live.now;
+  if (now === null || live.describedAt !== live.pageChanges) {
+    // 返らなかった記述は描くたびには頼み直さない（大きなページでは、記述を作るたびに全要素をたどる）。
+    if (live.describeFailure !== "") {
+      setChanges(null, null, live.describeFailure);
+      return;
+    }
+    // 隠れている間は頼まず、今の一覧を残す。また見えるようにしたときの描き直しか、ページの変化の知らせで頼む。
+    if (liveFrameHidden()) {
+      return;
+    }
+    void describeNow();
+    return;
+  }
+  // 移る途中や表示幅を変えた直後の記述。ページが落ち着くと知らせが来るので、それまで待つ
+  // （ここで頼み直すと、移り終えるまで頼みごとが続く）。
+  if (now.page !== live.page || now.description.width !== live.width) {
+    setChanges(null, null);
+    return;
+  }
+  if (live.changesFrom?.snapshot === id && live.changesFrom.now === now.description) {
+    return;
+  }
+  const from = { snapshot: id, now: now.description };
+  let changes;
+  try {
+    changes = diffDescriptions(before, now.description);
+  } catch {
+    // 形の崩れた記述は比べない。一覧の代わりにそのことを出す。
+    setChanges(null, from, "Not compared: the element descriptions could not be read");
+    return;
+  }
+  setChanges(changes, from);
+}
+
+/** 記述やスナップショットを得られなかったことを忘れ、次に描くときに頼み直させる。 */
+function forgetFailures() {
+  live.describeFailure = "";
+  live.unloadable.clear();
+}
+
+/**
+ * @param {Change[] | null} changes
+ * @param {{ snapshot: string, now: Description } | null} from
+ * @param {string} [notice] 比べられないとき、一覧の代わりに出す知らせ
+ */
+function setChanges(changes, from, notice = "") {
+  const same = sameChanges(changes, live.changes) && notice === live.changesNotice;
+  live.changesFrom = from;
+  if (same && changes === null) {
+    return;
+  }
+  // 結果が前と同じなら一覧は描き直さない。印は送り直す: ページは記述を作り直すたびに要素を数え直すので、
+  // 要素が作り直されていれば同じ番号でも別の要素を指す（同じ要素のままなら、ページは印を作り直さない）。
+  if (!same) {
+    live.changes = changes;
+    live.changesNotice = notice;
+    if (shell) {
+      renderChanges(shell.pageTree, changeHandlers, changesToList());
+    }
+  }
+  renderMarks();
+}
+
+/**
+ * 変わったところに印を付ける（R-PAGE-VIEW）。今のページにある変化は動いているページの側に、
+ * 差し込んだスクリプトが付ける。消えた要素は比べる相手の側に、スナップショットの中身に足して付ける。
+ */
+function renderMarks() {
+  if (!shell) {
+    return;
+  }
+  const marks = live.changes === null ? { now: [], before: [] } : marksOf(live.changes);
+  shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "marks", marks: marks.now }, live.origin);
+  if (live.shownSnapshot !== "") {
+    void showSnapshot(live.shownSnapshot);
+  }
+}
+
+/**
+ * 比べる相手の枠に出すスナップショットの、印を付ける消えた要素の番号。今の変化の一覧がそのスナップショットと
+ * 比べたものでなければ無し（前に比べた別のスナップショットの印を付けない）。
+ * @param {string} id
+ * @returns {number[]}
+ */
+function removedMarksOf(id) {
+  if (live.changes === null || live.changesFrom?.snapshot !== id) {
+    return [];
+  }
+  return marksOf(live.changes)
+    .before.map((mark) => mark.index)
+    .sort((a, b) => a - b);
+}
+
+/**
+ * 動いているページに今の記述を頼む。返事を待つ間に頼み直しはしない。ページが読み込まれ直したら
+ * 待つのをやめる（読み込み直す前の文書に頼んだものは返らないことがある）。返らない・読めないときは
+ * 比べられないことを出し、次のきっかけまで頼み直さない。
+ */
+async function describeNow() {
+  const frame = shell?.liveFrame.contentWindow;
+  if (!frame || live.describing) {
+    return;
+  }
+  live.describing = true;
+  const asked = live.pageChanges;
+  const loads = live.pageLoads;
+  const answer = await ask(frame, "describe", DESCRIBE_TIMEOUT);
+  if (loads !== live.pageLoads) {
+    return;
+  }
+  live.describing = false;
+  // 待つ間に隠れた枠の記述は使わない。また見えるようにしたときに頼み直す。
+  if (liveFrameHidden()) {
+    return;
+  }
+  // 動いているページの記述は postMessage で届くので縮めない（縮めて戻す手間のほうが大きい）。
+  const description = unpackDescription(answer.description);
+  if (description === null) {
+    live.now = null;
+    live.describeFailure = `Not compared: ${answer.error ?? "the page did not describe its elements"}`;
+    refreshChanges();
+    return;
+  }
+  live.now = { page: pageKey(String(answer.path ?? "/")), description };
+  live.describedAt = asked;
+  refreshChanges();
+}
+
+/**
+ * 動いているページの枠が隠れているか（狭い画面で比べる相手の側を見ている、コードの見方）。隠れた文書の要素は
+ * 並べられていないので、その記述の要素の箱はスナップショットと合わず、変わっていない要素がずれたに見える。
+ */
+function liveFrameHidden() {
+  return shell === null || shell.liveFrame.getClientRects().length === 0;
+}
+
+/**
+ * 動いているページの枠が隠れていれば、見えず操作も受けないまま選んだ幅で並べてから task を呼ぶ。スナップショットの
+ * 記述を隠れた文書から作ると、並べた後のページと比べたときに変わっていない要素がずれたに見える。
+ * @template T
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+async function whileLaidOut(task) {
+  if (!shell || !liveFrameHidden()) {
+    return task();
+  }
+  const { stage, livePane, liveFrame } = shell;
+  // コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
+  const revealed = stage.getClientRects().length === 0 ? stage : livePane;
+  stage.dataset.measuring = "true";
+  revealed.inert = true;
+  try {
+    liveFrame.getBoundingClientRect();
+    // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
+    await new Promise((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => done(undefined)));
+      setTimeout(done, 200);
+    });
+    return await task();
+  } finally {
+    delete stage.dataset.measuring;
+    revealed.inert = false;
+  }
 }
 
 function renderBand() {
@@ -450,6 +766,29 @@ function renderBand() {
   }
 }
 
+/** 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。 */
+const changeHandlers = {
+  onShifted: (/** @type {boolean} */ open) => {
+    live.shiftedOpen = open;
+  },
+  onListed: (/** @type {"main" | "shifted"} */ group, /** @type {number} */ count) => {
+    live.listed[group] = count;
+  },
+};
+
+/**
+ * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。
+ * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | null}
+ */
+function changesToList() {
+  if (live.changes === null) {
+    return live.changesNotice === "" ? null : { notice: live.changesNotice };
+  }
+  const snapshot = live.changesFrom?.snapshot ?? "";
+  const unmarked = live.mapped.get(snapshot) === false && live.changes.some((change) => change.kind === "removed");
+  return { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
+}
+
 function renderTree() {
   if (!shell) {
     return;
@@ -463,7 +802,9 @@ function renderTree() {
         setWidth(width);
         openPage(page);
       },
+      ...changeHandlers,
     },
+    changesToList(),
   );
 }
 
@@ -473,13 +814,7 @@ function renderReference() {
     return;
   }
   const mock = live.mocks.get(live.page) ?? null;
-  const reference = chooseReference({
-    snapshots: live.snapshots,
-    mock: mock?.path ?? null,
-    page: live.page,
-    width: live.width,
-    chosen: live.chosen.get(live.page),
-  });
+  const reference = currentReference();
   shell.refNotice.hidden = live.refNotice === "";
   shell.refNotice.textContent = live.refNotice;
   shell.refNotice.dataset.kind = "waiting";
@@ -544,26 +879,64 @@ function showMock(url) {
 }
 
 /**
- * スナップショットの中身を、スクリプトを止めた枠に出す。
+ * スナップショットの中身を、スクリプトを止めた枠に出す。消えた要素の印は中身に足して描く。
+ * 枠を作り直すとその中のスクロールは先頭に戻るので、作り直すのは出すスナップショットか、印を付ける
+ * 消えた要素の組が変わったときだけにする（動いているページの側の印だけが変わったときは作り直さない）。
  * @param {string} id
  */
 async function showSnapshot(id) {
   if (!shell) {
     return;
   }
-  let html = live.bodies.get(id);
-  if (html === undefined) {
-    html = String((await api.getSnapshot(id)).html ?? "");
-    live.bodies.set(id, html);
-  }
-  if (live.shownSnapshot !== id) {
+  const html = await loadSnapshot(id);
+  const removed = removedMarksOf(id);
+  const key = `${id} ${removed.join(",")}`;
+  if (live.shownSnapshot !== id || live.shownFrame === key) {
     return;
   }
-  // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。
+  live.shownFrame = key;
+  // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。印が無くても通すのは、
+  // ページが添えた要素の対応の <meta> を外すため（残すと head の先頭の子になり、head を前提にしたセレクタが変わる）。
   const frame = /** @type {HTMLIFrameElement} */ (shell.refFrame.cloneNode(false));
-  frame.srcdoc = html;
+  const marked = markRemovedInSnapshot(html, removed);
+  frame.srcdoc = marked.html;
   shell.refFrame.replaceWith(frame);
   shell.refFrame = frame;
+  layoutFrames();
+  if (live.mapped.get(id) !== marked.mapped) {
+    // 一覧は対応の有無が分かる前に描いていることがあるので、印を付けられないことを出し直す。
+    live.mapped.set(id, marked.mapped);
+    renderChanges(shell.pageTree, changeHandlers, changesToList());
+  }
+}
+
+/** 取り寄せ中のスナップショット（id → 取り寄せ）。同じものを 2 度取りに行かない。 */
+/** @type {Map<string, Promise<string>>} */
+const loadingSnapshots = new Map();
+
+/**
+ * スナップショットの中身と記述。手元に無ければ取り寄せて覚える。中身を返す。
+ * @param {string} id
+ * @returns {Promise<string>}
+ */
+function loadSnapshot(id) {
+  const html = live.bodies.get(id);
+  if (html !== undefined && live.descriptions.has(id)) {
+    return Promise.resolve(html);
+  }
+  let loading = loadingSnapshots.get(id);
+  if (!loading) {
+    loading = api.getSnapshot(id).then(async (snapshot) => {
+      const body = String(snapshot.html ?? "");
+      const description = await readUploadedDescription(snapshot.description);
+      live.bodies.set(id, body);
+      live.descriptions.set(id, description);
+      return body;
+    });
+    loading.finally(() => loadingSnapshots.delete(id)).catch(() => {});
+    loadingSnapshots.set(id, loading);
+  }
+  return loading;
 }
 
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
