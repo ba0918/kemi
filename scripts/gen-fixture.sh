@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: gen-fixture.sh <dir> --files N --lines M [--commits K]" >&2
+  echo "usage: gen-fixture.sh <dir> --files N --lines M [--commits K] [--ignored-dirs D]" >&2
   exit 2
 }
 
@@ -12,6 +12,7 @@ dir=""
 files=""
 lines=""
 commits=1
+ignored_dirs=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --files)
@@ -24,6 +25,10 @@ while [ $# -gt 0 ]; do
       ;;
     --commits)
       commits=$2
+      shift 2
+      ;;
+    --ignored-dirs)
+      ignored_dirs=$2
       shift 2
       ;;
     -*)
@@ -72,6 +77,10 @@ while [ "$index" -lt "$files" ]; do
   } > "$path"
   index=$((index + 1))
 done
+# git が無視するディレクトリを作るときは、無視の規則も最初のコミットに入れる。
+if [ "$ignored_dirs" -gt 0 ]; then
+  echo 'out*/' > .gitignore
+fi
 git add -A
 git commit -q -m "base"
 
@@ -97,5 +106,15 @@ while [ "$index" -lt "$files" ]; do
   index=$((index + 1))
 done
 
+# git が無視するディレクトリを D 個、追跡しているディレクトリの間に散らして作る
+# （R-LIVE の監視が潜らないことを測るため）。中に 1 ファイルずつ置く。
+index=0
+while [ "$index" -lt "$ignored_dirs" ]; do
+  sub=$((index % 100))
+  mkdir "src/dir$sub/out$index"
+  printf 'ignored %s\n' "$index" > "src/dir$sub/out$index/build.o"
+  index=$((index + 1))
+done
+
 tree=$(git rev-parse "HEAD^{tree}")
-echo "fixture ready: $dir files=$files lines=$lines commits=$commits tree=$tree"
+echo "fixture ready: $dir files=$files lines=$lines commits=$commits ignored_dirs=$ignored_dirs tree=$tree"
