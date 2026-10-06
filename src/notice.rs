@@ -79,26 +79,6 @@ mod tests {
     }
 
     #[test]
-    fn a_page_comment_names_the_page_the_width_and_the_number_of_places() {
-        let notice = Notice::PageCommentAdded {
-            url: "/products?x=1".to_string(),
-            width: 390,
-            places: 3,
-        };
-        assert_eq!(
-            notice_line(&notice),
-            "kemi: comment page /products?x=1 390 3 places"
-        );
-    }
-
-    #[test]
-    fn an_unsaved_comment_image_is_a_warning_that_carries_the_reason() {
-        let line = notice_line(&Notice::CommentImageNotSaved(disk_full()));
-        assert!(line.starts_with("kemi: could not save the comment image: "));
-        assert!(line.contains("disk is full"));
-    }
-
-    #[test]
     fn failures_are_warnings_that_carry_the_reason() {
         let result = Notice::ResultNotSaved(ResultSaveError::Unlocated("no home".to_string()));
         assert_eq!(

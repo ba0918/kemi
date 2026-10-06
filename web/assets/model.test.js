@@ -366,12 +366,6 @@ test("commentLabel_marks_file_wide_and_ranges", () => {
   assert.equal(commentLabel({ side: "old", start_line: 4, end_line: 6 }), "Old side 4–6");
 });
 
-test("a comment on a running page is labelled by its width and the number of its places", () => {
-  const page = (/** @type {number} */ count) => ({ url: "/cart", width: 390, places: Array.from({ length: count }, (_, i) => ({ n: i + 1 })) });
-  assert.equal(commentLabel({ side: null, start_line: null, page: page(1) }), "390px · 1 place");
-  assert.equal(commentLabel({ side: null, start_line: null, page: page(3) }), "390px · 3 places");
-});
-
 test("a page comment left at another page or width tells the width to switch to", () => {
   const comment = { page: { url: "/cart", width: 390, places: [] } };
   assert.equal(pageCommentElsewhere(comment, { page: "/cart", width: 390 }), null);

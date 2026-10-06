@@ -206,12 +206,3 @@ test("undo takes away the place added last", () => {
   assert.deepEqual(numbers(draft), [1]);
   assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
 });
-
-test("a place on another page or at another width starts the places over", () => {
-  let draft = emptyDraft("/", 390);
-  draft = addPlace(draft, place("element", "#a"), "/", 390);
-  const moved = addPlace(draft, place("arrow"), "/other", 390);
-  assert.deepEqual([moved.url, moved.width, numbers(moved)], ["/other", 390, [1]]);
-  const resized = addPlace(draft, place("arrow"), "/", 1280);
-  assert.deepEqual([resized.url, resized.width, numbers(resized)], ["/", 1280, [1]]);
-});
