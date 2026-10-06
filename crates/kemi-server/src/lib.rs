@@ -140,6 +140,18 @@ pub enum Notice {
         directory: std::path::PathBuf,
         reason: String,
     },
+    /// worktree の作業ツリー全体を見張れず、起動時の差分のファイルだけを見張る形に落とした。
+    /// レビューの間に 1 回だけ出す（R-LIVE）。
+    WorkTreeNotWatched(WatchFallback),
+}
+
+/// 作業ツリー全体の見張りをやめた理由（R-LIVE）。
+#[derive(Debug)]
+pub enum WatchFallback {
+    /// 見張るディレクトリが上限を超えた。
+    TooManyDirectories { limit: usize },
+    /// OS が見張りを断った、または見張るディレクトリを集められなかった。
+    Refused(String),
 }
 
 /// [`Notice`] の受け取り先。
@@ -423,7 +435,12 @@ pub async fn serve(
     if let Some(agent) = &params.agent {
         let _ = agent.control.state.set(Arc::downgrade(&state));
     }
-    watch::start(state.source.watch_paths(), state.events.clone());
+    watch::start(
+        state.source.watch_paths(),
+        state.source.work_tree(),
+        state.events.clone(),
+        state.notices.clone(),
+    );
 
     let app = api::router(state.clone());
     let page = axum::serve(listener, app).with_graceful_shutdown(stopping(&state));

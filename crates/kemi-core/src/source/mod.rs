@@ -358,6 +358,10 @@ impl ReviewSource for FocusSource {
         self.inner.watch_paths()
     }
 
+    fn work_tree(&self) -> Option<work_tree::WorkTree> {
+        self.inner.work_tree()
+    }
+
     fn reads_repository(&self) -> bool {
         self.inner.reads_repository()
     }
@@ -426,6 +430,21 @@ mod tests {
         fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
             Err(SourceError::UnknownFileId(file_id.to_string()))
         }
+    }
+
+    #[test]
+    fn focus_keeps_the_work_tree_of_the_source_it_wraps() {
+        let repo = testutil::TempRepo::new();
+        let inner = Box::new(git::GitSource::new(
+            repo.path.clone(),
+            git::GitMode::Worktree,
+        ));
+        let source = FocusSource::new(inner, focus::parse_focus("{}").unwrap());
+
+        assert_eq!(
+            source.work_tree(),
+            Some(work_tree::WorkTree::new(repo.path.clone()))
+        );
     }
 
     #[test]
