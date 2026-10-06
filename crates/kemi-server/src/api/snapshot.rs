@@ -77,11 +77,10 @@ pub(super) async fn take_snapshot(
         html: request.html,
         description: request.description,
     };
-    let unsaved = match &state.session_sink {
+    let (unsaved, removed) = match &state.session_sink {
         Some(sink) => {
             let write = sink.save_snapshot(&record, &comment_ids(&state));
-            forget_removed(&state, live, &write.removed_snapshots);
-            match write.written {
+            let unsaved = match write.written {
                 FileWritten::Saved(_) => false,
                 FileWritten::NoRoom => true,
                 // 書き込みの失敗も、保存していないことは同じなので同じ印を付ける。
@@ -89,9 +88,10 @@ pub(super) async fn take_snapshot(
                     state.notices.notify(Notice::SnapshotNotSaved(error));
                     true
                 }
-            }
+            };
+            (unsaved, write.removed_snapshots)
         }
-        None => false,
+        None => (false, Vec::new()),
     };
     let snapshot = Snapshot { record, unsaved };
     let value = summary(&snapshot);
@@ -100,6 +100,9 @@ pub(super) async fn take_snapshot(
         .expect("snapshots poisoned")
         .taken
         .push(snapshot);
+    // 一覧の読み直しを促すのは、新しいものを一覧に入れてから。先に知らせると、読み直した
+    // 一覧に新しいものが無いことがある。
+    forget_removed(&state, live, &removed);
     Ok(Json(value))
 }
 

@@ -806,6 +806,7 @@ async function savePageComment() {
     const notice = imageUnsavedNotice(comment);
     if (notice !== "") {
       live.refNotice = notice;
+      renderReference();
     }
     refreshCommentBadges(before);
     renderHeader();
@@ -871,7 +872,10 @@ async function capture(kind) {
       html: answer.html,
       description: description === null ? null : answer.description,
     });
-    live.snapshots.push(taken);
+    // 取ったことで古いものが消えると、一覧の読み直しが先に届いて、もう入っていることがある。
+    if (!live.snapshots.some((snapshot) => snapshot.id === taken.id)) {
+      live.snapshots.push(taken);
+    }
     live.bodies.set(taken.id, answer.html);
     live.descriptions.set(taken.id, description);
     live.refNotice = "";
