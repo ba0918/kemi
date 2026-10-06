@@ -24,6 +24,44 @@
  */
 
 /**
+ * ページから届く詰めた形。要素は `[親, タグ, id, class, 文字, 左, 上, 幅, 高さ, スタイルの番号]` の並び。
+ * 要素ごとに項目名を持たないので、要素の多いページでも小さく送れる。
+ * @param {unknown} value
+ * @returns {Description | null} 形が違えば null（比べない）
+ */
+export function unpackDescription(value) {
+  const packed = /** @type {{ width: unknown, height: unknown, styles: unknown, elements: unknown }} */ (value);
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    typeof packed.width !== "number" ||
+    typeof packed.height !== "number" ||
+    !Array.isArray(packed.styles) ||
+    !Array.isArray(packed.elements)
+  ) {
+    return null;
+  }
+  /** @type {DescribedElement[]} */
+  const elements = [];
+  for (const row of packed.elements) {
+    if (!Array.isArray(row) || row.length !== 10) {
+      return null;
+    }
+    const [parent, tag, id, cls, text, left, top, width, height, style] = row;
+    elements.push({
+      parent: Number(parent),
+      tag: String(tag),
+      id: String(id),
+      cls: String(cls),
+      text: String(text),
+      box: [Number(left), Number(top), Number(width), Number(height)],
+      style: Number(style),
+    });
+  }
+  return { width: packed.width, height: packed.height, styles: packed.styles, elements };
+}
+
+/**
  * 変化 1 つ。`before` と `now` はそれぞれの記述の中の要素の番号で、無い側は null。
  * 見た目の変化は `property` の値の前後を、文字の変化は文字の前後を `was` と `is` に持つ。
  * 増えた・消えたは、その要素の中の文字の始まりを持つ。
