@@ -132,6 +132,18 @@ export function chooseSnapshot(snapshots, page, width, chosen) {
   return null;
 }
 
+/**
+ * 開始時のスナップショットを今取るか（live.md の R-PAGE-SNAPSHOT）。預けた一覧がまだ分からない間は
+ * 取らない: 復元したレビューでは一覧に開始時のものがあり、先に取ると既定の比べる相手が今の見た目に
+ * 替わる（R-PAGE-SESSION の反例）。
+ * @param {{ taken: boolean, reachable: boolean, snapshots: SnapshotSummary[] | null }} at
+ *   taken は取りに行ったか、snapshots は預けた一覧（読む前は null）
+ * @returns {boolean}
+ */
+export function startSnapshotDue({ taken, reachable, snapshots }) {
+  return !taken && reachable && snapshots !== null && !snapshots.some((snapshot) => snapshot.kind === "start");
+}
+
 /** @type {Record<string, string>} */
 const KIND_LABELS = { start: "Start", handed: "Handed", manual: "Recorded" };
 

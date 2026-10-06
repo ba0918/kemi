@@ -23,6 +23,7 @@ import {
   parseWidth,
   removePlace,
   snapshotLabel,
+  startSnapshotDue,
   snapshotOptions,
   undoPlace,
   unsavedSnapshotNotice,
@@ -93,6 +94,8 @@ const live = {
   chosen: new Map(),
   /** 開始時のスナップショットを取りに行ったか。 */
   startTaken: false,
+  /** 預けたスナップショットの一覧を一度読めたか。読めるまで開始時のスナップショットは取らない。 */
+  snapshotsListed: false,
   /** 取れなかったときの知らせ。次に描くまで出す。 */
   refNotice: "",
   /** @type {Map<string, string>} 中身の写し（id → HTML） */
@@ -289,9 +292,10 @@ export function startLive(info) {
   });
   void api.listSnapshots().then((list) => {
     live.snapshots = list.snapshots ?? [];
-    // 読み込み直したページと復元したレビューでは、開始時のスナップショットはもう取ってある。
-    live.startTaken = live.startTaken || live.snapshots.some((snapshot) => snapshot.kind === "start");
+    live.snapshotsListed = true;
     render();
+    // 読み込み直したページと復元したレビューでは、開始時のスナップショットはもう取ってあり、ここでは取らない。
+    // ページが先に読み込みを知らせていれば、そのときは一覧を待って取らずにいたので、ここで取る。
     takeStartSnapshot();
   });
   // 20 MB の規則で消えたスナップショットを、読み込み直さずに選択肢から消す（R-PAGE-SESSION）。
@@ -496,7 +500,8 @@ async function removeMock() {
 
 /** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
 function takeStartSnapshot() {
-  if (live.startTaken || !live.reachable) {
+  const snapshots = live.snapshotsListed ? live.snapshots : null;
+  if (!startSnapshotDue({ taken: live.startTaken, reachable: live.reachable, snapshots })) {
     return;
   }
   live.startTaken = true;
