@@ -16,6 +16,16 @@ body[data-live-view="code"][data-live-code="false"] #main > :not(.lv-band):not(#
   display: none !important;
 }
 
+/* 隠れた動いているページのスナップショットを取る間だけ、見えず操作も受けないまま並べる（features/live.js の
+   whileLaidOut）。git の外で隠す上の規則にも勝つよう、id まで書いて後ろに置く。 */
+body[data-live-view="code"] #main > #live-stage.lv-stage[data-measuring] {
+  display: grid !important;
+  position: fixed;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 body[data-live-view="page"] #tree,
 body:not([data-live-view="page"]) #page-tree {
   display: none;
@@ -310,6 +320,14 @@ body[data-live-view="code"] .lv-page-only {
   .lv-stage[data-compare="side"][data-side="live"] .lv-pane[data-side="ref"],
   .lv-stage[data-compare="side"][data-side="ref"] .lv-pane[data-side="live"] {
     display: none;
+  }
+
+  .lv-stage[data-compare="side"][data-side="ref"][data-measuring] .lv-pane[data-side="live"] {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
 
   /* 重ねて透かすときは 2 枚を重ねるので、どちらを見るかの切り替えは要らない。 */

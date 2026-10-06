@@ -25,7 +25,8 @@
 //   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色つきで主な変化に入る。
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
 //   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
-//   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。
+//   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。枠が隠れている間（比べる相手の
+//   側を見ている、コードの見方から渡す）に取ったスナップショットも、変えていないページとは変化 0。
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
@@ -910,6 +911,33 @@ async function changeListFollowsThePage(repository) {
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
     await waitFor(`${visible(`${livePane} .lv-frame`)} && ${counts} === '0/0'`);
     console.log('PASS 幅 390px で比べる相手の側を見ている間は変化の数が変わらず、動いているページの側に戻すと比べ直す');
+
+    // 比べる相手の側を見ている（動いているページの枠が隠れている）間に取ったスナップショットも、選んだ幅で
+    // 並べた文書から記述する。ページを変えずに動いているページの側に戻せば、それと比べた変化は 0。
+    await evaluate(`document.querySelector('.lv-side button[data-side="ref"]').click(); true`);
+    await waitFor(`!${visible(`${livePane} .lv-frame`)} && ${visible('.lv-compare .lv-record')}`);
+    // ページのツリーの引き出しが開いたままなので、押すのはスクリプトで。
+    await evaluate(`document.querySelector('.lv-compare .lv-record').click(); true`);
+    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
+    await chooseReference('Recorded 2');
+    await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
+    await waitFor(`${visible(`${livePane} .lv-frame`)} && ${changeList} !== null`);
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.equal(await evaluate(counts), '0/0', 'a snapshot recorded while the live page is hidden shows no change against the unchanged page');
+    console.log('PASS 幅 390px で比べる相手の側を見ている間に取ったスナップショットと、変えていないページを比べると変化が 0');
+
+    // コードの見方から渡すとき（舞台ごと隠れている）に取るスナップショットも同じ。
+    await browser('set', 'viewport', '1280', '800');
+    await post(kemi.url, 'api/message', { body: 'once more' });
+    await browser('click', '.lv-view button[data-view="code"]');
+    await waitFor(`!${visible('#live-stage')}`);
+    await handInThePage(kemi, repository, state);
+    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 2'))`);
+    await browser('click', '.lv-view button[data-view="page"]');
+    await chooseReference('Handed 2');
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view shows no change against the unchanged page');
+    console.log('PASS コードの見方から渡したときのスナップショットと、変えていないページを比べると変化が 0');
     assert.equal(await evaluate(`window.__kemiNotReloaded === true`), true, 'the review page was not reloaded');
   } finally {
     await browser('set', 'viewport', '1280', '800');

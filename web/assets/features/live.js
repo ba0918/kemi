@@ -449,7 +449,7 @@ async function capture(kind) {
   }
   const page = live.page;
   const width = live.width;
-  const answer = await ask(frame, "capture", CAPTURE_TIMEOUT);
+  const answer = await whileLaidOut(() => ask(frame, "capture", CAPTURE_TIMEOUT));
   if (typeof answer.html !== "string") {
     live.refNotice = `Not recorded: ${answer.error ?? "the page could not be copied"}`;
     render();
@@ -690,6 +690,36 @@ async function describeNow() {
  */
 function liveFrameHidden() {
   return shell === null || shell.liveFrame.getClientRects().length === 0;
+}
+
+/**
+ * 動いているページの枠が隠れていれば、見えず操作も受けないまま選んだ幅で並べてから task を呼ぶ。スナップショットの
+ * 記述を隠れた文書から作ると、並べた後のページと比べたときに変わっていない要素がずれたに見える。
+ * @template T
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+async function whileLaidOut(task) {
+  if (!shell || !liveFrameHidden()) {
+    return task();
+  }
+  const { stage, livePane, liveFrame } = shell;
+  // コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
+  const revealed = stage.getClientRects().length === 0 ? stage : livePane;
+  stage.dataset.measuring = "true";
+  revealed.inert = true;
+  try {
+    liveFrame.getBoundingClientRect();
+    // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
+    await new Promise((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => done(undefined)));
+      setTimeout(done, 200);
+    });
+    return await task();
+  } finally {
+    delete stage.dataset.measuring;
+    revealed.inert = false;
+  }
 }
 
 function renderBand() {
