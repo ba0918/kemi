@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写すか null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
@@ -1931,6 +1931,76 @@ async function narrowReferenceSideSavesTheImage(repository) {
   }
 }
 
+/**
+ * 保存している間に見方や側を変えたときの画像（R-PAGE-COMMENT、R-NARROW）: 画像を作る頼みがページに届く前に、コードの
+ * 見方か、狭い画面で比べる相手の側に切り替えても、画像は場所の周り（場所の要素の矩形に上下の余白を足した高さ）を
+ * 写すか、作れずに null になる。場所の一部を切り落とした画像にはならない。
+ */
+async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await new Promise((done) => setTimeout(done, 500));
+    // 保存の要求に載せた画像を控える。
+    await evaluate(`(() => {
+      const real = window.fetch;
+      window.fetch = (path, init) => {
+        if (String(path).endsWith('api/comment')) window.__kemiSavedImage = JSON.parse(String(init?.body)).image;
+        return real(path, init);
+      };
+      return true;
+    })()`);
+    for (const away of ['view', 'side']) {
+      await chooseTool('element');
+      // 2 番目の帯（文書の y 300〜600）。
+      await clickInPane(livePane, 150, 450);
+      await waitFor(`${draftNumbers} === '[1]'`);
+      if (away === 'side') {
+        await browser('set', 'viewport', '390', '844');
+        await waitFor(visible('.lv-side'));
+        await new Promise((done) => setTimeout(done, 500));
+      }
+      await browser('fill', '#live-compose .lv-compose-body', `saved after switching the ${away}`);
+      await holdRequests('image');
+      await browser('click', '#live-compose .lv-compose-save');
+      await waitFor(`${heldRequests} === 1`);
+      if (away === 'view') {
+        await browser('click', '.lv-view button[data-view="code"]');
+        await waitFor(`document.body.dataset.liveView === 'code'`);
+      } else {
+        await browser('click', '.lv-side button[data-side="ref"]');
+        await waitFor(`!${visible(livePane)}`);
+      }
+      await releaseRequests();
+      await waitFor(`${draftNumbers} === '[]'`, 30000);
+      const comment = (await reviewJson(kemi)).comments.at(-1);
+      assert.equal(comment.body, `saved after switching the ${away}`);
+      const rect = comment.page.places[0].elements[0].rect;
+      const saved = await evaluate('window.__kemiSavedImage ?? null');
+      if (saved !== null) {
+        const image = decodePng(Buffer.from(saved, 'base64'));
+        assert.equal(image.height, Math.round(rect.h) + 96, `the image keeps the whole place after switching the ${away}: ${image.width}x${image.height}, place ${JSON.stringify(rect)}`);
+      }
+      console.log(`PASS 保存している間に${away === 'view' ? 'コードの見方' : '比べる相手の側'}へ切り替えても、画像は場所の周りを写すか null になる（画像: ${saved === null ? 'null' : 'あり'}）`);
+      if (away === 'view') {
+        await browser('click', '.lv-view button[data-view="page"]');
+        await waitFor(visible(livePane));
+        await new Promise((done) => setTimeout(done, 500));
+      }
+    }
+  } finally {
+    await browser('set', 'viewport', '1280', '900');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）。 */
 async function placesMakeNoChange(repository) {
   const dev = await startDevServer();
@@ -2170,6 +2240,7 @@ try {
   await latePlacesKeepTheirWidth(repository);
   await draftsStayWhileSaving(repository);
   await narrowReferenceSideSavesTheImage(repository);
+  await switchingWhileSavingKeepsTheImageAroundThePlace(repository);
   await placesMakeNoChange(repository);
   await savedPageCommentsAreListedShownAndSwitched(repository);
   await handedPageCommentsReachWaitAndSubmit(repository);

@@ -16,8 +16,8 @@ body[data-live-view="code"][data-live-code="false"] #main > :not(.lv-band):not(#
   display: none !important;
 }
 
-/* 隠れた動いているページのスナップショットを取る間だけ、見えず操作も受けないまま並べる（features/live.js の
-   whileLaidOut）。git の外で隠す上の規則にも勝つよう、id まで書いて後ろに置く。 */
+/* スナップショットやコメントの画像を作る間は、動いているページが隠れていても隠れても、見えず操作も受けないまま並べる
+   （features/live.js の whileLaidOut）。git の外で隠す上の規則にも勝つよう、id まで書いて後ろに置く。 */
 body[data-live-view="code"] #main > #live-stage.lv-stage[data-measuring] {
   display: grid !important;
   position: fixed;
