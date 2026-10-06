@@ -27,7 +27,8 @@
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。印を付け直しても比べる相手の枠のスクロール位置は変わらない。
-//   インラインのスタイルを止める CSP のページでも印が付く。
+//   インラインのスタイルを止める CSP のページでも印が付く。スクロールしただけでは変化にならず、印は
+//   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -39,7 +40,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { CHANGING_GEOMETRY, RESOURCE_BOXES, changingCss, changingPage, manyCss, startDevServer } from './live-dev-server.mjs';
+import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, changingCss, changingPage, manyCss, scrollingCss, startDevServer } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -1027,6 +1028,59 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
 }
 
 /**
+ * スクロールしただけでは変化にならず、印はスクロールしても要素に付いたまま（R-PAGE-DIFF の位置と大きさの
+ * 変化、R-PAGE-VIEW の変わったところに必ず印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。
+ */
+async function scrollingMakesNoChangeAndMarksStay(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}scrolling.html`]);
+  // 別のオリジンの枠の中は、ページ内の目印へ移して（同じ文書のままスクロールさせて）動かす。
+  const moveTo = async (anchor) => {
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#${anchor}'; return true; })()`);
+    await new Promise((done) => setTimeout(done, 600));
+  };
+  const { box, row, scrollMargin, badge } = SCROLLING_GEOMETRY;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
+
+    // 箱の中を 6 行目まで、ページを末尾までスクロールしてから、札と 6 行目の色を変えて比べ直させる。
+    await moveTo('row-6');
+    await moveTo('end');
+    await writeFile(join(dev.dir, 'scrolling.css'), scrollingCss({ badge: 'rgb(40, 160, 220)', row: 'rgb(250, 200, 0)' }));
+    await waitFor(`${changeList}?.dataset.main === '2'`);
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.equal(await evaluate(`${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`), '2/0', 'scrolling alone shifts nothing');
+    console.log('PASS ページと中の箱をスクロールしただけでは、張り付く見出し・固定した札・箱の中の要素が変化に入らない');
+
+    // ページを先頭へ戻す。札は画面の同じ場所に、6 行目は箱の中のスクロールで箱の上端から scroll-margin-top 下に見える。
+    await moveTo('start');
+    const rowAt = [0, box.top + scrollMargin, 390, box.top + scrollMargin + row];
+    const badgeAt = [badge.left, badge.top, badge.left + badge.width, badge.top + badge.height];
+    let image = await shot(`${livePane} .lv-frame`, shots, 'scrolled-marks');
+    assert.ok(countPixels(image, badgeAt, isRed) > 0, `the fixed badge keeps its mark: ${join(shots, 'scrolled-marks.png')}`);
+    assert.ok(countPixels(image, rowAt, isRed) > 0, `the row in the scrolled box keeps its mark: ${join(shots, 'scrolled-marks.png')}`);
+
+    // 箱の中を先頭へ戻すと、6 行目（箱の中の上から 5 行ぶん下）は箱の見えている範囲の外に出て、その印も見えなくなる。
+    await moveTo('row-1');
+    image = await shot(`${livePane} .lv-frame`, shots, 'box-scrolled-back');
+    assert.equal(countPixels(image, [0, 0, 390, badge.top], isRed), 0, `the mark of the row hidden in the box is not drawn: ${join(shots, 'box-scrolled-back.png')}`);
+    assert.ok(countPixels(image, badgeAt, isRed) > 0, 'the fixed badge still has its mark');
+    console.log('PASS スクロールしても、固定した札と中でスクロールする箱の要素の印は要素に付いたまま');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 要素の多いページ（R-PAGE-SNAPSHOT の 2 MB は HTML に掛ける）: HTML が 2 MB 未満のページは、要素の記述が
  * 大きくても取れて、変化の一覧が出る。
  */
@@ -1067,6 +1121,7 @@ try {
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
+  await scrollingMakesNoChangeAndMarksStay(repository);
   await manyElementsAreRecordedAndCompared(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});

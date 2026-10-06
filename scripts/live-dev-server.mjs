@@ -26,6 +26,9 @@
 //                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
 //                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
 //                 `?csp=1` を付けると `style-src 'self'`（インラインのスタイルを止める CSP）を返す
+//   /scrolling.html  スクロールで位置の変わる要素を持つページ。上に張り付く見出し（#bar）、中でスクロールする箱
+//                 （#box の中の #row-1〜#row-10）、画面に固定した札（#badge）、高い余白と #start・#end の目印を持つ。
+//                 scrolling.css を書き換えると HMR の知らせで差し替える。大きさは SCROLLING_GEOMETRY
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
 //                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
@@ -166,6 +169,48 @@ ul { margin: 0; padding: 0; list-style: none; }
 `;
 }
 
+/**
+ * /scrolling.html の要素の大きさと位置（ページの左上から）。箱は見出しのすぐ下にあり、行は箱の中で縦に並ぶ。
+ * 行は scroll-margin-top を持ち、目印へ移ると箱の上端から `scrollMargin` 下に来る。
+ */
+export const SCROLLING_GEOMETRY = {
+  bar: 40,
+  box: { top: 40, height: 160 },
+  row: 40,
+  rows: 10,
+  scrollMargin: 40,
+  badge: { left: 250, top: 400, width: 100, height: 40 },
+};
+
+/**
+ * /scrolling.html の CSS。`badge` は札の、`row` は 6 行目の背景色。
+ * @param {{ badge?: string, row?: string }} [colors]
+ */
+export function scrollingCss({ badge = 'rgb(120, 120, 120)', row = 'rgb(235, 235, 235)' } = {}) {
+  const { bar, box, row: height, scrollMargin, badge: place } = SCROLLING_GEOMETRY;
+  return `body { margin: 0; font: 16px sans-serif; }
+#bar { position: sticky; top: 0; height: ${bar}px; background: rgb(220, 220, 220); }
+#box { height: ${box.height}px; overflow: auto; }
+.row { height: ${height}px; scroll-margin-top: ${scrollMargin}px; }
+#row-6 { background: ${row}; }
+#badge { position: fixed; left: ${place.left}px; top: ${place.top}px; width: ${place.width}px; height: ${place.height}px; background: ${badge}; }
+.spacer { height: 3000px; }
+`;
+}
+
+PAGES['scrolling.css'] = scrollingCss();
+PAGES['scrolling.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Scrolling</title>
+<link rel="stylesheet" href="/scrolling.css">
+<script type="module" src="/__hmr.js"></script>
+</head><body><div id="start"></div>
+<header id="bar">Bar</header>
+<div id="box">${Array.from({ length: SCROLLING_GEOMETRY.rows }, (_, index) => `<div class="row" id="row-${index + 1}">Row ${index + 1}</div>`).join('')}</div>
+<div id="badge">Badge</div>
+<div class="spacer"></div>
+<div id="end">End</div>
+</body></html>
+`;
 PAGES['changing.html'] = changingPage();
 PAGES['changing.css'] = changingCss();
 /**

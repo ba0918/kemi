@@ -131,8 +131,11 @@
   const round = (value) => Math.round(value * 100) / 100;
 
   /**
-   * 今のページの要素の記述。位置と大きさはスクロールに依らない文書の座標。開いている shadow root の
-   * 中の要素は持ち主の子として並べ、閉じた shadow root は読めないので持ち主までにする。
+   * 今のページの要素の記述。位置と大きさは、ページも中の箱もどこもスクロールしていないとしたときの文書の
+   * 座標（スクロールしただけで変化に入らないように）。画面に固定した要素とその中は画面の座標。上に張り付く
+   * 要素は、張り付いたぶんがスクロールで変わり測り分けられないので、自分を親の左上に置き、中の要素は
+   * そこからの位置にする（張り付く要素自身の親の中での動きは変化に出ない）。
+   * 開いている shadow root の中の要素は持ち主の子として並べ、閉じた shadow root は読めないので持ち主までにする。
    */
   function describePage() {
     // 要素ごとに項目名を持たない詰めた形（live-diff.js の unpackDescription が読む）。
@@ -144,13 +147,16 @@
     const styles = [];
     /** @type {Map<string, number>} */
     const styleIndex = new Map();
-    const left = scrollX;
-    const top = scrollY;
+    const scroller = document.scrollingElement ?? document.documentElement;
+    /** 要素ごとの、その中に置かれた要素の画面の座標に足す量（スクロールのぶん）。 */
+    /** @type {Map<Element, number[]>} */
+    const insideShift = new Map();
     /**
      * @param {Element} element
      * @param {number} parent
+     * @param {number[]} shift 親の中に置かれた要素の、画面の座標に足す量
      */
-    const visit = (element, parent) => {
+    const visit = (element, parent, shift) => {
       if (UNDESCRIBED.has(element.localName) || element === marksHost) return;
       const computed = getComputedStyle(element);
       /** @type {Record<string, string>} */
@@ -168,6 +174,19 @@
         if (node.nodeType === Node.TEXT_NODE) text += /** @type {Text} */ (node).data;
       }
       const rect = element.getBoundingClientRect();
+      const position = computed.position;
+      // 固定した要素は画面に、絶対配置の要素はその基準の要素の中に置かれる（間の箱のスクロールで動かない）。
+      const containing = position === 'absolute' && element instanceof HTMLElement ? element.offsetParent : null;
+      let own = position === 'fixed' ? [0, 0] : (containing && insideShift.get(containing)) || shift;
+      let left = rect.left + own[0];
+      let top = rect.top + own[1];
+      if (position === 'sticky' && parent !== -1) {
+        left = Number(elements[parent][5]);
+        top = Number(elements[parent][6]);
+        own = [left - rect.left, top - rect.top];
+      }
+      const inside = element === scroller ? own : [own[0] + element.scrollLeft, own[1] + element.scrollTop];
+      insideShift.set(element, inside);
       const index = elements.length;
       elements.push([
         parent,
@@ -175,8 +194,8 @@
         element.id,
         element.getAttribute('class') ?? '',
         text,
-        round(rect.left + left),
-        round(rect.top + top),
+        round(left),
+        round(top),
         round(rect.width),
         round(rect.height),
         number,
@@ -184,17 +203,18 @@
       originals.push(element);
       if (element.shadowRoot) {
         watchRoot(element.shadowRoot);
-        for (const child of element.shadowRoot.children) visit(child, index);
+        for (const child of element.shadowRoot.children) visit(child, index, inside);
       }
-      for (const child of element.children) visit(child, index);
+      for (const child of element.children) visit(child, index, inside);
     };
-    visit(document.documentElement, -1);
+    visit(document.documentElement, -1, [scrollX, scrollY]);
     return { description: { width: innerWidth, height: document.documentElement.scrollHeight, styles, elements }, elements: originals };
   }
 
   // ---- 印（R-PAGE-VIEW の変わったところに必ず印） ----
-  // 変わった要素に枠を重ねる層。ページの見た目を変えないよう、文書の左上に大きさ 0 で置き、閉じた
-  // shadow root の中に描く。この層は記述にもスナップショットにも入れず、見張りも反応させない
+  // 変わった要素に枠を重ねる層。ページの見た目を変えないよう、画面の左上に大きさ 0 で固定し、閉じた
+  // shadow root の中に描く。ページや中の箱がスクロールしたら置き直す（固定した要素や箱の中の要素から
+  // 印が離れないように）。スクロールで箱の見えている範囲の外に出た要素の印は、その範囲で切る。この層は記述にもスナップショットにも入れず、見張りも反応させない
   // （入れると、印そのものが変化として出て、付け直しが繰り返す）。
   // 見た目は <style> や style 属性の文字列ではなく、スクリプトから要素のスタイルの値を 1 つずつ入れる。
   // ページの CSP の style-src がインラインのスタイルを止めていても効くようにするため。
@@ -219,12 +239,16 @@
   let marksHost = null;
   /** @type {ShadowRoot | null} */
   let marksRoot = null;
+  /** 描いている印と、その要素と、要素を切って見せる祖先（中身をはみ出させない箱）。 */
+  /** @type {{ box: HTMLElement, element: Element, clippers: Element[] }[]} */
+  let shownMarks = [];
 
   /**
    * 最後に渡した記述の要素に印を描く。前の印は消す。
    * @param {unknown[]} marks
    */
   function drawMarks(marks) {
+    shownMarks = [];
     if (marks.length === 0) {
       marksHost?.remove();
       return;
@@ -232,30 +256,100 @@
     if (!marksHost || !marksRoot) {
       marksHost = document.createElement('div');
       setStyles(marksHost, {
-        position: 'absolute', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
+        position: 'fixed', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
         overflow: 'visible', 'pointer-events': 'none', 'z-index': '2147483647',
       });
       marksRoot = marksHost.attachShadow({ mode: 'closed' });
     }
     if (!marksHost.isConnected) document.documentElement.append(marksHost);
-    const origin = marksHost.getBoundingClientRect();
-    /** @type {HTMLElement[]} */
-    const boxes = [];
+    /** @type {Map<Element, boolean>} */
+    const clips = new Map();
     for (const mark of marks) {
       const { index, kind } = /** @type {{ index: unknown, kind: unknown }} */ (mark ?? {});
       const element = typeof index === 'number' ? described[index] : undefined;
       const border = Object.hasOwn(MARK_BORDERS, String(kind)) ? MARK_BORDERS[String(kind)] : undefined;
       if (!element?.isConnected || border === undefined) continue;
-      const rect = element.getBoundingClientRect();
       const box = document.createElement('div');
-      setStyles(box, {
-        position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border,
-        left: `${rect.left - origin.left}px`, top: `${rect.top - origin.top}px`, width: `${rect.width}px`, height: `${rect.height}px`,
-      });
-      boxes.push(box);
+      setStyles(box, { position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border });
+      shownMarks.push({ box, element, clippers: clippersOf(element, clips) });
     }
-    marksRoot.replaceChildren(...boxes);
+    marksRoot.replaceChildren(...shownMarks.map((mark) => mark.box));
+    placeMarks();
   }
+
+  /**
+   * 要素を切って見せる祖先。中身をはみ出させない箱で、画面に固定した要素より外のものは除く（固定した
+   * 要素は外の箱のスクロールで動かず、切られもしない）。ページ全体のスクロールは画面が切るので除く。
+   * @param {Element} element
+   * @param {Map<Element, boolean>} clips 祖先ごとに、中身をはみ出させないか（1 回の描き直しの中で覚える）
+   */
+  function clippersOf(element, clips) {
+    /** @type {Element[]} */
+    const clippers = [];
+    /** @type {Element | null} */
+    let current = element;
+    while (current && current !== document.body && current !== document.documentElement) {
+      if (current !== element) {
+        let clipping = clips.get(current);
+        if (clipping === undefined) {
+          const computed = getComputedStyle(current);
+          clipping = computed.overflowX !== 'visible' || computed.overflowY !== 'visible';
+          clips.set(current, clipping);
+        }
+        if (clipping) clippers.push(current);
+      }
+      if (getComputedStyle(current).position === 'fixed') break;
+      /** @type {Node | null} */
+      const root = current.parentNode;
+      current = root instanceof ShadowRoot ? root.host : current.parentElement;
+    }
+    return clippers;
+  }
+
+  /** 印を今の要素の位置に置き直す。先にすべて測ってから書き込む（測るたびに配置を計算し直させない）。 */
+  function placeMarks() {
+    if (!marksHost || shownMarks.length === 0) return;
+    const origin = marksHost.getBoundingClientRect();
+    const placed = shownMarks.map(({ element, clippers }) => {
+      const rect = element.getBoundingClientRect();
+      let visible = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      for (const clipper of clippers) {
+        const bound = clipper.getBoundingClientRect();
+        visible = {
+          left: Math.max(visible.left, bound.left),
+          top: Math.max(visible.top, bound.top),
+          right: Math.min(visible.right, bound.right),
+          bottom: Math.min(visible.bottom, bound.bottom),
+        };
+      }
+      return { rect, visible };
+    });
+    shownMarks.forEach(({ box }, at) => {
+      const { rect, visible } = placed[at];
+      const hidden = visible.right <= visible.left || visible.bottom <= visible.top;
+      setStyles(box, {
+        display: hidden ? 'none' : 'block',
+        left: `${rect.left - origin.left}px`,
+        top: `${rect.top - origin.top}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+        'clip-path': `inset(${visible.top - rect.top}px ${rect.right - visible.right}px ${rect.bottom - visible.bottom}px ${visible.left - rect.left}px)`,
+      });
+    });
+  }
+
+  let placeQueued = false;
+  const placeMarksSoon = () => {
+    if (placeQueued || shownMarks.length === 0) return;
+    placeQueued = true;
+    requestAnimationFrame(() => {
+      placeQueued = false;
+      placeMarks();
+    });
+  };
+  // スクロールの知らせは浮き上がらないので、捕まえる側で受ける。shadow root の中のものは watchRoot で受ける。
+  document.addEventListener('scroll', placeMarksSoon, { capture: true, passive: true });
+  window.addEventListener('resize', placeMarksSoon);
 
   /**
    * 印の層を足し外ししただけの変化か。
@@ -311,6 +405,7 @@
     if (!watching || watchedRoots.has(root)) return;
     watchedRoots.add(root);
     mutations.observe(root, OBSERVED);
+    root.addEventListener('scroll', placeMarksSoon, { capture: true, passive: true });
   }
 
   /**
