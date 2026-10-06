@@ -4,7 +4,7 @@
 use super::review::{Author, Comment, Message, Reply};
 
 /// 往復の続き。セッション状態の一部として保存し、保留と復元をまたぐ（R-SESSION）。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Channel {
     /// このレビューで `kemi wait` が一度でも呼ばれたか（R-AGENT-STATE）。
     pub called: bool,
@@ -36,20 +36,20 @@ pub struct ReplyRef {
 
 /// `kemi wait` に返す起きたこと（R-AGENT-EVENTS）。submit は保存しない（submit で
 /// セッションごと消える）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AgentEvent {
     Handed(Handed),
 }
 
 /// 「エージェントに渡す」1 回分。中身は渡した時点のもの。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Handed {
     pub comments: Vec<HandedComment>,
     pub replies: Vec<HandedReply>,
     pub messages: Vec<Message>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HandedComment {
     Added(Comment),
     Edited(Comment),
@@ -303,26 +303,28 @@ pub fn validate_writes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::review::Side;
+    use crate::domain::review::{CommentTarget, FileTarget, Side};
 
     fn comment(id: &str, body: &str) -> Comment {
         Comment {
             id: id.to_string(),
             seq: 0,
-            file_id: "f1".to_string(),
             group_id: "g1".to_string(),
             group_title: "group".to_string(),
-            path: "src/a.rs".to_string(),
-            side: Side::New,
-            start_line: Some(1),
-            end_line: Some(1),
-            quote: vec!["one".to_string()],
             body: body.to_string(),
             replies: Vec::new(),
             resolved: false,
             outdated: false,
-            content_hash: "hash".to_string(),
-            suggestion: None,
+            target: CommentTarget::File(FileTarget {
+                file_id: "f1".to_string(),
+                path: "src/a.rs".to_string(),
+                side: Side::New,
+                start_line: Some(1),
+                end_line: Some(1),
+                quote: vec!["one".to_string()],
+                content_hash: "hash".to_string(),
+                suggestion: None,
+            }),
         }
     }
 

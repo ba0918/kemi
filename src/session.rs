@@ -94,6 +94,13 @@ impl SessionSink for StoredSession {
     fn delete(&self) -> Result<(), SessionError> {
         self.open.lock().expect("session poisoned").delete()
     }
+
+    fn save_file(&self, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .save_file(name, bytes)
+    }
 }
 
 /// 一覧の 1 行（R-SESSION）。5 列のタブ区切り。

@@ -961,3 +961,116 @@ async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_
     }
     std::mem::forget(range);
 }
+
+// ---- ページへのコメント（live.md の R-PAGE-COMMENT、kemi.md の R-SUBMIT の `page`） ----
+
+fn page_place(n: u32, kind: &str) -> serde_json::Value {
+    serde_json::json!({
+        "n": n,
+        "kind": kind,
+        "points": if kind == "element" { serde_json::json!([]) } else { serde_json::json!([{ "x": 10, "y": 20.5 }, { "x": 30, "y": 40 }]) },
+        "elements": [{ "selector": "#buy", "text": "Buy", "rect": { "x": 0, "y": 120, "w": 200, "h": 60 } }],
+    })
+}
+
+async fn add_page_comment(running: &Running, places: serde_json::Value) -> reqwest::Response {
+    post_review(
+        running,
+        "api/comment",
+        serde_json::json!({
+            "op": "add_page",
+            "page": { "url": "/products?x=1", "width": 390, "places": places },
+            "body": "1 is too large",
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_page_comment_is_added_in_the_page_group_with_its_places_in_number_order() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let added = add_page_comment(
+        &running,
+        serde_json::json!([page_place(3, "pen"), page_place(1, "element")]),
+    )
+    .await;
+
+    assert_eq!(added.status(), StatusCode::OK);
+    let comment: serde_json::Value = added.json().await.unwrap();
+    assert_eq!(comment["group_id"], "page");
+    assert_eq!(comment["group_title"], "Page");
+    for key in ["path", "side", "start_line", "end_line", "suggestion"] {
+        assert!(comment[key].is_null(), "{key}: {comment}");
+    }
+    assert_eq!(comment["quote"], serde_json::json!([]));
+    assert_eq!(comment["outdated"], false);
+    assert_eq!(comment["page"]["url"], "/products?x=1");
+    assert_eq!(comment["page"]["width"], 390);
+    assert_eq!(comment["page"]["places"][0]["n"], 1);
+    assert_eq!(comment["page"]["places"][0]["kind"], "element");
+    assert_eq!(
+        comment["page"]["places"][0]["points"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        comment["page"]["places"][0]["elements"][0],
+        serde_json::json!({ "selector": "#buy", "text": "Buy", "rect": { "x": 0.0, "y": 120.0, "w": 200.0, "h": 60.0 } })
+    );
+    assert_eq!(comment["page"]["places"][1]["n"], 3);
+    assert_eq!(comment["page"]["places"][1]["kind"], "pen");
+    assert_eq!(
+        comment["page"]["places"][1]["points"],
+        serde_json::json!([{ "x": 10.0, "y": 20.5 }, { "x": 30.0, "y": 40.0 }])
+    );
+    assert!(comment["page"]["image"].is_null());
+    let review = get_review_json(&running, "api/review").await;
+    assert_eq!(review["comments"][0]["page"], comment["page"]);
+}
+
+#[tokio::test]
+async fn a_page_comment_without_a_place_with_a_repeated_number_or_an_unknown_kind_is_refused() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    for places in [
+        serde_json::json!([]),
+        serde_json::json!([page_place(1, "element"), page_place(1, "arrow")]),
+        serde_json::json!([page_place(1, "circle")]),
+    ] {
+        let refused = add_page_comment(&running, places.clone()).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{places}");
+        let message = refused.text().await.unwrap();
+        assert!(message.is_ascii(), "{message}");
+    }
+    let review = get_review_json(&running, "api/review").await;
+    assert_eq!(review["comments"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn editing_a_page_comment_changes_only_its_body() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+    let added: serde_json::Value =
+        add_page_comment(&running, serde_json::json!([page_place(1, "arrow")]))
+            .await
+            .json()
+            .await
+            .unwrap();
+
+    let edited = post_review(
+        &running,
+        "api/comment",
+        serde_json::json!({
+            "op": "edit", "id": added["id"], "body": "make it smaller",
+            "page": { "url": "/other", "width": 1280, "places": [page_place(2, "pen")] },
+        }),
+    )
+    .await;
+
+    assert_eq!(edited.status(), StatusCode::OK);
+    let edited: serde_json::Value = edited.json().await.unwrap();
+    assert_eq!(edited["body"], "make it smaller");
+    assert_eq!(edited["page"], added["page"]);
+}

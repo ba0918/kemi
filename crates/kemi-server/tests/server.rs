@@ -739,6 +739,25 @@ async fn comment_api_validates_line_range() {
 }
 
 #[tokio::test]
+async fn page_comments_are_refused_outside_a_review_of_a_running_page() {
+    let server = TestServer::start().await;
+    let response = server
+        .post(
+            "api/comment",
+            json!({
+                "op": "add_page",
+                "page": { "url": "/", "width": 390, "places": [{ "n": 1, "kind": "element", "points": [], "elements": [] }] },
+                "body": "page"
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 400);
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"], json!([]));
+}
+
+#[tokio::test]
 async fn submit_schema_follows_contract() {
     let server = TestServer::start().await;
     let _ = server
@@ -2059,6 +2078,13 @@ impl SessionSink for RecordingSink {
         self.deleted.store(true, Ordering::SeqCst);
         Ok(())
     }
+
+    fn save_file(&self, _name: &str, _bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
+        Err(SessionError::Io {
+            path: std::path::PathBuf::from("files"),
+            source: std::io::Error::other("this sink keeps no files"),
+        })
+    }
 }
 
 /// 最初の状態保存を止める sink。保存が完了した順に状態を記録する。
@@ -2128,6 +2154,13 @@ impl SessionSink for SlowSink {
 
     fn delete(&self) -> Result<(), SessionError> {
         Ok(())
+    }
+
+    fn save_file(&self, _name: &str, _bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
+        Err(SessionError::Io {
+            path: std::path::PathBuf::from("files"),
+            source: std::io::Error::other("this sink keeps no files"),
+        })
     }
 }
 
@@ -2535,6 +2568,10 @@ impl SessionSink for StoreSink {
     fn delete(&self) -> Result<(), SessionError> {
         self.open.lock().unwrap().delete()
     }
+
+    fn save_file(&self, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
+        self.open.lock().unwrap().save_file(name, bytes)
+    }
 }
 
 fn incompressible(size: usize) -> Vec<u8> {
@@ -2618,14 +2655,8 @@ async fn session_initial_state_is_restored() {
     let comment = kemi_core::domain::review::Comment {
         id: "c7".to_string(),
         seq: 1,
-        file_id: "f1".to_string(),
         group_id: "g1".to_string(),
         group_title: "最初の変更".to_string(),
-        path: "src/a.rs".to_string(),
-        side: Side::New,
-        start_line: Some(1),
-        end_line: Some(1),
-        quote: vec!["x".to_string()],
         body: "復元されたコメント".to_string(),
         replies: vec![kemi_core::domain::review::Reply {
             id: "r1".to_string(),
@@ -2635,8 +2666,18 @@ async fn session_initial_state_is_restored() {
         }],
         resolved: true,
         outdated: false,
-        content_hash: "hash".to_string(),
-        suggestion: None,
+        target: kemi_core::domain::review::CommentTarget::File(
+            kemi_core::domain::review::FileTarget {
+                file_id: "f1".to_string(),
+                path: "src/a.rs".to_string(),
+                side: Side::New,
+                start_line: Some(1),
+                end_line: Some(1),
+                quote: vec!["x".to_string()],
+                content_hash: "hash".to_string(),
+                suggestion: None,
+            },
+        ),
     };
     let sink = Arc::new(RecordingSink::default());
     *sink.initial.lock().unwrap() = Some(SessionState {

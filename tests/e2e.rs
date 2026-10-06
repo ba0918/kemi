@@ -1781,22 +1781,26 @@ fn session_comment() -> kemi_core::domain::review::Comment {
     kemi_core::domain::review::Comment {
         id: "c1".to_string(),
         seq: 1,
-        file_id: "f1".to_string(),
         group_id: "worktree".to_string(),
         group_title: "Working tree changes".to_string(),
-        path: "a.txt".to_string(),
-        side: Side::New,
-        start_line: Some(1),
-        end_line: Some(1),
-        quote: vec!["one".to_string()],
         body: "note".to_string(),
         replies: Vec::new(),
         resolved: false,
         outdated: false,
-        content_hash: "hash".to_string(),
-        suggestion: Some(Suggestion {
-            replacement: "ONE".to_string(),
-        }),
+        target: kemi_core::domain::review::CommentTarget::File(
+            kemi_core::domain::review::FileTarget {
+                file_id: "f1".to_string(),
+                path: "a.txt".to_string(),
+                side: Side::New,
+                start_line: Some(1),
+                end_line: Some(1),
+                quote: vec!["one".to_string()],
+                content_hash: "hash".to_string(),
+                suggestion: Some(Suggestion {
+                    replacement: "ONE".to_string(),
+                }),
+            },
+        ),
     }
 }
 
@@ -3578,4 +3582,201 @@ async fn live_resume_keeps_comments_and_seen_marks_on_the_same_files() {
     assert_eq!(seen("a.txt"), true);
     assert_eq!(seen("0.txt"), false);
     resumed.kill();
+}
+
+// ---- ページへのコメント（live.md の R-PAGE-COMMENT、R-PAGE-SESSION、kemi.md の R-SUBMIT） ----
+
+/// 画像の中身。base64 にしやすいよう 0 のバイトを並べ、本文の既定の上限（2 MB）を超える大きさにする。
+const PAGE_IMAGE_BYTES: usize = 3 * 1024 * 1024;
+
+fn page_image() -> (Vec<u8>, String) {
+    // 0 のバイト 3 つは base64 で "AAAA"。
+    (
+        vec![0u8; PAGE_IMAGE_BYTES],
+        "AAAA".repeat(PAGE_IMAGE_BYTES / 3),
+    )
+}
+
+fn page_places() -> serde_json::Value {
+    let element = serde_json::json!({ "selector": "#buy", "text": "Buy", "rect": { "x": 0, "y": 120, "w": 200, "h": 60 } });
+    serde_json::json!([
+        { "n": 1, "kind": "element", "points": [], "elements": [element] },
+        { "n": 2, "kind": "arrow", "points": [{ "x": 300, "y": 40 }, { "x": 100, "y": 150 }], "elements": [element] },
+        { "n": 3, "kind": "pen", "points": [{ "x": 0, "y": 100 }, { "x": 220, "y": 100 }, { "x": 220, "y": 200 }], "elements": [element] },
+    ])
+}
+
+impl Kemi {
+    /// 3 つの場所と画像を持つページへのコメントを足し、その JSON を返す。
+    async fn add_page_comment(&self, body: &str) -> serde_json::Value {
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add_page",
+                    "page": { "url": "/products?x=1", "width": 390, "places": page_places() },
+                    "body": body,
+                    "image": page_image().1,
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+}
+
+/// `kemi wait` が返した最初の渡したコメント。
+fn handed_comment(output: &std::process::Output) -> serde_json::Value {
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    answer["events"][0]["comments"][0]["comment"].clone()
+}
+
+fn start_live_review(dir: &TempDir, state: &TempDir) -> (Kemi, String) {
+    worktree_fixture(dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    (kemi, id)
+}
+
+#[tokio::test]
+async fn a_handed_page_comment_reaches_wait_with_its_places_and_a_readable_image() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    let added = kemi.add_page_comment("1 is too large").await;
+    kemi.hand().await;
+
+    let comment = handed_comment(&run_agent(&dir.path, &state.path, &["wait", &id], ""));
+
+    assert_eq!(comment["id"], added["id"]);
+    let page = &comment["page"];
+    assert_eq!(page["url"], "/products?x=1");
+    assert_eq!(page["width"], 390);
+    let places = page["places"].as_array().unwrap();
+    let numbers: Vec<u64> = places
+        .iter()
+        .map(|place| place["n"].as_u64().unwrap())
+        .collect();
+    let kinds: Vec<&str> = places
+        .iter()
+        .map(|place| place["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(numbers, vec![1, 2, 3]);
+    assert_eq!(kinds, vec!["element", "arrow", "pen"]);
+    for place in places {
+        assert_eq!(place["elements"][0]["selector"], "#buy");
+        assert_eq!(place["elements"][0]["text"], "Buy");
+        assert_eq!(place["elements"][0]["rect"]["w"], 200.0);
+    }
+    assert_eq!(
+        places[1]["points"][1],
+        serde_json::json!({ "x": 100.0, "y": 150.0 })
+    );
+    let image = Path::new(page["image"].as_str().unwrap());
+    assert!(image.is_absolute(), "{image:?}");
+    assert_eq!(std::fs::read(image).unwrap(), page_image().0);
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn a_submitted_page_comment_has_no_image_and_the_keys_it_had_when_handed() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    kemi.add_page_comment("1 is too large").await;
+    kemi.hand().await;
+    let handed = handed_comment(&run_agent(&dir.path, &state.path, &["wait", &id], ""));
+
+    kemi.submit("approved").await;
+    let (_, stdout) = kemi.wait();
+
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let submitted = &document["comments"][0];
+    assert!(submitted["page"]["image"].is_null(), "{submitted}");
+    assert_eq!(submitted["page"]["places"], handed["page"]["places"]);
+    for key in ["path", "side", "start_line", "end_line", "suggestion"] {
+        assert!(submitted[key].is_null(), "{key}: {submitted}");
+    }
+    assert_eq!(submitted["quote"], serde_json::json!([]));
+    assert_eq!(submitted["outdated"], false);
+    assert_eq!(submitted["group_id"], "page");
+    assert_eq!(submitted["group_title"], "Page");
+    let keys = |value: &serde_json::Value| {
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(keys(&handed), keys(submitted));
+    assert_eq!(keys(&handed["page"]), keys(&submitted["page"]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_page_comment_handed_before_suspending_comes_back_with_its_image_after_resuming() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    kemi.add_page_comment("1 is too large").await;
+    kemi.hand().await;
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+
+    let mut resumed =
+        Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    assert_eq!(resumed.review_id(), id);
+    let review = resumed.review_json().await;
+    let comment = handed_comment(&run_agent(&dir.path, &state.path, &["wait", &id], ""));
+
+    assert_eq!(
+        review["comments"][0]["page"]["places"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(review["comments"][0]["page"]["url"], "/products?x=1");
+    let image = Path::new(comment["page"]["image"].as_str().unwrap());
+    assert_eq!(std::fs::read(image).unwrap(), page_image().0);
+    resumed.kill();
+}
+
+#[tokio::test]
+async fn a_page_comment_is_added_and_handed_in_a_live_review_outside_git() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    dir.write("page.html", "<p>hello</p>\n");
+    let mut kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &["--live", "page.html", "--no-open"],
+        &state.path,
+    );
+    let id = kemi.review_id();
+    kemi.add_page_comment("outside git").await;
+    kemi.hand().await;
+
+    let comment = handed_comment(&run_agent(&dir.path, &state.path, &["wait", &id], ""));
+
+    assert_eq!(comment["body"], "outside git");
+    assert_eq!(comment["group_id"], "page");
+    assert!(comment["page"]["image"].is_string(), "{comment}");
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn submitting_removes_the_files_of_the_session() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    kemi.add_page_comment("1 is too large").await;
+    let files = sessions_dir(&state.path).join(format!("{id}.files"));
+    assert!(files.is_dir(), "the image is kept with the session");
+
+    kemi.submit("changes_requested").await;
+    let (status, _) = kemi.wait();
+
+    assert_eq!(status.code(), Some(1));
+    assert!(!files.exists());
 }

@@ -21,6 +21,12 @@ pub fn notice_line(notice: &Notice) -> String {
             };
             format!("kemi: comment {path} {} {location}", side.as_str())
         }
+        Notice::PageCommentAdded { url, width, places } => {
+            format!("kemi: comment page {url} {width} {places} places")
+        }
+        Notice::CommentImageNotSaved(error) => {
+            format!("kemi: could not save the comment image: {error}")
+        }
         Notice::ResultNotSaved(error) => format!("kemi: could not save the result file: {error}"),
         Notice::SessionNotSaved(error) => format!("kemi: could not save the session: {error}"),
         Notice::SessionNotDeleted(error) => format!("kemi: could not delete the session: {error}"),
@@ -70,6 +76,26 @@ mod tests {
             lines: None,
         };
         assert_eq!(notice_line(&notice), "kemi: comment src/a.rs old file-wide");
+    }
+
+    #[test]
+    fn a_page_comment_names_the_page_the_width_and_the_number_of_places() {
+        let notice = Notice::PageCommentAdded {
+            url: "/products?x=1".to_string(),
+            width: 390,
+            places: 3,
+        };
+        assert_eq!(
+            notice_line(&notice),
+            "kemi: comment page /products?x=1 390 3 places"
+        );
+    }
+
+    #[test]
+    fn an_unsaved_comment_image_is_a_warning_that_carries_the_reason() {
+        let line = notice_line(&Notice::CommentImageNotSaved(disk_full()));
+        assert!(line.starts_with("kemi: could not save the comment image: "));
+        assert!(line.contains("disk is full"));
     }
 
     #[test]

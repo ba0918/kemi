@@ -35,7 +35,8 @@ use crate::domain::agent::{
 };
 use crate::domain::live::LivePage;
 use crate::domain::review::{
-    Approval, Author, Comment, FileEntry, Group, GroupBy, Message, Reply, ReviewMeta, Side, Status,
+    Approval, Author, Comment, CommentTarget, FileEntry, FileTarget, Group, GroupBy, Message,
+    PageTarget, Place, PlaceElement, PlaceKind, Point, Rect, Reply, ReviewMeta, Side, Status,
     Suggestion,
 };
 use crate::source::FileContent;
@@ -386,25 +387,74 @@ struct ApprovalDto {
     identity: String,
 }
 
+/// ファイルへのコメントはファイルの位置の項目を持ち、ページへのコメントはそれらを持たずに
+/// `page` を持つ（ファイルへのコメントの形は今までと同じ）。
 #[derive(Serialize, Deserialize)]
 struct CommentDto {
     id: String,
     #[serde(default)]
     seq: Option<u32>,
-    file_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_id: Option<String>,
     group_id: String,
     group_title: String,
-    path: String,
-    side: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    side: Option<String>,
+    #[serde(default)]
     start_line: Option<u32>,
+    #[serde(default)]
     end_line: Option<u32>,
+    #[serde(default)]
     quote: Vec<String>,
     body: String,
     replies: Vec<ReplyDto>,
     resolved: bool,
     outdated: bool,
-    content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_hash: Option<String>,
+    #[serde(default)]
     suggestion: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page: Option<CommentPageDto>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CommentPageDto {
+    url: String,
+    width: u32,
+    places: Vec<PlaceDto>,
+    image: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlaceDto {
+    n: u32,
+    kind: String,
+    points: Vec<PointDto>,
+    elements: Vec<PlaceElementDto>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PointDto {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlaceElementDto {
+    selector: String,
+    text: String,
+    rect: RectDto,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RectDto {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
 }
 
 /// `<id>.session` が書いている写しの状態。中身は store が `<id>.payload` から読む。
@@ -764,48 +814,75 @@ impl EventDto {
 
 impl From<&Comment> for CommentDto {
     fn from(comment: &Comment) -> Self {
-        CommentDto {
+        let mut dto = CommentDto {
             id: comment.id.clone(),
             seq: Some(comment.seq),
-            file_id: comment.file_id.clone(),
+            file_id: None,
             group_id: comment.group_id.clone(),
             group_title: comment.group_title.clone(),
-            path: comment.path.clone(),
-            side: comment.side.as_str().to_string(),
-            start_line: comment.start_line,
-            end_line: comment.end_line,
-            quote: comment.quote.clone(),
+            path: None,
+            side: None,
+            start_line: None,
+            end_line: None,
+            quote: Vec::new(),
             body: comment.body.clone(),
             replies: comment.replies.iter().map(ReplyDto::from).collect(),
             resolved: comment.resolved,
             outdated: comment.outdated,
-            content_hash: comment.content_hash.clone(),
-            suggestion: comment
-                .suggestion
-                .as_ref()
-                .map(|suggestion| suggestion.replacement.clone()),
+            content_hash: None,
+            suggestion: None,
+            page: None,
+        };
+        match &comment.target {
+            CommentTarget::File(file) => {
+                dto.file_id = Some(file.file_id.clone());
+                dto.path = Some(file.path.clone());
+                dto.side = Some(file.side.as_str().to_string());
+                dto.start_line = file.start_line;
+                dto.end_line = file.end_line;
+                dto.quote = file.quote.clone();
+                dto.content_hash = Some(file.content_hash.clone());
+                dto.suggestion = file
+                    .suggestion
+                    .as_ref()
+                    .map(|suggestion| suggestion.replacement.clone());
+            }
+            CommentTarget::Page(page) => dto.page = Some(CommentPageDto::from(page)),
         }
+        dto
     }
 }
 
 impl CommentDto {
     fn into_comment(self) -> Result<Comment, String> {
-        let side = match self.side.as_str() {
-            "new" => Side::New,
-            "old" => Side::Old,
-            other => return Err(format!("unknown side: {other}")),
+        let target = match self.page {
+            Some(page) => CommentTarget::Page(page.into_target()?),
+            None => {
+                let side = match self.side.as_deref() {
+                    Some("new") => Side::New,
+                    Some("old") => Side::Old,
+                    Some(other) => return Err(format!("unknown side: {other}")),
+                    None => return Err("a comment has neither a file nor a page".to_string()),
+                };
+                CommentTarget::File(FileTarget {
+                    file_id: self.file_id.unwrap_or_default(),
+                    path: self.path.unwrap_or_default(),
+                    side,
+                    start_line: self.start_line,
+                    end_line: self.end_line,
+                    quote: self.quote,
+                    content_hash: self.content_hash.unwrap_or_default(),
+                    suggestion: self
+                        .suggestion
+                        .map(|replacement| Suggestion { replacement }),
+                })
+            }
         };
         Ok(Comment {
             id: self.id,
             seq: self.seq.unwrap_or_default(),
-            file_id: self.file_id,
             group_id: self.group_id,
             group_title: self.group_title,
-            path: self.path,
-            side,
-            start_line: self.start_line,
-            end_line: self.end_line,
-            quote: self.quote,
             body: self.body,
             replies: self
                 .replies
@@ -814,10 +891,92 @@ impl CommentDto {
                 .collect::<Result<Vec<_>, String>>()?,
             resolved: self.resolved,
             outdated: self.outdated,
-            content_hash: self.content_hash,
-            suggestion: self
-                .suggestion
-                .map(|replacement| Suggestion { replacement }),
+            target,
+        })
+    }
+}
+
+impl From<&PageTarget> for CommentPageDto {
+    fn from(page: &PageTarget) -> Self {
+        CommentPageDto {
+            url: page.url.clone(),
+            width: page.width,
+            places: page
+                .places
+                .iter()
+                .map(|place| PlaceDto {
+                    n: place.n,
+                    kind: place.kind.as_str().to_string(),
+                    points: place
+                        .points
+                        .iter()
+                        .map(|point| PointDto {
+                            x: point.x,
+                            y: point.y,
+                        })
+                        .collect(),
+                    elements: place
+                        .elements
+                        .iter()
+                        .map(|element| PlaceElementDto {
+                            selector: element.selector.clone(),
+                            text: element.text.clone(),
+                            rect: RectDto {
+                                x: element.rect.x,
+                                y: element.rect.y,
+                                w: element.rect.w,
+                                h: element.rect.h,
+                            },
+                        })
+                        .collect(),
+                })
+                .collect(),
+            image: page.image.clone(),
+        }
+    }
+}
+
+impl CommentPageDto {
+    fn into_target(self) -> Result<PageTarget, String> {
+        let places = self
+            .places
+            .into_iter()
+            .map(|place| {
+                let kind = PlaceKind::parse(&place.kind)
+                    .ok_or_else(|| format!("unknown place kind: {}", place.kind))?;
+                Ok(Place {
+                    n: place.n,
+                    kind,
+                    points: place
+                        .points
+                        .into_iter()
+                        .map(|point| Point {
+                            x: point.x,
+                            y: point.y,
+                        })
+                        .collect(),
+                    elements: place
+                        .elements
+                        .into_iter()
+                        .map(|element| PlaceElement {
+                            selector: element.selector,
+                            text: element.text,
+                            rect: Rect {
+                                x: element.rect.x,
+                                y: element.rect.y,
+                                w: element.rect.w,
+                                h: element.rect.h,
+                            },
+                        })
+                        .collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(PageTarget {
+            url: self.url,
+            width: self.width,
+            places,
+            image: self.image,
         })
     }
 }

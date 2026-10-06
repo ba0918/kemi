@@ -4,8 +4,11 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use kemi_core::domain::comment::{self, CommentError};
-use kemi_core::domain::review::{Author, Comment, LineRange, Reply, Side, Suggestion};
+use kemi_core::domain::comment::{self, CommentError, PlaceError};
+use kemi_core::domain::review::{
+    Author, Comment, CommentTarget, FileTarget, LineRange, PageTarget, Place, PlaceElement,
+    PlaceKind, Point, Rect, Reply, Side, Suggestion,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -28,6 +31,16 @@ pub(super) enum CommentRequest {
         #[serde(default)]
         suggestion: Option<String>,
     },
+    /// `--live` のページへのコメント（live.md の R-PAGE-COMMENT）。
+    #[serde(rename = "add_page")]
+    AddPage {
+        page: PageRequest,
+        body: String,
+        /// 描き込みを重ねた PNG（base64）。画像とコメントを 1 回の要求で保存し、渡す前に
+        /// 画像のパスが決まっているようにする。
+        #[serde(default)]
+        image: Option<String>,
+    },
     /// 本文と suggestion を書き換える。suggestion を省くか null にすると外す。
     Edit {
         id: String,
@@ -48,6 +61,48 @@ pub(super) enum CommentRequest {
     },
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct PageRequest {
+    url: String,
+    width: u32,
+    places: Vec<PlaceRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlaceRequest {
+    n: u32,
+    kind: String,
+    #[serde(default)]
+    points: Vec<PointRequest>,
+    #[serde(default)]
+    elements: Vec<ElementRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PointRequest {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ElementRequest {
+    selector: String,
+    text: String,
+    rect: RectRequest,
+}
+
+#[derive(Debug, Deserialize)]
+struct RectRequest {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+/// ページへのコメントのグループ（R-INPUT の `--live` の行）。
+const PAGE_GROUP_ID: &str = "page";
+const PAGE_GROUP_TITLE: &str = "Page";
+
 pub(super) async fn comment_api(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
@@ -67,6 +122,9 @@ pub(super) async fn comment_api(
             )
             .await
         }
+        CommentRequest::AddPage { page, body, image } => {
+            add_page_comment(&state, page, body, image)
+        }
         CommentRequest::Edit {
             id,
             body,
@@ -78,15 +136,26 @@ pub(super) async fn comment_api(
                 .iter_mut()
                 .find(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
-            // 行レンジ・side・quote・作成時の内容ハッシュは変えない（R-COMMENT）。
-            let range = comment
-                .start_line
-                .zip(comment.end_line)
-                .map(|(start, end)| LineRange { start, end });
-            comment::validate_comment(comment.side, range, suggestion.as_deref())
-                .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
+            // 行レンジ・side・quote・作成時の内容ハッシュも、ページの場所と画像も変えない
+            // （R-COMMENT、live.md の R-PAGE-COMMENT）。
+            match comment.file_mut() {
+                Some(file) => {
+                    let range = file
+                        .start_line
+                        .zip(file.end_line)
+                        .map(|(start, end)| LineRange { start, end });
+                    comment::validate_comment(file.side, range, suggestion.as_deref())
+                        .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
+                    file.suggestion = suggestion.map(|replacement| Suggestion { replacement });
+                }
+                None if suggestion.is_some() => {
+                    return Err(ApiError::bad_request(comment_error_message(
+                        CommentError::SuggestionRequiresNewSide,
+                    )));
+                }
+                None => {}
+            }
             comment.body = body;
-            comment.suggestion = suggestion.map(|replacement| Suggestion { replacement });
             let value = page_comment_json(comment);
             session.channel.note_comment(&id);
             drop(session);
@@ -191,20 +260,22 @@ async fn add_comment(
     let comment = Comment {
         id: format!("c{}", session.last_comment),
         seq: session.next_seq(),
-        file_id,
         group_id: file.group_id.clone(),
         group_title,
-        path: file.path.clone(),
-        side,
-        start_line: range.map(|range| range.start),
-        end_line: range.map(|range| range.end),
-        quote,
         body,
         replies: Vec::new(),
         resolved: false,
         outdated: false,
-        content_hash,
-        suggestion: suggestion.map(|replacement| Suggestion { replacement }),
+        target: CommentTarget::File(FileTarget {
+            file_id,
+            path: file.path.clone(),
+            side,
+            start_line: range.map(|range| range.start),
+            end_line: range.map(|range| range.end),
+            quote,
+            content_hash,
+            suggestion: suggestion.map(|replacement| Suggestion { replacement }),
+        }),
     };
     session.channel.note_comment(&comment.id);
     session.comments.push(comment.clone());
@@ -212,12 +283,132 @@ async fn add_comment(
     persist(state);
     notify_agent_state(state);
 
-    state.notices.notify(Notice::CommentAdded {
-        path: comment.path.clone(),
-        side: comment.side,
-        lines: comment.start_line.zip(comment.end_line),
-    });
+    if let Some(file) = comment.file() {
+        state.notices.notify(Notice::CommentAdded {
+            path: file.path.clone(),
+            side: file.side,
+            lines: file.start_line.zip(file.end_line),
+        });
+    }
     Ok(Json(page_comment_json(&comment)))
+}
+
+fn add_page_comment(
+    state: &AppState,
+    page: PageRequest,
+    body: String,
+    image: Option<String>,
+) -> Result<Json<Value>, ApiError> {
+    if state.live.is_none() {
+        return Err(ApiError::bad_request(
+            "page comments exist only in a review of a running page",
+        ));
+    }
+    let places = page
+        .places
+        .into_iter()
+        .map(place_from_request)
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let places = comment::validate_places(places)
+        .map_err(|error| ApiError::bad_request(place_error_message(error)))?;
+
+    let (id, seq) = {
+        let mut session = state.session.lock().expect("session poisoned");
+        session.last_comment += 1;
+        (format!("c{}", session.last_comment), session.next_seq())
+    };
+    // 画像はセッションのロックの外で書く。書けなくてもコメントは画像なしで残す。
+    let image = image.and_then(|image| save_image(state, &id, &image));
+    let comment = Comment {
+        id,
+        seq,
+        group_id: PAGE_GROUP_ID.to_string(),
+        group_title: PAGE_GROUP_TITLE.to_string(),
+        body,
+        replies: Vec::new(),
+        resolved: false,
+        outdated: false,
+        target: CommentTarget::Page(PageTarget {
+            url: page.url,
+            width: page.width,
+            places,
+            image,
+        }),
+    };
+    let mut session = state.session.lock().expect("session poisoned");
+    session.channel.note_comment(&comment.id);
+    // 画像を書く間に足されたコメントがあっても、作成順（通し番号の順）に並べる。
+    let at = session
+        .comments
+        .partition_point(|other| other.seq < comment.seq);
+    session.comments.insert(at, comment.clone());
+    drop(session);
+    persist(state);
+    notify_agent_state(state);
+    if let CommentTarget::Page(page) = &comment.target {
+        state.notices.notify(Notice::PageCommentAdded {
+            url: page.url.clone(),
+            width: page.width,
+            places: page.places.len(),
+        });
+    }
+    Ok(Json(page_comment_json(&comment)))
+}
+
+/// 画像を `<id>.files/` に書き、絶対パスを返す。セッションの無いレビュー、base64 として
+/// 読めない値、書き込みの失敗では None（submit の契約が許す `null`）。
+fn save_image(state: &AppState, id: &str, image: &str) -> Option<String> {
+    use base64::Engine;
+    let sink = state.session_sink.as_ref()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(image)
+        .ok()?;
+    match sink.save_file(&format!("{id}.png"), &bytes) {
+        Ok(path) => Some(path.to_string_lossy().into_owned()),
+        Err(error) => {
+            state.notices.notify(Notice::CommentImageNotSaved(error));
+            None
+        }
+    }
+}
+
+fn place_from_request(place: PlaceRequest) -> Result<Place, ApiError> {
+    let kind = PlaceKind::parse(&place.kind)
+        .ok_or_else(|| ApiError::bad_request("a place kind must be element, arrow or pen"))?;
+    Ok(Place {
+        n: place.n,
+        kind,
+        points: place
+            .points
+            .into_iter()
+            .map(|point| Point {
+                x: point.x,
+                y: point.y,
+            })
+            .collect(),
+        elements: place
+            .elements
+            .into_iter()
+            .map(|element| PlaceElement {
+                selector: element.selector,
+                text: element.text,
+                rect: Rect {
+                    x: element.rect.x,
+                    y: element.rect.y,
+                    w: element.rect.w,
+                    h: element.rect.h,
+                },
+            })
+            .collect(),
+    })
+}
+
+fn place_error_message(error: PlaceError) -> String {
+    match error {
+        PlaceError::NoPlace => "a page comment needs at least one place".to_string(),
+        PlaceError::NumberFromOne => "place numbers start at 1".to_string(),
+        PlaceError::DuplicateNumber(n) => format!("place number {n} is used twice"),
+    }
 }
 
 fn comment_not_found() -> ApiError {

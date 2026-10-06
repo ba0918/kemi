@@ -495,7 +495,17 @@ The JSON printed at the end:
   kemi never moves a comment to a new line number.
 - `replies` are in creation order. `author` is `reviewer` or `agent`;
   `variants`, `chosen`, and `applied` are `[]`, `null`, `null` outside a
-  review of a running page, and so is `page`.
+  review of a running page.
+- `page` is `null` except on a comment left on a running page (`--live`).
+  Such a comment is in the group `page` ("Page"), has `path`, `side`,
+  `start_line`, `end_line`, and `suggestion` `null`, `quote` `[]`, and
+  `outdated` `false`, and its `page` is
+  `{ "url": "/products?x=1", "width": 390, "places": [...], "image": null }`.
+  Each place has a number `n` (in order, possibly with gaps), a `kind`
+  (`element`, `arrow`, or `pen`), `points` (`[]` for an element), and
+  `elements` with a `selector`, `text`, and `rect`, in CSS pixels of the
+  page. `image`, the PNG of the area with the places drawn on it, is an
+  absolute path only in what `kemi wait` returns, and `null` in the result.
 - `messages` are notes on the whole review, in creation order.
 - `comments` are in creation order.
 

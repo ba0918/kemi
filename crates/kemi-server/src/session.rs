@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use kemi_core::domain::agent::{AgentEvent, Channel, HandedComment};
-use kemi_core::domain::review::{Comment, Message, Reply};
+use kemi_core::domain::review::{Comment, CommentTarget, Message, PageTarget, Reply};
 use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
 use serde_json::json;
@@ -98,27 +98,77 @@ fn highest_number<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u3
         .unwrap_or(0)
 }
 
-/// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。`page` は
-/// `--live` のページへのコメントだけが持つので、ここでは常に `null`。
+/// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。ページへのコメントの
+/// 画像のパスは出さない（submit と画面への応答では `null`）。
 pub fn comment_json(comment: &Comment) -> serde_json::Value {
-    json!({
+    comment_json_with(comment, false)
+}
+
+/// `kemi wait` に返すコメントの JSON。ページへのコメントの画像は絶対パスで渡す（R-AGENT-EVENTS）。
+fn agent_comment_json(comment: &Comment) -> serde_json::Value {
+    comment_json_with(comment, true)
+}
+
+fn comment_json_with(comment: &Comment, with_image: bool) -> serde_json::Value {
+    let mut value = json!({
         "id": comment.id,
         "group_id": comment.group_id,
         "group_title": comment.group_title,
-        "path": comment.path,
-        "side": comment.side.as_str(),
-        "start_line": comment.start_line,
-        "end_line": comment.end_line,
-        "quote": comment.quote,
+        "path": null,
+        "side": null,
+        "start_line": null,
+        "end_line": null,
+        "quote": [],
         "body": comment.body,
         "page": null,
         "replies": comment.replies.iter().map(reply_json).collect::<Vec<_>>(),
         "resolved": comment.resolved,
         "outdated": comment.outdated,
-        "suggestion": comment
-            .suggestion
-            .as_ref()
-            .map(|suggestion| json!({ "replacement": suggestion.replacement })),
+        "suggestion": null,
+    });
+    if let CommentTarget::Page(page) = &comment.target {
+        value["page"] = page_json(page);
+        if with_image {
+            value["page"]["image"] = json!(page.image);
+        }
+    }
+    if let Some(file) = comment.file() {
+        value["path"] = json!(file.path);
+        value["side"] = json!(file.side.as_str());
+        value["start_line"] = json!(file.start_line);
+        value["end_line"] = json!(file.end_line);
+        value["quote"] = json!(file.quote);
+        value["suggestion"] = json!(
+            file.suggestion
+                .as_ref()
+                .map(|suggestion| json!({ "replacement": suggestion.replacement }))
+        );
+    }
+    value
+}
+
+/// R-SUBMIT の `page`。画像のパスは `kemi wait` の応答でだけ渡すので、ここでは `null`
+/// （submit の確定でファイルごと消える）。
+fn page_json(page: &PageTarget) -> serde_json::Value {
+    json!({
+        "url": page.url,
+        "width": page.width,
+        "places": page.places.iter().map(|place| json!({
+            "n": place.n,
+            "kind": place.kind.as_str(),
+            "points": place.points.iter().map(|point| json!({ "x": point.x, "y": point.y })).collect::<Vec<_>>(),
+            "elements": place.elements.iter().map(|element| json!({
+                "selector": element.selector,
+                "text": element.text,
+                "rect": {
+                    "x": element.rect.x,
+                    "y": element.rect.y,
+                    "w": element.rect.w,
+                    "h": element.rect.h,
+                },
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "image": null,
     })
 }
 
@@ -174,10 +224,10 @@ pub fn agent_event_json(event: &AgentEvent) -> serde_json::Value {
             "type": "handed",
             "comments": handed.comments.iter().map(|change| match change {
                 HandedComment::Added(comment) => {
-                    json!({ "change": "added", "comment": comment_json(comment) })
+                    json!({ "change": "added", "comment": agent_comment_json(comment) })
                 }
                 HandedComment::Edited(comment) => {
-                    json!({ "change": "edited", "comment": comment_json(comment) })
+                    json!({ "change": "edited", "comment": agent_comment_json(comment) })
                 }
                 HandedComment::Deleted(id) => json!({ "change": "deleted", "comment": { "id": id } }),
             }).collect::<Vec<_>>(),

@@ -95,16 +95,18 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         .clone();
     let snapshot: Vec<(String, String, Side, String)> = {
         let session = state.session.lock().expect("session poisoned");
+        // ページへのコメントは内容ハッシュを持たず、outdated は常に false（R-SUBMIT）。
         session
             .comments
             .iter()
-            .map(|comment| {
-                (
+            .filter_map(|comment| {
+                let file = comment.file()?;
+                Some((
                     comment.id.clone(),
-                    comment.file_id.clone(),
-                    comment.side,
-                    comment.content_hash.clone(),
-                )
+                    file.file_id.clone(),
+                    file.side,
+                    file.content_hash.clone(),
+                ))
             })
             .collect()
     };
