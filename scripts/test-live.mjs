@@ -24,7 +24,8 @@
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
-//   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。
+//   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
+//   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
@@ -1690,6 +1691,111 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
   }
 }
 
+/**
+ * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
+ */
+async function handAndWait(kemi, dir, state) {
+  const waiting = new Promise((done, fail) => {
+    const child = spawn(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: environment(state), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.on('error', fail);
+    child.on('exit', (code) => done({ code, stdout }));
+  });
+  const button = `(${visible('#rail-hand')} ? document.querySelector('#rail-hand') : ${visible('#btn-hand')} ? document.querySelector('#btn-hand') : null)`;
+  await waitFor(`${button} !== null && !${button}.disabled`);
+  await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
+  const { code, stdout } = await waiting;
+  assert.equal(code, 0, 'kemi wait returns what was handed');
+  return JSON.parse(stdout);
+}
+
+/** 書いたページへのコメントを保存し、書く欄が空くのを待つ。 */
+async function savePageCommentInThePage(body) {
+  await browser('fill', '#live-compose .lv-compose-body', body);
+  await browser('click', '#live-compose .lv-compose-save');
+  await waitFor(`${draftNumbers} === '[]'`);
+}
+
+/**
+ * 渡すことと submit（R-PAGE-COMMENT の成功条件 1、R-AGENT-EVENTS、R-SUBMIT）: 画面で要素・矢印・ペンの 3 つの場所を
+ * 持つコメントを付けて渡すと、`kemi wait` に 3 つの場所と画像の絶対パスが届き、そのファイルが PNG として読める。submit の
+ * JSON には `page` が入り、画像は null。インラインのスタイルを止める CSP と Trusted Types を求める CSP のページでも、
+ * コメントと場所は届く。
+ */
+async function handedPageCommentsReachWaitAndSubmit(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    await handInThePage(kemi, repository, state);
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await chooseTool('arrow');
+    await dragInPane(livePane, [[340, 160], [260, 210], [150, 250]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await chooseTool('pen');
+    await dragInPane(livePane, [[20, 90], [260, 90], [260, 140], [20, 140], [20, 92]]);
+    await waitFor(`${draftNumbers} === '[1,2,3]'`);
+    await savePageCommentInThePage('1 is too wide, 2 points at it, 3 needs more room');
+    const answer = await handAndWait(kemi, repository, state);
+    const comment = answer.events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+    assert.ok(comment, `a page comment is handed: ${JSON.stringify(answer)}`);
+    assert.deepEqual(comment.page.places.map((place) => [place.n, place.kind]), [[1, 'element'], [2, 'arrow'], [3, 'pen']]);
+    for (const place of comment.page.places) {
+      assert.ok(place.elements.length > 0 && place.elements.every((element) => element.selector && element.rect), `place ${place.n} names its elements`);
+    }
+    assert.ok(comment.page.image?.startsWith('/') || /^[A-Za-z]:\\/.test(comment.page.image ?? ''), `the image is an absolute path: ${comment.page.image}`);
+    const image = decodePng(await readFile(comment.page.image));
+    assert.ok(image.width > 0 && image.height > 0);
+    console.log(`PASS 画面で要素・矢印・ペンの 3 つの場所を持つコメントを付けて渡すと、kemi wait に 3 つの場所と画像の絶対パスが届き、PNG として読める（${image.width}×${image.height}）`);
+
+    await post(kemi.url, 'api/submit', { verdict: 'approved' });
+    const { code, stdout } = await kemi.exited;
+    assert.equal(code, 0);
+    const submitted = JSON.parse(stdout).comments.find((item) => item.id === comment.id);
+    assert.deepEqual(submitted.page.places, comment.page.places);
+    assert.equal(submitted.page.image, null);
+    console.log('PASS 同じコメントを submit すると、JSON の page に同じ場所が入り、image は null');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+
+  for (const query of ['csp=1', 'tt=1']) {
+    const strict = await startDevServer();
+    const strictState = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+    kemi = await startKemi(repository, strictState, ['--live', `${strict.url}changing.html?${query}`]);
+    try {
+      await browser('set', 'viewport', '1280', '900');
+      await browser('open', kemi.url);
+      await waitFor(showsSnapshot('Start'));
+      await post(kemi.url, 'api/message', { body: 'start' });
+      await handInThePage(kemi, repository, strictState);
+      await chooseTool('element');
+      await clickInPane(livePane, 100, 150);
+      await waitFor(`${draftNumbers} === '[1]'`);
+      await savePageCommentInThePage(`under ${query}`);
+      const answer = await handAndWait(kemi, repository, strictState);
+      const comment = answer.events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+      assert.ok(comment, `a page comment is handed under ${query}`);
+      assert.equal(comment.page.places[0].elements[0].selector, '#buy');
+      console.log(`PASS changing.html?${query} の CSP のページでも、コメントと場所が kemi wait に届く（画像: ${comment.page.image === null ? 'null' : '絶対パス'}）`);
+    } finally {
+      await stop(kemi);
+      await strict.close();
+    }
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -1716,6 +1822,7 @@ try {
   await pageCommentPlacesArePutAndSaved(repository);
   await placesMakeNoChange(repository);
   await savedPageCommentsAreListedShownAndSwitched(repository);
+  await handedPageCommentsReachWaitAndSubmit(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
