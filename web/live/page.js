@@ -1413,12 +1413,13 @@
 
   /**
    * 頼まれた画像のページと表示幅に、いまの文書が並んでいなければ断る。画像を作る途中でページが移ったり幅が変わったり
-   * すると、場所の座標と写しの並びが合わない画像になる。
+   * すると、場所の座標と写しの並びが合わない画像になる。幅は 1px の違いまで同じとみなす。端数の拡大率（ブラウザの
+   * 拡大縮小など）では、枠の幅を装置の画素に丸めた分だけ innerWidth が頼んだ幅から 1 ずれる。
    * @param {{ page: string, width: number }} view
    */
   function checkView(view) {
     if (location.pathname + location.search !== view.page) throw new Error('the page is not the page of the places');
-    if (innerWidth !== view.width) throw new Error('the page is not laid out at the width of the places');
+    if (Math.abs(innerWidth - view.width) > 1) throw new Error('the page is not laid out at the width of the places');
   }
 
   /**
