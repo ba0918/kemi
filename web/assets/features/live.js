@@ -269,7 +269,11 @@ export function startLive(info) {
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
-  new ResizeObserver(() => layoutFrames()).observe(shell.stage);
+  new ResizeObserver(() => {
+    layoutFrames();
+    // 狭い画面との境をまたぐと、並べたまま隠れている側も変わる。
+    syncLaidOutInert();
+  }).observe(shell.stage);
 
   shell.liveFrame.src = live.origin + live.page;
   setView("page");
@@ -869,6 +873,8 @@ function render() {
   refreshChanges();
   renderTree();
   layoutFrames();
+  // 並べている間に見方や側が変わると、並べたまま隠れるものも変わる。
+  syncLaidOutInert();
 }
 
 /**
@@ -1091,9 +1097,24 @@ function laidOutHeight() {
 /**
  * 並べたままにしている間の状態。重なって呼ばれても、並べるのは最初の呼び出し、戻すのは最後に終わった呼び出しだけ
  * （先に終わった方が戻すと、まだ読んでいる方が並べていない文書を読む）。
- * @type {{ running: number, revealed: HTMLElement | null, ready: Promise<void> }}
+ * @type {{ running: number, ready: Promise<void> }}
  */
-const laidOut = { running: 0, revealed: null, ready: Promise.resolve() };
+const laidOut = { running: 0, ready: Promise.resolve() };
+
+/**
+ * 並べたまま見えなくしている舞台か動いているページの側を、操作もフォーカスも受けないようにする。並べている間に見方や
+ * 側や画面の幅が変わると隠れるものも変わるので、そのたびに合わせる。並べていなければどちらも戻す。
+ */
+function syncLaidOutInert() {
+  if (!shell) {
+    return;
+  }
+  const { stage, livePane } = shell;
+  const hidden = (/** @type {HTMLElement} */ element) => getComputedStyle(element).visibility === "hidden";
+  const inert = stage.dataset.measuring === undefined ? null : hidden(stage) ? stage : hidden(livePane) ? livePane : null;
+  stage.inert = inert === stage;
+  livePane.inert = inert === livePane;
+}
 
 /**
  * task が終わるまで、動いているページの枠を選んだ幅で並べたままにする。隠れていれば、見えず操作も受けないまま並べて
@@ -1107,15 +1128,13 @@ async function whileLaidOut(task) {
   if (!shell) {
     return task();
   }
-  const { stage, livePane, liveFrame } = shell;
+  const { stage, liveFrame } = shell;
   if (laidOut.running === 0) {
-    // 隠れていれば、コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
-    const revealed = !liveFrameHidden() ? null : stage.getClientRects().length === 0 ? stage : livePane;
+    const wasHidden = liveFrameHidden();
     stage.dataset.measuring = "true";
-    laidOut.revealed = revealed;
+    syncLaidOutInert();
     laidOut.ready = Promise.resolve();
-    if (revealed) {
-      revealed.inert = true;
+    if (wasHidden) {
       liveFrame.getBoundingClientRect();
       // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
       laidOut.ready = new Promise((done) => {
@@ -1132,10 +1151,7 @@ async function whileLaidOut(task) {
     laidOut.running -= 1;
     if (laidOut.running === 0) {
       delete stage.dataset.measuring;
-      if (laidOut.revealed) {
-        laidOut.revealed.inert = false;
-      }
-      laidOut.revealed = null;
+      syncLaidOutInert();
     }
   }
 }
