@@ -34,7 +34,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   refViewport: HTMLElement,
  *   refFrame: HTMLIFrameElement,
  *   refMockFrame: HTMLIFrameElement,
- *   refMarks: HTMLElement,
  *   refEmpty: HTMLElement,
  *   refEmptyText: HTMLElement,
  *   refRecordButton: HTMLButtonElement,
@@ -170,10 +169,7 @@ export function buildShell() {
   refMockFrame.setAttribute("sandbox", "allow-scripts");
   refMockFrame.referrerPolicy = "no-referrer";
   refMockFrame.hidden = true;
-  // 消えた要素の印。スナップショットの枠の中は触れないので、枠と同じ大きさと変形で上に重ねる。
-  const refMarks = el("div", "lv-marks");
-  refMarks.hidden = true;
-  ref.box.append(refFrame, refMockFrame, refMarks, refEmpty);
+  ref.box.append(refFrame, refMockFrame, refEmpty);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -221,7 +217,6 @@ export function buildShell() {
     refViewport: ref.viewport,
     refFrame,
     refMockFrame,
-    refMarks,
     refEmpty,
     refEmptyText,
     refRecordButton,
@@ -402,21 +397,70 @@ function changeWhat(change) {
   }
 }
 
+/** スナップショットの写しに入れない要素（ページの記述に入れないものと同じ。web/live/page.js の UNDESCRIBED）。 */
+const UNDESCRIBED = new Set(["head", "script", "style", "link", "meta", "noscript", "template", "title", "base"]);
+
+/** 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。 */
+const REMOVED_MARK_STYLE = "[data-kemi-removed] { outline: 2px solid rgb(214, 69, 69) !important; outline-offset: -2px !important; }";
+
 /**
- * 比べる相手の側の印（消えた要素）。位置と大きさはスナップショットの文書の座標で、層ごと枠と同じ
- * 倍率で縮める。
- * @param {HTMLElement} layer
- * @param {number[][]} boxes
+ * 比べる相手の側の印（消えた要素）を付けたスナップショットの HTML。記述の要素の番号を、写しの要素を
+ * ページが記述したのと同じ順（shadow root の中を先に、持ち主の子として）にたどって探し、属性を付ける。
+ * shadow root の中には文書の <style> が効かないので、印を付けた shadow root ごとにも <style> を足す。
+ * HTML を読み直すと要素の並びが変わることがあり（表に tbody が足されるなど）、タグが記述と合わなく
+ * なったら、そこから先には印を付けない（別の要素に付けないため）。
+ * @param {string} html
+ * @param {import("../live-diff.js").Description} description
+ * @param {number[]} indices 印を付ける要素の番号
+ * @returns {string}
  */
-export function renderRemovedMarks(layer, boxes) {
-  layer.textContent = "";
-  for (const [left, top, width, height] of boxes) {
-    const mark = el("div", "lv-mark");
-    mark.dataset.kind = "removed";
-    mark.style.left = `${left}px`;
-    mark.style.top = `${top}px`;
-    mark.style.width = `${width}px`;
-    mark.style.height = `${height}px`;
-    layer.append(mark);
+export function markRemovedInSnapshot(html, description, indices) {
+  const wanted = new Set(indices);
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  /** @type {Element[]} */
+  const marked = [];
+  let next = 0;
+  let aligned = true;
+  /** @param {Element} element */
+  const visit = (element) => {
+    if (!aligned || UNDESCRIBED.has(element.localName)) {
+      return;
+    }
+    const expected = description.elements[next]?.tag;
+    // canvas は写しでは画像になる。
+    if (expected !== element.localName && !(expected === "canvas" && element.localName === "img")) {
+      aligned = false;
+      return;
+    }
+    if (wanted.has(next)) {
+      marked.push(element);
+    }
+    next += 1;
+    const shadow = [...element.children].find(
+      (child) => child instanceof HTMLTemplateElement && child.hasAttribute("shadowrootmode"),
+    );
+    if (shadow instanceof HTMLTemplateElement) {
+      for (const child of shadow.content.children) {
+        visit(child);
+      }
+    }
+    for (const child of element.children) {
+      visit(child);
+    }
+  };
+  visit(parsed.documentElement);
+  /** @type {Set<Node>} */
+  const styled = new Set();
+  for (const element of marked) {
+    element.setAttribute("data-kemi-removed", "");
+    const root = element.getRootNode();
+    if (!styled.has(root)) {
+      styled.add(root);
+      const style = parsed.createElement("style");
+      style.textContent = REMOVED_MARK_STYLE;
+      (root instanceof DocumentFragment ? root : parsed.head).append(style);
+    }
   }
+  const doctype = parsed.doctype ? `<!doctype ${parsed.doctype.name}>` : "";
+  return doctype + parsed.documentElement.outerHTML;
 }

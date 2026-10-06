@@ -477,29 +477,3 @@ body[data-live-view="code"] .lv-page-only {
   color: var(--ink-3);
   cursor: pointer;
 }
-
-/* ---- 印（R-PAGE-VIEW）: 比べる相手の側の消えた要素 ----
-   並べるときのスナップショットは中身の高さで描き、外側の枠でスクロールする。印の層は枠と同じ
-   大きさと変形で重ねる。 */
-.lv-stage[data-compare="side"] .lv-pane[data-side="ref"][data-reference="snapshot"] .lv-viewport {
-  overflow-y: auto;
-}
-
-.lv-marks {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
-  pointer-events: none;
-}
-
-.lv-marks[hidden] {
-  display: none;
-}
-
-.lv-mark {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px solid rgb(214, 69, 69);
-  background: rgba(214, 69, 69, 0.08);
-}

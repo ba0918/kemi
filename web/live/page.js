@@ -110,7 +110,7 @@
     'border-style': ['border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style'],
   };
 
-  /** 描かれない要素。記述に入れない。 */
+  /** 描かれない要素。記述に入れない。レビュー画面が写しの要素をたどるとき（views/live.js）も同じものを飛ばす。 */
   const UNDESCRIBED = new Set(['head', 'script', 'style', 'link', 'meta', 'noscript', 'template', 'title', 'base']);
 
   /** 最後に記述を渡した要素。印の番号はこの並びを指す。 */
@@ -126,6 +126,13 @@
     const parts = STYLE_PARTS[property];
     return value !== '' || !parts ? value : parts.map((part) => computed.getPropertyValue(part)).join(' ');
   }
+
+  /**
+   * <picture> の <source>。スナップショットの写しには入れないので、記述にも入れない（レビュー画面が
+   * 写しの要素を記述の番号でたどれるよう、両側の要素の並びをそろえる）。
+   * @param {Element} element
+   */
+  const isPictureSource = (element) => element.localName === 'source' && element.parentElement?.localName === 'picture';
 
   /** @param {number} value */
   const round = (value) => Math.round(value * 100) / 100;
@@ -157,7 +164,7 @@
      * @param {number[]} shift 親の中に置かれた要素の、画面の座標に足す量
      */
     const visit = (element, parent, shift) => {
-      if (UNDESCRIBED.has(element.localName) || element === marksHost) return;
+      if (UNDESCRIBED.has(element.localName) || element === marksHost || isPictureSource(element)) return;
       const computed = getComputedStyle(element);
       /** @type {Record<string, string>} */
       const style = {};
@@ -586,7 +593,7 @@
       return copy;
     }
     // <picture> の <source> は外す。選ばれた画像は <img> の currentSrc として埋め込む。
-    if (tag === 'source' && original.parentElement?.localName === 'picture') {
+    if (isPictureSource(original)) {
       return null;
     }
     if (tag === 'canvas') {

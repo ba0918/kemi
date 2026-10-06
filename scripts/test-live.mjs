@@ -26,7 +26,8 @@
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。幅 390px では引き出しの中。
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
-//   表示でも同じ印。モックと比べる間は付かない。印を付け直しても比べる相手の枠のスクロール位置は変わらない。
+//   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
+//   枠のスクロール位置は変わらない。並べる表示の比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
 //   インラインのスタイルを止める CSP のページでも印が付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
@@ -876,7 +877,35 @@ function countPixels(image, [left, top, right, bottom], test) {
 
 const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
 const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;
+const isBlue = ([r, g, b]) => r < 90 && g < 130 && b > 180;
 const isPurple = ([r, g, b]) => r > 150 && r < 210 && g > 140 && g < 190 && b > 195;
+
+/**
+ * 枠を撮り直しながら、範囲の中に条件に合う画素が出る（`present` が false なら無くなる）のを待つ。
+ * スナップショットの枠はスクリプトの止まった別のオリジンで、中を調べられないため画素で見る。
+ */
+async function waitForPixels(selector, dir, name, region, test, present = true, timeout = 10000) {
+  const until = Date.now() + timeout;
+  for (;;) {
+    const image = await shot(selector, dir, name);
+    if ((countPixels(image, region, test) > 0) === present) return image;
+    if (Date.now() > until) assert.fail(`${present ? 'no' : 'still'} matching pixels in ${region.join(',')}: ${join(dir, `${name}.png`)}`);
+    await new Promise((done) => setTimeout(done, 300));
+  }
+}
+
+/**
+ * 比べる相手の枠の中を 1 画面ぶん下へスクロールさせる。別のオリジンの枠にはホイールが届かないので、
+ * 何も無いところを押してから PageDown を押す。
+ */
+async function pageDownInReference() {
+  const box = await evaluate(`(() => { const r = document.querySelector('${refPane} .lv-frame:not([hidden])').getBoundingClientRect(); return { x: r.x + Math.min(r.width, 300) / 2, y: r.y + 500 }; })()`);
+  await browser('mouse', 'move', String(Math.round(box.x)), String(Math.round(box.y)));
+  await browser('mouse', 'down');
+  await browser('mouse', 'up');
+  await browser('press', 'PageDown');
+  await new Promise((done) => setTimeout(done, 500));
+}
 
 /** /changing.html の要素の範囲（文書の座標）。`inserted` は兄弟を 1 つ足したとき。 */
 function changingRegions(inserted) {
@@ -909,7 +938,7 @@ async function marksFollowTheChanges(repository) {
     await new Promise((done) => setTimeout(done, 400));
     return shot(`${livePane} .lv-frame`, shots, name);
   };
-  const removedMark = `(() => { const mark = document.querySelector('${refPane} .lv-mark[data-kind="removed"]'); if (!mark) return null; const frame = document.querySelector('${refPane} .lv-frame:not([hidden])').getBoundingClientRect(); const box = mark.getBoundingClientRect(); const scale = Number(getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'); return [Math.round((box.left - frame.left) / scale), Math.round((box.top - frame.top) / scale), Math.round(box.width / scale), Math.round(box.height / scale)].join(','); })()`;
+  const refFrame = `${refPane} .lv-frame:not([hidden])`;
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
@@ -968,30 +997,36 @@ async function marksFollowTheChanges(repository) {
     await waitFor(`${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage());
     await waitFor(`${changeList}?.dataset.main === '1'`);
-    const expected = changingRegions(true).item(2);
-    const removedAt = [expected[0], expected[1], 390, expected[3] - expected[1]].join(',');
-    await waitFor(`${removedMark} === ${JSON.stringify(removedAt)}`);
+    const removedAt = changingRegions(true).item(2);
+    await waitForPixels(refFrame, shots, 'marks-removed', removedAt, isRed);
     console.log('PASS 兄弟の途中の要素を消すと、スナップショットの側のその要素に消えたの印が付く');
 
     await browser('click', '.lv-mode button[data-compare="overlay"]');
     await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay'`);
-    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '0'; range.dispatchEvent(new Event('input')); return true; })()`);
-    await waitFor(`${removedMark} === ${JSON.stringify(removedAt)}`);
+    const setOpacity = (value) => evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+    await setOpacity(100);
+    await waitForPixels(refFrame, shots, 'marks-overlay-removed', removedAt, isRed);
+    await setOpacity(0);
     regions = changingRegions(false);
     image = await liveShot('marks-overlay');
     assert.ok(countPixels(image, regions.item(2), isPurple) > 0, `the shifted sibling keeps its mark in the overlay: ${join(shots, 'marks-overlay.png')}`);
     console.log('PASS 重ねて透かす表示に切り替えても、同じ要素に同じ印がある');
 
+    // 動いているページの側の印だけが変わるときは、比べる相手の枠を作り直さず、スクロール位置も変わらない。
+    // 枠の中は読めないので、先頭にあるボタンの色が見えなくなるまでスクロールし、印を付け直した後も見えないことで見る。
     await browser('click', '.lv-mode button[data-compare="side"]');
     await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side'`);
-    const viewport = `document.querySelector('${refPane} .lv-viewport')`;
-    await evaluate(`${viewport}.scrollTop = 300; true`);
-    await waitFor(`${viewport}.scrollTop === 300`);
+    const button = changingRegions(true).button;
+    const refView = `${refPane} .lv-viewport`;
+    await waitForPixels(refView, shots, 'scroll-before', button, isBlue);
+    await pageDownInReference();
+    await waitForPixels(refView, shots, 'scroll-scrolled', button, isBlue, false);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '2'`);
     await new Promise((done) => setTimeout(done, 500));
-    assert.equal(await evaluate(`${viewport}.scrollTop`), 300);
-    console.log('PASS 比べる相手の枠をスクロールしてからページを変えて印が付け直されても、枠のスクロール位置が変わらない');
+    image = await shot(refView, shots, 'scroll-kept');
+    assert.equal(countPixels(image, button, isBlue), 0, `the reference keeps its scroll: ${join(shots, 'scroll-kept.png')}`);
+    console.log('PASS 比べる相手の枠をスクロールしてから動いているページの側の印だけが付け直されても、枠のスクロール位置が変わらない');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -1051,6 +1086,16 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     await browser('click', `${refPane} .lv-empty .lv-record`);
     await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
 
+    // 並べる表示の比べる相手は、見えている高さで描いて中でスクロールする（動いているページと同じ見え方）。
+    const badgeAt = [badge.left, badge.top, badge.left + badge.width, badge.top + badge.height];
+    const isBadge = ([r, g, b]) => r === 120 && g === 120 && b === 120;
+    const unscrolled = await shot(`${refPane} .lv-viewport`, shots, 'unscrolled-reference');
+    await pageDownInReference();
+    const reference = await shot(`${refPane} .lv-viewport`, shots, 'scrolled-reference');
+    assert.ok((await comparePixels(unscrolled, reference, join(shots, 'scrolled-reference-diff.png'))).different > 0, 'the snapshot scrolled');
+    assert.ok(countPixels(reference, badgeAt, isBadge) > badge.width * badge.height * 0.5, `the fixed badge stays in place in the scrolled snapshot: ${join(shots, 'scrolled-reference.png')}`);
+    console.log('PASS 並べる表示で比べる相手をスクロールしても、画面に固定した要素は動いているページと同じ場所に描かれる');
+
     // 箱の中を 6 行目まで、ページを末尾までスクロールしてから、札と 6 行目の色を変えて比べ直させる。
     await moveTo('row-6');
     await moveTo('end');
@@ -1063,7 +1108,6 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     // ページを先頭へ戻す。札は画面の同じ場所に、6 行目は箱の中のスクロールで箱の上端から scroll-margin-top 下に見える。
     await moveTo('start');
     const rowAt = [0, box.top + scrollMargin, 390, box.top + scrollMargin + row];
-    const badgeAt = [badge.left, badge.top, badge.left + badge.width, badge.top + badge.height];
     let image = await shot(`${livePane} .lv-frame`, shots, 'scrolled-marks');
     assert.ok(countPixels(image, badgeAt, isRed) > 0, `the fixed badge keeps its mark: ${join(shots, 'scrolled-marks.png')}`);
     assert.ok(countPixels(image, rowAt, isRed) > 0, `the row in the scrolled box keeps its mark: ${join(shots, 'scrolled-marks.png')}`);
