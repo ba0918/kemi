@@ -645,6 +645,8 @@ struct LiveRun {
     root: PathBuf,
     /// 復元で戻すスナップショット（R-PAGE-SESSION）。新しいレビューでは空。
     snapshots: Vec<PageSnapshot>,
+    /// `<id>.files/` に残るスナップショットのファイルの最大の番号（読めないものも含む）。
+    last_snapshot_number: u32,
 }
 
 impl LiveRun {
@@ -692,6 +694,7 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
         mock_secret: random_token(),
         code_view: kemi_core::source::git::repo_root(&live.root).is_ok(),
         snapshots: live.snapshots.clone(),
+        last_snapshot_number: live.last_snapshot_number,
     })
 }
 
@@ -892,6 +895,7 @@ async fn run_resume(cli: &Cli) -> ! {
                 page,
                 root,
                 snapshots: restored_snapshots(&stored),
+                last_snapshot_number: stored.last_snapshot_number(),
             });
             source
         }
@@ -1098,6 +1102,7 @@ async fn main() {
         page,
         root,
         snapshots: Vec::new(),
+        last_snapshot_number: 0,
     });
     run_review(&cli, source, stored_session, results_key, live).await
 }

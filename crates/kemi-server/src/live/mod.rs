@@ -36,6 +36,9 @@ pub struct LiveParams {
     pub code_view: bool,
     /// 復元で戻すスナップショット（R-PAGE-SESSION）。新しいレビューでは空。
     pub snapshots: Vec<PageSnapshot>,
+    /// 復元で、`<id>.files/` に残るスナップショットのファイルの最大の番号。読めずに戻さなかった
+    /// ものも含む。新しく振る番号はこれより大きくする。新しいレビューでは 0。
+    pub last_snapshot_number: u32,
 }
 
 /// 中継する相手。
@@ -69,17 +72,17 @@ pub(crate) struct LiveInfo {
 /// 比べる相手に選べるスナップショットの一覧と、次に振る番号。
 pub(crate) struct Snapshots {
     pub taken: Vec<Snapshot>,
-    /// 最後に振った番号。消したものの番号も使い直さない。復元では戻したものの最大から続ける。
+    /// 最後に振った番号。消したものの番号も使い直さない。復元では、戻したものと `<id>.files/` に
+    /// 残る読めないものの番号の最大から続ける。
     pub last_number: u32,
 }
 
 impl Snapshots {
-    fn restored(snapshots: Vec<PageSnapshot>) -> Self {
+    fn restored(snapshots: Vec<PageSnapshot>, last_on_disk: u32) -> Self {
         let last_number = snapshots
             .iter()
             .map(|snapshot| snapshot.number)
-            .max()
-            .unwrap_or(0);
+            .fold(last_on_disk, u32::max);
         Snapshots {
             taken: snapshots
                 .into_iter()
@@ -189,7 +192,10 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
         start,
         display,
         code_view: params.code_view,
-        snapshots: std::sync::Mutex::new(Snapshots::restored(params.snapshots)),
+        snapshots: std::sync::Mutex::new(Snapshots::restored(
+            params.snapshots,
+            params.last_snapshot_number,
+        )),
         root: params.root,
         mock_secret: params.mock_secret,
     };

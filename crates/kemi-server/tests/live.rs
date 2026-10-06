@@ -150,7 +150,7 @@ async fn start_review_with_session(
     root: std::path::PathBuf,
     session: Option<Arc<dyn SessionSink>>,
 ) -> Running {
-    start_restored_review(target, root, session, Vec::new()).await
+    start_restored_review(target, root, session, Vec::new(), 0).await
 }
 
 /// 復元したレビューのように、保存してあったスナップショットを持って始める。
@@ -159,6 +159,7 @@ async fn start_restored_review(
     root: std::path::PathBuf,
     session: Option<Arc<dyn SessionSink>>,
     snapshots: Vec<PageSnapshot>,
+    last_snapshot_number: u32,
 ) -> Running {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let review_port = listener.local_addr().unwrap().port();
@@ -181,6 +182,7 @@ async fn start_restored_review(
             mock_secret: MOCK_SECRET.to_string(),
             code_view: false,
             snapshots,
+            last_snapshot_number,
         }),
     };
     let task = tokio::spawn(serve(listener, params));
@@ -1308,30 +1310,37 @@ impl SessionSink for StoreSink {
     }
 }
 
+/// `start_stored_review` が開くセッションの情報。
+fn stored_session_info(authority: &str, sessions: &Scratch) -> kemi_core::session::SessionInfo {
+    use kemi_core::session::{SessionInfo, SessionMode};
+    SessionInfo {
+        id: "01HF7YAT00PAGE000000000000".to_string(),
+        created: 1,
+        updated: 1,
+        workspace: sessions.0.clone(),
+        workspace_key: "00000000000000aa".to_string(),
+        mode: SessionMode::Live {
+            page: kemi_core::domain::live::LivePage::Url(format!("http://{authority}/")),
+            root: sessions.0.clone(),
+        },
+        title: "live".to_string(),
+        total_files: 0,
+    }
+}
+
 /// `<id>.files/` の上限を `files_limit` にしたセッションで、`--live` のレビューを始める。
+/// 復元と同じく、`<id>.files/` に残るスナップショットの番号の続きから振る。
 async fn start_stored_review(
     authority: &str,
     sessions: &Scratch,
     files_limit: u64,
     snapshots: Vec<PageSnapshot>,
 ) -> Running {
-    use kemi_core::session::{SessionInfo, SessionMode, SessionStore};
-    let open = SessionStore::new(sessions.0.clone())
+    let open = kemi_core::session::SessionStore::new(sessions.0.clone())
         .with_files_limit(files_limit)
-        .create(SessionInfo {
-            id: "01HF7YAT00PAGE000000000000".to_string(),
-            created: 1,
-            updated: 1,
-            workspace: sessions.0.clone(),
-            workspace_key: "00000000000000aa".to_string(),
-            mode: SessionMode::Live {
-                page: kemi_core::domain::live::LivePage::Url(format!("http://{authority}/")),
-                root: sessions.0.clone(),
-            },
-            title: "live".to_string(),
-            total_files: 0,
-        })
+        .create(stored_session_info(authority, sessions))
         .unwrap();
+    let last_snapshot_number = open.last_snapshot_number();
     start_restored_review(
         LiveTarget::Url {
             authority: authority.to_string(),
@@ -1343,6 +1352,7 @@ async fn start_stored_review(
             open: std::sync::Mutex::new(open),
         })),
         snapshots,
+        last_snapshot_number,
     )
     .await
 }
@@ -1538,4 +1548,47 @@ async fn a_snapshot_taken_after_restoring_gets_an_id_no_restored_one_has() {
         vec!["s1", "s3", taken["id"].as_str().unwrap()]
     );
     assert!(taken["id"] != "s1" && taken["id"] != "s3", "{taken}");
+}
+
+#[tokio::test]
+async fn a_snapshot_taken_after_restoring_stays_when_the_rule_removes_a_file_that_could_not_be_read()
+ {
+    // 強制終了で途中まで書いたスナップショットのファイルは、復元で読めずに飛ばされるが
+    // `<id>.files/` に残る。復元後の新しいスナップショットがその番号を使うと、20 MB の規則が
+    // そのファイルを消したときに、新しいものが選択肢から消える（R-PAGE-SESSION）。
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("restored-unreadable-sessions");
+    let snapshot = |number, kind, html: String| PageSnapshot {
+        number,
+        kind,
+        page: "/".to_string(),
+        width: 390,
+        html,
+        description: None,
+    };
+    let start = snapshot(1, SnapshotKind::Start, incompressible_text(900, 1));
+    {
+        let open = kemi_core::session::SessionStore::new(sessions.0.clone())
+            .create(stored_session_info(&authority, &sessions))
+            .unwrap();
+        let none = std::collections::BTreeSet::new();
+        open.save_snapshot(&start, &none);
+        let handed = open.save_snapshot(
+            &snapshot(2, SnapshotKind::Handed, "<p>handed</p>".to_string()),
+            &none,
+        );
+        let kemi_core::session::FileWritten::Saved(path) = handed.written else {
+            panic!("not saved: {:?}", handed.written);
+        };
+        std::fs::write(path, incompressible_text(1500, 3)).unwrap();
+    }
+    let running = start_stored_review(&authority, &sessions, 3000, vec![start]).await;
+
+    let taken = take_snapshot(&running, "manual", &incompressible_text(1200, 2)).await;
+
+    assert_eq!(taken["unsaved"], false, "{taken}");
+    assert_eq!(
+        listed_ids(&running).await,
+        vec!["s1", taken["id"].as_str().unwrap()]
+    );
 }

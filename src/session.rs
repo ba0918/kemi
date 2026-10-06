@@ -48,6 +48,14 @@ impl StoredSession {
         self.open.lock().expect("session poisoned").read_snapshots()
     }
 
+    /// `<id>.files/` にあるスナップショットのファイルの最大の番号。読めないものも数える。
+    pub fn last_snapshot_number(&self) -> u32 {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .last_snapshot_number()
+    }
+
     /// 保留で終わるとき。会話の無い `--live` のセッションは `<id>.files/` も残さない。
     pub fn close_suspended(&self) -> Result<(), SessionError> {
         self.open

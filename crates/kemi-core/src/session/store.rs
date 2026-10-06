@@ -492,6 +492,17 @@ impl OpenSession {
             .collect()
     }
 
+    /// `<id>.files/` にあるスナップショットのファイルの最大の番号。読めないファイルも数える
+    /// （復元後に振る番号が、残っているファイルと重ならないように）。無ければ 0。
+    pub fn last_snapshot_number(&self) -> u32 {
+        list_files(&files_path(&self.dir, &self.info.id))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|(name, _)| Some(files::snapshot_of_name(name)?.0))
+            .max()
+            .unwrap_or(0)
+    }
+
     /// 保留で終わるとき。会話の無い `--live` のセッションは `<id>.files/` も残さない
     /// （R-PAGE-SESSION）。レビューの途中では会話が無くなっても `<id>.files/` を消さない
     /// （開始時のスナップショットを、後で会話ができたときのために持っておく）。
@@ -1476,6 +1487,28 @@ mod tests {
         assert_eq!(read.len(), 2);
         assert_eq!(read[0].as_ref().unwrap(), &start);
         assert!(read[1].is_err());
+    }
+
+    #[test]
+    fn the_last_snapshot_number_counts_snapshot_files_that_cannot_be_read() {
+        // 強制終了で途中まで書いたファイルも番号を持つ。復元後の新しいスナップショットが
+        // その番号を使うと、20 MB の規則がそのファイルを消したときに取り違える（R-PAGE-SESSION）。
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, "<p>start</p>"),
+            &no_comments(),
+        );
+        let broken = saved_path(&open.save_snapshot(
+            &page_snapshot(2, SnapshotKind::Manual, "<p>manual</p>"),
+            &no_comments(),
+        ));
+        std::fs::write(&broken, b"not gzip").unwrap();
+
+        assert_eq!(open.last_snapshot_number(), 2);
     }
 
     #[test]
