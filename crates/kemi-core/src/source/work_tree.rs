@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::SourceError;
-use super::git::path_bytes;
+use super::git::{git_raw, path_bytes, split_z};
 
 /// 1 レビューで見張るディレクトリの数の上限（R-LIVE）。
 pub const WATCH_DIRECTORY_LIMIT: usize = 10_000;
@@ -63,6 +63,11 @@ impl WorkTree {
     /// `paths`（作業ツリーの中の絶対パス）のうち、git が無視するもの。追跡している
     /// ファイルは無視されない。作業ツリーの外と `.git` の中のパスは聞かずに外す。
     pub fn ignored(&self, paths: &[PathBuf]) -> Result<HashSet<PathBuf>, SourceError> {
+        self.ask(paths, Index::Consult)
+    }
+
+    /// `paths` を `git check-ignore` に聞き、無視されるものを返す。
+    fn ask(&self, paths: &[PathBuf], index: Index) -> Result<HashSet<PathBuf>, SourceError> {
         let asked: Vec<(&PathBuf, Vec<u8>)> = paths
             .iter()
             .filter(|path| self.inside(path))
@@ -81,16 +86,27 @@ impl WorkTree {
             input.extend_from_slice(relative);
             input.push(0);
         }
-        let output = check_ignore(&self.root, &input)?;
-        let matched: HashSet<&[u8]> = output
-            .split(|byte| *byte == 0)
-            .filter(|token| !token.is_empty())
-            .collect();
+        let output = check_ignore(&self.root, &input, index)?;
+        let matched: HashSet<&[u8]> = split_z(&output).into_iter().collect();
         Ok(asked
             .into_iter()
             .filter(|(_, relative)| matched.contains(relative.as_slice()))
             .map(|(path, _)| path.clone())
             .collect())
+    }
+
+    /// 追跡しているファイルを持つディレクトリ（根からの相対、`/` 区切り）。
+    fn tracked_directories(&self) -> Result<HashSet<Vec<u8>>, SourceError> {
+        let listed = git_raw(&self.root, &["ls-files", "-z"])?;
+        let mut directories = HashSet::new();
+        for file in split_z(&listed) {
+            for (position, byte) in file.iter().enumerate() {
+                if *byte == b'/' {
+                    directories.insert(file[..position].to_vec());
+                }
+            }
+        }
+        Ok(directories)
     }
 
     /// 作業ツリーの中で、`.git` の中でないパスか。
@@ -104,7 +120,13 @@ impl WorkTree {
 
     /// `starts` から 1 段ずつ辿る。段ごとに子のディレクトリをまとめて git に聞き、無視される
     /// ものの下には潜らない。git を呼ぶ回数は深さの分だけで、ディレクトリの数に比例しない。
+    ///
+    /// 子のディレクトリは索引を読まずに聞く。索引を読む `check-ignore` は 1 パスごとに索引を
+    /// 舐めるので、追跡ファイル 1 万個・ディレクトリ 5 万個で 5 秒かかった（読まなければ 0.3 秒）。
+    /// 索引を読まないと、追跡しているファイルを持つディレクトリも無視と答えるので、それは
+    /// `ls-files` から求めて外す（索引を読むときの git の答えと同じになる）。
     fn walk(&self, starts: Vec<PathBuf>, limit: usize) -> Result<WatchDirectories, SourceError> {
+        let tracked = self.tracked_directories()?;
         let mut found = WatchDirectories::default();
         let mut level = starts;
         found.directories.extend(level.iter().cloned());
@@ -117,10 +139,13 @@ impl WorkTree {
                 .iter()
                 .flat_map(|parent| subdirectories(parent))
                 .collect();
-            let ignored = self.ignored(&children)?;
+            let ignored = self.ask(&children, Index::Skip)?;
             level = Vec::new();
             for child in children {
-                if ignored.contains(&child) {
+                let holds_tracked = child
+                    .strip_prefix(&self.root)
+                    .is_ok_and(|relative| tracked.contains(&git_path(relative)));
+                if ignored.contains(&child) && !holds_tracked {
                     found.ignored.push(child);
                 } else {
                     found.directories.push(child.clone());
@@ -158,9 +183,16 @@ fn subdirectories(parent: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// `check-ignore` が索引を読むか。読むと追跡しているパスを無視と答えない。
+#[derive(Clone, Copy)]
+enum Index {
+    Consult,
+    Skip,
+}
+
 /// `git check-ignore -z --stdin` に NUL 区切りのパスを渡し、無視されるパスを NUL 区切りで返す。
 /// 1 つも無視されないとき git は終了コード 1 を返すので、それは空の結果として扱う。
-fn check_ignore(root: &Path, input: &[u8]) -> Result<Vec<u8>, SourceError> {
+fn check_ignore(root: &Path, input: &[u8], index: Index) -> Result<Vec<u8>, SourceError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -172,6 +204,10 @@ fn check_ignore(root: &Path, input: &[u8]) -> Result<Vec<u8>, SourceError> {
         .arg("-C")
         .arg(root)
         .args(["check-ignore", "-z", "--stdin"])
+        .args(match index {
+            Index::Consult => None,
+            Index::Skip => Some("--no-index"),
+        })
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -248,6 +284,29 @@ mod tests {
                 repo.path.join("notes/draft"),
             ])
         );
+    }
+
+    #[test]
+    fn an_ignored_directory_that_holds_a_tracked_file_is_watched_but_its_other_children_are_not() {
+        let repo = TempRepo::new();
+        repo.write(".gitignore", "vendor/\n");
+        repo.write("vendor/kept/a.txt", "a\n");
+        repo.git(&["add", "-f", ".gitignore", "vendor/kept/a.txt"]);
+        repo.git(&["commit", "-q", "-m", "base"]);
+        repo.write("vendor/other/b.txt", "b\n");
+        let tree = WorkTree::new(repo.path.clone());
+
+        let found = tree.directories(WATCH_DIRECTORY_LIMIT).unwrap();
+
+        assert_eq!(
+            sorted(found.directories),
+            vec![
+                repo.path.clone(),
+                repo.path.join("vendor"),
+                repo.path.join("vendor/kept"),
+            ]
+        );
+        assert_eq!(found.ignored, vec![repo.path.join("vendor/other")]);
     }
 
     #[test]

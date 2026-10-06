@@ -1188,7 +1188,7 @@ fn parse_count(field: &[u8]) -> u64 {
     String::from_utf8_lossy(field).parse().unwrap_or(0)
 }
 
-fn split_z(bytes: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn split_z(bytes: &[u8]) -> Vec<&[u8]> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|token| !token.is_empty())
