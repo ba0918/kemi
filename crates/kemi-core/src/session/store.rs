@@ -826,7 +826,7 @@ pub(crate) fn remove_if_present(path: &Path) -> Result<(), SessionError> {
 
 /// 上限を超えた分を最終更新の古い順に消す。ロック中のセッションは消さず、件数とバイト数にも
 /// 数えない。復元できないセッションも数える。1 セッションの大きさは `<id>.session` と
-/// `<id>.payload` の合算（R-SESSION）。
+/// `<id>.payload` と `<id>.files/` の中のファイルの合算（R-SESSION）。
 pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -835,6 +835,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
     // `<id>.session` の中身は読まない（R-SESSION）。
     let mut sessions: BTreeMap<String, u64> = BTreeMap::new();
     let mut payloads: BTreeMap<String, u64> = BTreeMap::new();
+    let mut files: BTreeMap<String, u64> = BTreeMap::new();
     let mut endpoints: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -842,7 +843,13 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
             continue;
         };
         let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
-        if let Some(id) = name.strip_suffix(".session") {
+        if let Some(id) = name.strip_suffix(".files") {
+            // `<id>.files/` は 1 段なので、中の一覧と大きさだけを読む。
+            let size = list_files(&entry.path())
+                .map(|listed| listed.iter().map(|(_, size)| size).sum())
+                .unwrap_or(0);
+            files.insert(id.to_string(), size);
+        } else if let Some(id) = name.strip_suffix(".session") {
             sessions.insert(id.to_string(), size);
         } else if let Some(id) = name.strip_suffix(".payload") {
             payloads.insert(id.to_string(), size);
@@ -865,10 +872,18 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
         }
         let _ = std::fs::remove_file(payload_path(dir, id));
     }
-    let total: u64 = sessions
-        .iter()
-        .map(|(id, size)| size + payloads.get(id).copied().unwrap_or(0))
-        .sum();
+    // 強制終了で残った `<id>.files/` も同じ形で回収する。起動中の `--live` のレビューは
+    // 会話が無い間も書くが、ロックを持っているので消さない（R-PAGE-SESSION）。
+    for id in files.keys().filter(|id| !sessions.contains_key(*id)) {
+        if is_locked(dir, id) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(files_path(dir, id));
+    }
+    let size_of = |id: &str, session: u64| {
+        session + payloads.get(id).copied().unwrap_or(0) + files.get(id).copied().unwrap_or(0)
+    };
+    let total: u64 = sessions.iter().map(|(id, size)| size_of(id, *size)).sum();
     if sessions.len() <= keep_count && total <= keep_bytes {
         return;
     }
@@ -877,7 +892,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
         .into_iter()
         .map(|(id, size)| {
             let updated = read_updated(&session_path(dir, &id)).unwrap_or(0);
-            let size = size + payloads.get(&id).copied().unwrap_or(0);
+            let size = size_of(&id, size);
             (updated, id, size)
         })
         .collect();
@@ -2034,6 +2049,65 @@ mod tests {
                 .exists()
         );
         assert!(held_payload.exists());
+        drop(held);
+    }
+
+    #[test]
+    fn session_cleanup_counts_the_files_directory_in_the_total_size() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut old = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        old.save_state_at(state_with_comment(), 100).unwrap();
+        saved_path(&old.save_image("c1", &incompressible(20_000), &no_comments()));
+        drop(old);
+        let mut newest = store
+            .create(live_info("01HF7YAT00BBBBBBBBBBBBBBBB", 200))
+            .unwrap();
+        newest.save_state_at(state_with_comment(), 200).unwrap();
+        drop(newest);
+        let size_of = |name: &str| std::fs::metadata(scratch.dir().join(name)).unwrap().len();
+        // `<id>.session` だけなら 2 件とも収まる上限。古い方の `<id>.files/` を足して
+        // 初めて超える（R-SESSION: 合計には `<id>.files/` も数える）。
+        let limit = size_of("01HF7YAT00AAAAAAAAAAAAAAAA.session")
+            + size_of("01HF7YAT00BBBBBBBBBBBBBBBB.session")
+            + 10;
+
+        cleanup(&scratch.dir(), KEEP_SESSIONS, limit);
+
+        assert!(matches!(
+            store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
+            Err(SessionError::NotFound { .. })
+        ));
+        assert!(!files_dir(&scratch, "01HF7YAT00AAAAAAAAAAAAAAAA").exists());
+        assert!(store.read("01HF7YAT00BBBBBBBBBBBBBBBB").is_ok());
+    }
+
+    #[test]
+    fn session_cleanup_removes_a_files_directory_without_its_session() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let held = store
+            .create(live_info("01HF7YAT00DDDDDDDDDDDDDDDD", 100))
+            .unwrap();
+        // 起動中のレビューは会話が無い間も `<id>.files/` にスナップショットを書く。
+        // ロックを持っているものは消さない。
+        let held_snapshot = saved_path(&held.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, "<p></p>"),
+            &no_comments(),
+        ));
+        let left = files_dir(&scratch, "01HF7YAT00CCCCCCCCCCCCCCCC");
+        std::fs::create_dir_all(&left).unwrap();
+        std::fs::write(left.join("c1.png"), b"left by a killed review").unwrap();
+
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 200))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+
+        assert!(!left.exists());
+        assert!(held_snapshot.exists());
         drop(held);
     }
 
