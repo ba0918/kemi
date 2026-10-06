@@ -265,21 +265,25 @@ pub fn root_relative_css(css: &[u8], prefix: &str) -> Vec<u8> {
 }
 
 /// Cookie ヘッダから中継用の cookie を取り出す。返すのはその値と、残りの cookie
-/// （無ければ None）。開発サーバへは残りだけを送る。
-pub fn take_cookie(header: &str, name: &str) -> (Option<String>, Option<String>) {
+/// （無ければ None）。開発サーバへは残りだけを送る。ヘッダは文字列にせずバイト列のまま
+/// 扱う。ほかの cookie が ASCII の外のバイトを持っていても、中継の cookie を読み、
+/// 残りを変えずに送るため。
+pub fn take_cookie(header: &[u8], name: &str) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
     let mut value = None;
-    let mut rest = Vec::new();
+    let mut rest: Vec<&[u8]> = Vec::new();
     for pair in header
-        .split(';')
-        .map(str::trim)
+        .split(|&byte| byte == b';')
+        .map(<[u8]>::trim_ascii)
         .filter(|pair| !pair.is_empty())
     {
-        match pair.split_once('=') {
-            Some((key, found)) if key.trim() == name => value = Some(found.trim().to_string()),
+        match pair.iter().position(|&byte| byte == b'=') {
+            Some(at) if pair[..at].trim_ascii() == name.as_bytes() => {
+                value = Some(pair[at + 1..].trim_ascii().to_vec());
+            }
             _ => rest.push(pair),
         }
     }
-    let rest = (!rest.is_empty()).then(|| rest.join("; "));
+    let rest = (!rest.is_empty()).then(|| rest.join(&b"; "[..]));
     (value, rest)
 }
 
@@ -476,16 +480,16 @@ mod tests {
     #[test]
     fn the_relay_cookie_is_taken_out_and_the_rest_is_kept() {
         assert_eq!(
-            take_cookie("a=1; kemi_live_5000=secret; b=2", "kemi_live_5000"),
-            (Some("secret".to_string()), Some("a=1; b=2".to_string()))
+            take_cookie(b"a=1; kemi_live_5000=secret; b=2", "kemi_live_5000"),
+            (Some(b"secret".to_vec()), Some(b"a=1; b=2".to_vec()))
         );
         assert_eq!(
-            take_cookie("kemi_live_5000=secret", "kemi_live_5000"),
-            (Some("secret".to_string()), None)
+            take_cookie(b"kemi_live_5000=secret", "kemi_live_5000"),
+            (Some(b"secret".to_vec()), None)
         );
         assert_eq!(
-            take_cookie("a=1", "kemi_live_5000"),
-            (None, Some("a=1".to_string()))
+            take_cookie(b"a=1", "kemi_live_5000"),
+            (None, Some(b"a=1".to_vec()))
         );
     }
 

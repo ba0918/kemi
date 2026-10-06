@@ -190,18 +190,17 @@ async fn handle(State(state): State<Arc<LiveState>>, mut request: Request) -> Re
     let header = request
         .headers()
         .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
+        .map(|value| value.as_bytes().to_vec())
+        .unwrap_or_default();
     let (value, rest) = rewrite::take_cookie(&header, &state.info.cookie_name);
-    if !value.is_some_and(|value| same_secret(&value, &state.info.cookie)) {
+    if !value.is_some_and(|value| same_secret(&value, state.info.cookie.as_bytes())) {
         return (
             StatusCode::FORBIDDEN,
             "kemi: open the review URL first; this page is shown only inside the review",
         )
             .into_response();
     }
-    match rest.map(|rest| HeaderValue::from_str(&rest)) {
+    match rest.map(|rest| HeaderValue::from_bytes(&rest)) {
         Some(Ok(rest)) => {
             request.headers_mut().insert(header::COOKIE, rest);
         }
@@ -266,11 +265,11 @@ fn reload_events(state: &LiveState) -> Response {
 }
 
 /// 長さと中身を、早く抜けずに比べる。
-fn same_secret(left: &str, right: &str) -> bool {
+fn same_secret(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len()
         && left
-            .bytes()
-            .zip(right.bytes())
+            .iter()
+            .zip(right)
             .fold(0u8, |difference, (a, b)| difference | (a ^ b))
             == 0
 }

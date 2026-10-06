@@ -82,11 +82,11 @@ async fn start_dev_server() -> (String, JoinHandle<()>) {
         )
             .into_response()
     }
-    async fn cookies(headers: HeaderMap) -> String {
+    async fn cookies(headers: HeaderMap) -> Vec<u8> {
         headers
             .get(header::COOKIE)
-            .map(|value| value.to_str().unwrap().to_string())
-            .unwrap_or_else(|| "(none)".to_string())
+            .map(|value| value.as_bytes().to_vec())
+            .unwrap_or_else(|| b"(none)".to_vec())
     }
     async fn nonce_page() -> Response {
         (
@@ -233,6 +233,31 @@ async fn the_relay_cookie_is_removed_before_the_dev_server_sees_the_request() {
         .unwrap();
 
     assert_eq!(body, "theme=dark");
+}
+
+#[tokio::test]
+async fn other_cookies_with_non_ascii_bytes_keep_the_relay_open_and_reach_the_dev_server_unchanged()
+{
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+    let mut cookie = "name=caf\u{e9}; ".as_bytes().to_vec();
+    cookie.extend_from_slice(relay_cookie(&running).as_bytes());
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/cookies", running.live))
+        .header(
+            header::COOKIE,
+            reqwest::header::HeaderValue::from_bytes(&cookie).unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        "name=caf\u{e9}".as_bytes()
+    );
 }
 
 #[tokio::test]
