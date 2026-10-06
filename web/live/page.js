@@ -1232,26 +1232,33 @@
   }
 
   /**
-   * 文書の写しを SVG の画像として読む。範囲の左上が画像の左上になる。
+   * 文書の写しを、範囲を縦に画面の高さずつ切った SVG の画像として読む。SVG の画像の中のメディアクエリと vw・vh は
+   * SVG の大きさで決まるので、画像は動いているページの画面と同じ大きさにし、写しをずらして範囲を画面に入れる
+   * （範囲の大きさにすると、幅で変わる CSS や vh の要素が別の見た目で並ぶ）。
    * @param {Rect} area
    * @param {number} width 文書の幅
    * @param {number} height 文書の高さ
-   * @returns {Promise<HTMLImageElement>}
+   * @returns {Promise<{ image: HTMLImageElement, top: number, height: number }[]>} top は文書の y
    */
-  async function pageAsImage(area, width, height) {
+  async function pageAsImages(area, width, height) {
     const { root } = await copyDocument(new Map());
     flattenShadowRoots(root);
     const xhtml = new XMLSerializer().serializeToString(root);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${area.w}" height="${area.h}">`
-      + `<foreignObject x="${-area.x}" y="${-area.y}" width="${width}" height="${height}">${xhtml}</foreignObject></svg>`;
-    const image = new Image();
-    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-    try {
-      await image.decode();
-    } catch {
-      throw new Error('the copy of the page could not be drawn as an image (the page may forbid data: images)');
+    const screen = { w: Math.max(1, innerWidth), h: Math.max(1, innerHeight) };
+    const tiles = [];
+    for (let top = area.y; top < area.y + area.h; top += screen.h) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${screen.w}" height="${screen.h}">`
+        + `<foreignObject x="0" y="${-top}" width="${width}" height="${height}">${xhtml}</foreignObject></svg>`;
+      const image = new Image();
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      try {
+        await image.decode();
+      } catch {
+        throw new Error('the copy of the page could not be drawn as an image (the page may forbid data: images)');
+      }
+      tiles.push({ image, top, height: Math.min(screen.h, area.y + area.h - top) });
     }
-    return image;
+    return tiles;
   }
 
   /**
@@ -1347,7 +1354,7 @@
     const width = document.documentElement.clientWidth;
     const height = Math.max(document.documentElement.scrollHeight, innerHeight);
     const area = imageArea(asked, places, width, height);
-    const image = await pageAsImage(area, width, height);
+    const tiles = await pageAsImages(area, width, height);
     let scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(area.w, area.h));
     for (let attempt = 0; attempt < 4; attempt += 1, scale *= 0.6) {
       const canvas = document.createElement('canvas');
@@ -1357,7 +1364,9 @@
       context.fillStyle = 'rgb(255, 255, 255)';
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.scale(scale, scale);
-      context.drawImage(image, 0, 0, area.w, area.h);
+      for (const tile of tiles) {
+        context.drawImage(tile.image, area.x, 0, area.w, tile.height, 0, tile.top - area.y, area.w, tile.height);
+      }
       context.translate(-area.x, -area.y);
       drawPlaces(context, places);
       const blob = await canvasPng(canvas);

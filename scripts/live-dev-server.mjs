@@ -34,6 +34,8 @@
 //                 （#box の中の #row-1〜#row-10）、画面に固定した札（#badge）、高い余白と #start・#end の目印を持つ。
 //                 scrolling.css を書き換えると HMR の知らせで差し替える。大きさは SCROLLING_GEOMETRY
 //   /wide.html    <html> に min-width: 1024px を持つページ（表示幅を 1024px より狭くしても文書の幅が変わらない）
+//   /responsive.html  表示幅と高さで見た目の変わるページ。上から、高さ 50vh の帯（幅 600px 以下では赤、それより広いと青）、
+//                 高さ 150vh の緑の帯、高さ 100px の橙の帯
 //   /adopted.html  構築したスタイルシート（adoptedStyleSheets）だけで見た目を付けるページ。adopted.css を書き換えると、
 //                 DOM を変えずにそのシートの中身を replaceSync で差し替える
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
@@ -289,6 +291,17 @@ PAGES['wide.html'] = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Wide</title>
 <style>html { min-width: 1024px; } body { margin: 0; } .box { height: 100px; background: rgb(200, 200, 200); }</style>
 </head><body><div class="box">Wide</div></body></html>
+`;
+PAGES['responsive.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Responsive</title>
+<style>
+  body { margin: 0; }
+  #hero { height: 50vh; background: rgb(0, 0, 255); }
+  @media (max-width: 600px) { #hero { background: rgb(255, 0, 0); } }
+  #after { height: 150vh; background: rgb(0, 128, 0); }
+  #tail { height: 100px; background: rgb(255, 160, 0); }
+</style>
+</head><body><div id="hero"></div><div id="after"></div><div id="tail"></div></body></html>
 `;
 PAGES['adopted.css'] = adoptedCss();
 // /__hmr.js は読まない。その HMR は CSS を差し替えるたびに <html> の属性を変え、DOM の変化として見張りに掛かる。

@@ -19,7 +19,8 @@
 //   poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じ色に出る。
 // - コメントの画像: ページの中で写しを描いて作った描き込み無しの画像を、動いているページの同じ範囲と画素で比べる
 //   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
-//   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。
+//   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。範囲が表示幅より狭く画面の高さと違っても、
+//   動いているページと同じ幅の CSS と vh で描く。
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
@@ -1487,6 +1488,44 @@ async function commentImagesLookLikeThePage(repository) {
   }
 }
 
+/**
+ * コメントの画像の見た目の幅と高さ（R-PAGE-COMMENT の画像の段落）: 画像にする範囲が表示幅より狭く、画面の高さと違っても、
+ * 動いているページと同じ表示幅と画面の高さで並べた写しを描く（幅で変わる CSS と vh が範囲の大きさで変わらない）。
+ */
+async function commentImagesKeepTheLayoutOfTheViewport(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-images-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}responsive.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '1280px'`);
+    // 枠の高さが、動いているページの画面の高さ（vh の 100）。
+    const height = Number(await evaluate(`document.querySelector('${livePane} .lv-frame').clientHeight`));
+    // 青い帯の終わりの少し上から、橙の帯の途中まで。幅は 600px より狭い。
+    const rect = { x: 0, y: Math.round(height / 2) - 50, w: 200, h: Math.round(height * 1.5) + 100 };
+    const made = await askImage(rect, []);
+    assert.equal(made.error, null, 'the image of responsive.html is made');
+    const path = join(shots, 'responsive.png');
+    await writeFile(path, Buffer.from(made.png, 'base64'));
+    const image = decodePng(await readFile(path));
+    // 文書の y を画像の y に（長い辺の上限で縮めて描いていることがある）。
+    const at = (y) => pixelAt(image, 10, Math.round(((y - rect.y) * image.height) / rect.h));
+    const blue = ([r, g, b]) => r < 60 && g < 60 && b > 200;
+    const green = ([r, g, b]) => r < 60 && g > 100 && g < 160 && b < 60;
+    const orange = ([r, g, b]) => r > 200 && g > 120 && g < 200 && b < 60;
+    assert.ok(blue(at(rect.y + 10)), `the band above the breakpoint keeps its wide colour: ${at(rect.y + 10)} ${path}`);
+    assert.ok(green(at(height / 2 + 30)), `the 50vh band ends where it does on the page: ${at(height / 2 + 30)} ${path}`);
+    assert.ok(orange(at(height * 2 + 30)), `the band after 50vh + 150vh is where it is on the page: ${at(height * 2 + 30)} ${path}`);
+    console.log('PASS コメントの画像は、範囲が表示幅より狭く画面の高さと違っても、動いているページと同じ幅の CSS と vh で描かれる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 枠の中の点を順にたどって描く（押して、動かして、離す）。 */
 async function dragInPane(pane, points) {
   const box = await evaluate(`(() => { const r = document.querySelector('${pane} .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
@@ -1891,6 +1930,7 @@ try {
   await snapshotsAreTakenShownAndChosen(repository);
   await snapshotsCarryTheirResources(repository);
   await commentImagesLookLikeThePage(repository);
+  await commentImagesKeepTheLayoutOfTheViewport(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
