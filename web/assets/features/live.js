@@ -19,7 +19,7 @@ import {
   snapshotLabel,
   snapshotOptions,
 } from "../live-model.js";
-import { diffDescriptions, marksOf } from "../live-diff.js";
+import { diffDescriptions, marksOf, unpackDescription } from "../live-diff.js";
 import { buildShell, renderCompareOptions, renderPageTree, renderRemovedMarks } from "../views/live.js";
 
 /**
@@ -433,14 +433,14 @@ async function capture(kind) {
     render();
     return;
   }
-  const description = readDescription(answer.description);
+  const description = await readUploadedDescription(answer.description);
   try {
     const taken = await api.takeSnapshot({
       page: pageKey(String(answer.path ?? page)),
       width,
       kind,
       html: answer.html,
-      description,
+      description: description === null ? null : answer.description,
     });
     live.snapshots.push(taken);
     live.bodies.set(taken.id, answer.html);
@@ -461,19 +461,25 @@ function render() {
 }
 
 /**
- * ページから届いた記述の形を確かめる。形が違えば null（比べない）。
+ * スナップショットと一緒に預けた記述（gzip で縮めた base64 の文字列）を読む。読めなければ null（比べない）。
  * @param {unknown} value
- * @returns {Description | null}
+ * @returns {Promise<Description | null>}
  */
-function readDescription(value) {
-  const description = /** @type {Description} */ (value);
-  return value !== null &&
-    typeof value === "object" &&
-    typeof description.width === "number" &&
-    Array.isArray(description.styles) &&
-    Array.isArray(description.elements)
-    ? description
-    : null;
+async function readUploadedDescription(value) {
+  if (typeof value !== "string" || value === "") {
+    return null;
+  }
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    return unpackDescription(JSON.parse(text));
+  } catch {
+    return null;
+  }
 }
 
 /** 表示中のページの比べる相手。 */
@@ -583,7 +589,8 @@ async function describeNow() {
     return;
   }
   live.describing = false;
-  const description = readDescription(answer.description);
+  // 動いているページの記述は postMessage で届くので縮めない（縮めて戻す手間のほうが大きい）。
+  const description = unpackDescription(answer.description);
   if (description === null) {
     return;
   }
@@ -764,10 +771,11 @@ function loadSnapshot(id) {
   }
   let loading = loadingSnapshots.get(id);
   if (!loading) {
-    loading = api.getSnapshot(id).then((snapshot) => {
+    loading = api.getSnapshot(id).then(async (snapshot) => {
       const body = String(snapshot.html ?? "");
+      const description = await readUploadedDescription(snapshot.description);
       live.bodies.set(id, body);
-      live.descriptions.set(id, readDescription(snapshot.description));
+      live.descriptions.set(id, description);
       return body;
     });
     loading.finally(() => loadingSnapshots.delete(id)).catch(() => {});

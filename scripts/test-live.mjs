@@ -27,6 +27,7 @@
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。印を付け直しても比べる相手の枠のスクロール位置は変わらない。
+// - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -37,7 +38,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { CHANGING_GEOMETRY, RESOURCE_BOXES, changingCss, changingPage, startDevServer } from './live-dev-server.mjs';
+import { CHANGING_GEOMETRY, RESOURCE_BOXES, changingCss, changingPage, manyCss, startDevServer } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -995,6 +996,31 @@ async function marksFollowTheChanges(repository) {
   }
 }
 
+/**
+ * 要素の多いページ（R-PAGE-SNAPSHOT の 2 MB は HTML に掛ける）: HTML が 2 MB 未満のページは、要素の記述が
+ * 大きくても取れて、変化の一覧が出る。
+ */
+async function manyElementsAreRecordedAndCompared(repository) {
+  const cards = 18000;
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const page = `${dev.url}many.html?cards=${cards}`;
+  const html = await (await fetch(page)).text();
+  assert.ok(new Blob([html]).size < 2 * 1024 * 1024, 'the page is under 2 MB');
+  const kemi = await startKemi(repository, state, ['--live', page]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`, 120000);
+    await writeFile(join(dev.dir, 'many.css'), manyCss('rgb(214, 69, 69)'));
+    await waitFor(`${changeList}?.dataset.main === '${cards}'`, 120000);
+    console.log(`PASS HTML が 2 MB 未満で要素が ${cards * 4} を超えるページのスナップショットが取れ、変化の一覧が出る`);
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -1010,6 +1036,7 @@ try {
   await overlayFollowsTheScrollAndTheOpacity(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
+  await manyElementsAreRecordedAndCompared(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

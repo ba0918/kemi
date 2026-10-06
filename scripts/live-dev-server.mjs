@@ -167,7 +167,15 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 PAGES['changing.html'] = changingPage();
 PAGES['changing.css'] = changingCss();
-PAGES['many.css'] = '.cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px; } .card { width: 160px; border: 1px solid rgb(220, 220, 220); border-radius: 8px; padding: 8px; } .card button { background: rgb(49, 89, 214); color: rgb(255, 255, 255); }\n';
+/**
+ * /many.html の CSS。`button` はボタンの背景色。
+ * @param {string} [button]
+ */
+export function manyCss(button = CHANGING_BUTTON) {
+  return `.cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px; } .card { width: 160px; border: 1px solid rgb(220, 220, 220); border-radius: 8px; padding: 8px; } .card button { background: ${button}; color: rgb(255, 255, 255); }\n`;
+}
+
+PAGES['many.css'] = manyCss();
 
 /** @param {number} cards */
 function manyPage(cards) {

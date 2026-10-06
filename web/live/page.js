@@ -135,7 +135,8 @@
    * 中の要素は持ち主の子として並べ、閉じた shadow root は読めないので持ち主までにする。
    */
   function describePage() {
-    /** @type {{ parent: number, tag: string, id: string, cls: string, text: string, box: number[], style: number }[]} */
+    // 要素ごとに項目名を持たない詰めた形（live-diff.js の unpackDescription が読む）。
+    /** @type {(string | number)[][]} */
     const elements = [];
     /** @type {Element[]} */
     const originals = [];
@@ -168,15 +169,18 @@
       }
       const rect = element.getBoundingClientRect();
       const index = elements.length;
-      elements.push({
+      elements.push([
         parent,
-        tag: element.localName,
-        id: element.id,
-        cls: element.getAttribute('class') ?? '',
+        element.localName,
+        element.id,
+        element.getAttribute('class') ?? '',
         text,
-        box: [round(rect.left + left), round(rect.top + top), round(rect.width), round(rect.height)],
-        style: number,
-      });
+        round(rect.left + left),
+        round(rect.top + top),
+        round(rect.width),
+        round(rect.height),
+        number,
+      ]);
       originals.push(element);
       if (element.shadowRoot) {
         watchRoot(element.shadowRoot);
@@ -293,6 +297,24 @@
     if (!watching || watchedRoots.has(root)) return;
     watchedRoots.add(root);
     mutations.observe(root, OBSERVED);
+  }
+
+  /**
+   * スナップショットと一緒に預ける記述を、gzip で縮めて base64 の文字列にする。要素の多いページでは
+   * 記述が HTML より大きくなり、縮めないと要求の本文の上限を超えて取れなくなる。
+   * @param {unknown} description
+   * @returns {Promise<string>}
+   */
+  async function packForUpload(description) {
+    const zipped = new Blob([JSON.stringify(description)]).stream().pipeThrough(new CompressionStream('gzip'));
+    const blob = await new Response(zipped).blob();
+    const url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    return url.slice(url.indexOf(',') + 1);
   }
 
   // ---- スナップショット（R-PAGE-SNAPSHOT、形は DL3） ----
@@ -566,7 +588,7 @@
 
   async function captureSnapshot() {
     // 写す途中で読み込みを待つ間にページが変わることがあるので、記述は写し始める前の同じ DOM から作る。
-    const { description } = describePage();
+    const description = packForUpload(describePage().description);
     inlined = new Map();
     const owner = document.implementation.createHTMLDocument('');
     const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner));
@@ -581,6 +603,6 @@
       }
     }
     const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
-    return { html: doctype + root.outerHTML, description };
+    return { html: doctype + root.outerHTML, description: await description };
   }
 })();
