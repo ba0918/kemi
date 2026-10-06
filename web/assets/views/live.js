@@ -339,8 +339,9 @@ const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
  * @param {ComposeShell} compose
  * @param {import("../live-model.js").Place[]} places
  * @param {(n: number) => void} onRemove
+ * @param {boolean} locked 保存している間は外せない
  */
-export function renderPlaces(compose, places, onRemove) {
+export function renderPlaces(compose, places, onRemove, locked) {
   compose.list.textContent = "";
   for (const place of places) {
     const row = el("li", "lv-place");
@@ -359,6 +360,7 @@ export function renderPlaces(compose, places, onRemove) {
     remove.textContent = "×";
     remove.title = `Remove place ${place.n}`;
     remove.setAttribute("aria-label", `Remove place ${place.n}`);
+    remove.disabled = locked;
     remove.addEventListener("click", () => onRemove(place.n));
     row.append(textEl("span", "lv-place-n", String(place.n)), textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what), remove);
     compose.list.append(row);

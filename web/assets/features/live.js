@@ -588,7 +588,7 @@ async function finishStroke() {
   cancelStroke();
   const frame = shell?.liveFrame.contentWindow;
   // 書きかけの場所と別の URL か表示幅では足さない（書く欄がそのことと戻る操作を出している）。
-  if (!stroke || !frame || live.tool === "interact" || draftElsewhere(live.draft, live.page, live.width)) {
+  if (!stroke || !frame || live.tool === "interact" || live.saving || draftElsewhere(live.draft, live.page, live.width)) {
     return;
   }
   const kind = live.tool;
@@ -603,6 +603,10 @@ async function finishStroke() {
     kind,
     points: kind === "element" ? stroke.points.slice(0, 1) : stroke.points,
   });
+  // 返事を待つ間に保存を始めていれば、書きかけは変えない。
+  if (live.saving) {
+    return;
+  }
   if (answer.kind !== kind) {
     live.composeError = `The place was not put: ${answer.error ?? "the page did not answer"}`;
     renderCompose();
@@ -712,8 +716,11 @@ function renderCompose() {
   }
   compose.box.hidden =
     live.view !== "page" || (live.tool === "interact" && places.length === 0 && compose.body.value === "");
-  renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)));
-  compose.undo.disabled = places.length === 0;
+  // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
+  renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)), live.saving);
+  compose.undo.disabled = places.length === 0 || live.saving;
+  compose.cancel.disabled = live.saving;
+  compose.body.readOnly = live.saving;
   compose.save.disabled = places.length === 0 || away !== null || live.saving || compose.body.value.trim() === "" || state.submitted;
   compose.error.hidden = live.composeError === "";
   compose.error.textContent = live.composeError;
