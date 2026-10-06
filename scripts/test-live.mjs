@@ -17,6 +17,9 @@
 //   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
 //   渡すと取る。別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の
 //   poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じ色に出る。
+// - コメントの画像: ページの中で写しを描いて作った描き込み無しの画像を、動いているページの同じ範囲と画素で比べる
+//   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
+//   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
@@ -1372,6 +1375,111 @@ async function manyElementsAreRecordedAndCompared(repository) {
   }
 }
 
+/**
+ * 中継したページにコメントの画像（R-PAGE-COMMENT）を頼み、返った PNG の base64 か、作れなかった理由を返す。
+ * 道具の画面を通さず、レビュー画面と同じオリジンから枠へ頼みを送る。
+ */
+async function askImage(rect, places) {
+  const reply = await evaluate(`new Promise((done) => {
+    const frame = document.querySelector('${livePane} .lv-frame');
+    const id = 'image-' + Math.random();
+    const listen = (event) => {
+      const data = event.data;
+      if (event.source !== frame.contentWindow || data?.kemi !== 'live' || data.type !== 'imaged' || data.id !== id) return;
+      removeEventListener('message', listen);
+      done(JSON.stringify({ png: data.png ?? null, error: data.error ?? null }));
+    };
+    addEventListener('message', listen);
+    frame.contentWindow.postMessage({ kemi: 'live', type: 'image', id, rect: ${JSON.stringify(rect)}, places: ${JSON.stringify(places)} }, new URL(frame.src).origin);
+  })`);
+  return JSON.parse(reply);
+}
+
+/** 画像の左上から width × height を切り出す。 */
+function crop(image, width, height) {
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) image.pixels.copy(pixels, y * width * 4, y * image.width * 4, (y * image.width + width) * 4);
+  return { width, height, pixels };
+}
+
+/**
+ * コメントの画像（R-PAGE-COMMENT の画像の段落）: ページの中で写しを描いて作った描き込み無しの画像を、動いているページの
+ * 同じ範囲の画素と比べる。細部の違いは仕様が認めるので、差の割合と差の画像を出して人の確認に回す。描き込みを重ねた
+ * 画像も残す。インラインのスタイルを止める CSP と、Trusted Types を求める CSP のページでは、画像が作れるか、作れない
+ * 理由が返るかを確かめる。
+ */
+async function commentImagesLookLikeThePage(repository) {
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-images-'));
+  const pages = [
+    {
+      page: 'rich.html',
+      rect: { x: 0, y: 0, w: 390, h: 320 },
+      places: [
+        { n: 1, kind: 'element', points: [], elements: [{ rect: { x: 0, y: 200, w: 300, h: 100 } }] },
+        { n: 2, kind: 'arrow', points: [{ x: 330, y: 120 }, { x: 250, y: 40 }], elements: [] },
+        { n: 3, kind: 'pen', points: [{ x: 20, y: 90 }, { x: 260, y: 90 }, { x: 260, y: 140 }, { x: 20, y: 140 }, { x: 20, y: 90 }], elements: [] },
+      ],
+    },
+    { page: 'resources.html', rect: { x: 0, y: 0, w: 390, h: 200 }, places: [{ n: 1, kind: 'element', points: [], elements: [{ rect: { x: 10, y: 10, w: 80, h: 80 } }] }] },
+  ];
+  for (const { page, rect, places } of pages) {
+    const dev = await startDevServer();
+    const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+    const kemi = await startKemi(repository, state, ['--live', `${dev.url}${page}`]);
+    try {
+      await browser('set', 'viewport', '1280', '900');
+      await browser('open', kemi.url);
+      await waitFor(showsSnapshot('Start'));
+      await browser('click', '.lv-widths button[data-width="390"]');
+      await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+      await new Promise((done) => setTimeout(done, 800));
+      const name = page.replace('.html', '');
+      const plain = await askImage(rect, []);
+      assert.equal(plain.error, null, `the image of ${page} is made`);
+      const imagePath = join(shots, `${name}-image.png`);
+      await writeFile(imagePath, Buffer.from(plain.png, 'base64'));
+      const image = decodePng(await readFile(imagePath));
+      assert.deepEqual([image.width, image.height], [rect.w, rect.h], 'the image covers the asked area at its size');
+      const live = await shot(`${livePane} .lv-frame`, shots, `${name}-live`);
+      const diffPath = join(shots, `${name}-diff.png`);
+      const compared = await comparePixels(crop(live, rect.w, rect.h), image, diffPath);
+      console.log(`CHECK コメントの画像（${page}、描き込み無し）と動いているページの同じ範囲の画素が ${compared.different} / ${compared.total}（${(compared.ratio * 100).toFixed(3)}%）違う。画像: ${imagePath}、差の画像: ${compared.different > 0 ? diffPath : 'なし'}（人が確かめる）`);
+      const drawn = await askImage(null, places);
+      assert.equal(drawn.error, null, `the image with places of ${page} is made`);
+      const drawnPath = join(shots, `${name}-places.png`);
+      await writeFile(drawnPath, Buffer.from(drawn.png, 'base64'));
+      console.log(`CHECK 場所の描き込みと番号を重ねたコメントの画像（${page}）: ${drawnPath}（人が確かめる）`);
+    } finally {
+      await stop(kemi);
+      await dev.close();
+    }
+  }
+
+  for (const query of ['csp=1', 'tt=1']) {
+    const dev = await startDevServer();
+    const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+    const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?${query}`]);
+    try {
+      await browser('set', 'viewport', '1280', '900');
+      await browser('open', kemi.url);
+      await waitFor(showsSnapshot('Start'));
+      const made = await askImage(null, [{ n: 1, kind: 'element', points: [], elements: [{ rect: { x: 0, y: 120, w: 200, h: 60 } }] }]);
+      if (made.error === null) {
+        const path = join(shots, `changing-${query.replace('=1', '')}.png`);
+        await writeFile(path, Buffer.from(made.png, 'base64'));
+        decodePng(await readFile(path));
+        console.log(`PASS changing.html?${query} の CSP の下でもコメントの画像が作れる: ${path}`);
+      } else {
+        assert.ok(made.error.length > 0, 'a reason is given');
+        console.log(`PASS changing.html?${query} の CSP の下ではコメントの画像を作れず、理由が返る: ${made.error}`);
+      }
+    } finally {
+      await stop(kemi);
+      await dev.close();
+    }
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -1382,6 +1490,7 @@ try {
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);
   await snapshotsCarryTheirResources(repository);
+  await commentImagesLookLikeThePage(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
