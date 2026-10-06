@@ -175,7 +175,8 @@ What the page is compared with is chosen per page (path and query):
   token, so the mock reaches neither the review page nor kemi's API. kemi
   reads the mock when it starts showing it (choosing it, moving to the page,
   changing the width or the way of comparing, or **Reload mock**), not when
-  the file changes.
+  the file changes. If the file cannot be read then, the comparison area
+  says so instead of showing it.
 
 When the page is compared with a snapshot, kemi matches the two element by
 element and lists the changes under the shown page in the page list, with
@@ -404,10 +405,21 @@ kemi --resume <id>     # continue a known session, from any directory
   one tab-separated line each — id, last update, workspace, mode, seen/total —
   newest first, and exits with 0; with none it prints nothing and exits with 2.
 - A `--live` review keeps no frozen copy. Resuming reads the working tree as
-  it is now and keeps watching it. Snapshots and mock assignments are kept
-  only while kemi runs; they do not come back on resume yet. It is kept only when it holds a comment, a
-  reply, or a message; seen marks and folding alone are not kept. Its mode
+  it is now and keeps watching it. Its snapshots, including the one taken at
+  the start, and its mock assignments come back, so the default comparison
+  stays the same; a mock whose file is gone by then says it cannot be read.
+  It is kept only when it holds a comment, a reply, or a message; seen marks,
+  folding, snapshots, and mock assignments alone are not kept. Its mode
   column reads `live <url>`.
+- A `--live` session keeps its snapshots and comment images in `<id>.files/`
+  next to it, up to 20 MB per session. When a new one would go over, kemi
+  removes older hand-over snapshots first, then older recorded ones, then
+  images of deleted comments; it never removes the start snapshot or an
+  image of a current comment. A removed snapshot also leaves the choices of
+  what to compare with. What still does not fit is not saved: such a snapshot
+  stays usable until the review ends and is marked as not saved (it is gone
+  after resuming), and a comment is saved without its image, with a notice.
+  `<id>.files/` counts toward the 500 MB kept across sessions.
 - A resumed `--live` review connects to the same URL again and prints a new
   `kemi: live` line.
 - `--resume` accepts only `--port`, `--bind`, `--no-open`, `--serve`, and

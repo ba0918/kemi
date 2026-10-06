@@ -125,6 +125,9 @@ pub enum Notice {
     ResultNotSaved(ResultSaveError),
     /// ページへのコメントの画像を保存できなかった。コメントは画像なしで残る（R-PAGE-COMMENT）。
     CommentImageNotSaved(SessionError),
+    /// スナップショットを `<id>.files/` に書けなかった。レビューの間は比べる相手に使えるが、
+    /// 復元すると消える（R-PAGE-SESSION）。
+    SnapshotNotSaved(SessionError),
     /// セッションを保存できなかった。レビューは続く（R-SESSION）。
     SessionNotSaved(SessionError),
     /// submit の後にセッションを消せなかった（R-SESSION）。
@@ -173,9 +176,20 @@ pub trait SessionSink: Send + Sync {
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError>;
     /// submit の確定後。
     fn delete(&self) -> Result<(), SessionError>;
-    /// セッションに添えるファイル（コメントの画像）を `<id>.files/` に書き、絶対パスを返す
-    /// （live.md の R-PAGE-SESSION）。`name` はサーバが決めた名前。
-    fn save_file(&self, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf, SessionError>;
+    /// コメントの画像を `<id>.files/` に書く（live.md の R-PAGE-SESSION）。書く前に 20 MB の
+    /// 規則で場所を空ける。`comments` は今あるコメントの id で、その画像は消さない。
+    fn save_image(
+        &self,
+        comment_id: &str,
+        bytes: &[u8],
+        comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite;
+    /// スナップショットを `<id>.files/` に書く。規則はコメントの画像と同じ。
+    fn save_snapshot(
+        &self,
+        snapshot: &kemi_core::session::PageSnapshot,
+        comments: &std::collections::BTreeSet<String>,
+    ) -> kemi_core::session::FilesWrite;
 }
 
 pub struct ServeParams {
@@ -260,6 +274,8 @@ pub(crate) enum Event {
     Message(serde_json::Value),
     /// エージェントの状態か未渡しの件数が変わった（R-AGENT-STATE）。
     Agent(serde_json::Value),
+    /// `--live` の比べる相手に選べるスナップショットが減った（R-PAGE-SESSION の 20 MB の規則）。
+    Snapshots,
 }
 
 /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が

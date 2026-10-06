@@ -30,6 +30,9 @@ pub struct Session {
     /// 知らせ（何件目まで受け取ったか）を、重なっても二度外さないための起点。メモリだけに
     /// 置き、復元では 0 から数え直す（それより前の知らせは止まったサーバへのもので届かない）。
     pub received: u64,
+    /// `--live` のモックの割り当て（ページ → 配れる範囲の根からの相対パス）。状態と一緒に
+    /// 保存し、復元で戻す（live-compare.md の R-PAGE-MOCK）。
+    pub mocks: BTreeMap<String, String>,
 }
 
 impl Session {
@@ -65,6 +68,7 @@ impl Session {
             last_seq: state.last_seq.max(from_writes),
             channel: state.channel,
             received: 0,
+            mocks: state.mocks,
         }
     }
 
@@ -86,6 +90,7 @@ impl Session {
             last_message: self.last_message,
             last_seq: self.last_seq,
             channel: self.channel.clone(),
+            mocks: self.mocks.clone(),
         }
     }
 }

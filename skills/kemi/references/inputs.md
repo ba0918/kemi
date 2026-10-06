@@ -82,7 +82,7 @@ the body refers to the places by their numbers.
 
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
 connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
-Snapshots and mock assignments do not come back on resume yet.
+Its snapshots and mock assignments come back on resume too.
 
 ## Surveying a large change first
 

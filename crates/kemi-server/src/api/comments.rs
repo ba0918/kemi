@@ -9,10 +9,12 @@ use kemi_core::domain::review::{
     Author, Comment, CommentTarget, FileTarget, LineRange, PageTarget, Place, PlaceElement,
     PlaceKind, Point, Rect, Reply, Side, Suggestion,
 };
+use kemi_core::session::FileWritten;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::channel::notify_agent_state;
+use super::snapshot::{comment_ids, forget_removed};
 use super::{ApiError, file_not_found, find_file, parse_side, side_lines, source_content};
 use crate::session::{page_comment_json, persist};
 use crate::{AppState, Event, Notice};
@@ -318,10 +320,16 @@ fn add_page_comment(
         (format!("c{}", session.last_comment), session.next_seq())
     };
     // 画像はセッションのロックの外で書く。書けなくてもコメントは画像なしで残す。
-    // 書いてからコメントが入るまでは保存を止める。その間に空のセッションが保存されると
-    // `<id>.files/` ごと消え、画像のパスだけが残る。ロックは persist → session の順。
+    // 書いてからコメントが入るまでは、スナップショットと別の画像の書き込みを止める。その間に
+    // 20 MB の規則が掛かると、まだ状態に無いこの画像を、削除したコメントの画像と見誤る
+    // ことがある。ロックは persist → session → snapshots の順。
     let saving = state.persist.lock().expect("persist poisoned");
-    let image = image.and_then(|image| save_image(state, &id, &image));
+    let image = image.map(|image| save_image(state, &id, &image));
+    let image_unsaved = matches!(image, Some(ImageSaved::NoRoom));
+    let image = match image {
+        Some(ImageSaved::Saved(path)) => Some(path),
+        Some(ImageSaved::NoRoom | ImageSaved::NotSaved) | None => None,
+    };
     let comment = Comment {
         id,
         seq,
@@ -356,22 +364,41 @@ fn add_page_comment(
             places: page.places.len(),
         });
     }
-    Ok(Json(page_comment_json(&comment)))
+    let mut answer = page_comment_json(&comment);
+    if image_unsaved {
+        // 20 MB の規則で保存しなかったことは画面に出す（R-PAGE-SESSION）。
+        answer["image_unsaved"] = json!(true);
+    }
+    Ok(Json(answer))
 }
 
-/// 画像を `<id>.files/` に書き、絶対パスを返す。セッションの無いレビュー、base64 として
-/// 読めない値、書き込みの失敗では None（submit の契約が許す `null`）。
-fn save_image(state: &AppState, id: &str, image: &str) -> Option<String> {
+/// コメントの画像を保存した結果。
+enum ImageSaved {
+    /// 書いた画像の絶対パス。
+    Saved(String),
+    /// 20 MB の規則で入らなかった。
+    NoRoom,
+    /// セッションの無いレビュー、base64 として読めない値、書き込みの失敗。
+    NotSaved,
+}
+
+/// 画像を `<id>.files/` に書く。保存しなかったときのパスは `null`（submit の契約が許す）。
+fn save_image(state: &AppState, id: &str, image: &str) -> ImageSaved {
     use base64::Engine;
-    let sink = state.session_sink.as_ref()?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(image)
-        .ok()?;
-    match sink.save_file(&format!("{id}.png"), &bytes) {
-        Ok(path) => Some(path.to_string_lossy().into_owned()),
-        Err(error) => {
+    let (Some(sink), Some(live)) = (state.session_sink.as_ref(), state.live.as_deref()) else {
+        return ImageSaved::NotSaved;
+    };
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(image) else {
+        return ImageSaved::NotSaved;
+    };
+    let write = sink.save_image(id, &bytes, &comment_ids(state));
+    forget_removed(state, live, &write.removed_snapshots);
+    match write.written {
+        FileWritten::Saved(path) => ImageSaved::Saved(path.to_string_lossy().into_owned()),
+        FileWritten::NoRoom => ImageSaved::NoRoom,
+        FileWritten::Failed(error) => {
             state.notices.notify(Notice::CommentImageNotSaved(error));
-            None
+            ImageSaved::NotSaved
         }
     }
 }

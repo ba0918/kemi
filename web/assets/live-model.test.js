@@ -7,6 +7,7 @@ import {
   buildPageTree,
   draftElsewhere,
   emptyDraft,
+  imageUnsavedNotice,
   removePlace,
   undoPlace,
   chooseReference,
@@ -17,7 +18,9 @@ import {
   pageKey,
   parseWidth,
   snapshotLabel,
+  startSnapshotDue,
   snapshotOptions,
+  unsavedSnapshotNotice,
 } from "./live-model.js";
 
 test("the width choices are 390, 768 and 1280", () => {
@@ -129,6 +132,29 @@ test("the points to choose from are the snapshots of the page, newest first", ()
   ]);
 });
 
+test("a snapshot that was not saved is told apart among the points to choose from", () => {
+  const saved = snap("s1", "manual");
+  const [unsaved] = snapshotOptions([{ ...saved, unsaved: true }], "/");
+  const [plain] = snapshotOptions([saved], "/");
+  assert.notEqual(unsaved.label, plain.label);
+});
+
+test("only a snapshot that was not saved carries a notice that it is gone after resuming", () => {
+  assert.notEqual(unsavedSnapshotNotice({ ...snap("s1", "manual"), unsaved: true }), "");
+  assert.equal(unsavedSnapshotNotice({ ...snap("s1", "manual"), unsaved: false }), "");
+  assert.equal(unsavedSnapshotNotice(snap("s1", "manual")), "");
+});
+
+test("a chosen point that is no longer among the snapshots shows that nothing is recorded", () => {
+  const snapshots = [snap("s1", "start"), snap("s3", "manual")];
+  assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "s2" }), { type: "none" });
+});
+
+test("only a page comment whose image was not saved carries a notice", () => {
+  assert.notEqual(imageUnsavedNotice({ image_unsaved: true }), "");
+  assert.equal(imageUnsavedNotice({}), "");
+});
+
 test("a page with a mock compares with the mock unless something else is chosen", () => {
   const snapshots = [snap("s1", "start"), snap("s2", "handed")];
   assert.deepEqual(chooseReference({ snapshots, mock: "m.html", page: "/", width: 1280, chosen: undefined }), { type: "mock", path: "m.html" });
@@ -225,4 +251,14 @@ test("a draft with places is elsewhere at another URL or width", () => {
   assert.deepEqual(draftElsewhere(draft, "/other", 390), { url: "/", width: 390 });
   assert.deepEqual(draftElsewhere(draft, "/", 1280), { url: "/", width: 390 });
   assert.equal(draftElsewhere(emptyDraft("/", 390), "/other", 1280), null);
+});
+
+test("the start snapshot waits until the saved snapshots are known, and is not taken again after resuming", () => {
+  // ページが先に読み込みを知らせても、預けた一覧がまだ分からなければ取らない（live.md の R-PAGE-SESSION の反例）。
+  assert.equal(startSnapshotDue({ taken: false, reachable: true, snapshots: null }), false);
+  assert.equal(startSnapshotDue({ taken: false, reachable: true, snapshots: [snap("s1", "start")] }), false);
+  assert.equal(startSnapshotDue({ taken: false, reachable: true, snapshots: [snap("s1", "manual")] }), true);
+  assert.equal(startSnapshotDue({ taken: false, reachable: true, snapshots: [] }), true);
+  assert.equal(startSnapshotDue({ taken: false, reachable: false, snapshots: [] }), false);
+  assert.equal(startSnapshotDue({ taken: true, reachable: true, snapshots: [] }), false);
 });

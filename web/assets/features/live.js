@@ -19,11 +19,14 @@ import {
   pageKey,
   draftElsewhere,
   emptyDraft,
+  imageUnsavedNotice,
   parseWidth,
   removePlace,
   snapshotLabel,
+  startSnapshotDue,
   snapshotOptions,
   undoPlace,
+  unsavedSnapshotNotice,
 } from "../live-model.js";
 import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
@@ -91,6 +94,8 @@ const live = {
   chosen: new Map(),
   /** 開始時のスナップショットを取りに行ったか。 */
   startTaken: false,
+  /** 預けたスナップショットの一覧を一度読めたか。読めるまで開始時のスナップショットは取らない。 */
+  snapshotsListed: false,
   /** 取れなかったときの知らせ。次に描くまで出す。 */
   refNotice: "",
   /** @type {Map<string, string>} 中身の写し（id → HTML） */
@@ -107,6 +112,8 @@ const live = {
   mockShownKey: "",
   /** 読み直す操作を押した。 */
   mockReloadAsked: false,
+  /** 出し始めるときに読めなかったモックの条件（mockShownKey と同じ形）。読めたら空。 */
+  mockUnreadable: "",
   /** 見比べ方。並べるか、重ねて透かすか（live-compare.md の R-PAGE-REF）。 */
   /** @type {"side" | "overlay"} */
   compare: "side",
@@ -285,11 +292,26 @@ export function startLive(info) {
   });
   void api.listSnapshots().then((list) => {
     live.snapshots = list.snapshots ?? [];
-    // 読み込み直したページでは、開始時のスナップショットはもう取ってある。
-    live.startTaken = live.startTaken || live.snapshots.some((snapshot) => snapshot.kind === "start");
+    live.snapshotsListed = true;
     render();
+    // 読み込み直したページと復元したレビューでは、開始時のスナップショットはもう取ってあり、ここでは取らない。
+    // ページが先に読み込みを知らせていれば、そのときは一覧を待って取らずにいたので、ここで取る。
     takeStartSnapshot();
   });
+  // 20 MB の規則で消えたスナップショットを、読み込み直さずに選択肢から消す（R-PAGE-SESSION）。
+  // 取りこぼした通知がそれだったかは分からないので、取りこぼしでも読み直す。
+  api.onServerEvent("snapshots", () => void reloadSnapshots());
+  api.onServerEvent("lagged", () => void reloadSnapshots());
+}
+
+/** 預けたスナップショットの一覧を読み直す。 */
+async function reloadSnapshots() {
+  const list = await api.listSnapshots().catch(() => null);
+  if (list === null) {
+    return;
+  }
+  live.snapshots = list.snapshots ?? [];
+  render();
 }
 
 /**
@@ -478,7 +500,8 @@ async function removeMock() {
 
 /** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
 function takeStartSnapshot() {
-  if (live.startTaken || !live.reachable) {
+  const snapshots = live.snapshotsListed ? live.snapshots : null;
+  if (!startSnapshotDue({ taken: live.startTaken, reachable: live.reachable, snapshots })) {
     return;
   }
   live.startTaken = true;
@@ -785,6 +808,11 @@ async function savePageComment() {
     });
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
+    const notice = imageUnsavedNotice(comment);
+    if (notice !== "") {
+      live.refNotice = notice;
+      renderReference();
+    }
     refreshCommentBadges(before);
     renderHeader();
     renderConversation();
@@ -849,7 +877,10 @@ async function capture(kind) {
       html: answer.html,
       description: description === null ? null : answer.description,
     });
-    live.snapshots.push(taken);
+    // 取ったことで古いものが消えると、一覧の読み直しが先に届いて、もう入っていることがある。
+    if (!live.snapshots.some((snapshot) => snapshot.id === taken.id)) {
+      live.snapshots.push(taken);
+    }
     live.bodies.set(taken.id, answer.html);
     live.descriptions.set(taken.id, description);
     live.refNotice = "";
@@ -1263,8 +1294,10 @@ function renderReference() {
   }
   const mock = live.mocks.get(live.page) ?? null;
   const reference = currentReference();
-  shell.refNotice.hidden = live.refNotice === "";
-  shell.refNotice.textContent = live.refNotice;
+  const notice =
+    live.refNotice !== "" || reference.type !== "snapshot" ? live.refNotice : unsavedSnapshotNotice(reference.snapshot);
+  shell.refNotice.hidden = notice === "";
+  shell.refNotice.textContent = notice;
   shell.refNotice.dataset.kind = "waiting";
   if (reference.type !== "mock") {
     shell.refMockFrame.hidden = true;
@@ -1275,9 +1308,15 @@ function renderReference() {
     delete shell.refPane.dataset.snapshot;
     shell.refLabel.textContent = `Mock · ${reference.path} · ${live.width}`;
     shell.refFrame.hidden = true;
-    shell.refEmpty.hidden = true;
     live.shownSnapshot = "";
     showMock(mock?.url ?? "");
+    // 出し始めるときに読めなかったモックは、枠の代わりにそのことを出す（R-PAGE-MOCK）。
+    const unreadable = live.mockUnreadable !== "" && live.mockUnreadable === live.mockShownKey;
+    shell.refEmpty.hidden = !unreadable;
+    shell.refRecordButton.hidden = unreadable;
+    if (unreadable) {
+      shell.refEmptyText.textContent = `Cannot read the mock ${reference.path}. The file may have been moved or deleted.`;
+    }
     return;
   }
   if (reference.type === "none") {
@@ -1287,6 +1326,7 @@ function renderReference() {
     shell.refFrame.hidden = true;
     shell.refEmpty.hidden = false;
     shell.refEmptyText.textContent = "This page at this width has not been recorded yet.";
+    shell.refRecordButton.hidden = false;
     shell.refRecordButton.disabled = !live.reachable;
     live.shownSnapshot = "";
     return;
@@ -1314,16 +1354,32 @@ function showMock(url) {
     return;
   }
   const key = `${live.page}\n${live.width}\n${live.compare}\n${url}`;
-  if (key === live.mockShownKey && !live.mockReloadAsked && !shell.refMockFrame.hidden) {
+  // 比べる相手がモックでなくなると mockShownKey を空にするので、同じ条件なら出し始めではない。
+  // 読めるかを確かめている間や読めなかったときの枠は隠れているが、読み直さない。
+  if (key === live.mockShownKey && !live.mockReloadAsked) {
     return;
   }
   live.mockShownKey = key;
   live.mockReloadAsked = false;
+  live.mockUnreadable = "";
   const frame = /** @type {HTMLIFrameElement} */ (shell.refMockFrame.cloneNode(false));
-  frame.hidden = false;
-  frame.src = url;
+  frame.hidden = true;
   shell.refMockFrame.replaceWith(frame);
   shell.refMockFrame = frame;
+  // 枠は別のオリジンで中の状態を読めないので、出し始めるときに同じ URL を読めるか先に確かめる。
+  void api.mockReadable(url).then((readable) => {
+    // 確かめている間に別の条件で出し直した（枠を作り直した）か、モックをやめたなら、この結果は古い。
+    if (shell?.refMockFrame !== frame || live.mockShownKey !== key) {
+      return;
+    }
+    if (readable) {
+      frame.hidden = false;
+      frame.src = url;
+    } else {
+      live.mockUnreadable = key;
+      renderReference();
+    }
+  });
 }
 
 /**

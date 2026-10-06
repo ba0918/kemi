@@ -2,8 +2,11 @@
 
 use std::sync::Mutex;
 
+use std::collections::BTreeSet;
+
 use kemi_core::session::{
-    OpenSession, SessionCopy, SessionError, SessionInfo, SessionState, SessionStore, SessionSummary,
+    FilesWrite, OpenSession, PageSnapshot, SessionCopy, SessionError, SessionInfo, SessionState,
+    SessionStore, SessionSummary,
 };
 use kemi_core::source::FrozenSource;
 use kemi_server::SessionSink;
@@ -38,6 +41,27 @@ impl StoredSession {
 
     pub fn info(&self) -> SessionInfo {
         self.open.lock().expect("session poisoned").info().clone()
+    }
+
+    /// `<id>.files/` に置いたスナップショット（R-PAGE-SESSION）。読めないものは誤りとして返す。
+    pub fn read_snapshots(&self) -> Vec<Result<PageSnapshot, SessionError>> {
+        self.open.lock().expect("session poisoned").read_snapshots()
+    }
+
+    /// `<id>.files/` にあるスナップショットのファイルの最大の番号。読めないものも数える。
+    pub fn last_snapshot_number(&self) -> u32 {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .last_snapshot_number()
+    }
+
+    /// 保留で終わるとき。会話の無い `--live` のセッションは `<id>.files/` も残さない。
+    pub fn close_suspended(&self) -> Result<(), SessionError> {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .close_suspended()
     }
 
     /// 凍結したレビューを配るソースを作る。写しが無ければ None。
@@ -95,11 +119,23 @@ impl SessionSink for StoredSession {
         self.open.lock().expect("session poisoned").delete()
     }
 
-    fn save_file(&self, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf, SessionError> {
+    fn save_image(
+        &self,
+        comment_id: &str,
+        bytes: &[u8],
+        comments: &BTreeSet<String>,
+    ) -> FilesWrite {
         self.open
             .lock()
             .expect("session poisoned")
-            .save_file(name, bytes)
+            .save_image(comment_id, bytes, comments)
+    }
+
+    fn save_snapshot(&self, snapshot: &PageSnapshot, comments: &BTreeSet<String>) -> FilesWrite {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .save_snapshot(snapshot, comments)
     }
 }
 

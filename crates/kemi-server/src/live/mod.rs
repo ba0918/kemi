@@ -6,7 +6,6 @@ pub(crate) mod files;
 mod relay;
 pub(crate) mod rewrite;
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -18,6 +17,7 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use kemi_core::domain::live::url_path;
+use kemi_core::session::PageSnapshot;
 
 use crate::Assets;
 
@@ -34,6 +34,11 @@ pub struct LiveParams {
     pub mock_secret: String,
     /// コードの見方を出せるか（git の作業ツリーの中か）。
     pub code_view: bool,
+    /// 復元で戻すスナップショット（R-PAGE-SESSION）。新しいレビューでは空。
+    pub snapshots: Vec<PageSnapshot>,
+    /// 復元で、`<id>.files/` に残るスナップショットのファイルの最大の番号。読めずに戻さなかった
+    /// ものも含む。新しく振る番号はこれより大きくする。新しいレビューでは 0。
+    pub last_snapshot_number: u32,
 }
 
 /// 中継する相手。
@@ -57,52 +62,57 @@ pub(crate) struct LiveInfo {
     pub start: String,
     pub display: String,
     pub code_view: bool,
-    /// 取ったスナップショット。保存はまだ無く、メモリにだけ持つ（R-PAGE-SNAPSHOT）。
-    pub snapshots: std::sync::Mutex<Vec<Snapshot>>,
+    /// 比べる相手に選べるスナップショット（R-PAGE-SNAPSHOT）。セッションがあれば
+    /// `<id>.files/` にも書き、20 MB の規則で消したものはここからも消す（R-PAGE-SESSION）。
+    pub snapshots: std::sync::Mutex<Snapshots>,
     pub root: PathBuf,
     pub mock_secret: String,
-    /// ページ（パスとクエリ）ごとのモックの割り当て（範囲の根からの相対パス）。保存はまだ
-    /// 無く、メモリにだけ持つ（R-PAGE-MOCK）。
-    pub mocks: std::sync::Mutex<BTreeMap<String, String>>,
+}
+
+/// 比べる相手に選べるスナップショットの一覧と、次に振る番号。
+pub(crate) struct Snapshots {
+    pub taken: Vec<Snapshot>,
+    /// 最後に振った番号。消したものの番号も使い直さない。復元では、戻したものと `<id>.files/` に
+    /// 残る読めないものの番号の最大から続ける。
+    pub last_number: u32,
+}
+
+impl Snapshots {
+    fn restored(snapshots: Vec<PageSnapshot>, last_on_disk: u32) -> Self {
+        let last_number = snapshots
+            .iter()
+            .map(|snapshot| snapshot.number)
+            .fold(last_on_disk, u32::max);
+        Snapshots {
+            taken: snapshots
+                .into_iter()
+                .map(|record| Snapshot {
+                    record,
+                    unsaved: false,
+                })
+                .collect(),
+            last_number,
+        }
+    }
+
+    /// 20 MB の規則で `<id>.files/` から消したものを、選択肢からも消す（R-PAGE-SESSION）。
+    pub fn forget(&mut self, numbers: &[u32]) {
+        self.taken
+            .retain(|snapshot| !numbers.contains(&snapshot.record.number));
+    }
 }
 
 /// スナップショット 1 つ。中身はスクリプトを含まない HTML（形はページ用のスクリプトが決める）。
 pub(crate) struct Snapshot {
-    pub id: String,
-    /// ページ（パスとクエリ）。
-    pub page: String,
-    pub width: u32,
-    pub kind: SnapshotKind,
-    pub html: String,
-    /// 写した時点のページの要素の記述（live.md の DL3）。差分の比べる相手の側に使う。
-    /// 形はページ用のスクリプトが決め、kemi は中身を読まずに持って返す。
-    pub description: Option<Value>,
+    pub record: PageSnapshot,
+    /// セッションがあるのに `<id>.files/` に書けなかった。レビューの間は使えるが、
+    /// 復元すると消える（R-PAGE-SESSION）。
+    pub unsaved: bool,
 }
 
-/// 取った時点（R-PAGE-SNAPSHOT）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SnapshotKind {
-    Start,
-    Handed,
-    Manual,
-}
-
-impl SnapshotKind {
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "start" => Some(SnapshotKind::Start),
-            "handed" => Some(SnapshotKind::Handed),
-            "manual" => Some(SnapshotKind::Manual),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SnapshotKind::Start => "start",
-            SnapshotKind::Handed => "handed",
-            SnapshotKind::Manual => "manual",
-        }
+impl Snapshot {
+    pub fn id(&self) -> String {
+        format!("s{}", self.record.number)
     }
 }
 
@@ -182,10 +192,12 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
         start,
         display,
         code_view: params.code_view,
-        snapshots: std::sync::Mutex::new(Vec::new()),
+        snapshots: std::sync::Mutex::new(Snapshots::restored(
+            params.snapshots,
+            params.last_snapshot_number,
+        )),
         root: params.root,
         mock_secret: params.mock_secret,
-        mocks: std::sync::Mutex::new(BTreeMap::new()),
     };
     Ok((params.listener, info, params.target))
 }

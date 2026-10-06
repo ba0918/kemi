@@ -104,7 +104,8 @@ export function buildPageTree({ current, snapshots, mocks, comments }) {
 
 /**
  * スナップショットの見出し（中身は持たない）。
- * @typedef {{ id: string, kind: string, page: string, width: number }} SnapshotSummary
+ * `unsaved` は、セッションがあるのに保存できなかったもの（live.md の R-PAGE-SESSION）。
+ * @typedef {{ id: string, kind: string, page: string, width: number, unsaved?: boolean }} SnapshotSummary
  */
 
 /**
@@ -129,6 +130,18 @@ export function chooseSnapshot(snapshots, page, width, chosen) {
     }
   }
   return null;
+}
+
+/**
+ * 開始時のスナップショットを今取るか（live.md の R-PAGE-SNAPSHOT）。預けた一覧がまだ分からない間は
+ * 取らない: 復元したレビューでは一覧に開始時のものがあり、先に取ると既定の比べる相手が今の見た目に
+ * 替わる（R-PAGE-SESSION の反例）。
+ * @param {{ taken: boolean, reachable: boolean, snapshots: SnapshotSummary[] | null }} at
+ *   taken は取りに行ったか、snapshots は預けた一覧（読む前は null）
+ * @returns {boolean}
+ */
+export function startSnapshotDue({ taken, reachable, snapshots }) {
+  return !taken && reachable && snapshots !== null && !snapshots.some((snapshot) => snapshot.kind === "start");
 }
 
 /** @type {Record<string, string>} */
@@ -159,7 +172,32 @@ export function snapshotOptions(snapshots, page) {
   return snapshots
     .filter((snapshot) => snapshot.page === page)
     .reverse()
-    .map((snapshot) => ({ id: snapshot.id, label: `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}` }));
+    .map((snapshot) => {
+      const label = `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}`;
+      return { id: snapshot.id, label: snapshot.unsaved ? `${label} · not saved` : label };
+    });
+}
+
+/**
+ * 保存できなかったスナップショットの知らせ。レビューの間は使えるが、復元すると消える
+ * （live.md の R-PAGE-SESSION）。保存したものでは空。
+ * @param {SnapshotSummary} snapshot
+ * @returns {string}
+ */
+export function unsavedSnapshotNotice(snapshot) {
+  return snapshot.unsaved ? "Not saved: this snapshot is gone when the review is resumed" : "";
+}
+
+/**
+ * ページへのコメントを足した応答から、画像を保存できなかった知らせを作る（20 MB の規則。
+ * live.md の R-PAGE-SESSION）。保存したとき・画像が無いときは空。
+ * @param {{ image_unsaved?: boolean }} answer
+ * @returns {string}
+ */
+export function imageUnsavedNotice(answer) {
+  return answer.image_unsaved === true
+    ? "The comment was saved without its image: the session's files would exceed 20 MB"
+    : "";
 }
 
 /**
