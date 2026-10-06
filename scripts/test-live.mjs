@@ -24,7 +24,8 @@
 // - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
 //   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色つきで主な変化に入る。
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
-//   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。
+//   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
+//   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
@@ -884,6 +885,31 @@ async function changeListFollowsThePage(repository) {
     await browser('click', '#btn-tree');
     await waitFor(`document.querySelector('#page-tree').dataset.drawer === 'open' && ${visible('#page-tree .lv-changes')}`);
     console.log('PASS 幅 390px で開くと、変化の一覧が引き出しの中にある');
+
+    // 比べる相手の側を見ている間は動いているページの枠が隠れる。その間は変化の数を変えず（隠れた文書と比べない）、
+    // 隠れている間にページが変わっても、動いているページの側に戻してから比べ直す。
+    const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
+    const shown = await evaluate(counts);
+    assert.equal(shown, '1/0');
+    await evaluate(`(() => {
+      window.__kemiCounts = [];
+      new MutationObserver(() => {
+        const list = ${changeList};
+        window.__kemiCounts.push(list ? list.dataset.main + '/' + list.dataset.shifted : 'none');
+      }).observe(document.querySelector('#page-tree'), { childList: true, subtree: true, attributes: true });
+      document.querySelector('.lv-side button[data-side="ref"]').click();
+      return true;
+    })()`);
+    await waitFor(`!${visible(`${livePane} .lv-frame`)}`);
+    await new Promise((done) => setTimeout(done, 1500));
+    // 最後に渡した時点の色に戻す。比べ直せば変化は 0 になる。
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)'));
+    await new Promise((done) => setTimeout(done, 1500));
+    const seen = JSON.parse(await evaluate(`JSON.stringify(window.__kemiCounts)`));
+    assert.ok(seen.every((value) => value === shown), `the counts do not change while the live page is hidden: ${shown} -> ${JSON.stringify(seen)}`);
+    await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
+    await waitFor(`${visible(`${livePane} .lv-frame`)} && ${counts} === '0/0'`);
+    console.log('PASS 幅 390px で比べる相手の側を見ている間は変化の数が変わらず、動いているページの側に戻すと比べ直す');
     assert.equal(await evaluate(`window.__kemiNotReloaded === true`), true, 'the review page was not reloaded');
   } finally {
     await browser('set', 'viewport', '1280', '800');

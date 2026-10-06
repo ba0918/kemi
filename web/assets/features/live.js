@@ -562,6 +562,10 @@ function refreshChanges() {
       setChanges(null, null, live.describeFailure);
       return;
     }
+    // 隠れている間は頼まず、今の一覧を残す。また見えるようにしたときの描き直しか、ページの変化の知らせで頼む。
+    if (liveFrameHidden()) {
+      return;
+    }
     void describeNow();
     return;
   }
@@ -663,6 +667,10 @@ async function describeNow() {
     return;
   }
   live.describing = false;
+  // 待つ間に隠れた枠の記述は使わない。また見えるようにしたときに頼み直す。
+  if (liveFrameHidden()) {
+    return;
+  }
   // 動いているページの記述は postMessage で届くので縮めない（縮めて戻す手間のほうが大きい）。
   const description = unpackDescription(answer.description);
   if (description === null) {
@@ -674,6 +682,14 @@ async function describeNow() {
   live.now = { page: pageKey(String(answer.path ?? "/")), description };
   live.describedAt = asked;
   refreshChanges();
+}
+
+/**
+ * 動いているページの枠が隠れているか（狭い画面で比べる相手の側を見ている、コードの見方）。隠れた文書の要素は
+ * 並べられていないので、その記述の要素の箱はスナップショットと合わず、変わっていない要素がずれたに見える。
+ */
+function liveFrameHidden() {
+  return shell === null || shell.liveFrame.getClientRects().length === 0;
 }
 
 function renderBand() {
