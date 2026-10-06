@@ -91,6 +91,18 @@ impl GitSource {
         }
     }
 
+    /// これまでに振った id から、その id のファイルの生のパス（git が返したバイト列）への対応。
+    /// 表示のパスは lossy なので、別のファイルを見分けるにはこちらを使う。
+    pub fn raw_paths(&self) -> HashMap<String, Vec<u8>> {
+        self.ids
+            .lock()
+            .expect("file id lock poisoned")
+            .map
+            .iter()
+            .map(|((_, path), id)| (id.clone(), path_bytes(path)))
+            .collect()
+    }
+
     pub fn open(mode: GitMode) -> Result<Self, SourceError> {
         let repo = repo_root(Path::new("."))?;
         Ok(GitSource::new(repo, mode))
@@ -820,6 +832,18 @@ pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 #[cfg(not(unix))]
 pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// `path_from_bytes` の逆。運んだパスを git が返したときのバイト列に戻す。
+#[cfg(unix)]
+fn path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(not(unix))]
+fn path_bytes(path: &Path) -> Vec<u8> {
+    path.to_string_lossy().into_owned().into_bytes()
 }
 
 fn diff_entries(repo: &Path, range_args: &[&str]) -> Result<Vec<DiffEntry>, SourceError> {

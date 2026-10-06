@@ -2,10 +2,12 @@
 
 mod frozen;
 pub mod git;
+mod live;
 pub mod manifest;
 mod origin;
 
 pub use frozen::FrozenSource;
+pub use live::LiveSource;
 
 #[cfg(test)]
 pub(crate) mod testutil;

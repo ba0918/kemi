@@ -25,10 +25,12 @@ Use one input mode per run:
 | Commits since a base | `kemi --from <base> [--to <head>]` |
 | Working tree, including untracked files | `kemi --worktree` |
 | Staged changes | `kemi --staged` |
+| A running page on a loopback dev server, or a local HTML file, with the working tree | `kemi --live <url\|file>` |
 | Drafts or groups you define | `kemi <manifest.json>` or `kemi -` for stdin |
 
 Read [the input reference](references/inputs.md) when writing a manifest, choosing commit
-presentation, adding focus marks, or surveying a large change with `--digest`. It also covers
+presentation, adding focus marks, reviewing a running page with `--live`, or surveying a large
+change with `--digest`. It also covers
 `--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
 reviewed work.
 For approval, identify the exact bytes being approved; the manifest's `approval` field is
@@ -70,8 +72,9 @@ seen marks, folding, and resolutions are saved in a session, and stderr prints o
 `kemi: resume with: kemi --resume <id>`, when the session can be reopened. Only a session whose
 copy completed within the size limit can be reopened; one whose copy is unfinished or too large
 keeps the state alone and stays out of the list and `--resume`, and a review with nothing to
-keep leaves no session. An empty stdout file while the process runs means no result has arrived
-yet.
+keep leaves no session. A `--live` review keeps no copy: it is kept only when it holds a
+comment, a reply, or a message. An empty stdout file while the process runs means no result has
+arrived yet.
 
 If the user approves in the conversation instead of submitting on the page, record it as a
 conversation decision. Stop only your own run by its retained identifier, never by process
@@ -104,6 +107,9 @@ Resuming shows the diff as it was when the review started, with the seen marks, 
 comments, and resolutions restored. The original input is not read again, so editing the
 working tree or moving away from the repository does not change the page; only origin notes
 read "Cannot determine" if the repository is gone. Live reload and its update badge are off.
+A `--live` review is the exception: resuming it reads the working tree as it is then, keeps live
+reload and the update badge, and connects to the same page again
+([the input reference](references/inputs.md)).
 Resuming continues the same session rather than creating one, and a submit that follows
 writes its result for the workspace the review was started from, with the manifest
 `approval` unchanged.
@@ -112,7 +118,7 @@ Without an id and without a terminal, `kemi --resume` prints the resumable sessi
 tab-separated line each — id, last update, workspace, mode, seen/total, newest first — and
 exits `0`; with none it exits `2`. In a terminal, cancelling the chooser (Esc or Ctrl+C) also
 exits `130`; no review starts and no resume line is printed. `--resume` takes only `--port`,
-`--bind`, `--no-open`, and `--serve`; pairing it with an input mode or `--digest` is a usage
+`--bind`, `--no-open`, `--serve`, and `--live-port`; pairing it with an input mode or `--digest` is a usage
 error (exit `2`), and `--digest` / `--result` never create sessions.
 
 ## Handle the result

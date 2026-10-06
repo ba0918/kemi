@@ -12,12 +12,15 @@ workspace = true
 [dependencies]
 axum = "0.8.9"
 futures-util = "0.3.34"
+getrandom = "0.3"
+hyper = { version = "1.11.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 kemi-core = { path = "../kemi-core" }
 notify = "8.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync", "io-util"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-fancy"] }
 

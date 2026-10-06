@@ -33,6 +33,7 @@ use serde_json::Value;
 use crate::domain::agent::{
     AgentEvent, Channel, Handed, HandedComment, HandedReply, ReplyRef, Unhanded,
 };
+use crate::domain::live::LivePage;
 use crate::domain::review::{
     Approval, Author, Comment, FileEntry, Group, GroupBy, Message, Reply, ReviewMeta, Side, Status,
     Suggestion,
@@ -83,6 +84,12 @@ pub enum SessionMode {
         from_sha: String,
         to_sha: String,
     },
+    /// `--live`。写しを持たず、復元でページにつなぎ直す（R-PAGE-SESSION）。`root` は
+    /// 配れる範囲の根で、git の外では起動ディレクトリなので復元時の場所からは決められない。
+    Live {
+        page: LivePage,
+        root: PathBuf,
+    },
 }
 
 impl SessionMode {
@@ -93,7 +100,13 @@ impl SessionMode {
             SessionMode::Staged => "staged".to_string(),
             SessionMode::Manifest => title.to_string(),
             SessionMode::Range { from, to, .. } => format!("{from}..{to}"),
+            SessionMode::Live { page, .. } => format!("live {}", page.display_url()),
         }
+    }
+
+    /// 写しを持たないモードか（R-PAGE-SESSION）。
+    pub fn is_live(&self) -> bool {
+        matches!(self, SessionMode::Live { .. })
     }
 }
 
@@ -124,6 +137,12 @@ impl SessionState {
             && self.collapsed.is_empty()
             && self.messages.is_empty()
             && self.channel == Channel::default()
+    }
+
+    /// コメント（返信を含む）か発言が 1 つでもあるか。`--live` のセッションはこれが
+    /// 無ければ保留しても残さない（R-PAGE-SESSION）。
+    pub fn has_conversation(&self) -> bool {
+        !self.comments.is_empty() || !self.messages.is_empty()
     }
 }
 
@@ -206,6 +225,17 @@ enum ModeDto {
         from_sha: String,
         to_sha: String,
     },
+    Live {
+        page: PageDto,
+        root: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+enum PageDto {
+    Url(String),
+    File(String),
 }
 
 /// 版 2 に無い項目は `default` で空として読む。
@@ -448,6 +478,13 @@ impl From<&SessionMode> for ModeDto {
                 from_sha: from_sha.clone(),
                 to_sha: to_sha.clone(),
             },
+            SessionMode::Live { page, root } => ModeDto::Live {
+                page: match page {
+                    LivePage::Url(url) => PageDto::Url(url.clone()),
+                    LivePage::File(path) => PageDto::File(path.clone()),
+                },
+                root: root.to_string_lossy().into_owned(),
+            },
         }
     }
 }
@@ -468,6 +505,13 @@ impl From<ModeDto> for SessionMode {
                 to,
                 from_sha,
                 to_sha,
+            },
+            ModeDto::Live { page, root } => SessionMode::Live {
+                page: match page {
+                    PageDto::Url(url) => LivePage::Url(url),
+                    PageDto::File(path) => LivePage::File(path),
+                },
+                root: PathBuf::from(root),
             },
         }
     }
@@ -968,7 +1012,7 @@ impl MetaDto {
     }
 
     pub(crate) fn is_resumable(&self) -> bool {
-        matches!(self.copy, CopyMetaDto::Ready)
+        matches!(self.info.mode, ModeDto::Live { .. }) || matches!(self.copy, CopyMetaDto::Ready)
     }
 }
 

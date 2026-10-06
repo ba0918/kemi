@@ -147,6 +147,8 @@ impl SessionStore {
             reason,
         })?;
         let copy = match copy {
+            // `--live` のセッションは写しを持たない（R-PAGE-SESSION）。
+            CopyMeta::Pending if info.mode.is_live() => CopyState::Pending,
             CopyMeta::Pending => return Err(SessionError::NotReady { id: id.to_string() }),
             CopyMeta::Unusable(reason) => {
                 return Err(SessionError::Unusable {
@@ -215,18 +217,18 @@ impl SessionStore {
         }
         let mut summaries = Vec::new();
         for id in ids {
-            // 写しの状態が「使える」と書いてあっても `<id>.payload` が無ければ復元
-            // できない（R-SESSION）。有無はディレクトリの一覧だけで決める。
-            if !payloads.contains(&id) {
-                continue;
-            }
             let Ok(meta) = read_meta(&self.path(&id)) else {
                 continue;
             };
             if !meta.is_resumable() {
                 continue;
             }
+            // 写しの状態が「使える」と書いてあっても `<id>.payload` が無ければ復元
+            // できない（R-SESSION）。`--live` は写しを持たない（R-PAGE-SESSION）。
             let (info, seen) = meta.summary();
+            if !info.mode.is_live() && !payloads.contains(&id) {
+                continue;
+            }
             summaries.push(SessionSummary {
                 id: info.id,
                 updated: info.updated,
@@ -373,8 +375,12 @@ impl OpenSession {
         self.info.total_files = total_files;
     }
 
-    /// 復元の対象になるか（写しが完成しているか）。
+    /// 復元の対象になるか。写しが完成しているか、`--live` なら残すべき会話があるか
+    /// （R-PAGE-SESSION）。
     pub fn is_resumable(&self) -> bool {
+        if self.info.mode.is_live() {
+            return !self.deleted && self.state.has_conversation();
+        }
         matches!(self.copy, CopyState::Ready(_))
     }
 
@@ -462,7 +468,13 @@ impl OpenSession {
         }
         // 写しを作れなかった理由を残すためでも、状態が空ならセッションは残さない
         // （R-SESSION）。
-        if self.state.is_empty() && !self.has_copy() {
+        let keep = if self.info.mode.is_live() {
+            // `--live` は見た・折りたたみだけでは残さない（R-PAGE-SESSION）。
+            self.state.has_conversation()
+        } else {
+            !self.state.is_empty() || self.has_copy()
+        };
+        if !keep {
             return self.remove_file();
         }
         self.write_session()?;
@@ -1936,5 +1948,112 @@ mod tests {
 
         assert!(!endpoint_path(&scratch.dir(), stale).exists());
         assert!(endpoint_path(&scratch.dir(), running.id()).exists());
+    }
+
+    fn live_info(id: &str, updated: u128) -> SessionInfo {
+        SessionInfo {
+            mode: SessionMode::Live {
+                page: crate::domain::live::LivePage::Url("http://127.0.0.1:5173/".to_string()),
+                root: PathBuf::from("/tmp/workspace"),
+            },
+            title: "Live review of http://127.0.0.1:5173/".to_string(),
+            ..info(id, updated)
+        }
+    }
+
+    #[test]
+    fn live_session_is_listed_and_opened_without_a_copy() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        assert!(open.is_resumable());
+        let id = open.id().to_string();
+        drop(open);
+
+        let listed = store.list().unwrap();
+        let opened = store.open(&id).unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].mode_label(), "live http://127.0.0.1:5173/");
+        assert_eq!(opened.info().mode, live_info(&id, 0).mode);
+        assert_eq!(opened.state(), &state_with_comment());
+        assert!(!scratch.dir().join(format!("{id}.payload")).exists());
+    }
+
+    #[test]
+    fn live_session_without_a_comment_or_a_message_is_not_kept() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let seen_only = SessionState {
+            comments: Vec::new(),
+            last_comment: 0,
+            last_reply: 0,
+            ..state_with_comment()
+        };
+
+        open.save_state_at(seen_only, 200).unwrap();
+
+        assert!(!open.is_resumable());
+        assert!(
+            !scratch
+                .dir()
+                .join(format!("{}.session", open.id()))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn live_session_with_only_a_message_is_kept() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let message_only = SessionState {
+            messages: vec![Message {
+                id: "m1".to_string(),
+                seq: 1,
+                author: Author::Reviewer,
+                body: "hello".to_string(),
+            }],
+            last_message: 1,
+            last_seq: 1,
+            ..SessionState::default()
+        };
+
+        open.save_state_at(message_only, 200).unwrap();
+
+        assert!(open.is_resumable());
+        assert!(
+            scratch
+                .dir()
+                .join(format!("{}.session", open.id()))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn live_session_roundtrips_a_file_page_and_its_root() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut info = live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100);
+        info.mode = SessionMode::Live {
+            page: crate::domain::live::LivePage::File("docs/mock.html".to_string()),
+            root: PathBuf::from("/tmp/outside-git"),
+        };
+        let mut open = store.create(info.clone()).unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        drop(open);
+
+        let opened = store.open(&info.id).unwrap();
+
+        assert_eq!(opened.info().mode, info.mode);
+        assert_eq!(opened.info().mode.label(""), "live /docs/mock.html");
     }
 }

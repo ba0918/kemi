@@ -6,6 +6,7 @@
 mod api;
 mod highlight;
 mod lan;
+mod live;
 mod session;
 mod units;
 mod watch;
@@ -22,7 +23,8 @@ use tokio::sync::{broadcast, watch as shutdown_watch};
 
 use api::AllowedHosts;
 pub use api::{session_host, session_url};
-pub use lan::{detect_share_address, exposure_warning};
+pub use lan::{detect_share_address, exposure_warning, live_exposure_warning};
+pub use live::{LiveParams, LiveTarget};
 pub use session::Session;
 
 /// ページに配る資産。kemi-server は web の中身を知らない。
@@ -121,6 +123,12 @@ pub enum Notice {
     SessionNotDeleted(SessionError),
     /// ファイルの由来を計算できなかった。由来は「特定できない」になる（R-ORIGIN）。
     OriginUnknown { path: String, reason: String },
+    /// `--live <ファイル>` で、配ったファイルのディレクトリを見張れなかった。そこのファイルを
+    /// 保存してもページは読み込み直さない（R-LIVE）。
+    ServedNotWatched {
+        directory: std::path::PathBuf,
+        reason: String,
+    },
 }
 
 /// [`Notice`] の受け取り先。
@@ -173,6 +181,8 @@ pub struct ServeParams {
     pub share_address: Option<Ipv4Addr>,
     /// エージェント用の API（agent-channel.md）。セッションの無いレビューでは `None`。
     pub agent: Option<AgentParams>,
+    /// `--live` の中継（live.md の R-PAGE-PROXY）。`--live` でなければ `None`。
+    pub live: Option<LiveParams>,
 }
 
 /// エージェント用の API の待ち受け（R-AGENT-LINK）。
@@ -284,6 +294,8 @@ pub(crate) struct AppState {
     pub submit_state: Mutex<SubmitState>,
     /// 凍結のタスクを 1 度だけ始めるための印（R-SESSION）。
     pub freeze_started: std::sync::atomic::AtomicBool,
+    /// `--live` の中継の情報。トークンの URL で cookie を入れ、`api/review` に添える。
+    pub live: Option<Arc<live::LiveInfo>>,
 }
 
 /// レビュー中の実行時エラーで停止する。stdout に JSON を出さず終了コード 2（R-SUBMIT）。
@@ -296,6 +308,9 @@ pub(crate) fn stop_with_error(state: &AppState, message: impl Into<String>) {
     }
     let _ = state.shutdown.send(true);
 }
+
+type ServerFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>;
 
 /// 停止の合図（R-SUBMIT）を待つ future。
 fn stopping(state: &AppState) -> impl std::future::Future<Output = ()> + use<> {
@@ -343,6 +358,13 @@ pub async fn serve(
     // エージェントの返信は短い間に続けて届くことがあるので、取りこぼしにくい長さにする。
     let (events, _) = broadcast::channel(256);
     let (shutdown, _) = shutdown_watch::channel(false);
+    let live = match params.live {
+        Some(live) => {
+            let (listener, info, target) = live::prepare(live).map_err(ServerError::Io)?;
+            Some((listener, Arc::new(info), target))
+        }
+        None => None,
+    };
 
     let state = Arc::new(AppState {
         source: params.source,
@@ -368,6 +390,7 @@ pub async fn serve(
         stop: Mutex::new(None),
         submit_state: Mutex::new(SubmitState::Open),
         freeze_started: std::sync::atomic::AtomicBool::new(false),
+        live: live.as_ref().map(|(_, info, _)| info.clone()),
     });
 
     if let Some(agent) = &params.agent {
@@ -377,19 +400,38 @@ pub async fn serve(
 
     let app = api::router(state.clone());
     let page = axum::serve(listener, app).with_graceful_shutdown(stopping(&state));
-    match params.agent {
-        Some(agent) => {
-            api::start_status_ticker(&state);
-            let agent_app = api::agent_router(state.clone())
-                .into_make_service_with_connect_info::<SocketAddr>();
-            let agent =
-                axum::serve(agent.listener, agent_app).with_graceful_shutdown(stopping(&state));
-            // graceful shutdown は処理中の接続が閉じるまで待つ。待っている kemi wait は
-            // submit の結果を返し終えてから閉じる（R-AGENT-CLI）。
-            tokio::try_join!(page.into_future(), agent.into_future()).map_err(ServerError::Io)?;
-        }
-        None => page.await.map_err(ServerError::Io)?,
+    let mut servers: Vec<ServerFuture> = vec![Box::pin(page.into_future())];
+    if let Some(agent) = params.agent {
+        api::start_status_ticker(&state);
+        let agent_app =
+            api::agent_router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        // graceful shutdown は処理中の接続が閉じるまで待つ。待っている kemi wait は
+        // submit の結果を返し終えてから閉じる（R-AGENT-CLI）。
+        let agent = axum::serve(agent.listener, agent_app).with_graceful_shutdown(stopping(&state));
+        servers.push(Box::pin(agent.into_future()));
     }
+    if let Some((live_listener, info, target)) = live {
+        let live_state = Arc::new(live::LiveState::new(
+            info,
+            target,
+            state.assets.clone(),
+            address.port(),
+            state.notices.clone(),
+        ));
+        let relay = axum::serve(live_listener, live::router(live_state));
+        let stop = stopping(&state);
+        // 中継は開発サーバの長く続く応答（SSE など）を抱えうるので、graceful shutdown で
+        // 接続が閉じるのを待たない。止まる合図で受け付けをやめるだけにする。
+        servers.push(Box::pin(async move {
+            tokio::select! {
+                result = relay.into_future() => result,
+                () = stop => Ok(()),
+            }
+        }));
+    }
+    futures_util::future::try_join_all(servers)
+        .await
+        .map_err(ServerError::Io)?;
 
     let stop = state.stop.lock().expect("stop poisoned").take();
     match stop {

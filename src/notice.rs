@@ -27,6 +27,10 @@ pub fn notice_line(notice: &Notice) -> String {
         Notice::OriginUnknown { path, reason } => {
             format!("kemi: cannot compute the origin of {path}: {reason}")
         }
+        Notice::ServedNotWatched { directory, reason } => format!(
+            "kemi: cannot watch {} for page reloads: {reason}",
+            directory.display()
+        ),
     }
 }
 

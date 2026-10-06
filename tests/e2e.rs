@@ -3064,3 +3064,518 @@ fn a_manifest_named_wait_opens_with_a_path() {
     let digest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(digest["title"], "e2e のレビュー");
 }
+
+// ---- --live（live.md の R-PAGE-MODE と R-PAGE-SESSION） ----
+
+/// 開発サーバの居ないループバックの URL。つながらなくても起動して待つ。
+const LIVE_URL: &str = "http://127.0.0.1:9/app";
+
+impl Kemi {
+    /// コードの見方の最初のファイルの id。`--live` の id はパスから決まる。
+    async fn first_file_id(&self) -> String {
+        self.review_json().await["groups"][0]["files"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// コードの見方の最初のファイルの 1 行目に、コメントを付ける。
+    async fn add_live_comment(&self, body: &str) {
+        let file_id = self.first_file_id().await;
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add", "file_id": file_id, "side": "new",
+                    "start_line": 1, "end_line": 1, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+}
+
+#[test]
+fn live_usage_errors_exit_2_in_english() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    dir.write("notes.txt", "notes\n");
+    let outside = TempDir::new();
+    outside.write("page.html", "<p>outside</p>\n");
+    let outside_page = outside.path.join("page.html");
+    let outside_page = outside_page.to_str().unwrap();
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["--live", "http://example.com/"],
+        vec!["--live", "https://localhost:5173/"],
+        vec!["--live", "http://localhost:5173/", "--worktree"],
+        vec!["--live", "http://localhost:5173/", "--digest"],
+        vec!["--live", "http://localhost:5173/", "--staged"],
+        vec!["--live", "http://localhost:5173/", "--from", "HEAD"],
+        vec!["--live", "http://localhost:5173/", "--base", "."],
+        vec!["--live", "http://localhost:5173/", "--digest-top", "3"],
+        vec!["--live", "http://localhost:5173/", "--result"],
+        vec!["--live", outside_page],
+        vec!["--live", "notes.txt"],
+        vec!["--live", "missing.html"],
+        vec!["--live"],
+        vec!["--worktree", "--live-port", "0"],
+    ];
+    for args in &cases {
+        let output = run(&dir.path, args);
+        assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
+        assert!(output.stdout.is_empty(), "kemi {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.is_empty(), "kemi {args:?}");
+        assert!(!contains_japanese(&stderr), "kemi {args:?}: {stderr}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn live_refuses_a_symlink_whose_target_is_outside_the_served_range() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let outside = TempDir::new();
+    outside.write("page.html", "<p>outside</p>\n");
+    std::os::unix::fs::symlink(outside.path.join("page.html"), dir.path.join("link.html")).unwrap();
+
+    let output = run(&dir.path, &["--live", "link.html"]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[tokio::test]
+async fn live_accepts_an_html_file_outside_git_and_titles_it_by_its_path() {
+    let dir = TempDir::new();
+    dir.write("docs/page.html", "<p>hello</p>\n");
+    let mut kemi = Kemi::spawn(&dir.path, &["--live", "docs/page.html", "--no-open"]);
+    kemi.review_id();
+
+    let review = kemi.review_json().await;
+
+    assert_eq!(review["title"], "Live review of /docs/page.html");
+    assert_eq!(review["groups"].as_array().unwrap().len(), 0, "{review}");
+    assert_eq!(review["approval"], serde_json::json!([]));
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn live_prints_the_url_the_results_and_the_review_lines_in_order() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let state = TempDir::new();
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+
+    // 結果の保存先の行は文言を契約としないので、review の行の前に 1 行あることだけを見る。
+    let mut line = String::new();
+    kemi.stderr.read_line(&mut line).unwrap();
+    assert!(
+        !line.trim().is_empty() && !line.starts_with("kemi: review "),
+        "{line}"
+    );
+    line.clear();
+    kemi.stderr.read_line(&mut line).unwrap();
+    assert!(line.starts_with("kemi: review "), "{line}");
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn live_code_view_inside_git_is_the_working_tree() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--live", LIVE_URL, "--no-open"]);
+
+    let review = kemi.review_json().await;
+
+    assert_eq!(review["title"], format!("Live review of {LIVE_URL}"));
+    assert_eq!(review["groups"][0]["id"], "worktree");
+    assert_eq!(review["groups"][0]["title"], "Working tree changes");
+    assert_eq!(review["groups"][0]["files"][0]["path"], "a.txt");
+    kemi.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_suspend_and_resume_bring_back_the_comment_and_the_message() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    kemi.wait_serving().await;
+    kemi.add_live_comment("fix the wording").await;
+    let response = kemi
+        .post("api/message", serde_json::json!({ "body": "looks close" }))
+        .await;
+    assert_eq!(response.status(), 200);
+    signal(&kemi.child, "-INT");
+    let (status, _, stderr) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+    assert!(
+        stderr.contains(&format!("kemi: resume with: kemi --resume {id}")),
+        "{stderr}"
+    );
+    assert!(
+        !sessions_dir(&state.path)
+            .join(format!("{id}.payload"))
+            .exists()
+    );
+
+    // 保留の間に作業ツリーを変えると、復元したコードの見方は今の作業ツリーを読む。
+    std::fs::write(dir.path.join("b.txt"), "new\n").unwrap();
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let review = resumed.review_json().await;
+
+    assert_eq!(review["title"], format!("Live review of {LIVE_URL}"));
+    assert_eq!(review["comments"][0]["body"], "fix the wording");
+    assert_eq!(review["messages"][0]["body"], "looks close");
+    let paths: Vec<&str> = review["groups"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert!(paths.contains(&"b.txt"), "{review}");
+    resumed.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_session_with_only_seen_and_collapsed_is_not_kept() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let response = kemi
+        .post(
+            "api/state",
+            serde_json::json!({ "file_id": kemi.first_file_id().await, "seen": true, "collapsed": true }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+
+    signal(&kemi.child, "-INT");
+    let (status, _, stderr) = kemi.wait_with_stderr();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(!stderr.contains("resume with"), "{stderr}");
+    assert!(session_dir_files(&state.path).is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_session_is_listed_with_live_and_the_page_url() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    kemi.wait_serving().await;
+    kemi.add_live_comment("keep").await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+
+    let output = run_with_state(&dir.path, &["--resume"], &state.path);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let columns: Vec<&str> = stdout.lines().next().unwrap().split('\t').collect();
+    assert_eq!(columns[0], id);
+    assert_eq!(columns[3], format!("live {LIVE_URL}"));
+}
+
+#[tokio::test]
+async fn wait_returns_the_comment_handed_in_a_live_review() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
+    kemi.wait_agent_status("waiting").await;
+
+    kemi.add_live_comment("rename this").await;
+    kemi.hand().await;
+
+    let (code, stdout, _) = finish_agent(waiting).await;
+    assert_eq!(code, Some(0));
+    let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(answer["events"][0]["type"], "handed");
+    assert_eq!(
+        answer["events"][0]["comments"][0]["comment"]["body"],
+        "rename this"
+    );
+    kemi.kill();
+}
+
+/// 開発サーバの代わり。どの要求にも同じ HTML を返し、1 回ごとに接続を閉じる。
+async fn start_static_dev_server(body: &'static str) -> (u16, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    (port, task)
+}
+
+impl Kemi {
+    /// `kemi: live <url>` の行を待つ。
+    fn live_url(&mut self) -> String {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.stderr.read_line(&mut line).unwrap();
+            assert!(read > 0, "kemi printed no live line");
+            if let Some(url) = line.trim().strip_prefix("kemi: live ") {
+                return url.to_string();
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_page_is_read_through_the_live_url_after_opening_the_review_url() {
+    let (port, _dev) =
+        start_static_dev_server("<html><head></head><body>dev page body</body></html>").await;
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let page = format!("http://127.0.0.1:{port}/start");
+    let mut kemi = Kemi::spawn(&dir.path, &["--live", &page, "--no-open"]);
+    kemi.review_id();
+    let live = kemi.live_url();
+    assert!(live.starts_with("http://127.0.0.1:"), "{live}");
+    assert!(live.ends_with("/start"), "{live}");
+
+    let client = reqwest::Client::new();
+    let refused = client.get(&live).send().await.unwrap();
+    let opened = client.get(&kemi.url).send().await.unwrap();
+    let cookie = opened
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let body = client
+        .get(&live)
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert_eq!(refused.status(), 403);
+    assert!(body.contains("dev page body"), "{body}");
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn live_bind_wildcard_warns_after_the_url_with_the_lan_prefix() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi = Kemi::spawn(
+        &dir.path,
+        &["--live", LIVE_URL, "--bind", "0.0.0.0", "--no-open"],
+    );
+
+    let mut warning = String::new();
+    kemi.stderr.read_line(&mut warning).unwrap();
+
+    assert!(
+        warning.starts_with("kemi: exposed on the LAN;"),
+        "{warning}"
+    );
+    kemi.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resume_of_a_live_review_accepts_a_live_port_and_listens_there() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    kemi.wait_serving().await;
+    kemi.add_live_comment("keep").await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = free.local_addr().unwrap().port();
+    drop(free);
+
+    let port_text = port.to_string();
+    let mut resumed = Kemi::spawn_with_state(
+        &dir.path,
+        &["--resume", &id, "--live-port", &port_text, "--no-open"],
+        &state.path,
+    );
+
+    assert_eq!(resumed.live_url(), format!("http://127.0.0.1:{port}/app"));
+    resumed.kill();
+}
+
+/// レビューの URL を開いて中継用の cookie を受け取り、中継の URL を読む。
+async fn read_live_page(kemi: &Kemi, live: &str) -> (u16, String) {
+    let client = reqwest::Client::new();
+    let opened = client.get(&kemi.url).send().await.unwrap();
+    let cookie = opened.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let response = client
+        .get(live)
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.text().await.unwrap())
+}
+
+#[tokio::test]
+async fn live_file_outside_git_is_read_through_the_live_url() {
+    let dir = TempDir::new();
+    dir.write(
+        "site/page.html",
+        "<html><head></head><body>local file page</body></html>",
+    );
+    let mut kemi = Kemi::spawn(&dir.path, &["--live", "site/page.html", "--no-open"]);
+    kemi.review_id();
+    let live = kemi.live_url();
+    assert!(live.ends_with("/site/page.html"), "{live}");
+
+    let (status, body) = read_live_page(&kemi, &live).await;
+
+    assert_eq!(status, 200);
+    assert!(body.contains("local file page"), "{body}");
+    kemi.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_file_review_resumed_after_the_file_is_gone_says_so_and_waits() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    dir.write("page.html", "<p>page</p>");
+    let mut kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &["--live", "page.html", "--no-open"],
+        &state.path,
+    );
+    let id = kemi.review_id();
+    kemi.wait_serving().await;
+    kemi.add_live_comment("keep").await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+    std::fs::remove_file(dir.path.join("page.html")).unwrap();
+
+    let mut resumed =
+        Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let live = resumed.live_url();
+    let (status, body) = read_live_page(&resumed, &live).await;
+
+    assert_eq!(status, 404, "{body}");
+    resumed.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_resume_keeps_comments_and_seen_marks_on_the_same_files() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    std::fs::write(dir.path.join("0.txt"), "zero\n").unwrap();
+    git(&dir.path, &["add", "0.txt"]);
+    git(&dir.path, &["commit", "-q", "-m", "zero"]);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    let review = kemi.review_json().await;
+    let id_of = |review: &serde_json::Value, path: &str| {
+        review["groups"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["path"] == path)
+            .map(|file| file["id"].as_str().unwrap().to_string())
+            .unwrap()
+    };
+    let a = id_of(&review, "a.txt");
+    kemi.post(
+        "api/comment",
+        serde_json::json!({
+            "op": "add", "file_id": a, "side": "new",
+            "start_line": 2, "end_line": 2, "body": "on a.txt"
+        }),
+    )
+    .await;
+    kemi.post(
+        "api/state",
+        serde_json::json!({ "file_id": a, "seen": true }),
+    )
+    .await;
+    signal(&kemi.child, "-INT");
+    kemi.wait_with_stderr();
+    // 保留の間に、名前の順で前に来るファイルが変わる。
+    std::fs::write(dir.path.join("0.txt"), "ZERO\n").unwrap();
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let review = resumed.review_json().await;
+    let a = id_of(&review, "a.txt");
+    let zero = id_of(&review, "0.txt");
+    let file = resumed.get_json(&format!("api/file/{a}")).await;
+    let other = resumed.get_json(&format!("api/file/{zero}")).await;
+
+    assert_eq!(file["comments"][0]["body"], "on a.txt", "{file}");
+    assert_eq!(other["comments"].as_array().unwrap().len(), 0, "{other}");
+    let seen = |path: &str| {
+        review["groups"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["path"] == path)
+            .unwrap()["seen"]
+            .clone()
+    };
+    assert_eq!(seen("a.txt"), true);
+    assert_eq!(seen("0.txt"), false);
+    resumed.kill();
+}

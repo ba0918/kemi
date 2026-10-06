@@ -3,6 +3,7 @@
 // 「Hand to agent」、状態の表示。サーバからの通知（返信・発言・状態）は届いたらその場で
 // 取り込み、見ている位置は動かさない（R-LIVE の例外）。
 
+import { actions } from "../actions.js";
 import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { conversationShown, state } from "../state.js";
@@ -185,6 +186,10 @@ export async function handToAgent() {
     return;
   }
   try {
+    // 渡すものがあるときだけ。`--live` ではここでスナップショットを取り終えてから渡す。
+    if (state.agent.unhanded > 0) {
+      await actions.beforeHand();
+    }
     const answer = await api.hand();
     showToast(answer.handed ? "Handed to the agent" : "Nothing new to hand to the agent");
   } catch (error) {

@@ -26,7 +26,10 @@ impl FrozenSource {
             SessionMode::Range {
                 from_sha, to_sha, ..
             } => Some((from_sha.clone(), to_sha.clone())),
-            SessionMode::Worktree | SessionMode::Staged | SessionMode::Manifest => None,
+            SessionMode::Worktree
+            | SessionMode::Staged
+            | SessionMode::Manifest
+            | SessionMode::Live { .. } => None,
         };
         FrozenSource {
             workspace: info.workspace.clone(),

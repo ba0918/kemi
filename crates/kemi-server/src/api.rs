@@ -6,7 +6,9 @@ mod agent;
 mod channel;
 mod comments;
 mod file;
+mod mock;
 mod rendered;
+mod snapshot;
 mod submit;
 
 use std::convert::Infallible;
@@ -14,7 +16,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -35,7 +37,9 @@ pub(crate) use self::channel::start_status_ticker;
 use self::channel::{agent_json, hand_api, message_api};
 use self::comments::comment_api;
 use self::file::file_api;
+use self::mock::{assign_mock, list_mocks, mock_file};
 use self::rendered::{render_file, repository_image, review_image};
+use self::snapshot::{SNAPSHOT_BODY_LIMIT, get_snapshot, list_snapshots, take_snapshot};
 use self::submit::submit_api;
 use crate::session::{Session, page_comment_json, page_message_json, persist, start_freeze};
 use crate::units::{self, Unavailable};
@@ -61,8 +65,22 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/state", post(state_api))
         .route("/s/{token}/api/submit", post(submit_api))
         .route("/s/{token}/api/events", get(events))
+        .route(
+            "/s/{token}/api/snapshot",
+            post(take_snapshot).layer(axum::extract::DefaultBodyLimit::max(SNAPSHOT_BODY_LIMIT)),
+        )
+        .route("/s/{token}/api/snapshots", get(list_snapshots))
+        .route("/s/{token}/api/snapshot/{id}", get(get_snapshot))
+        .route("/s/{token}/api/mock", post(assign_mock))
+        .route("/s/{token}/api/mocks", get(list_mocks))
         .with_state(state.clone())
-        .layer(middleware::from_fn_with_state(state, guard))
+        .layer(middleware::from_fn_with_state(state.clone(), guard))
+        // モックはトークンの外で配る（R-PAGE-MOCK）。トークンの検証の層の外に置く。
+        .merge(
+            Router::new()
+                .route("/m/{secret}/{*path}", get(mock_file))
+                .with_state(state),
+        )
 }
 
 /// token・Host・Origin の検証は本文の解釈より先に行う。
@@ -130,6 +148,13 @@ impl ApiError {
     fn conflict(message: impl Into<String>) -> Self {
         ApiError {
             status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
+    fn too_large(message: impl Into<String>) -> Self {
+        ApiError {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
             message: message.into(),
         }
     }
@@ -245,7 +270,19 @@ async fn index(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
 ) -> Result<Response, ApiError> {
-    serve_asset(&state, "index.html")
+    let mut response = serve_asset(&state, "index.html")?;
+    // 枠に出すモックやスナップショットへ、トークンの URL を referrer として渡さない（R-PAGE-MOCK）。
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    // トークンの URL を開いた人にだけ、中継のポートを通す cookie を入れる（R-PAGE-PROXY）。
+    if let Some(live) = &state.live {
+        response
+            .headers_mut()
+            .insert(header::SET_COOKIE, live.set_cookie());
+    }
+    Ok(response)
 }
 
 async fn asset(
@@ -310,6 +347,7 @@ async fn review(
         body
     };
     body["agent"] = agent_json(&state);
+    body["live"] = state.live.as_ref().map_or(Value::Null, |live| live.json());
     // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
     units::start_if_waiting(&state);
     // 応答を返した後に、写しの凍結を裏で始める（R-SESSION）。
