@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { diffDescriptions } from "./live-diff.js";
+import { diffDescriptions, marksOf } from "./live-diff.js";
 
 /**
  * @typedef {{ tag: string, id?: string, cls?: string, text?: string, box: number[], style?: Record<string, string>, children?: Spec[] }} Spec
@@ -172,4 +172,30 @@ test("a changed text is a main change", () => {
 test("two descriptions of the same page have no changes", () => {
   const description = page([list(["one", "two"]), { tag: "p", text: "end", box: [0, 40, 100, 20] }]);
   assert.deepEqual(diffDescriptions(description, structuredClone(description)), []);
+});
+
+test("every changed element gets one mark: main changes on the page, removed ones on the snapshot, shifted ones apart", () => {
+  const before = page([
+    { tag: "p", cls: "price", text: "$89", box: [0, 0, 100, 20], style: { color: "rgb(200, 0, 0)" } },
+    { tag: "p", text: "gone", box: [0, 20, 100, 20] },
+    { tag: "p", text: "stays", box: [0, 40, 100, 20] },
+  ]);
+  const now = page([
+    { tag: "p", cls: "price", text: "$79", box: [0, 0, 100, 20], style: { color: "rgb(0, 0, 200)" } },
+    { tag: "div", text: "new", box: [0, 20, 100, 30] },
+    { tag: "p", text: "stays", box: [0, 50, 100, 20] },
+  ]);
+  const marks = marksOf(diffDescriptions(before, now));
+  const price = indexOfText(now, "$79");
+  const added = indexOfText(now, "new");
+  const stays = indexOfText(now, "stays");
+  assert.deepEqual(
+    marks.now.filter((mark) => [price, added, stays].includes(mark.index)).sort((x, y) => x.index - y.index),
+    [
+      { index: price, kind: "main" },
+      { index: added, kind: "added" },
+      { index: stays, kind: "shifted" },
+    ],
+  );
+  assert.deepEqual(marks.before, [{ index: indexOfText(before, "gone"), kind: "removed" }]);
 });

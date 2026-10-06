@@ -38,6 +38,12 @@
  * }} Change
  */
 
+/**
+ * 印 1 つ。`index` は記述の中の要素の番号。主な変化・増えた・ずれただけは今のページの側に、
+ * 消えたは比べる相手の側に付ける。
+ * @typedef {{ index: number, kind: "main" | "added" | "shifted" | "removed" }} Mark
+ */
+
 /** 位置と大きさの差のうち、これ以下は同じとみなす（小数の丸めの差を拾わない）。 */
 const BOX_TOLERANCE = 0.5;
 
@@ -383,4 +389,34 @@ function excerpt(side, index) {
     stack.push(...[...side.children[current]].reverse());
   }
   return text.length > EXCERPT_LENGTH ? `${text.slice(0, EXCERPT_LENGTH - 1)}…` : text;
+}
+
+/** 1 つの要素に変化が重なるときに残す印の順（前が強い）。 */
+const MARK_ORDER = ["main", "added", "removed", "shifted"];
+
+/**
+ * 変化の一覧から、要素ごとに 1 つの印を作る。1 つの要素に見た目と文字の両方の変化があっても
+ * 印は 1 つ。
+ * @param {Change[]} changes
+ * @returns {{ now: Mark[], before: Mark[] }}
+ */
+export function marksOf(changes) {
+  /** @type {Map<number, Mark["kind"]>} */
+  const now = new Map();
+  /** @type {Map<number, Mark["kind"]>} */
+  const before = new Map();
+  for (const change of changes) {
+    const kind = change.kind === "visual" || change.kind === "text" ? "main" : change.kind;
+    const side = kind === "removed" ? before : now;
+    const index = kind === "removed" ? change.before : change.now;
+    if (index === null) {
+      continue;
+    }
+    const held = side.get(index);
+    if (held === undefined || MARK_ORDER.indexOf(kind) < MARK_ORDER.indexOf(held)) {
+      side.set(index, kind);
+    }
+  }
+  const list = (/** @type {Map<number, Mark["kind"]>} */ marks) => [...marks].map(([index, kind]) => ({ index, kind }));
+  return { now: list(now), before: list(before) };
 }
