@@ -21,6 +21,12 @@ pub fn notice_line(notice: &Notice) -> String {
             };
             format!("kemi: comment {path} {} {location}", side.as_str())
         }
+        Notice::PageCommentAdded { url, width, places } => {
+            format!("kemi: comment page {url} {width} {places} places")
+        }
+        Notice::CommentImageNotSaved(error) => {
+            format!("kemi: could not save the comment image: {error}")
+        }
         Notice::ResultNotSaved(error) => format!("kemi: could not save the result file: {error}"),
         Notice::SessionNotSaved(error) => format!("kemi: could not save the session: {error}"),
         Notice::SessionNotDeleted(error) => format!("kemi: could not delete the session: {error}"),

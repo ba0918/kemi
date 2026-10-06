@@ -54,6 +54,11 @@
  *   toggleSeen: (file: import("./model.js").FileEntry) => void,
  *   switchUnit: (unit: string, jump: UnitJump | null) => void,
  *   tapLine: (side: "old" | "new", number: number) => void,
+ *   showPageComment: (comment: any) => void,
+ *   pageCommentsChanged: () => void,
+ *   editPageComment: (id: string | null) => void,
+ *   keepPageCommentDraft: (text: string) => void,
+ *   savePageCommentBody: (comment: any, body: string) => void,
  * }} Actions
  */
 

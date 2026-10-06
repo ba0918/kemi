@@ -65,7 +65,41 @@
   `author` is `reviewer` (the person) or `agent` (you, through `kemi reply`). `variants`,
   `chosen`, and `applied` are `[]`, `null`, and `null` outside a review of a running page.
 - `resolved` is `true` when the person closed the thread. Only the person resolves.
-- `page` is `null` outside a review of a running page.
+- `page` is `null` except on a comment the person left on a running page (`kemi --live`). Such a
+  comment has `group_id` `page` and `group_title` `Page`; its `path`, `side`, `start_line`,
+  `end_line`, and `suggestion` are `null`, `quote` is `[]`, and `outdated` is always `false`.
+  Its `page` is:
+
+  ```json
+  {
+    "url": "/products?x=1",
+    "width": 390,
+    "places": [
+      {
+        "n": 1,
+        "kind": "element",
+        "points": [],
+        "elements": [{"selector": "#buy", "text": "Buy", "rect": {"x": 0, "y": 120, "w": 200, "h": 60}}]
+      }
+    ],
+    "image": null
+  }
+  ```
+
+  `url` is the path and query the person was viewing, and `width` the viewport width in CSS
+  pixels. `places` are where the comment points, in order of `n`; the body refers to them by
+  number, and numbers may skip (a place removed while writing keeps its number gone). `kind` is
+  `element` (a chosen element, `points` is `[]`), `arrow` (the points of the arrow, and the
+  element at its head), or `pen` (the points of the line, and up to five elements that overlap
+  the area it encloses, even partly, largest overlap first; elements that contain the whole line, such as a wrapper around the
+  page, are left out, and a line drawn inside one element names that innermost element). Each element carries a `selector`, its `text`, and its `rect`; all
+  coordinates are CSS pixels of the page, independent of scrolling. For an element inside an
+  open shadow root, `selector` joins the host's selector and the selector inside the shadow root
+  with ` >>> ` (for example `#host >>> p:nth-of-type(2)`), which is not CSS: query the host in the
+  document, then its `shadowRoot` with the part after ` >>> ` (repeated for nested roots).
+  `image` is the absolute path of a PNG of the area with the places drawn on it, given only in
+  what `kemi wait` returns; in the result it is always `null`, because the file is removed with
+  the session on submit.
 - `messages` are notes on the whole review rather than on one comment, in creation order, with
   the same `author` values; `[]` when there are none.
 - `comments` come in creation order. `approval` is returned exactly as it was given, and is `[]`

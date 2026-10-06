@@ -545,6 +545,10 @@ export function collapseDefault(file, collapsedMap) {
  * @returns {string}
  */
 export function commentLabel(comment) {
+  if (comment.page) {
+    const count = comment.page.places.length;
+    return `${comment.page.width}px · ${count} ${count === 1 ? "place" : "places"}`;
+  }
   if (comment.start_line === null || comment.start_line === undefined) {
     return "Whole file";
   }
@@ -556,6 +560,21 @@ export function commentLabel(comment) {
   return single
     ? `${side} ${comment.start_line}`
     : `${side} ${comment.start_line}–${comment.end_line}`;
+}
+
+/**
+ * ページへのコメント（live.md の R-PAGE-COMMENT）を付けた表示幅。今見ているページと表示幅で付けたもの
+ * （とページへのコメントでないもの）は null。別の幅で付けたものには付けた幅を出し、押すとそこへ移る。
+ * @param {any} comment
+ * @param {{ page: string, width: number } | null} shown 今見ているページと表示幅（ページの見方でなければ null）
+ * @returns {number | null}
+ */
+export function pageCommentElsewhere(comment, shown) {
+  if (!comment.page) {
+    return null;
+  }
+  const here = shown !== null && shown.page === comment.page.url && shown.width === comment.page.width;
+  return here ? null : comment.page.width;
 }
 
 /**

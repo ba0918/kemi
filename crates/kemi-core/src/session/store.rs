@@ -274,6 +274,7 @@ impl SessionStore {
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         remove_if_present(&self.path(id))?;
         remove_if_present(&self.payload_path(id))?;
+        remove_dir_if_present(&files_path(&self.dir, id))?;
         remove_if_present(&super::endpoint_path(&self.dir, id))
     }
 
@@ -405,7 +406,30 @@ impl OpenSession {
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         self.remove_file()?;
         self.remove_payload_file()?;
+        remove_dir_if_present(&files_path(&self.dir, &self.info.id))?;
         remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))
+    }
+
+    /// セッションに添えるファイル（コメントの画像。live.md の R-PAGE-SESSION）を `<id>.files/` に
+    /// 書き、その絶対パスを返す。名前は呼ぶ側（サーバ）が決めたもので、要求の値から組まない。
+    pub fn save_file(&self, name: &str, bytes: &[u8]) -> Result<PathBuf, SessionError> {
+        if self.deleted {
+            return Err(SessionError::Io {
+                path: files_path(&self.dir, &self.info.id),
+                source: std::io::Error::other("the session is already deleted"),
+            });
+        }
+        let dir = files_path(&self.dir, &self.info.id);
+        create_private_dir(&dir)?;
+        let path = std::path::absolute(dir.join(name)).map_err(|source| SessionError::Io {
+            path: dir.join(name),
+            source,
+        })?;
+        write_private_file(&path, bytes).map_err(|source| SessionError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        Ok(path)
     }
 
     pub(crate) fn save_state_at(
@@ -475,7 +499,8 @@ impl OpenSession {
             !self.state.is_empty() || self.has_copy()
         };
         if !keep {
-            return self.remove_file();
+            self.remove_file()?;
+            return remove_dir_if_present(&files_path(&self.dir, &self.info.id));
         }
         self.write_session()?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
@@ -581,6 +606,23 @@ pub(crate) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), 
 }
 
 /// あれば消す。無いのは成功と同じに扱う。
+/// セッションに添えたファイルの置き場所（`<id>.files/`）。
+fn files_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.files"))
+}
+
+/// ディレクトリを中身ごと消す。無ければ何もしない。
+fn remove_dir_if_present(path: &Path) -> Result<(), SessionError> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(SessionError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 pub(crate) fn remove_if_present(path: &Path) -> Result<(), SessionError> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -663,6 +705,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
             // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
             let _ = std::fs::remove_file(session_path(dir, &id));
             let _ = std::fs::remove_file(payload_path(dir, &id));
+            let _ = std::fs::remove_dir_all(files_path(dir, &id));
         }
     }
 }
@@ -896,14 +939,8 @@ mod tests {
         crate::domain::review::Comment {
             id: "c1".to_string(),
             seq: 0,
-            file_id: "f1".to_string(),
             group_id: "all".to_string(),
             group_title: "final".to_string(),
-            path: "src/a.rs".to_string(),
-            side: Side::New,
-            start_line: Some(1),
-            end_line: Some(2),
-            quote: vec!["one".to_string(), "two".to_string()],
             body: "please change".to_string(),
             replies: vec![Reply {
                 id: "r1".to_string(),
@@ -913,9 +950,17 @@ mod tests {
             }],
             resolved: true,
             outdated: false,
-            content_hash: "hash".to_string(),
-            suggestion: Some(Suggestion {
-                replacement: "replaced".to_string(),
+            target: crate::domain::review::CommentTarget::File(crate::domain::review::FileTarget {
+                file_id: "f1".to_string(),
+                path: "src/a.rs".to_string(),
+                side: Side::New,
+                start_line: Some(1),
+                end_line: Some(2),
+                quote: vec!["one".to_string(), "two".to_string()],
+                content_hash: "hash".to_string(),
+                suggestion: Some(Suggestion {
+                    replacement: "replaced".to_string(),
+                }),
             }),
         }
     }
@@ -1011,6 +1056,168 @@ mod tests {
         assert!(opened.is_resumable());
         assert!(scratch.dir().join(format!("{id}.session")).exists());
         assert!(scratch.dir().join(format!("{id}.payload")).exists());
+    }
+
+    fn page_comment() -> crate::domain::review::Comment {
+        use crate::domain::review::{
+            CommentTarget, PageTarget, Place, PlaceElement, PlaceKind, Point, Rect,
+        };
+        crate::domain::review::Comment {
+            id: "c2".to_string(),
+            seq: 3,
+            group_id: "page".to_string(),
+            group_title: "Page".to_string(),
+            body: "1 is too large".to_string(),
+            replies: Vec::new(),
+            resolved: false,
+            outdated: false,
+            target: CommentTarget::Page(PageTarget {
+                url: "/products?x=1".to_string(),
+                width: 390,
+                places: vec![
+                    Place {
+                        n: 1,
+                        kind: PlaceKind::Element,
+                        points: Vec::new(),
+                        elements: vec![PlaceElement {
+                            selector: "#buy".to_string(),
+                            text: "Buy".to_string(),
+                            rect: Rect {
+                                x: 0.0,
+                                y: 120.5,
+                                w: 200.0,
+                                h: 60.0,
+                            },
+                        }],
+                    },
+                    Place {
+                        n: 3,
+                        kind: PlaceKind::Pen,
+                        points: vec![Point { x: 1.0, y: 2.0 }, Point { x: 3.5, y: 4.0 }],
+                        elements: Vec::new(),
+                    },
+                ],
+                image: Some("/state/kemi/sessions/X.files/c2.png".to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn session_roundtrips_a_page_comment_with_its_places_and_image() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let state = SessionState {
+            comments: vec![comment(), page_comment()],
+            last_comment: 2,
+            ..SessionState::default()
+        };
+        open.save_state_at(state.clone(), 200).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+
+        let opened = store.open(&id).unwrap();
+
+        assert_eq!(opened.state(), &state);
+    }
+
+    fn files_dir(scratch: &Scratch, id: &str) -> PathBuf {
+        scratch.dir().join(format!("{id}.files"))
+    }
+
+    #[test]
+    fn a_session_file_is_written_into_its_files_directory_for_the_owner_only() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+
+        let path = open.save_file("c1.png", b"png").unwrap();
+
+        assert_eq!(path, files_dir(&scratch, open.id()).join("c1.png"));
+        assert!(path.is_absolute());
+        assert_eq!(std::fs::read(&path).unwrap(), b"png");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(&files_dir(&scratch, open.id())), 0o700);
+        }
+    }
+
+    #[test]
+    fn deleting_a_session_removes_its_files_directory() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.save_file("c1.png", b"png").unwrap();
+        let id = open.id().to_string();
+
+        open.delete().unwrap();
+
+        assert!(!files_dir(&scratch, &id).exists());
+    }
+
+    #[test]
+    fn a_live_session_whose_conversation_is_gone_removes_its_files_directory() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.save_file("c1.png", b"png").unwrap();
+        let id = open.id().to_string();
+
+        open.save_state_at(SessionState::default(), 300).unwrap();
+
+        assert!(!scratch.dir().join(format!("{id}.session")).exists());
+        assert!(!files_dir(&scratch, &id).exists());
+    }
+
+    #[test]
+    fn a_session_removed_by_the_cleanup_loses_its_files_directory() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        for (id, updated) in [
+            ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
+            ("01HF7YAT00BBBBBBBBBBBBBBBB", 200),
+        ] {
+            let mut open = store.create(live_info(id, updated)).unwrap();
+            open.save_state_at(state_with_comment(), updated).unwrap();
+            open.save_file("c1.png", b"png").unwrap();
+            drop(open);
+        }
+
+        cleanup(&scratch.dir(), 1, u64::MAX);
+
+        assert!(!files_dir(&scratch, "01HF7YAT00AAAAAAAAAAAAAAAA").exists());
+        assert!(files_dir(&scratch, "01HF7YAT00BBBBBBBBBBBBBBBB").exists());
+    }
+
+    #[test]
+    fn deleting_a_stored_session_by_id_removes_its_files_directory() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.save_file("c1.png", b"png").unwrap();
+        let id = open.id().to_string();
+        drop(open);
+
+        store.delete(&id).unwrap();
+
+        assert!(!files_dir(&scratch, &id).exists());
     }
 
     #[test]

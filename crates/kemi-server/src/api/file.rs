@@ -202,7 +202,7 @@ fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
     session
         .comments
         .iter()
-        .filter(|comment| comment.file_id == file_id)
+        .filter(|comment| comment.file().is_some_and(|file| file.file_id == file_id))
         .map(page_comment_json)
         .collect()
 }
@@ -211,16 +211,17 @@ fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
 fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u32>) {
     let session = state.session.lock().expect("session poisoned");
     let (mut old, mut new) = (HashSet::new(), HashSet::new());
-    for comment in session
+    for file in session
         .comments
         .iter()
-        .filter(|comment| comment.file_id == file_id)
+        .filter_map(|comment| comment.file())
+        .filter(|file| file.file_id == file_id)
     {
-        let Some(start) = comment.start_line else {
+        let Some(start) = file.start_line else {
             continue;
         };
-        let end = comment.end_line.unwrap_or(start);
-        match comment.side {
+        let end = file.end_line.unwrap_or(start);
+        match file.side {
             Side::Old => old.extend(start..=end),
             Side::New => new.extend(start..=end),
         }
@@ -230,17 +231,15 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
     let mut session = state.session.lock().expect("session poisoned");
-    for comment in session
-        .comments
-        .iter_mut()
-        .filter(|comment| comment.file_id == file_id)
-    {
-        let lines = match comment.side {
+    for comment in session.comments.iter_mut() {
+        let Some(file) = comment.file().filter(|file| file.file_id == file_id) else {
+            continue;
+        };
+        let lines = match file.side {
             Side::Old => old_lines,
             Side::New => new_lines,
         };
-        comment.outdated =
-            comment::is_outdated(&comment.content_hash, &comment::content_hash(lines));
+        comment.outdated = comment::is_outdated(&file.content_hash, &comment::content_hash(lines));
     }
 }
 

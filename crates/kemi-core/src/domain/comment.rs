@@ -1,6 +1,6 @@
 //! コメントと suggestion（R-COMMENT）の検証と状態。
 
-use crate::domain::review::{LineRange, Side};
+use crate::domain::review::{LineRange, Place, Side};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentError {
@@ -42,6 +42,29 @@ pub fn validate_comment(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceError {
+    NoPlace,
+    NumberFromOne,
+    DuplicateNumber(u32),
+}
+
+/// ページへのコメントの場所の規約（live.md の R-PAGE-COMMENT）を検証し、番号の順に並べて返す。
+/// 場所は 1 つ以上で、番号は 1 から、重ならない（消した番号は飛んでよい）。
+pub fn validate_places(mut places: Vec<Place>) -> Result<Vec<Place>, PlaceError> {
+    if places.is_empty() {
+        return Err(PlaceError::NoPlace);
+    }
+    places.sort_by_key(|place| place.n);
+    if places[0].n == 0 {
+        return Err(PlaceError::NumberFromOne);
+    }
+    if let Some(pair) = places.windows(2).find(|pair| pair[0].n == pair[1].n) {
+        return Err(PlaceError::DuplicateNumber(pair[0].n));
+    }
+    Ok(places)
+}
+
 /// 指定した行レンジの行テキストを取り出す。範囲外は黙って縮めない。
 pub fn quote_for(lines: &[String], range: LineRange) -> Result<Vec<String>, CommentError> {
     if range.start < 1 || range.end < range.start {
@@ -74,7 +97,7 @@ pub fn is_outdated(created_hash: &str, current_hash: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::review::{LineRange, Side};
+    use crate::domain::review::{LineRange, Place, PlaceKind, Side};
 
     fn lines(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
@@ -147,6 +170,51 @@ mod tests {
             content_hash(&lines(&["a", "b"])),
             content_hash(&lines(&["a", "c"]))
         );
+    }
+
+    fn place(n: u32) -> Place {
+        Place {
+            n,
+            kind: PlaceKind::Element,
+            points: Vec::new(),
+            elements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn page_comment_without_a_place_is_rejected() {
+        assert_eq!(validate_places(Vec::new()), Err(PlaceError::NoPlace));
+    }
+
+    #[test]
+    fn page_comment_places_sharing_a_number_are_rejected() {
+        assert_eq!(
+            validate_places(vec![place(1), place(2), place(1)]),
+            Err(PlaceError::DuplicateNumber(1))
+        );
+    }
+
+    #[test]
+    fn page_comment_place_numbers_start_at_one() {
+        assert_eq!(
+            validate_places(vec![place(0)]),
+            Err(PlaceError::NumberFromOne)
+        );
+    }
+
+    #[test]
+    fn page_comment_places_are_kept_in_number_order_with_gaps() {
+        let places = validate_places(vec![place(3), place(1)]).unwrap();
+        let numbers: Vec<u32> = places.iter().map(|place| place.n).collect();
+        assert_eq!(numbers, vec![1, 3]);
+    }
+
+    #[test]
+    fn place_kinds_are_element_arrow_and_pen_only() {
+        assert_eq!(PlaceKind::parse("element"), Some(PlaceKind::Element));
+        assert_eq!(PlaceKind::parse("arrow"), Some(PlaceKind::Arrow));
+        assert_eq!(PlaceKind::parse("pen"), Some(PlaceKind::Pen));
+        assert_eq!(PlaceKind::parse("circle"), None);
     }
 
     #[test]

@@ -52,6 +52,9 @@ document with everything that happened since the previous `kemi wait` returned:
   after printing them and before the review learns they were received, the next `kemi wait`
   returns them again. Tell repeats apart by the comment, reply, and message `id`s.
 - A comment, reply, or message has the same shape as in the result (see the result reference).
+  The one difference: on a comment left on a running page, `page.image` is the absolute path of
+  the PNG with the places drawn on it (or `null` when it could not be made). Read it before the
+  submit; the file goes away with the session.
 - `added` is a comment you have not seen; `edited` is one you were handed before whose text
   changed since; `deleted` carries only the id, so drop any work on it.
 - `replies` are the person's new replies in threads, and `messages` their new notes on the

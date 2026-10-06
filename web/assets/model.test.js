@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  pageCommentElsewhere,
   buildTree,
   collapseDefault,
   commentLabel,
@@ -363,6 +364,15 @@ test("commentLabel_marks_file_wide_and_ranges", () => {
   assert.equal(commentLabel({ side: "new", start_line: null, end_line: null }), "Whole file");
   assert.equal(commentLabel({ side: "new", start_line: 3, end_line: 3 }), "New side 3");
   assert.equal(commentLabel({ side: "old", start_line: 4, end_line: 6 }), "Old side 4–6");
+});
+
+test("a page comment left at another page or width tells the width to switch to", () => {
+  const comment = { page: { url: "/cart", width: 390, places: [] } };
+  assert.equal(pageCommentElsewhere(comment, { page: "/cart", width: 390 }), null);
+  assert.equal(pageCommentElsewhere(comment, { page: "/cart", width: 1280 }), 390);
+  assert.equal(pageCommentElsewhere(comment, { page: "/", width: 390 }), 390);
+  assert.equal(pageCommentElsewhere(comment, null), 390);
+  assert.equal(pageCommentElsewhere({ page: null }, { page: "/", width: 390 }), null);
 });
 
 test("suggestionAllowed_only_on_new_side", () => {

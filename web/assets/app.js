@@ -56,7 +56,9 @@ import {
   closeConversation,
   closeThread,
   editFromThread,
+  editPageComment,
   goToComment,
+  keepPageCommentDraft,
   keepReplyDraft,
   loadCommitGroups,
   markLoaded,
@@ -64,6 +66,7 @@ import {
   openConversation,
   openThread,
   reloadThreadLines,
+  savePageCommentBody,
   setThreadFolded,
   showNewest,
   startResize,
@@ -167,6 +170,10 @@ function handleKey(event) {
 /** @type {() => Promise<void>} */
 let beforeHand = async () => {};
 
+/** ページへのコメントをページの見方で見せる・変わったコメントを描き直す。`--live` のレビューでだけ入れる。 */
+/** @type {{ show: (comment: any) => void, changed: () => void }} */
+let pageComments = { show: () => {}, changed: () => {} };
+
 async function boot() {
   // サーバはつながる前の通知を送り直さないので、先に通知につながってから中身を読む（読んだ後、
   // つながる前に起きたことを取りこぼさない）。読んだ中身を描き終えるまでに届いた通知は、
@@ -217,9 +224,10 @@ async function boot() {
     }
     // ページの見方は `--live` のレビューでだけ読み込む（R-VERIFY）。modulepreload にも載せない。
     if (state.review?.live) {
-      const { startLive, captureBeforeHand } = await import("./features/live.js");
+      const { startLive, captureBeforeHand, showPageComment, refreshPageComments } = await import("./features/live.js");
       startLive(state.review.live);
       beforeHand = captureBeforeHand;
+      pageComments = { show: showPageComment, changed: refreshPageComments };
     }
   } catch (error) {
     failed = true;
@@ -324,6 +332,11 @@ bindActions({
   toggleOrigin,
   toggleOriginReason,
   toggleSeen,
+  showPageComment: (comment) => pageComments.show(comment),
+  pageCommentsChanged: () => pageComments.changed(),
+  editPageComment,
+  keepPageCommentDraft,
+  savePageCommentBody: (comment, body) => void savePageCommentBody(comment, body),
 });
 
 applyTheme();

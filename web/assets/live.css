@@ -16,8 +16,8 @@ body[data-live-view="code"][data-live-code="false"] #main > :not(.lv-band):not(#
   display: none !important;
 }
 
-/* 隠れた動いているページのスナップショットを取る間だけ、見えず操作も受けないまま並べる（features/live.js の
-   whileLaidOut）。git の外で隠す上の規則にも勝つよう、id まで書いて後ろに置く。 */
+/* スナップショットやコメントの画像を作る間は、動いているページが隠れていても隠れても、見えず操作も受けないまま並べる
+   （features/live.js の whileLaidOut）。git の外で隠す上の規則にも勝つよう、id まで書いて後ろに置く。 */
 body[data-live-view="code"] #main > #live-stage.lv-stage[data-measuring] {
   display: grid !important;
   position: fixed;
@@ -112,6 +112,7 @@ body[data-live-view="code"] .lv-page-only {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 10px;
   padding: 10px;
   background: var(--panel-2);
@@ -240,6 +241,16 @@ body[data-live-view="code"] .lv-page-only {
   background: var(--bg);
   color: var(--ink-2);
   font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+}
+
+.lv-comment-count {
+  border-radius: 999px;
+  background: var(--star);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
   line-height: 16px;
   padding: 0 6px;
 }
@@ -511,4 +522,166 @@ body[data-live-view="code"] .lv-page-only {
   font-weight: 600;
   color: var(--ink-3);
   cursor: pointer;
+}
+
+/* ---- ページへのコメント（live.md の R-PAGE-COMMENT）: 道具、枠の上の層、書く欄 ---- */
+.lv-tools button[aria-pressed="true"] {
+  background: var(--star-soft);
+  color: var(--star);
+}
+
+/* 道具を選んでいる間だけ動いているページの枠の上に重ね、押す・描く操作を受ける。指で描くのでスクロールにしない。 */
+.lv-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.lv-capture[hidden] {
+  display: none;
+}
+
+.lv-stroke {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lv-stroke polyline {
+  fill: none;
+  stroke: var(--star);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* 書く欄は 2 枚の下に横いっぱいに置く（重ねて透かすときも比べる相手が上に重ならない）。 */
+.lv-compose {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px dashed var(--star);
+  border-radius: 8px;
+  background: var(--star-soft);
+  font-size: 12.5px;
+}
+
+.lv-compose[hidden] {
+  display: none;
+}
+
+.lv-compose-head {
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.lv-compose-away {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--note-ink);
+}
+
+.lv-compose-away[hidden] {
+  display: none;
+}
+
+.lv-places {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lv-place {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  min-width: 0;
+}
+
+.lv-place-n {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--star);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.lv-place-kind {
+  color: var(--ink-2);
+}
+
+.lv-place-what {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-place-remove {
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font-size: 14px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.lv-compose-body {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.lv-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ページへのコメントのスレッドの、本文の編集欄（views/conversation.js）。 */
+.cv-page-edit textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.cv-page-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
 }

@@ -8,19 +8,36 @@
 import { actions } from "../actions.js";
 import * as api from "../api.js";
 import { dom } from "../dom.js";
+import { state } from "../state.js";
 import {
+  addPlace,
   buildPageTree,
   chooseReference,
   fitScale,
   liveOrigin,
   overlayPlacement,
   pageKey,
+  draftElsewhere,
+  emptyDraft,
   parseWidth,
+  removePlace,
   snapshotLabel,
   snapshotOptions,
+  undoPlace,
 } from "../live-model.js";
 import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
-import { buildShell, markRemovedInSnapshot, renderChanges, renderCompareOptions, renderPageTree } from "../views/live.js";
+import {
+  buildShell,
+  markRemovedInSnapshot,
+  renderChanges,
+  renderCompareOptions,
+  renderPageTree,
+  renderPlaces,
+} from "../views/live.js";
+import { closeSheet } from "./conversation.js";
+import { renderConversation } from "../views/conversation.js";
+import { renderHeader } from "../views/header.js";
+import { refreshCommentBadges } from "../views/tree.js";
 
 /**
  * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
@@ -40,6 +57,15 @@ const CAPTURE_TIMEOUT = 15000;
 
 /** ページが記述を返すまで待つ上限。 */
 const DESCRIBE_TIMEOUT = 5000;
+
+/** ページが置いた場所を決めて返すまで待つ上限。ペンは要素をすべて測るので長めに。 */
+const PLACE_TIMEOUT = 5000;
+
+/** ページがコメントの画像を返すまで待つ上限。過ぎたら画像なしで保存する。 */
+const IMAGE_TIMEOUT = 15000;
+
+/** これより短い矢印とペンの線は、押しただけとみなして場所にしない（画面のピクセル）。 */
+const MIN_STROKE = 4;
 
 const live = {
   /** @type {LiveInfo | null} */
@@ -117,7 +143,20 @@ const live = {
   shiftedOpen: false,
   /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
   listed: { main: 0, shifted: 0 },
+  /** 選んでいる道具（R-PAGE-COMMENT）。「操作」ではページを普通に触れる。 */
+  /** @type {"element" | "arrow" | "pen" | "interact"} */
+  tool: "interact",
+  /** 書いているコメントの場所。 */
+  draft: emptyDraft("/", DEFAULT_WIDTH),
+  /** コメントを保存している途中。 */
+  saving: false,
+  /** 書く欄に出す知らせ（場所を置けなかった、保存できなかった）。 */
+  composeError: "",
 };
+
+/** 描いている途中の線。点は枠の中の画面の座標（ページの CSS ピクセル）と、重ねた層の中の座標。 */
+/** @type {{ pointer: number, points: { x: number, y: number }[], drawn: { x: number, y: number }[] } | null} */
+let drawing = null;
 
 /** @type {import("../views/live.js").LiveShell | null} */
 let shell = null;
@@ -130,11 +169,12 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe"} type
+ * @param {"capture" | "describe" | "place" | "image"} type
  * @param {number} timeout
+ * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
  */
-async function ask(frame, type, timeout) {
+async function ask(frame, type, timeout, details = {}) {
   const id = nextCapture++;
   const answer = await new Promise((resolve) => {
     const timer = setTimeout(() => resolve({ error: "the page did not answer" }), timeout);
@@ -142,7 +182,7 @@ async function ask(frame, type, timeout) {
       clearTimeout(timer);
       resolve(message);
     });
-    frame.postMessage({ kemi: "live", type, id }, live.origin);
+    frame.postMessage({ kemi: "live", ...details, type, id }, live.origin);
   });
   pendingCaptures.delete(id);
   return answer;
@@ -189,8 +229,7 @@ export function startLive(info) {
   shell.sideSeg.addEventListener("click", (event) => {
     const side = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.side;
     if (side === "live" || side === "ref") {
-      live.side = side;
-      render();
+      setSide(side);
     }
   });
   shell.compareSelect.addEventListener("change", () => {
@@ -227,6 +266,7 @@ export function startLive(info) {
     render();
   });
   shell.recordButton.addEventListener("click", () => void capture("manual"));
+  startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
   new ResizeObserver(() => layoutFrames()).observe(shell.stage);
@@ -279,11 +319,25 @@ function setView(view) {
 }
 
 /**
+ * 狭い画面で見る側（動いているページか比べる相手か）。
+ * @param {"live" | "ref"} side
+ */
+function setSide(side) {
+  live.side = side;
+  render();
+}
+
+/**
  * @param {number} width
  */
 function setWidth(width) {
+  // 保存している間は、画像を作る表示幅を変えない（R-PAGE-COMMENT の画像は場所のある表示幅で作る）。
+  if (live.saving) {
+    return;
+  }
   live.width = width;
   forgetFailures();
+  sendPlaces();
   if (shell) {
     shell.widthInput.value = "";
     shell.widthError.hidden = true;
@@ -309,7 +363,8 @@ function applyWidthInput() {
  * @param {string} page
  */
 function openPage(page) {
-  if (!shell) {
+  // 保存している間は、画像を作るページを移らない（読み込み直しも含む）。
+  if (!shell || live.saving) {
     return;
   }
   if (page !== live.page) {
@@ -334,7 +389,7 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (message.type === "captured" || message.type === "described") {
+  if (["captured", "described", "placed", "imaged"].includes(message.type)) {
     pendingCaptures.get(Number(message.id))?.(message);
     return;
   }
@@ -381,6 +436,9 @@ function receive(event) {
   }
   render();
   takeStartSnapshot();
+  // 読み込み直した文書には前の描き込みが無いので、描き直させる。
+  sentPlaces = "";
+  sendPlaces();
 }
 
 /** 入れたパスのモックを、表示中のページに割り当てる。断られたら理由を出す（R-PAGE-MOCK）。 */
@@ -432,6 +490,311 @@ export async function captureBeforeHand() {
   await capture("handed");
 }
 
+// ---- ページへのコメント（live.md の R-PAGE-COMMENT） ----
+// 道具を選んでいる間は、動いているページの枠の上に重ねた層で押す・描く操作を受け、枠の中の座標をページに送る。
+// どの要素を指すかと文書の座標はページの中（page.js）が決める（別のオリジンで、レビュー画面からは読めない）。
+// 重ねた層は動いているページの枠の上にだけあるので、比べる相手の側では場所を置けない。重ねて透かしている間は
+// 比べる相手が操作を受けないので、下の層が受け、見る対象の要素が場所になる（live-compare.md の R-PAGE-REF）。
+
+/**
+ * @param {import("../views/live.js").LiveShell} shell
+ */
+function startComposing(shell) {
+  shell.toolSeg.addEventListener("click", (event) => {
+    const tool = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.tool;
+    if (tool === "element" || tool === "arrow" || tool === "pen" || tool === "interact") {
+      cancelStroke();
+      live.tool = tool;
+      live.composeError = "";
+      render();
+    }
+  });
+  const layer = shell.capture;
+  layer.addEventListener("pointerdown", (event) => {
+    if (live.tool === "interact" || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    layer.setPointerCapture(event.pointerId);
+    drawing = { pointer: event.pointerId, points: [], drawn: [] };
+    extendStroke(event);
+  });
+  layer.addEventListener("pointermove", (event) => {
+    if (drawing?.pointer === event.pointerId && live.tool !== "element") {
+      extendStroke(event);
+    }
+  });
+  layer.addEventListener("pointerup", (event) => {
+    if (drawing?.pointer === event.pointerId) {
+      void finishStroke();
+    }
+  });
+  layer.addEventListener("pointercancel", cancelStroke);
+  // 道具を選んでいる間もページをスクロールできるよう、ホイールはページに送る。
+  layer.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? layer.clientHeight : 1;
+      shell.liveFrame.contentWindow?.postMessage(
+        { kemi: "live", type: "scroll-by", x: event.deltaX * unit, y: event.deltaY * unit },
+        live.origin,
+      );
+    },
+    { passive: false },
+  );
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && drawing) {
+      cancelStroke();
+    }
+  });
+  const compose = shell.compose;
+  compose.undo.addEventListener("click", () => setDraft(undoPlace(live.draft)));
+  compose.cancel.addEventListener("click", () => {
+    compose.body.value = "";
+    live.composeError = "";
+    setDraft(emptyDraft(live.page, live.width));
+  });
+  compose.save.addEventListener("click", () => void savePageComment());
+  compose.back.addEventListener("click", () => showPage(live.draft.url, live.draft.width));
+  compose.body.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void savePageComment();
+    }
+  });
+  compose.body.addEventListener("input", () => renderCompose());
+}
+
+/**
+ * 描いている線に点を足す。枠の中の座標はページの CSS ピクセルに戻す（枠は縮めて描いている）。
+ * @param {PointerEvent} event
+ */
+function extendStroke(event) {
+  if (!shell || !drawing) {
+    return;
+  }
+  const frame = shell.liveFrame.getBoundingClientRect();
+  const layer = shell.capture.getBoundingClientRect();
+  drawing.points.push({ x: (event.clientX - frame.left) / live.scale, y: (event.clientY - frame.top) / live.scale });
+  drawing.drawn.push({ x: event.clientX - layer.left, y: event.clientY - layer.top });
+  shell.stroke.setAttribute("points", drawing.drawn.map((point) => `${point.x},${point.y}`).join(" "));
+}
+
+/** 描いている途中の線を取りやめる。 */
+function cancelStroke() {
+  drawing = null;
+  shell?.stroke.setAttribute("points", "");
+}
+
+/** 線を描き終えた（押し終えた）。ページに場所を決めてもらい、書いているコメントに足す。 */
+async function finishStroke() {
+  const stroke = drawing;
+  cancelStroke();
+  const frame = shell?.liveFrame.contentWindow;
+  // 書きかけの場所と別の URL か表示幅では足さない（書く欄がそのことと戻る操作を出している）。
+  if (!stroke || !frame || live.tool === "interact" || live.saving || draftElsewhere(live.draft, live.page, live.width)) {
+    return;
+  }
+  const kind = live.tool;
+  const first = stroke.drawn[0];
+  const length = stroke.drawn.reduce((most, point) => Math.max(most, Math.hypot(point.x - first.x, point.y - first.y)), 0);
+  if (kind !== "element" && length < MIN_STROKE) {
+    return;
+  }
+  // 返事を待つ間に別のページや表示幅へ移っても、場所は押したときのページのもの。
+  const { page, width } = live;
+  const answer = await ask(frame, "place", PLACE_TIMEOUT, {
+    kind,
+    points: kind === "element" ? stroke.points.slice(0, 1) : stroke.points,
+  });
+  // 返事を待つ間に保存を始めていれば、書きかけは変えない。
+  if (live.saving) {
+    return;
+  }
+  if (answer.kind !== kind) {
+    live.composeError = `The place was not put: ${answer.error ?? "the page did not answer"}`;
+    renderCompose();
+    return;
+  }
+  live.composeError = "";
+  setDraft(addPlace(live.draft, { kind, points: answer.points ?? [], elements: answer.elements ?? [] }, page, width));
+}
+
+/**
+ * 書いているコメントの場所を差し替え、書く欄とページの上の描き込みを描き直す。
+ * @param {import("../live-model.js").PlaceDraft} draft
+ */
+function setDraft(draft) {
+  live.draft = draft;
+  renderCompose();
+  sendPlaces();
+}
+
+/** 保存したページへのコメント（`page` を持つもの）。 */
+function pageComments() {
+  return state.allComments.filter((comment) => comment.page);
+}
+
+/** 最後にページへ送った描き込み。同じなら送り直さない（会話が描き直されるたびに呼ばれる）。 */
+let sentPlaces = "";
+
+/**
+ * ページの上に場所を描かせる。保存したコメントの場所は、そのコメントの URL と表示幅で見ているときに控えめな
+ * 印で、開いているスレッドのものは目立たせる。書いているコメントの場所も、そのページ・その幅を見ているときだけ。
+ */
+function sendPlaces() {
+  const frame = shell?.liveFrame.contentWindow;
+  if (!frame) {
+    return;
+  }
+  const here = (/** @type {string} */ url, /** @type {number} */ width) => url === live.page && width === live.width;
+  const sets = pageComments()
+    .filter((comment) => here(comment.page.url, comment.page.width))
+    .map((comment) => ({ places: comment.page.places, look: state.conversation.thread === comment.id ? "focus" : "saved" }));
+  const draft = live.draft;
+  if (here(draft.url, draft.width) && draft.places.length > 0) {
+    sets.push({ places: draft.places, look: "draft" });
+  }
+  const message = JSON.stringify(sets);
+  if (message === sentPlaces) {
+    return;
+  }
+  sentPlaces = message;
+  frame.postMessage({ kemi: "live", type: "places", sets }, live.origin);
+}
+
+/** 会話の中身が変わった（コメントが増えた・消えた、スレッドを開いた）。印とページのツリーを合わせる。 */
+export function refreshPageComments() {
+  sendPlaces();
+  renderTree();
+}
+
+/**
+ * ページへのコメントを、付けた URL と表示幅のページの見方で見せる（R-PAGE-COMMENT）。狭い画面では
+ * 会話のシートを閉じてページを見せる。
+ * @param {any} comment
+ */
+export function showPageComment(comment) {
+  if (!comment.page) {
+    return;
+  }
+  if (state.narrow) {
+    closeSheet();
+  }
+  showPage(comment.page.url, comment.page.width);
+  renderConversation();
+}
+
+/**
+ * そのページをその表示幅で、ページの見方で見せる。狭い画面では動いているページの側を見せる（比べる相手の側を
+ * 見ていると、動いているページと、その上のコメントの場所が隠れたままになる）。
+ * @param {string} url
+ * @param {number} width
+ */
+function showPage(url, width) {
+  // 保存している間は表示幅もページも変えられないので、見方だけを切り替えることもしない。
+  if (live.saving) {
+    return;
+  }
+  if (live.view !== "page") {
+    setView("page");
+  }
+  if (live.side !== "live") {
+    setSide("live");
+  }
+  if (live.width !== width) {
+    setWidth(width);
+  }
+  if (live.page !== url) {
+    openPage(url);
+  }
+}
+
+function renderCompose() {
+  if (!shell) {
+    return;
+  }
+  const compose = shell.compose;
+  const places = live.draft.places;
+  const away = draftElsewhere(live.draft, live.page, live.width);
+  compose.away.hidden = away === null;
+  if (away) {
+    compose.awayText.textContent = `These places are on ${away.url} at ${away.width}px. Places can be added and the comment saved there.`;
+    compose.back.textContent = `Back to ${away.url} at ${away.width}px`;
+  }
+  compose.box.hidden =
+    live.view !== "page" || (live.tool === "interact" && places.length === 0 && compose.body.value === "");
+  // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
+  renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)), live.saving);
+  compose.undo.disabled = places.length === 0 || live.saving;
+  compose.cancel.disabled = live.saving;
+  compose.body.readOnly = live.saving;
+  compose.save.disabled = places.length === 0 || away !== null || live.saving || compose.body.value.trim() === "" || state.submitted;
+  compose.error.hidden = live.composeError === "";
+  compose.error.textContent = live.composeError;
+}
+
+/**
+ * 書いたコメントを保存する。ページに場所の周りの画像を作らせ、コメントと 1 回で送る。画像を作れなければ
+ * 画像なしで保存する（R-PAGE-COMMENT の画像は作れないこともある）。保存した後は場所を変えない。
+ */
+async function savePageComment() {
+  if (!shell || live.saving || state.submitted) {
+    return;
+  }
+  const draft = live.draft;
+  const body = shell.compose.body.value.trim();
+  // 画像は場所のあるページで作るので、保存は書きかけの URL と表示幅に戻ってから（R-PAGE-COMMENT）。
+  if (draft.places.length === 0 || body === "" || draftElsewhere(draft, live.page, live.width)) {
+    return;
+  }
+  live.saving = true;
+  renderBand();
+  renderCompose();
+  const frame = shell.liveFrame.contentWindow;
+  let image = null;
+  if (frame) {
+    // 狭い画面で比べる相手の側を見ていると、動いているページは並べられておらず画像を作れない。画像を決める値（ページ・
+    // 表示幅・並べた画面の高さ・場所）は頼みに載せ、ページはそれだけで画像を作り、自分の場所や幅が違えば断る。
+    const answer = await whileLaidOut(() =>
+      ask(frame, "image", IMAGE_TIMEOUT, {
+        page: draft.url,
+        width: draft.width,
+        height: laidOutHeight(),
+        places: draft.places,
+      }),
+    );
+    image = typeof answer.png === "string" ? answer.png : null;
+  }
+  const request = { op: "add_page", page: { url: draft.url, width: draft.width, places: draft.places }, body };
+  try {
+    const comment = await api.postComment({ ...request, image }).catch((error) => {
+      // 本文と場所に画像を足すと要求の上限を超えるときは、画像なしで保存する（画像は作れないこともある）。
+      // 上限を超えた要求はサーバが読まずに断るので、送り直しても二重にはならない。
+      if (image !== null && error?.status === api.TOO_LARGE) {
+        return api.postComment({ ...request, image: null });
+      }
+      throw error;
+    });
+    const before = state.allComments;
+    state.allComments = [...state.allComments, comment];
+    refreshCommentBadges(before);
+    renderHeader();
+    renderConversation();
+    shell.compose.body.value = "";
+    live.composeError = "";
+    live.draft = emptyDraft(live.page, live.width);
+    sendPlaces();
+  } catch (error) {
+    live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    live.saving = false;
+    renderBand();
+    renderCompose();
+  }
+}
+
 /**
  * 表示中のページのスナップショットを取り、預ける。2 MB を超えるものは取らず、そのことを
  * 出す。比べる相手は 1 つ前のまま（R-PAGE-SNAPSHOT）。
@@ -480,7 +843,15 @@ async function capture(kind) {
 }
 
 function render() {
+  const shown = live.view === "page" ? { page: live.page, width: live.width } : null;
+  const moved = JSON.stringify(shown) !== JSON.stringify(state.live);
+  state.live = shown;
+  if (moved) {
+    // 開いているスレッドの「付けた幅」の札は、見ているページと表示幅で変わる。
+    renderConversation();
+  }
   renderBand();
+  renderCompose();
   renderReference();
   refreshChanges();
   renderTree();
@@ -693,32 +1064,66 @@ function liveFrameHidden() {
 }
 
 /**
- * 動いているページの枠が隠れていれば、見えず操作も受けないまま選んだ幅で並べてから task を呼ぶ。スナップショットの
- * 記述を隠れた文書から作ると、並べた後のページと比べたときに変わっていない要素がずれたに見える。
+ * 動いているページの枠を並べた画面の高さ（ページの CSS ピクセル）。並べたままにしている間に読む。
+ * @returns {number}
+ */
+function laidOutHeight() {
+  if (!shell) {
+    return 0;
+  }
+  const height = Number.parseFloat(shell.liveFrame.style.height);
+  return Number.isFinite(height) && height > 0 ? height : shell.liveFrame.clientHeight;
+}
+
+/**
+ * 並べたままにしている間の状態。重なって呼ばれても、並べるのは最初の呼び出し、戻すのは最後に終わった呼び出しだけ
+ * （先に終わった方が戻すと、まだ読んでいる方が並べていない文書を読む）。
+ * @type {{ running: number, revealed: HTMLElement | null, ready: Promise<void> }}
+ */
+const laidOut = { running: 0, revealed: null, ready: Promise.resolve() };
+
+/**
+ * task が終わるまで、動いているページの枠を選んだ幅で並べたままにする。隠れていれば、見えず操作も受けないまま並べて
+ * から task を呼ぶ。途中で見方や側を変えて枠が隠れても、並べたままにする。スナップショットの記述や画像を隠れた
+ * 文書から作ると、隠れた文書は並べられていないので、要素の箱や文書の高さが並べたページと合わない。
  * @template T
  * @param {() => Promise<T>} task
  * @returns {Promise<T>}
  */
 async function whileLaidOut(task) {
-  if (!shell || !liveFrameHidden()) {
+  if (!shell) {
     return task();
   }
   const { stage, livePane, liveFrame } = shell;
-  // コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
-  const revealed = stage.getClientRects().length === 0 ? stage : livePane;
-  stage.dataset.measuring = "true";
-  revealed.inert = true;
+  if (laidOut.running === 0) {
+    // 隠れていれば、コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
+    const revealed = !liveFrameHidden() ? null : stage.getClientRects().length === 0 ? stage : livePane;
+    stage.dataset.measuring = "true";
+    laidOut.revealed = revealed;
+    laidOut.ready = Promise.resolve();
+    if (revealed) {
+      revealed.inert = true;
+      liveFrame.getBoundingClientRect();
+      // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
+      laidOut.ready = new Promise((done) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => done(undefined)));
+        setTimeout(done, 200);
+      });
+    }
+  }
+  laidOut.running += 1;
   try {
-    liveFrame.getBoundingClientRect();
-    // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
-    await new Promise((done) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => done(undefined)));
-      setTimeout(done, 200);
-    });
+    await laidOut.ready;
     return await task();
   } finally {
-    delete stage.dataset.measuring;
-    revealed.inert = false;
+    laidOut.running -= 1;
+    if (laidOut.running === 0) {
+      delete stage.dataset.measuring;
+      if (laidOut.revealed) {
+        laidOut.revealed.inert = false;
+      }
+      laidOut.revealed = null;
+    }
   }
 }
 
@@ -731,7 +1136,9 @@ function renderBand() {
   }
   for (const choice of shell.widthSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(Number(choice.dataset.width) === live.width));
+    choice.disabled = live.saving;
   }
+  shell.widthInput.disabled = live.saving;
   for (const choice of shell.sideSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.side === live.side));
   }
@@ -754,6 +1161,12 @@ function renderBand() {
   shell.mockRemove.hidden = mock === null;
   shell.mockReload.hidden = mock === null;
   shell.recordButton.disabled = !live.reachable;
+  for (const choice of shell.toolSeg.querySelectorAll("button")) {
+    choice.setAttribute("aria-pressed", String(choice.dataset.tool === live.tool));
+    choice.disabled = state.submitted && choice.dataset.tool !== "interact";
+  }
+  shell.capture.hidden = live.tool === "interact" || state.submitted;
+  shell.capture.dataset.tool = live.tool;
   shell.liveLabel.textContent = `${live.page} · ${live.width}${live.scale < 1 ? ` · ×${live.scale.toFixed(2)}` : ""}`;
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {
@@ -795,7 +1208,12 @@ function renderTree() {
   }
   renderPageTree(
     shell.pageTree,
-    buildPageTree({ current: live.page, snapshots: live.snapshots, mocks: new Set(live.mocks.keys()) }),
+    buildPageTree({
+      current: live.page,
+      snapshots: live.snapshots,
+      mocks: new Set(live.mocks.keys()),
+      comments: pageComments().map((comment) => ({ page: comment.page.url, width: comment.page.width })),
+    }),
     {
       onPage: openPage,
       onWidth: (page, width) => {

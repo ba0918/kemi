@@ -31,6 +31,31 @@
       drawMarks(Array.isArray(message.marks) ? message.marks : []);
       return;
     }
+    if (message.type === 'place') {
+      post({ type: 'placed', id: message.id, ...resolvePlace(String(message.kind), Array.isArray(message.points) ? message.points : []) });
+      return;
+    }
+    if (message.type === 'places') {
+      drawPlaceSets(Array.isArray(message.sets) ? message.sets : []);
+      return;
+    }
+    if (message.type === 'scroll-by') {
+      scrollBy(finite(message.x), finite(message.y));
+      return;
+    }
+    if (message.type === 'image') {
+      try {
+        const image = await placesImage(
+          message.rect ?? null,
+          Array.isArray(message.places) ? message.places : [],
+          { page: String(message.page), width: finite(message.width), height: finite(message.height) },
+        );
+        post({ type: 'imaged', id: message.id, ...image });
+      } catch (error) {
+        post({ type: 'imaged', id: message.id, error: String(error) });
+      }
+      return;
+    }
     if (message.type !== 'capture') return;
     try {
       const { html, description } = await captureSnapshot();
@@ -243,8 +268,41 @@
 
   /** @type {HTMLElement | null} */
   let marksHost = null;
-  /** @type {ShadowRoot | null} */
-  let marksRoot = null;
+  /** 印の層（変わったところの枠）。 */
+  /** @type {HTMLElement | null} */
+  let marksLayer = null;
+  /** コメントの場所の層（描き込みと番号）。文書の座標で描き、ページのスクロールの分だけ戻す。 */
+  /** @type {HTMLElement | null} */
+  let placesLayer = null;
+
+  /**
+   * 印と場所を描く層を作り、文書に置く。ページの見た目を変えないよう、画面の左上に大きさ 0 で固定し、閉じた
+   * shadow root の中に描く。
+   * @returns {{ marks: HTMLElement, places: HTMLElement }}
+   */
+  function layers() {
+    if (!marksHost || !marksLayer || !placesLayer) {
+      marksHost = document.createElement('div');
+      setStyles(marksHost, {
+        position: 'fixed', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
+        overflow: 'visible', 'pointer-events': 'none', 'z-index': '2147483647',
+      });
+      const root = marksHost.attachShadow({ mode: 'closed' });
+      marksLayer = document.createElement('div');
+      placesLayer = document.createElement('div');
+      for (const layer of [marksLayer, placesLayer]) {
+        setStyles(layer, { position: 'absolute', left: '0', top: '0', width: '0', height: '0', overflow: 'visible', 'pointer-events': 'none' });
+      }
+      root.append(marksLayer, placesLayer);
+    }
+    if (!marksHost.isConnected) document.documentElement.append(marksHost);
+    return { marks: marksLayer, places: placesLayer };
+  }
+
+  /** どちらの層も空なら、層を文書から外す。 */
+  function releaseLayers() {
+    if (marksLayer?.childElementCount === 0 && placesLayer?.childElementCount === 0) marksHost?.remove();
+  }
   /** 描いている印と、その要素と枠の線と、要素を切って見せる祖先（中身をはみ出させない箱）。 */
   /** @type {{ box: HTMLElement, element: Element, border: string, clippers: Element[] }[]} */
   let shownMarks = [];
@@ -258,19 +316,11 @@
     const previous = shownMarks;
     shownMarks = [];
     if (marks.length === 0) {
-      marksRoot?.replaceChildren();
-      marksHost?.remove();
+      marksLayer?.replaceChildren();
+      releaseLayers();
       return;
     }
-    if (!marksHost || !marksRoot) {
-      marksHost = document.createElement('div');
-      setStyles(marksHost, {
-        position: 'fixed', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
-        overflow: 'visible', 'pointer-events': 'none', 'z-index': '2147483647',
-      });
-      marksRoot = marksHost.attachShadow({ mode: 'closed' });
-    }
-    if (!marksHost.isConnected) document.documentElement.append(marksHost);
+    const { marks: layer } = layers();
     /** @type {Map<Element, boolean>} */
     const clips = new Map();
     /** @type {{ element: Element, border: string }[]} */
@@ -290,7 +340,7 @@
       if (!unchanged) setStyles(box, { position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border });
       return { box, element, border, clippers: clippersOf(element, clips) };
     });
-    if (!unchanged) marksRoot.replaceChildren(...shownMarks.map((mark) => mark.box));
+    if (!unchanged) layer.replaceChildren(...shownMarks.map((mark) => mark.box));
     placeMarks();
   }
 
@@ -325,6 +375,7 @@
 
   /** 印を今の要素の位置に置き直す。先にすべて測ってから書き込む（測るたびに配置を計算し直させない）。 */
   function placeMarks() {
+    placePlaces();
     if (!marksHost || shownMarks.length === 0) return;
     const origin = marksHost.getBoundingClientRect();
     const placed = shownMarks.map(({ element, clippers }) => {
@@ -357,7 +408,7 @@
 
   let placeQueued = false;
   const placeMarksSoon = () => {
-    if (placeQueued || shownMarks.length === 0) return;
+    if (placeQueued || (shownMarks.length === 0 && (placesLayer?.childElementCount ?? 0) === 0)) return;
     placeQueued = true;
     requestAnimationFrame(() => {
       placeQueued = false;
@@ -376,6 +427,258 @@
     if (record.target === marksHost) return true;
     const nodes = [...record.addedNodes, ...record.removedNodes];
     return record.type === 'childList' && nodes.length > 0 && nodes.every((node) => node === marksHost);
+  }
+
+  // ---- コメントの場所（R-PAGE-COMMENT） ----
+  // 押す・描く操作はレビュー画面が枠の上に重ねた層で受け（ページのスクリプトに横取りされないように）、画面の座標を
+  // 送ってくる。ここではそれを文書の座標にし、指している要素を決める。場所の描き込みと番号も印と同じ層に描くので、
+  // 記述・スナップショット・見張りには入らない。
+
+  /** ペンで囲んだ範囲と重なる要素として渡す数の上限。 */
+  const ENCLOSED_LIMIT = 5;
+  /** 要素の文字として渡す長さの上限。 */
+  const TEXT_LIMIT = 200;
+  /**
+   * ペンで囲んだ範囲と重なる要素に入れない要素（ページ全体を覆い、囲んだ要素を押し出す）。押した・指した位置の要素や、
+   * 範囲を含む一番内側の要素としては選ぶ（どの要素にも掛からない地では、これが場所の要素になる）。
+   */
+  const PAGE_ROOTS = new Set(['html', 'body']);
+
+  /**
+   * 画面の座標のその点にある要素。開いている shadow root の中まで下りる。
+   * @param {number} x
+   * @param {number} y
+   * @returns {Element | null}
+   */
+  function elementAt(x, y) {
+    let element = document.elementFromPoint(x, y);
+    while (element?.shadowRoot) {
+      const inner = element.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === element) break;
+      element = inner;
+    }
+    return element;
+  }
+
+  /**
+   * 要素をその root（文書か shadow root）の中で 1 つに決めるセレクタ。id が root の中で 1 つならそれを根にし、
+   * 無ければ兄弟の中の同じ名前の何番目かでたどる。shadow root の中の要素は、持ち主のセレクタと ` >>> ` でつなぐ
+   * （文書の querySelector は shadow root の中に届かないため）。
+   * @param {Element} element
+   * @returns {string}
+   */
+  function selectorOf(element) {
+    const root = /** @type {Document | ShadowRoot} */ (element.getRootNode());
+    /** @type {string[]} */
+    const parts = [];
+    /** @type {Element | null} */
+    let current = element;
+    while (current) {
+      if (current.id && root.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
+        parts.unshift(`#${CSS.escape(current.id)}`);
+        break;
+      }
+      if (current === document.documentElement) {
+        parts.unshift('html');
+        break;
+      }
+      /** @type {Element | null} */
+      const parent = current.parentElement;
+      const siblings = parent ? [...parent.children] : [...root.children];
+      const name = current.localName;
+      const same = siblings.filter((sibling) => sibling.localName === name);
+      parts.unshift(same.length > 1 ? `${CSS.escape(name)}:nth-of-type(${same.indexOf(current) + 1})` : CSS.escape(name));
+      current = parent;
+    }
+    const selector = parts.join(' > ');
+    return root instanceof ShadowRoot ? `${selectorOf(root.host)} >>> ${selector}` : selector;
+  }
+
+  /**
+   * エージェントに渡す要素の情報。位置と大きさは文書の座標（ページのスクロールに依存しない）。
+   * @param {Element} element
+   */
+  function placeElement(element) {
+    const rect = element.getBoundingClientRect();
+    const text = (element instanceof HTMLElement ? element.innerText : element.textContent) ?? '';
+    return {
+      selector: selectorOf(element),
+      text: text.replace(/\s+/g, ' ').trim().slice(0, TEXT_LIMIT),
+      rect: { x: round(rect.left + scrollX), y: round(rect.top + scrollY), w: round(rect.width), h: round(rect.height) },
+    };
+  }
+
+  /**
+   * 文書の要素を、開いている shadow root の中も含めてたどる。kemi の層は除く。
+   * @param {(element: Element) => void} visit
+   */
+  function eachPageElement(visit) {
+    /** @param {Element} element */
+    const walk = (element) => {
+      if (element === marksHost || UNDESCRIBED.has(element.localName)) return;
+      visit(element);
+      if (element.shadowRoot) for (const child of element.shadowRoot.children) walk(child);
+      for (const child of element.children) walk(child);
+    };
+    walk(document.documentElement);
+  }
+
+  /**
+   * ペンで囲んだ範囲（線の外接矩形）と重なる要素を、重なる面積の大きい順に上限まで。画面の座標で比べる。範囲を丸ごと
+   * 含む要素（ページを包む入れ物など）と、文書の根（html と body）は、重なる面積が範囲いっぱいになって囲んだ要素を
+   * 押し出すので除く。除くと何も残らない（1 つの要素の内側だけか、地だけを囲んだ）ときは、範囲を含む一番内側の要素
+   * 1 つにする。
+   * @param {{ x: number, y: number }[]} points 画面の座標
+   */
+  function enclosedElements(points) {
+    const left = Math.min(...points.map((point) => point.x));
+    const right = Math.max(...points.map((point) => point.x));
+    const top = Math.min(...points.map((point) => point.y));
+    const bottom = Math.max(...points.map((point) => point.y));
+    /** @type {{ element: Element, area: number }[]} */
+    const found = [];
+    /** @type {{ element: Element | null, area: number }} */
+    const innermost = { element: null, area: Infinity };
+    eachPageElement((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.left <= left && rect.top <= top && rect.right >= right && rect.bottom >= bottom) {
+        // 文書の順にたどるので、面積が同じなら後に来る（内側の）要素を選ぶ。
+        const area = rect.width * rect.height;
+        if (area <= innermost.area) Object.assign(innermost, { element, area });
+        return;
+      }
+      if (PAGE_ROOTS.has(element.localName)) return;
+      const width = Math.min(right, rect.right) - Math.max(left, rect.left);
+      const height = Math.min(bottom, rect.bottom) - Math.max(top, rect.top);
+      if (width > 0 && height > 0) found.push({ element, area: width * height });
+    });
+    // 文書の根の箱より外（中身の短いページの下の地）でも、地は文書の根のものとして描かれる。
+    if (found.length === 0) return [placeElement(innermost.element ?? document.documentElement)];
+    found.sort((a, b) => b.area - a.area);
+    return found.slice(0, ENCLOSED_LIMIT).map(({ element }) => placeElement(element));
+  }
+
+  /**
+   * 置いた場所を決める。点は画面の座標で届き、文書の座標にして返す。要素は 1 つ、矢印は先端の要素、ペンは
+   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。
+   * @param {string} kind
+   * @param {unknown[]} requested
+   */
+  function resolvePlace(kind, requested) {
+    const points = requested.map((point) => {
+      const { x, y } = /** @type {{ x: unknown, y: unknown }} */ (point ?? {});
+      return { x: finite(x), y: finite(y) };
+    });
+    if (points.length === 0) return { error: 'no point' };
+    const toDocument = (/** @type {{ x: number, y: number }} */ point) => ({ x: round(point.x + scrollX), y: round(point.y + scrollY) });
+    if (kind === 'pen') {
+      return { kind, points: points.map(toDocument), elements: enclosedElements(points) };
+    }
+    const at = kind === 'arrow' ? points[points.length - 1] : points[0];
+    const element = elementAt(at.x, at.y);
+    const elements = element ? [placeElement(element)] : [];
+    if (kind === 'arrow') return { kind, points: points.map(toDocument), elements };
+    if (elements.length === 0) return { error: 'no element there' };
+    return { kind: 'element', points: [], elements };
+  }
+
+  /** 場所の描き込みの見た目。書いている途中と、目立たせる保存したものは濃く、ほかの保存したものは控えめに。 */
+  /** @type {Record<string, { width: number, opacity: string, numbers: boolean }>} */
+  const PLACE_LOOKS = {
+    draft: { width: 2, opacity: '1', numbers: true },
+    focus: { width: 2, opacity: '1', numbers: true },
+    saved: { width: 1, opacity: '0.55', numbers: true },
+  };
+  const SVG = 'http://www.w3.org/2000/svg';
+
+  /**
+   * 場所の組を描く。前に描いたものは消す。座標は文書の座標で、層ごとページのスクロールの分だけ戻す。
+   * @param {unknown[]} sets 各組は `{ places, look }`
+   */
+  function drawPlaceSets(sets) {
+    const drawn = [];
+    for (const set of sets) {
+      const { places, look } = /** @type {{ places: unknown, look: unknown }} */ (set ?? {});
+      const style = PLACE_LOOKS[String(look)] ?? PLACE_LOOKS.saved;
+      drawn.push(...placeShapes(readPlaces(Array.isArray(places) ? places : []), style));
+    }
+    if (drawn.length === 0) {
+      placesLayer?.replaceChildren();
+      releaseLayers();
+      return;
+    }
+    layers().places.replaceChildren(...drawn);
+    placePlaces();
+  }
+
+  /**
+   * 1 組の場所の描き込みの要素。
+   * @param {ImagePlace[]} places
+   * @param {{ width: number, opacity: string, numbers: boolean }} style
+   * @returns {Element[]}
+   */
+  function placeShapes(places, style) {
+    /** @type {Element[]} */
+    const drawn = [];
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('width', '1');
+    svg.setAttribute('height', '1');
+    svg.setAttribute('overflow', 'visible');
+    svg.setAttribute('opacity', style.opacity);
+    setStyles(/** @type {any} */ (svg), { position: 'absolute', left: '0', top: '0', overflow: 'visible' });
+    for (const place of places) {
+      if (place.kind === 'element') {
+        for (const { rect } of place.elements) {
+          const box = document.createElementNS(SVG, 'rect');
+          for (const [name, value] of Object.entries({ x: rect.x - 2, y: rect.y - 2, width: rect.w + 4, height: rect.h + 4 })) box.setAttribute(name, String(value));
+          box.setAttribute('fill', 'none');
+          box.setAttribute('stroke', PLACE_COLOR);
+          box.setAttribute('stroke-width', String(style.width));
+          svg.append(box);
+        }
+      } else if (place.points.length > 0) {
+        const line = document.createElementNS(SVG, 'polyline');
+        line.setAttribute('points', place.points.map((point) => `${point.x},${point.y}`).join(' '));
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', PLACE_COLOR);
+        line.setAttribute('stroke-width', String(style.width));
+        line.setAttribute('stroke-linejoin', 'round');
+        line.setAttribute('stroke-linecap', 'round');
+        svg.append(line);
+        const from = place.points.at(-2);
+        const to = place.points.at(-1);
+        if (place.kind === 'arrow' && from && to) {
+          const angle = Math.atan2(to.y - from.y, to.x - from.x);
+          const head = document.createElementNS(SVG, 'polygon');
+          const corner = (/** @type {number} */ turn) => `${to.x - 12 * Math.cos(angle + turn)},${to.y - 12 * Math.sin(angle + turn)}`;
+          head.setAttribute('points', `${to.x},${to.y} ${corner(-0.45)} ${corner(0.45)}`);
+          head.setAttribute('fill', PLACE_COLOR);
+          svg.append(head);
+        }
+      }
+    }
+    drawn.push(svg);
+    if (style.numbers) {
+      for (const place of places) {
+        const anchor = place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
+        if (!anchor) continue;
+        const badge = document.createElement('div');
+        badge.textContent = String(place.n);
+        setStyles(badge, {
+          position: 'absolute', left: `${Math.max(0, anchor.x - 10)}px`, top: `${Math.max(0, anchor.y - 10)}px`, width: '20px', height: '20px',
+          'border-radius': '50%', background: PLACE_COLOR, color: 'rgb(255, 255, 255)', font: 'bold 11px/20px sans-serif',
+          'text-align': 'center', opacity: style.opacity, 'box-sizing': 'border-box', margin: '0', padding: '0',
+        });
+        drawn.push(badge);
+      }
+    }
+    return drawn;
+  }
+
+  /** 場所の層をページのスクロールに合わせて置き直す（描き込みは文書の座標で描いてある）。 */
+  function placePlaces() {
+    if (!placesLayer || placesLayer.childElementCount === 0) return;
+    setStyles(placesLayer, { transform: `translate(${-scrollX}px, ${-scrollY}px)` });
   }
 
   // ---- ページの変化の見張り ----
@@ -493,7 +796,14 @@
    */
   async function packForUpload(description) {
     const zipped = new Blob([JSON.stringify(description)]).stream().pipeThrough(new CompressionStream('gzip'));
-    const blob = await new Response(zipped).blob();
+    return blobBase64(await new Response(zipped).blob());
+  }
+
+  /**
+   * @param {Blob} blob
+   * @returns {Promise<string>}
+   */
+  async function blobBase64(blob) {
     const url = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
@@ -788,18 +1098,12 @@
     const page = describePage();
     const description = packForUpload(page.description);
     const indices = new Map(page.elements.map((element, index) => [element, index]));
-    inlined = new Map();
-    const owner = document.implementation.createHTMLDocument('');
-    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner, indices));
-    const head = root.querySelector('head');
+    const { owner, root, head } = await copyDocument(indices);
     if (head) {
       // 埋め込めなかった相対の参照は、中継のオリジンに解く（読めなくても形は崩れない）。
       const base = owner.createElement('base');
       base.setAttribute('href', location.href);
       head.prepend(base);
-      for (const sheet of document.adoptedStyleSheets) {
-        head.append(styleElement(owner, (await sheetCss(sheet, document.baseURI)) ?? ''));
-      }
     }
     const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
     const map = elementMap(doctype + root.outerHTML);
@@ -811,6 +1115,303 @@
       head.prepend(meta);
     }
     return { html: doctype + root.outerHTML, description: await description };
+  }
+
+  /**
+   * 今の文書の写し（スクリプトを除き、CSS と画像を data: に埋め込んだもの）。スナップショットとコメントの画像が使う。
+   * @param {Map<Element, number>} indices 記述の要素の番号（写しの要素に目印として付ける）
+   */
+  async function copyDocument(indices) {
+    inlined = new Map();
+    const owner = document.implementation.createHTMLDocument('');
+    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner, indices));
+    const head = root.querySelector('head');
+    if (head) {
+      for (const sheet of document.adoptedStyleSheets) {
+        head.append(styleElement(owner, (await sheetCss(sheet, document.baseURI)) ?? ''));
+      }
+    }
+    return { owner, root, head };
+  }
+
+  // ---- コメントの画像（R-PAGE-COMMENT） ----
+  // 場所の周りに描き込みと番号を重ねた PNG。今の文書の写しを SVG の foreignObject に入れて画像として読み、
+  // canvas に描いて作る。ブラウザを外から操作しない（live.md の RL7）。SVG の画像の中では外の資源を
+  // 読まないので、写しの CSS と画像を data: に埋め込んであることを使う。画像の中は XML として読まれ、
+  // 宣言的な shadow root が働かないので、shadow root の中身は持ち主の子として並べ直す（スコープの効かない分の
+  // 見た目の違いは、仕様が認める細部の違い）。
+
+  /** 場所の外接矩形の周りに足す余白（CSS ピクセル）。 */
+  const IMAGE_MARGIN = 48;
+  /** 画像の長い辺の上限（ピクセル）。超える範囲は縮めて描く。 */
+  const IMAGE_MAX_SIDE = 2000;
+  /**
+   * PNG の大きさの上限。base64 で 4/3 倍になっても、要求の本文の上限（8 MB）に収まる大きさ。コメントの本文と場所を
+   * 足して収まらないときは、レビュー画面が画像なしで保存する。
+   */
+  const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+  /** 描き込みと番号の色（画面モックの紫）。 */
+  const PLACE_COLOR = 'rgb(123, 79, 208)';
+
+  /**
+   * @typedef {{ x: number, y: number }} Point
+   * @typedef {{ x: number, y: number, w: number, h: number }} Rect
+   * @typedef {{ n: number, kind: string, points: Point[], elements: { rect: Rect }[] }} ImagePlace
+   */
+
+  /** @param {unknown} value */
+  const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+  /**
+   * 頼まれた場所を、描ける形に読む（数でない値は 0 に）。
+   * @param {unknown[]} places
+   * @returns {ImagePlace[]}
+   */
+  function readPlaces(places) {
+    return places.map((place) => {
+      const { n, kind, points, elements } = /** @type {Record<string, unknown>} */ (place ?? {});
+      return {
+        n: finite(n),
+        kind: String(kind),
+        points: (Array.isArray(points) ? points : []).map((point) => ({ x: finite(point?.x), y: finite(point?.y) })),
+        elements: (Array.isArray(elements) ? elements : []).map((element) => {
+          const rect = element?.rect ?? {};
+          return { rect: { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) } };
+        }),
+      };
+    });
+  }
+
+  /**
+   * 画像にする文書の範囲。頼まれた矩形か、無ければ場所の外接矩形に余白を足したもの。文書の外は切る。
+   * @param {unknown} asked
+   * @param {ImagePlace[]} places
+   * @param {number} width 文書の幅
+   * @param {number} height 文書の高さ
+   * @returns {Rect}
+   */
+  function imageArea(asked, places, width, height) {
+    /** @type {Rect} */
+    let area;
+    if (asked && typeof asked === 'object') {
+      const rect = /** @type {Record<string, unknown>} */ (asked);
+      area = { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) };
+    } else {
+      const xs = [];
+      const ys = [];
+      for (const place of places) {
+        for (const point of place.points) {
+          xs.push(point.x);
+          ys.push(point.y);
+        }
+        for (const { rect } of place.elements) {
+          xs.push(rect.x, rect.x + rect.w);
+          ys.push(rect.y, rect.y + rect.h);
+        }
+      }
+      if (xs.length === 0) throw new Error('no place to draw around');
+      const left = Math.min(...xs) - IMAGE_MARGIN;
+      const top = Math.min(...ys) - IMAGE_MARGIN;
+      area = { x: left, y: top, w: Math.max(...xs) + IMAGE_MARGIN - left, h: Math.max(...ys) + IMAGE_MARGIN - top };
+    }
+    const left = Math.max(0, Math.floor(area.x));
+    const top = Math.max(0, Math.floor(area.y));
+    const right = Math.min(width, Math.ceil(area.x + area.w));
+    const bottom = Math.min(height, Math.ceil(area.y + area.h));
+    if (right <= left || bottom <= top) throw new Error('the area is outside the page');
+    return { x: left, y: top, w: right - left, h: bottom - top };
+  }
+
+  /**
+   * 写しの shadow root（宣言的な shadow root の <template>）を、持ち主の子として並べ直す。slot には割り当てられる
+   * 子を入れ、割り当てのない slot は中の既定の中身にする。どの slot にも入らない子は描かれないので外す。
+   * @param {Element} root
+   */
+  function flattenShadowRoots(root) {
+    for (let template = root.querySelector('template[shadowrootmode]'); template; template = root.querySelector('template[shadowrootmode]')) {
+      const host = template.parentElement;
+      const shadow = /** @type {HTMLTemplateElement} */ (template).content;
+      template.remove();
+      if (!host) continue;
+      const light = [...host.childNodes];
+      for (const slot of [...shadow.querySelectorAll('slot')]) {
+        const name = slot.getAttribute('name') ?? '';
+        const assigned = light.filter((node) => node.parentNode === host && (node instanceof Element ? node.getAttribute('slot') ?? '' : '') === name);
+        slot.replaceWith(...(assigned.length > 0 ? assigned : [...slot.childNodes]));
+      }
+      host.replaceChildren(shadow);
+    }
+  }
+
+  /**
+   * 文書の写しを、範囲を縦に画面の高さずつ切った SVG の画像として 1 枚ずつ読み、context に描く。SVG の画像の中の
+   * メディアクエリと vw・vh は SVG の大きさで決まるので、画像は動いているページの画面と同じ大きさにし、写しを
+   * ずらして範囲を画面に入れる（範囲の大きさにすると、幅で変わる CSS や vh の要素が別の見た目で並ぶ）。
+   * 写しは 1 回だけ符号化して使い回し、読んだ画像は描いたら手放す（長い範囲でも持つのは 1 枚だけ）。
+   * @param {CanvasRenderingContext2D} context 範囲の左上を原点にし、縮尺を掛けてある
+   * @param {Rect} area
+   * @param {number} width 文書の幅
+   * @param {number} height 文書の高さ
+   * @param {{ w: number, h: number }} screen 動いているページの画面の大きさ
+   */
+  async function drawPageCopy(context, area, width, height, screen) {
+    const { root } = await copyDocument(new Map());
+    flattenShadowRoots(root);
+    const body = encodeURIComponent(new XMLSerializer().serializeToString(root));
+    const end = encodeURIComponent('</foreignObject></svg>');
+    for (let top = area.y; top < area.y + area.h; top += screen.h) {
+      const start = `<svg xmlns="http://www.w3.org/2000/svg" width="${screen.w}" height="${screen.h}">`
+        + `<foreignObject x="0" y="${-top}" width="${width}" height="${height}">`;
+      const image = new Image();
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(start)}${body}${end}`;
+      try {
+        await image.decode();
+      } catch {
+        throw new Error('the copy of the page could not be drawn as an image (the page may forbid data: images)');
+      }
+      const tileHeight = Math.min(screen.h, area.y + area.h - top);
+      context.drawImage(image, area.x, 0, area.w, tileHeight, 0, top - area.y, area.w, tileHeight);
+    }
+  }
+
+  /**
+   * 場所の描き込みと番号を描く。座標は文書の座標で、呼ぶ側が範囲の左上へずらしておく。
+   * @param {CanvasRenderingContext2D} context
+   * @param {ImagePlace[]} places
+   */
+  function drawPlaces(context, places) {
+    context.strokeStyle = PLACE_COLOR;
+    context.fillStyle = PLACE_COLOR;
+    context.lineWidth = 2;
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    for (const place of places) {
+      if (place.kind === 'element') {
+        for (const { rect } of place.elements) context.strokeRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4);
+      } else if (place.points.length > 0) {
+        context.beginPath();
+        context.moveTo(place.points[0].x, place.points[0].y);
+        for (const point of place.points.slice(1)) context.lineTo(point.x, point.y);
+        context.stroke();
+        if (place.kind === 'arrow' && place.points.length > 1) drawArrowHead(context, place.points.at(-2), place.points.at(-1));
+      }
+    }
+    for (const place of places) {
+      const anchor = place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
+      if (!anchor) continue;
+      // 文書の左上の端の場所でも、番号が切れないように内側へ寄せる。
+      drawNumber(context, place.n, Math.max(10, anchor.x), Math.max(10, anchor.y));
+    }
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {Point | undefined} from
+   * @param {Point | undefined} to
+   */
+  function drawArrowHead(context, from, to) {
+    if (!from || !to) return;
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    context.beginPath();
+    context.moveTo(to.x, to.y);
+    context.lineTo(to.x - 12 * Math.cos(angle - 0.45), to.y - 12 * Math.sin(angle - 0.45));
+    context.lineTo(to.x - 12 * Math.cos(angle + 0.45), to.y - 12 * Math.sin(angle + 0.45));
+    context.closePath();
+    context.fill();
+  }
+
+  /**
+   * 番号の丸。場所の起点の左上に重ねる。
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} n
+   * @param {number} x
+   * @param {number} y
+   */
+  function drawNumber(context, n, x, y) {
+    context.save();
+    context.beginPath();
+    context.arc(x, y, 10, 0, Math.PI * 2);
+    context.fillStyle = PLACE_COLOR;
+    context.fill();
+    context.fillStyle = 'rgb(255, 255, 255)';
+    context.font = 'bold 11px sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(String(n), x, y + 0.5);
+    context.restore();
+  }
+
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @returns {Promise<Blob>}
+   */
+  function canvasPng(canvas) {
+    return new Promise((resolve, reject) => {
+      try {
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('the image could not be encoded'))), 'image/png');
+      } catch {
+        // 写しを描いた canvas が汚染されて読み出せないブラウザ。
+        reject(new Error('the drawn copy of the page cannot be read back'));
+      }
+    });
+  }
+
+  /**
+   * @param {Rect} area
+   * @param {number} scale
+   */
+  function sizedCanvas(area, scale) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(area.w * scale));
+    canvas.height = Math.max(1, Math.round(area.h * scale));
+    return canvas;
+  }
+
+  /**
+   * 頼まれた画像のページと表示幅に、いまの文書が並んでいなければ断る。画像を作る途中でページが移ったり幅が変わったり
+   * すると、場所の座標と写しの並びが合わない画像になる。
+   * @param {{ page: string, width: number }} view
+   */
+  function checkView(view) {
+    if (location.pathname + location.search !== view.page) throw new Error('the page is not the page of the places');
+    if (innerWidth !== view.width) throw new Error('the page is not laid out at the width of the places');
+  }
+
+  /**
+   * 場所の周りの画像を作る。PNG が上限を超えるときは縮めて描き直し、それでも超えれば諦める。画面の大きさは頼まれた値
+   * だけを使い、文書の大きさは始めに 1 回だけ読む（途中で読むと、その間に変わった並びで描く）。
+   * @param {unknown} asked 画像にする文書の矩形（無ければ場所から決める）
+   * @param {unknown[]} requested 重ねる場所（番号・種類・点・要素の矩形）
+   * @param {{ page: string, width: number, height: number }} view 場所のページ・表示幅・並べた画面の高さ
+   * @returns {Promise<{ png: string, width: number, height: number }>} png は base64
+   */
+  async function placesImage(asked, requested, view) {
+    checkView(view);
+    const places = readPlaces(requested);
+    const screen = { w: Math.max(1, view.width), h: Math.max(1, view.height) };
+    const width = document.documentElement.clientWidth;
+    const height = Math.max(document.documentElement.scrollHeight, screen.h);
+    const area = imageArea(asked, places, width, height);
+    // 写しは最初の縮尺で 1 回だけ描き、上限を超えて縮めるときはそれを縮めて使う。場所は縮尺ごとに描き直す。
+    let scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(area.w, area.h));
+    const page = sizedCanvas(area, scale);
+    const pageContext = /** @type {CanvasRenderingContext2D} */ (page.getContext('2d'));
+    pageContext.fillStyle = 'rgb(255, 255, 255)';
+    pageContext.fillRect(0, 0, page.width, page.height);
+    pageContext.scale(scale, scale);
+    await drawPageCopy(pageContext, area, width, height, screen);
+    checkView(view);
+    for (let attempt = 0; attempt < 4; attempt += 1, scale *= 0.6) {
+      const canvas = sizedCanvas(area, scale);
+      const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
+      context.drawImage(page, 0, 0, canvas.width, canvas.height);
+      context.scale(scale, scale);
+      context.translate(-area.x, -area.y);
+      drawPlaces(context, places);
+      const blob = await canvasPng(canvas);
+      if (blob.size <= IMAGE_MAX_BYTES) return { png: await blobBase64(blob), width: canvas.width, height: canvas.height };
+    }
+    throw new Error('the image is too large to send');
   }
 
   // ---- 写しの要素と記述の番号の対応 ----

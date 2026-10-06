@@ -3,7 +3,12 @@ import { test } from "node:test";
 
 import {
   WIDTH_CHOICES,
+  addPlace,
   buildPageTree,
+  draftElsewhere,
+  emptyDraft,
+  removePlace,
+  undoPlace,
   chooseReference,
   chooseSnapshot,
   fitScale,
@@ -58,11 +63,30 @@ test("the page tree lists the shown page and the pages with snapshots or mocks, 
       { page: "/a", width: 1280 },
     ],
     mocks: new Set(["/c"]),
+    comments: [],
   });
   assert.deepEqual(tree, [
-    { page: "/a", widths: [390, 1280], current: false, mock: false },
-    { page: "/b", widths: [], current: true, mock: false },
-    { page: "/c", widths: [], current: false, mock: true },
+    { page: "/a", widths: [390, 1280], current: false, mock: false, comments: 0 },
+    { page: "/b", widths: [], current: true, mock: false, comments: 0 },
+    { page: "/c", widths: [], current: false, mock: true, comments: 0 },
+  ]);
+});
+
+test("the page tree lists pages with only comments, with the comment count and the widths they were left at", () => {
+  const tree = buildPageTree({
+    current: "/",
+    snapshots: [{ page: "/", width: 1280 }],
+    mocks: new Set(),
+    comments: [
+      { page: "/cart", width: 390 },
+      { page: "/cart", width: 768 },
+      { page: "/cart", width: 390 },
+      { page: "/", width: 1280 },
+    ],
+  });
+  assert.deepEqual(tree, [
+    { page: "/", widths: [1280], current: true, mock: false, comments: 1 },
+    { page: "/cart", widths: [390, 768], current: false, mock: false, comments: 3 },
   ]);
 });
 
@@ -131,4 +155,74 @@ test("a short page is still drawn as tall as the pane", () => {
     overlayPlacement({ scale: 1, viewportHeight: 700, scrollX: 10, scrollY: 0, contentHeight: 300 }),
     { height: 700, transform: "translate(-10px, 0px) scale(1)" },
   );
+});
+
+/**
+ * @param {"element" | "arrow" | "pen"} kind
+ * @param {string} [selector]
+ * @returns {import("./live-model.js").NewPlace}
+ */
+const place = (kind, selector = "#a") => ({
+  kind,
+  points: kind === "element" ? [] : [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+  elements: [{ selector, text: "", rect: { x: 0, y: 0, w: 10, h: 10 } }],
+});
+
+/** @param {import("./live-model.js").PlaceDraft} draft */
+const numbers = (draft) => draft.places.map((item) => item.n);
+
+test("places of a comment are numbered from 1 in the order they are added", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("arrow"), "/", 390);
+  draft = addPlace(draft, place("pen"), "/", 390);
+  assert.deepEqual(numbers(draft), [1, 2, 3]);
+  assert.deepEqual(draft.places.map((item) => item.kind), ["element", "arrow", "pen"]);
+});
+
+test("removing a place keeps the other numbers and its number is not given again", () => {
+  let draft = emptyDraft("/", 390);
+  for (const kind of /** @type {const} */ (["element", "arrow", "pen"])) draft = addPlace(draft, place(kind, `#${kind}`), "/", 390);
+  draft = removePlace(draft, 2);
+  assert.deepEqual(numbers(draft), [1, 3]);
+  draft = addPlace(draft, place("arrow"), "/", 390);
+  assert.deepEqual(numbers(draft), [1, 3, 4]);
+});
+
+test("choosing the same element again takes its place away", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("element", "#b"), "/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  assert.deepEqual(draft.places.map((item) => [item.n, item.elements[0].selector]), [[2, "#b"]]);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  assert.deepEqual(numbers(draft), [2, 3]);
+});
+
+test("undo takes away the place added last", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("pen"), "/", 390);
+  draft = undoPlace(draft);
+  assert.deepEqual(numbers(draft), [1]);
+  assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
+});
+
+test("a place at another URL or width is not added to a draft that has places", () => {
+  const draft = addPlace(emptyDraft("/", 390), place("element", "#a"), "/", 390);
+  assert.deepEqual(addPlace(draft, place("arrow"), "/other", 390), draft);
+  assert.deepEqual(addPlace(draft, place("arrow"), "/", 1280), draft);
+});
+
+test("a draft without places takes the URL and width of its first place", () => {
+  const draft = addPlace(emptyDraft("/", 1280), place("element", "#a"), "/cart", 390);
+  assert.deepEqual([draft.url, draft.width, numbers(draft)], ["/cart", 390, [1]]);
+});
+
+test("a draft with places is elsewhere at another URL or width", () => {
+  const draft = addPlace(emptyDraft("/", 390), place("element", "#a"), "/", 390);
+  assert.equal(draftElsewhere(draft, "/", 390), null);
+  assert.deepEqual(draftElsewhere(draft, "/other", 390), { url: "/", width: 390 });
+  assert.deepEqual(draftElsewhere(draft, "/", 1280), { url: "/", width: 390 });
+  assert.equal(draftElsewhere(emptyDraft("/", 390), "/other", 1280), null);
 });

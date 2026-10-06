@@ -74,6 +74,67 @@ pub struct Suggestion {
     pub replacement: String,
 }
 
+/// ページへのコメントの場所の種類（live.md の R-PAGE-COMMENT）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceKind {
+    Element,
+    Arrow,
+    Pen,
+}
+
+impl PlaceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlaceKind::Element => "element",
+            PlaceKind::Arrow => "arrow",
+            PlaceKind::Pen => "pen",
+        }
+    }
+
+    pub fn parse(kind: &str) -> Option<Self> {
+        match kind {
+            "element" => Some(PlaceKind::Element),
+            "arrow" => Some(PlaceKind::Arrow),
+            "pen" => Some(PlaceKind::Pen),
+            _ => None,
+        }
+    }
+}
+
+/// ページの CSS ピクセルの点。スクロールに依存しない文書の座標。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// ページの CSS ピクセルの矩形。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// 場所が指す要素。エージェントに渡す情報（セレクタ・文字・位置と大きさ）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaceElement {
+    pub selector: String,
+    pub text: String,
+    pub rect: Rect,
+}
+
+/// ページへのコメントの場所 1 つ。番号はそのコメントの中で 1 から振り、消しても振り直さない。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Place {
+    pub n: u32,
+    pub kind: PlaceKind,
+    /// 矢印とペンの点。要素では空。
+    pub points: Vec<Point>,
+    pub elements: Vec<PlaceElement>,
+}
+
 /// 返信と発言を書いた人。人間の中は区別しない（P5）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Author {
@@ -110,28 +171,72 @@ pub struct Message {
     pub body: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Comment {
     pub id: String,
     /// 書いた順をレビュー全体で比べる通し番号（R-SESSION）。作成のときにだけ振る。
     pub seq: u32,
-    pub file_id: String,
     pub group_id: String,
     pub group_title: String,
+    pub body: String,
+    /// 作成順。
+    pub replies: Vec<Reply>,
+    pub resolved: bool,
+    pub outdated: bool,
+    /// コメントが指すところ。保存した後は変えない（R-COMMENT）。
+    pub target: CommentTarget,
+}
+
+impl Comment {
+    /// ファイルへのコメントなら、その位置。
+    pub fn file(&self) -> Option<&FileTarget> {
+        match &self.target {
+            CommentTarget::File(file) => Some(file),
+            CommentTarget::Page(_) => None,
+        }
+    }
+
+    pub fn file_mut(&mut self) -> Option<&mut FileTarget> {
+        match &mut self.target {
+            CommentTarget::File(file) => Some(file),
+            CommentTarget::Page(_) => None,
+        }
+    }
+}
+
+/// コメントが指すところ。ファイル（行レンジかファイル全体）か、`--live` のページの場所か。
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommentTarget {
+    File(FileTarget),
+    Page(PageTarget),
+}
+
+/// ファイルへのコメントの位置（R-COMMENT）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileTarget {
+    pub file_id: String,
     pub path: String,
     pub side: Side,
     /// ファイル全体のコメントでは None。
     pub start_line: Option<u32>,
     pub end_line: Option<u32>,
     pub quote: Vec<String>,
-    pub body: String,
-    /// 作成順。
-    pub replies: Vec<Reply>,
-    pub resolved: bool,
-    pub outdated: bool,
     /// 作成時の内容ハッシュ。現在のハッシュと違えば outdated。
     pub content_hash: String,
     pub suggestion: Option<Suggestion>,
+}
+
+/// ページへのコメントの位置（live.md の R-PAGE-COMMENT）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageTarget {
+    /// パスとクエリ（`#` から後ろを除く）。
+    pub url: String,
+    /// 付けたときの表示幅。
+    pub width: u32,
+    /// 1 つ以上で、番号の順。
+    pub places: Vec<Place>,
+    /// 描き込みを重ねた画像の絶対パス。作れなかった・書けなかったときは None。
+    pub image: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -115,8 +115,16 @@ pub enum Notice {
         side: Side,
         lines: Option<(u32, u32)>,
     },
+    /// ページへのコメントを足した（live.md の R-PAGE-COMMENT）。`places` は場所の数。
+    PageCommentAdded {
+        url: String,
+        width: u32,
+        places: usize,
+    },
     /// 結果ファイルを残せなかった。submit の結果と終了コードは変わらない（R-RESULT）。
     ResultNotSaved(ResultSaveError),
+    /// ページへのコメントの画像を保存できなかった。コメントは画像なしで残る（R-PAGE-COMMENT）。
+    CommentImageNotSaved(SessionError),
     /// セッションを保存できなかった。レビューは続く（R-SESSION）。
     SessionNotSaved(SessionError),
     /// submit の後にセッションを消せなかった（R-SESSION）。
@@ -165,6 +173,9 @@ pub trait SessionSink: Send + Sync {
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError>;
     /// submit の確定後。
     fn delete(&self) -> Result<(), SessionError>;
+    /// セッションに添えるファイル（コメントの画像）を `<id>.files/` に書き、絶対パスを返す
+    /// （live.md の R-PAGE-SESSION）。`name` はサーバが決めた名前。
+    fn save_file(&self, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf, SessionError>;
 }
 
 pub struct ServeParams {

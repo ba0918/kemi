@@ -37,7 +37,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `app.js` | 結線と起動だけ。すべてを import してよい唯一のモジュール |
 | `features/` | 状態を変え、`api.js` を呼び、描き直す |
 | `views/` | 要素を作る。`api.js` を除く leaf と、ほかの `views/` を import してよい（循環させない）。`api.js`・`features/`・`app.js` は import しない |
-| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読み）、`live-diff.js`（`--live` の差分の純粋な処理。要素の記述を比べて変化の一覧を作る） |
+| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読みと、書いているページへのコメントの場所の扱い）、`live-diff.js`（`--live` の差分の純粋な処理。要素の記述を比べて変化の一覧を作る） |
 
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
@@ -56,7 +56,11 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
 - `web/live/page.js` は、中継したページに差し込むスクリプト。レビュー画面の層の外で、開発中の
   ページの中で動き、レビュー画面とは `postMessage` だけで話す。中継のポートの `/__kemi/page.js`
-  で配る。
+  で配る。要素の記述・スナップショット・変化の印に加え、ページへのコメントの場所（指している要素と
+  文書の座標）を決め、場所の描き込みと、その周りの画像を作る。押す・描く操作そのものはレビュー
+  画面が枠の上に重ねた層（`features/live.js`）で受ける。
+- `--live` のページへのコメントの印とページのツリーの数は、`views/conversation.js` が会話を描くたびに
+  `actions.pageCommentsChanged` で合わせる。`--live` でないレビューでは何もしない。
 
 ## Commands
 

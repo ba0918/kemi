@@ -73,6 +73,13 @@ also lists and marks what changed (look, text, added and removed elements, and, 
 moved); against a mock it does not. Handing over is the person's
 action: their next hand-over (or **Record now**) takes a fresh snapshot.
 
+The person can also comment on the page itself, putting numbered places on it with the
+**Element**, **Arrow**, and **Pen** tools. Such a comment reaches you with `page` instead of a
+file and lines: the URL and width it was left at, its places with the elements they point at,
+and, from `kemi wait`, the path of a PNG of the area with the places drawn on it. Read the
+[result reference](results.md) for the shape, and look at the image before changing the page:
+the body refers to the places by their numbers.
+
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
 connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
 Snapshots and mock assignments do not come back on resume yet.

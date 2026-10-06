@@ -55,7 +55,9 @@ otherwise retain the run's identifier and keep using the environment's wait and 
 mechanisms.
 
 After the process exits, collect its exit code and stdout. For a submitted result, use
-[the result reference](references/results.md) to interpret the JSON and handle comments.
+[the result reference](references/results.md) to interpret the JSON and handle comments. A
+comment on a running page (`--live`) carries `page` (its URL, width, and numbered places) instead
+of a file and lines; the image of its places is a path only in what `kemi wait` returned.
 
 If the execution environment cannot preserve a long-running process and later collect its
 result, report that limitation instead of inventing a verdict.

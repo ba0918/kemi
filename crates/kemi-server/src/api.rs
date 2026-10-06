@@ -59,7 +59,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(repository_image),
         )
         .route("/s/{token}/api/unit", post(unit_api))
-        .route("/s/{token}/api/comment", post(comment_api))
+        // ページへのコメントは描き込みの画像を同じ要求で運ぶので、スナップショットと同じ上限にする。
+        .route(
+            "/s/{token}/api/comment",
+            post(comment_api).layer(axum::extract::DefaultBodyLimit::max(SNAPSHOT_BODY_LIMIT)),
+        )
         .route("/s/{token}/api/message", post(message_api))
         .route("/s/{token}/api/hand", post(hand_api))
         .route("/s/{token}/api/state", post(state_api))

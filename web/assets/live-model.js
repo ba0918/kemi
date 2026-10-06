@@ -58,38 +58,47 @@ export function liveOrigin(protocol, hostname, port) {
 
 /**
  * @typedef {{ page: string, width: number }} PageWidth
- * @typedef {{ page: string, widths: number[], current: boolean, mock: boolean }} PageTreeItem
+ * @typedef {{ page: string, widths: number[], current: boolean, mock: boolean, comments: number }} PageTreeItem
  */
 
 /**
- * ページのツリー（R-PAGE-VIEW）。表示中のページと、スナップショットかモックの割り当てが
- * あるページを、パスの順に並べる。各ページにはスナップショットのある表示幅を小さい順に。
- * @param {{ current: string, snapshots: PageWidth[], mocks: Set<string> }} input
+ * ページのツリー（R-PAGE-VIEW）。表示中のページと、スナップショット・コメント・モックの割り当てのいずれかが
+ * あるページを、パスの順に並べる。各ページには、スナップショットを取った表示幅とコメントを付けた表示幅を
+ * 小さい順に、コメントの数とともに。
+ * @param {{ current: string, snapshots: PageWidth[], mocks: Set<string>, comments: PageWidth[] }} input
  * @returns {PageTreeItem[]}
  */
-export function buildPageTree({ current, snapshots, mocks }) {
-  /** @type {Map<string, Set<number>>} */
+export function buildPageTree({ current, snapshots, mocks, comments }) {
+  /** @type {Map<string, { widths: Set<number>, comments: number }>} */
   const pages = new Map();
   const add = (/** @type {string} */ page) => {
-    if (!pages.has(page)) {
-      pages.set(page, new Set());
+    let item = pages.get(page);
+    if (!item) {
+      item = { widths: new Set(), comments: 0 };
+      pages.set(page, item);
     }
-    return /** @type {Set<number>} */ (pages.get(page));
+    return item;
   };
   add(current);
   for (const snapshot of snapshots) {
-    add(snapshot.page).add(snapshot.width);
+    add(snapshot.page).widths.add(snapshot.width);
+  }
+  for (const comment of comments) {
+    const item = add(comment.page);
+    item.widths.add(comment.width);
+    item.comments += 1;
   }
   for (const page of mocks) {
     add(page);
   }
   return [...pages.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([page, widths]) => ({
+    .map(([page, item]) => ({
       page,
-      widths: [...widths].sort((left, right) => left - right),
+      widths: [...item.widths].sort((left, right) => left - right),
       current: page === current,
       mock: mocks.has(page),
+      comments: item.comments,
     }));
 }
 
@@ -186,4 +195,78 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
   const x = -scrollX * scale;
   const y = -scrollY * scale;
   return { height, transform: `translate(${x === 0 ? 0 : x}px, ${y === 0 ? 0 : y}px) scale(${scale})` };
+}
+
+/**
+ * 書いている途中のページへのコメントの場所（live.md の R-PAGE-COMMENT）。場所は最初の場所の URL と表示幅の
+ * ものなので、それも覚える。`next` は次に振る番号で、消しても戻さない（本文が番号で指すため）。
+ * @typedef {{ selector: string, text: string, rect: { x: number, y: number, w: number, h: number } }} PlaceElement
+ * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[] }} NewPlace
+ * @typedef {NewPlace & { n: number }} Place
+ * @typedef {{ url: string, width: number, places: Place[], next: number }} PlaceDraft
+ */
+
+/**
+ * @param {string} url
+ * @param {number} width
+ * @returns {PlaceDraft}
+ */
+export function emptyDraft(url, width) {
+  return { url, width, places: [], next: 1 };
+}
+
+/**
+ * 書きかけのコメントの場所が、見ている URL と表示幅のものでないとき、その URL と表示幅（R-PAGE-COMMENT）。
+ * 場所が 1 つも無ければ、どこにも結びついていない。
+ * @param {PlaceDraft} draft
+ * @param {string} url
+ * @param {number} width
+ * @returns {{ url: string, width: number } | null}
+ */
+export function draftElsewhere(draft, url, width) {
+  if (draft.places.length === 0 || (draft.url === url && draft.width === width)) {
+    return null;
+  }
+  return { url: draft.url, width: draft.width };
+}
+
+/**
+ * 場所を足す。同じ要素をもう一度選んだら、その要素の場所を外す。場所は最初の場所の URL と表示幅のものだけなので、
+ * 別の URL か表示幅では足さない。場所が 1 つも無ければ、足す場所の URL と表示幅に移る（番号は戻さない）。
+ * @param {PlaceDraft} draft
+ * @param {NewPlace} place
+ * @param {string} url
+ * @param {number} width
+ * @returns {PlaceDraft}
+ */
+export function addPlace(draft, place, url, width) {
+  if (draftElsewhere(draft, url, width)) {
+    return draft;
+  }
+  const base = { ...draft, url, width };
+  const selector = place.kind === "element" ? place.elements[0]?.selector : undefined;
+  const chosen = base.places.find((item) => item.kind === "element" && selector !== undefined && item.elements[0]?.selector === selector);
+  if (chosen) {
+    return removePlace(base, chosen.n);
+  }
+  return { ...base, places: [...base.places, { ...place, n: base.next }], next: base.next + 1 };
+}
+
+/**
+ * @param {PlaceDraft} draft
+ * @param {number} n
+ * @returns {PlaceDraft}
+ */
+export function removePlace(draft, n) {
+  return { ...draft, places: draft.places.filter((item) => item.n !== n) };
+}
+
+/**
+ * 最後に足した場所を外す。
+ * @param {PlaceDraft} draft
+ * @returns {PlaceDraft}
+ */
+export function undoPlace(draft) {
+  const last = Math.max(0, ...draft.places.map((item) => item.n));
+  return removePlace(draft, last);
 }
