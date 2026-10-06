@@ -288,6 +288,8 @@ function renderThread(comment, options) {
     const go = button(away === null ? "cv-go" : "cv-go cv-page-width");
     go.textContent = away === null ? "Show on page" : `${away}px`;
     go.title = `Show ${comment.page.url} at ${comment.page.width}px`;
+    // 保存している間はページも表示幅も変えられないので、移れないと出す。
+    go.disabled = state.liveSaving;
     go.addEventListener("click", () => actions.showPageComment(comment));
     acts.append(go);
   } else if (!info.vanished) {

@@ -269,7 +269,11 @@ export function startLive(info) {
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
-  new ResizeObserver(() => layoutFrames()).observe(shell.stage);
+  new ResizeObserver(() => {
+    layoutFrames();
+    // 狭い画面との境をまたぐと、並べたまま隠れている側も変わる。
+    syncLaidOutInert();
+  }).observe(shell.stage);
 
   shell.liveFrame.src = live.origin + live.page;
   setView("page");
@@ -618,7 +622,8 @@ async function finishStroke() {
     return;
   }
   live.composeError = "";
-  setDraft(addPlace(live.draft, { kind, points: answer.points ?? [], elements: answer.elements ?? [] }, page, width));
+  const place = { kind, points: answer.points ?? [], elements: answer.elements ?? [] };
+  setDraft(addPlace(live.draft, answer.at ? { ...place, at: answer.at } : place, page, width));
 }
 
 /**
@@ -676,7 +681,8 @@ export function refreshPageComments() {
  * @param {any} comment
  */
 export function showPageComment(comment) {
-  if (!comment.page) {
+  // 保存している間は移れない（showPage が何もしない）ので、狭い画面のシートも閉じない。
+  if (!comment.page || live.saving) {
     return;
   }
   if (state.narrow) {
@@ -749,9 +755,7 @@ async function savePageComment() {
   if (draft.places.length === 0 || body === "" || draftElsewhere(draft, live.page, live.width)) {
     return;
   }
-  live.saving = true;
-  renderBand();
-  renderCompose();
+  setSaving(true);
   const frame = shell.liveFrame.contentWindow;
   let image = null;
   if (frame) {
@@ -767,7 +771,9 @@ async function savePageComment() {
     );
     image = typeof answer.png === "string" ? answer.png : null;
   }
-  const request = { op: "add_page", page: { url: draft.url, width: draft.width, places: draft.places }, body };
+  // 押した点（`at`）は画像の頼みにだけ載せる。保存する場所の形は R-SUBMIT の `page.places`。
+  const places = draft.places.map(({ n, kind, points, elements }) => ({ n, kind, points, elements }));
+  const request = { op: "add_page", page: { url: draft.url, width: draft.width, places }, body };
   try {
     const comment = await api.postComment({ ...request, image }).catch((error) => {
       // 本文と場所に画像を足すと要求の上限を超えるときは、画像なしで保存する（画像は作れないこともある）。
@@ -789,10 +795,21 @@ async function savePageComment() {
   } catch (error) {
     live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
-    live.saving = false;
-    renderBand();
-    renderCompose();
+    setSaving(false);
   }
+}
+
+/**
+ * 保存の始まりと終わり。保存している間は書きかけ・表示幅・ページを変える操作を使えないと出す。
+ * @param {boolean} saving
+ */
+function setSaving(saving) {
+  live.saving = saving;
+  state.liveSaving = saving;
+  renderBand();
+  renderCompose();
+  renderTree();
+  renderConversation();
 }
 
 /**
@@ -856,6 +873,8 @@ function render() {
   refreshChanges();
   renderTree();
   layoutFrames();
+  // 並べている間に見方や側が変わると、並べたまま隠れるものも変わる。
+  syncLaidOutInert();
 }
 
 /**
@@ -1078,9 +1097,24 @@ function laidOutHeight() {
 /**
  * 並べたままにしている間の状態。重なって呼ばれても、並べるのは最初の呼び出し、戻すのは最後に終わった呼び出しだけ
  * （先に終わった方が戻すと、まだ読んでいる方が並べていない文書を読む）。
- * @type {{ running: number, revealed: HTMLElement | null, ready: Promise<void> }}
+ * @type {{ running: number, ready: Promise<void> }}
  */
-const laidOut = { running: 0, revealed: null, ready: Promise.resolve() };
+const laidOut = { running: 0, ready: Promise.resolve() };
+
+/**
+ * 並べたまま見えなくしている舞台か動いているページの側を、操作もフォーカスも受けないようにする。並べている間に見方や
+ * 側や画面の幅が変わると隠れるものも変わるので、そのたびに合わせる。並べていなければどちらも戻す。
+ */
+function syncLaidOutInert() {
+  if (!shell) {
+    return;
+  }
+  const { stage, livePane } = shell;
+  const hidden = (/** @type {HTMLElement} */ element) => getComputedStyle(element).visibility === "hidden";
+  const inert = stage.dataset.measuring === undefined ? null : hidden(stage) ? stage : hidden(livePane) ? livePane : null;
+  stage.inert = inert === stage;
+  livePane.inert = inert === livePane;
+}
 
 /**
  * task が終わるまで、動いているページの枠を選んだ幅で並べたままにする。隠れていれば、見えず操作も受けないまま並べて
@@ -1094,15 +1128,13 @@ async function whileLaidOut(task) {
   if (!shell) {
     return task();
   }
-  const { stage, livePane, liveFrame } = shell;
+  const { stage, liveFrame } = shell;
   if (laidOut.running === 0) {
-    // 隠れていれば、コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
-    const revealed = !liveFrameHidden() ? null : stage.getClientRects().length === 0 ? stage : livePane;
+    const wasHidden = liveFrameHidden();
     stage.dataset.measuring = "true";
-    laidOut.revealed = revealed;
+    syncLaidOutInert();
     laidOut.ready = Promise.resolve();
-    if (revealed) {
-      revealed.inert = true;
+    if (wasHidden) {
       liveFrame.getBoundingClientRect();
       // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
       laidOut.ready = new Promise((done) => {
@@ -1119,10 +1151,7 @@ async function whileLaidOut(task) {
     laidOut.running -= 1;
     if (laidOut.running === 0) {
       delete stage.dataset.measuring;
-      if (laidOut.revealed) {
-        laidOut.revealed.inert = false;
-      }
-      laidOut.revealed = null;
+      syncLaidOutInert();
     }
   }
 }
@@ -1223,6 +1252,7 @@ function renderTree() {
       ...changeHandlers,
     },
     changesToList(),
+    live.saving,
   );
 }
 

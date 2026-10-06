@@ -201,7 +201,8 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
  * 書いている途中のページへのコメントの場所（live.md の R-PAGE-COMMENT）。場所は最初の場所の URL と表示幅の
  * ものなので、それも覚える。`next` は次に振る番号で、消しても戻さない（本文が番号で指すため）。
  * @typedef {{ selector: string, text: string, rect: { x: number, y: number, w: number, h: number } }} PlaceElement
- * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[] }} NewPlace
+ * `at` は要素の場所の押した点（文書の座標）。画像の頼みにだけ載せ、保存する場所には入れない。
+ * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[], at?: { x: number, y: number } }} NewPlace
  * @typedef {NewPlace & { n: number }} Place
  * @typedef {{ url: string, width: number, places: Place[], next: number }} PlaceDraft
  */
