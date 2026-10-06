@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use super::encoding;
+use super::files::{self, FILES_LIMIT, PageSnapshot};
 use super::{CopyMeta, CopyState, MetaDto, SessionCopy, SessionInfo, SessionState, SessionSummary};
 
 /// 写しの上限（`<id>.payload` 全体のバイト数）。超えた写しは捨てて復元不可にする。
@@ -111,11 +112,24 @@ pub struct StoredSession {
 #[derive(Clone, Debug)]
 pub struct SessionStore {
     dir: PathBuf,
+    /// 1 セッションの `<id>.files/` の上限（R-PAGE-SESSION）。
+    files_limit: u64,
 }
 
 impl SessionStore {
     pub fn new(dir: PathBuf) -> Self {
-        SessionStore { dir }
+        SessionStore {
+            dir,
+            files_limit: FILES_LIMIT,
+        }
+    }
+
+    /// `<id>.files/` の上限を差し替える。既定は [`FILES_LIMIT`]。
+    pub fn with_files_limit(self, files_limit: u64) -> Self {
+        SessionStore {
+            files_limit,
+            ..self
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -132,6 +146,7 @@ impl SessionStore {
             state: SessionState::default(),
             copy: CopyState::Pending,
             deleted: false,
+            files_limit: self.files_limit,
             _lock: lock,
         })
     }
@@ -164,6 +179,7 @@ impl SessionStore {
             state,
             copy,
             deleted: false,
+            files_limit: self.files_limit,
             _lock: lock,
         })
     }
@@ -349,6 +365,7 @@ pub struct OpenSession {
     /// submit で消した後の保存を無視する印。凍結が submit と競争しても、消えた
     /// セッションを作り直さない（R-SESSION）。
     deleted: bool,
+    files_limit: u64,
     /// このセッションのロック。フィールドとして持ち、Drop で解放する。
     _lock: SessionLock,
 }
@@ -432,6 +449,140 @@ impl OpenSession {
         Ok(path)
     }
 
+    /// スナップショットを `<id>.files/` に書く。書く前に 20 MB の規則で場所を空ける
+    /// （R-PAGE-SESSION）。`comments` は今あるコメントの id で、その画像は消さない。
+    pub fn save_snapshot(
+        &self,
+        snapshot: &PageSnapshot,
+        comments: &BTreeSet<String>,
+    ) -> FilesWrite {
+        match files::encode_snapshot(snapshot) {
+            Ok(bytes) => self.write_into_files(
+                &files::snapshot_name(snapshot.number, snapshot.kind),
+                &bytes,
+                comments,
+            ),
+            Err(reason) => FilesWrite {
+                written: FileWritten::Failed(SessionError::Encode { reason }),
+                removed_snapshots: Vec::new(),
+            },
+        }
+    }
+
+    /// コメントの画像を `<id>.files/` に書く。規則はスナップショットと同じで、書いている
+    /// 画像のコメントは `comments` に無くても今あるものとして扱う（状態に入る前に書くため）。
+    pub fn save_image(
+        &self,
+        comment_id: &str,
+        bytes: &[u8],
+        comments: &BTreeSet<String>,
+    ) -> FilesWrite {
+        let mut kept = comments.clone();
+        kept.insert(comment_id.to_string());
+        self.write_into_files(&files::image_name(comment_id), bytes, &kept)
+    }
+
+    /// `<id>.files/` に置いたスナップショットを、取った順に読み戻す。読めないものは
+    /// そのファイルの誤りとして返し、ほかのものは読む。
+    pub fn read_snapshots(&self) -> Vec<Result<PageSnapshot, SessionError>> {
+        let dir = files_path(&self.dir, &self.info.id);
+        let listed = match list_files(&dir) {
+            Ok(listed) => listed,
+            Err(error) => return vec![Err(error)],
+        };
+        let mut names: Vec<(u32, String)> = listed
+            .into_iter()
+            .filter_map(|(name, _)| Some((files::snapshot_of_name(&name)?.0, name)))
+            .collect();
+        names.sort();
+        names
+            .into_iter()
+            .map(|(_, name)| {
+                let path = dir.join(&name);
+                let bytes = std::fs::read(&path).map_err(|source| SessionError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+                files::decode_snapshot(&name, &bytes)
+                    .map_err(|reason| SessionError::Corrupt { path, reason })
+            })
+            .collect()
+    }
+
+    /// 保留で終わるとき。会話の無い `--live` のセッションは `<id>.files/` も残さない
+    /// （R-PAGE-SESSION）。レビューの途中では会話が無くなっても `<id>.files/` を消さない
+    /// （開始時のスナップショットを、後で会話ができたときのために持っておく）。
+    pub fn close_suspended(&mut self) -> Result<(), SessionError> {
+        if self.deleted || !self.info.mode.is_live() || self.state.has_conversation() {
+            return Ok(());
+        }
+        remove_dir_if_present(&files_path(&self.dir, &self.info.id))
+    }
+
+    fn write_into_files(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        comments: &BTreeSet<String>,
+    ) -> FilesWrite {
+        let dir = files_path(&self.dir, &self.info.id);
+        let failed = |error, removed_snapshots| FilesWrite {
+            written: FileWritten::Failed(error),
+            removed_snapshots,
+        };
+        if self.deleted {
+            return failed(
+                SessionError::Io {
+                    path: dir,
+                    source: std::io::Error::other("the session is already deleted"),
+                },
+                Vec::new(),
+            );
+        }
+        let listed = match list_files(&dir) {
+            // 同じ名前のファイルは書き直すので、今の大きさに数えない。
+            Ok(listed) => listed
+                .into_iter()
+                .filter(|(other, _)| other != name)
+                .collect::<Vec<_>>(),
+            Err(error) => return failed(error, Vec::new()),
+        };
+        let room = files::make_room(&listed, comments, bytes.len() as u64, self.files_limit);
+        let mut removed_snapshots = Vec::new();
+        for removed in &room.remove {
+            if let Err(error) = remove_if_present(&dir.join(removed)) {
+                return failed(error, removed_snapshots);
+            }
+            if let Some((number, _)) = files::snapshot_of_name(removed) {
+                removed_snapshots.push(number);
+            }
+        }
+        if !room.fits {
+            return FilesWrite {
+                written: FileWritten::NoRoom,
+                removed_snapshots,
+            };
+        }
+        let written = create_private_dir(&dir).and_then(|()| {
+            let path = std::path::absolute(dir.join(name)).map_err(|source| SessionError::Io {
+                path: dir.join(name),
+                source,
+            })?;
+            write_private_file(&path, bytes).map_err(|source| SessionError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            Ok(path)
+        });
+        FilesWrite {
+            written: match written {
+                Ok(path) => FileWritten::Saved(path),
+                Err(error) => FileWritten::Failed(error),
+            },
+            removed_snapshots,
+        }
+    }
+
     pub(crate) fn save_state_at(
         &mut self,
         state: SessionState,
@@ -499,8 +650,9 @@ impl OpenSession {
             !self.state.is_empty() || self.has_copy()
         };
         if !keep {
-            self.remove_file()?;
-            return remove_dir_if_present(&files_path(&self.dir, &self.info.id));
+            // `<id>.files/` は残す。`--live` のレビューは会話が無い間もスナップショットを
+            // 書いており、保留で終わるときに消すかを決める（`close_suspended`）。
+            return self.remove_file();
         }
         self.write_session()?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
@@ -544,6 +696,44 @@ impl OpenSession {
         let bytes = encoding::encode_session(encoding::VERSION, &meta);
         write_atomic(&self.dir, &self.path(), &bytes)
     }
+}
+
+/// `<id>.files/` に書いた結果（R-PAGE-SESSION）。
+#[derive(Debug)]
+pub struct FilesWrite {
+    pub written: FileWritten,
+    /// 20 MB の規則で消したスナップショットの番号。書けなかったときも、消したものは返す。
+    pub removed_snapshots: Vec<u32>,
+}
+
+#[derive(Debug)]
+pub enum FileWritten {
+    /// 書いたファイルの絶対パス。
+    Saved(PathBuf),
+    /// 20 MB の規則で消せるものを消しても入らないので、書かなかった。
+    NoRoom,
+    Failed(SessionError),
+}
+
+/// `<id>.files/` の中のファイルの名前と大きさ。ディレクトリが無ければ空。
+fn list_files(dir: &Path) -> Result<Vec<(String, u64)>, SessionError> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(SessionError::Io {
+                path: dir.to_path_buf(),
+                source,
+            });
+        }
+    };
+    Ok(entries
+        .flatten()
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok().filter(std::fs::Metadata::is_file)?;
+            Some((entry.file_name().into_string().ok()?, metadata.len()))
+        })
+        .collect())
 }
 
 /// セッションのロック。`File::try_lock` を使うので、プロセスが死ねば OS が解放する。
@@ -893,6 +1083,7 @@ mod tests {
         AgentEvent, Channel, Handed, HandedComment, HandedReply, ReplyRef, Unhanded,
     };
     use crate::domain::review::{Author, GroupBy, Message, Reply, ReviewMeta, Side, Suggestion};
+    use crate::session::files::{PageSnapshot, SnapshotKind};
     use crate::session::{FrozenUnit, SessionMode};
     use crate::source::FileContent;
 
@@ -1167,7 +1358,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_session_whose_conversation_is_gone_removes_its_files_directory() {
+    fn a_live_session_whose_conversation_is_gone_removes_its_files_directory_when_suspended() {
         let scratch = Scratch::new();
         let store = SessionStore::new(scratch.dir());
         let mut open = store
@@ -1176,11 +1367,226 @@ mod tests {
         open.save_state_at(state_with_comment(), 200).unwrap();
         open.save_file("c1.png", b"png").unwrap();
         let id = open.id().to_string();
-
         open.save_state_at(SessionState::default(), 300).unwrap();
+
+        open.close_suspended().unwrap();
 
         assert!(!scratch.dir().join(format!("{id}.session")).exists());
         assert!(!files_dir(&scratch, &id).exists());
+    }
+
+    fn page_snapshot(number: u32, kind: SnapshotKind, html: &str) -> PageSnapshot {
+        PageSnapshot {
+            number,
+            kind,
+            page: "/products?x=1".to_string(),
+            width: 390,
+            html: html.to_string(),
+            description: Some(serde_json::json!("H4sIAAAA")),
+        }
+    }
+
+    fn no_comments() -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+
+    fn saved_path(write: &FilesWrite) -> PathBuf {
+        match &write.written {
+            FileWritten::Saved(path) => path.clone(),
+            other @ (FileWritten::NoRoom | FileWritten::Failed(_)) => {
+                panic!("not saved: {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn a_snapshot_reads_back_the_same_from_another_open_session() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        let start = page_snapshot(1, SnapshotKind::Start, "<p>start</p>");
+        let manual = PageSnapshot {
+            width: 1280,
+            description: None,
+            ..page_snapshot(2, SnapshotKind::Manual, "<p>manual</p>")
+        };
+        saved_path(&open.save_snapshot(&start, &no_comments()));
+        saved_path(&open.save_snapshot(&manual, &no_comments()));
+        let id = open.id().to_string();
+        drop(open);
+
+        let opened = store.open(&id).unwrap();
+        let read: Vec<PageSnapshot> = opened
+            .read_snapshots()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+
+        assert_eq!(read, vec![start, manual]);
+    }
+
+    #[test]
+    fn a_snapshot_is_written_into_its_files_directory_for_the_owner_only() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+
+        let path = saved_path(&open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, "<p></p>"),
+            &no_comments(),
+        ));
+
+        assert!(path.starts_with(std::path::absolute(files_dir(&scratch, open.id())).unwrap()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(&files_dir(&scratch, open.id())), 0o700);
+        }
+    }
+
+    #[test]
+    fn an_unreadable_snapshot_file_does_not_hide_the_others() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let start = page_snapshot(1, SnapshotKind::Start, "<p>start</p>");
+        open.save_snapshot(&start, &no_comments());
+        let broken = saved_path(&open.save_snapshot(
+            &page_snapshot(2, SnapshotKind::Manual, "<p>manual</p>"),
+            &no_comments(),
+        ));
+        std::fs::write(&broken, b"not gzip").unwrap();
+
+        let read = open.read_snapshots();
+
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].as_ref().unwrap(), &start);
+        assert!(read[1].is_err());
+    }
+
+    #[test]
+    fn writing_into_a_full_files_directory_removes_files_by_the_rule_first() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir()).with_files_limit(3000);
+        let open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let html = |seed: u8| String::from_utf8(incompressible_text(900, seed)).unwrap();
+        open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, &html(1)),
+            &no_comments(),
+        );
+        let handed = saved_path(&open.save_snapshot(
+            &page_snapshot(2, SnapshotKind::Handed, &html(2)),
+            &no_comments(),
+        ));
+        let manual = saved_path(&open.save_snapshot(
+            &page_snapshot(3, SnapshotKind::Manual, &html(3)),
+            &no_comments(),
+        ));
+
+        let write = open.save_snapshot(
+            &page_snapshot(4, SnapshotKind::Manual, &html(4)),
+            &no_comments(),
+        );
+
+        assert_eq!(write.removed_snapshots, vec![2]);
+        assert!(!handed.exists());
+        assert!(manual.exists());
+        assert!(saved_path(&write).exists());
+    }
+
+    #[test]
+    fn a_snapshot_that_does_not_fit_beside_the_start_snapshot_and_current_images_is_not_written() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir()).with_files_limit(3000);
+        let open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let html = |seed: u8| String::from_utf8(incompressible_text(1200, seed)).unwrap();
+        open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, &html(1)),
+            &no_comments(),
+        );
+        let comments: BTreeSet<String> = ["c1".to_string()].into_iter().collect();
+        saved_path(&open.save_image("c1", &incompressible(1200), &comments));
+
+        let write =
+            open.save_snapshot(&page_snapshot(2, SnapshotKind::Manual, &html(2)), &comments);
+
+        assert!(matches!(write.written, FileWritten::NoRoom), "{write:?}");
+        assert!(open.read_snapshots().len() == 1);
+    }
+
+    #[test]
+    fn a_comment_image_makes_room_by_removing_images_of_deleted_comments() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir()).with_files_limit(2500);
+        let open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let first = saved_path(&open.save_image("c1", &incompressible(1200), &no_comments()));
+        let comments: BTreeSet<String> = ["c2".to_string()].into_iter().collect();
+        let second = saved_path(&open.save_image("c2", &incompressible(1200), &comments));
+
+        let third = open.save_image("c3", &incompressible(1200), &comments);
+
+        assert!(!first.exists());
+        assert!(second.exists());
+        assert_eq!(
+            std::fs::read(saved_path(&third)).unwrap(),
+            incompressible(1200)
+        );
+    }
+
+    #[test]
+    fn snapshots_of_a_live_session_without_a_conversation_stay_until_it_is_suspended() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let path = saved_path(&open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, "<p></p>"),
+            &no_comments(),
+        ));
+        let seen_only = SessionState {
+            seen: ["f1".to_string()].into_iter().collect(),
+            ..SessionState::default()
+        };
+
+        open.save_state_at(seen_only, 200).unwrap();
+        assert!(path.exists());
+
+        open.close_suspended().unwrap();
+        assert!(!files_dir(&scratch, open.id()).exists());
+    }
+
+    #[test]
+    fn snapshots_of_a_live_session_with_a_conversation_stay_after_it_is_suspended() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let path = saved_path(&open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, "<p></p>"),
+            &no_comments(),
+        ));
+        open.save_state_at(state_with_comment(), 200).unwrap();
+
+        open.close_suspended().unwrap();
+
+        assert!(path.exists());
     }
 
     #[test]
@@ -1375,6 +1781,17 @@ mod tests {
             store.open(&id),
             Err(SessionError::Unusable { .. })
         ));
+    }
+
+    /// gzip でほとんど縮まない ASCII の文字列（`seed` ごとに違う）。
+    fn incompressible_text(size: usize, seed: u8) -> Vec<u8> {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut bytes = incompressible(size + usize::from(seed));
+        bytes.drain(..usize::from(seed));
+        bytes
+            .into_iter()
+            .map(|byte| ALPHABET[usize::from(byte) % ALPHABET.len()])
+            .collect()
     }
 
     fn incompressible(size: usize) -> Vec<u8> {

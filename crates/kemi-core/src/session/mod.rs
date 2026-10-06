@@ -14,13 +14,15 @@
 
 mod encoding;
 mod endpoint;
+pub(crate) mod files;
 mod store;
 mod ulid;
 
 pub use endpoint::{Endpoint, endpoint_path, read_endpoint, remove_endpoint, write_endpoint};
+pub use files::{FILES_LIMIT, PageSnapshot, SnapshotKind};
 pub use store::{
-    COPY_LIMIT, KEEP_BYTES, KEEP_SESSIONS, OpenSession, SessionError, SessionLock, SessionStore,
-    StoredSession,
+    COPY_LIMIT, FileWritten, FilesWrite, KEEP_BYTES, KEEP_SESSIONS, OpenSession, SessionError,
+    SessionLock, SessionStore, StoredSession,
 };
 pub use ulid::{generate_ulid, is_valid_id, new_ulid, now_millis};
 
