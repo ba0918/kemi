@@ -28,7 +28,7 @@
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
-//   枠のスクロール位置は変わらない。並べる表示の比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
+//   枠のスクロール位置は変わらない。同じページを読み込み直しても、消えた要素の組が同じなら変わらない。並べる表示の比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
 //   インラインのスタイルを止める CSP のページでも印が付く。HTML として読み直すと要素の並びが変わる（スクリプトが
 //   tbody を挟まずに組んだ表の）ページでも、消えた要素の印はスナップショットのその要素に付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
@@ -1054,6 +1054,22 @@ async function marksFollowTheChanges(repository) {
     image = await shot(refView, shots, 'scroll-kept');
     assert.equal(countPixels(image, button, isBlue), 0, `the reference keeps its scroll: ${join(shots, 'scroll-kept.png')}`);
     console.log('PASS 比べる相手の枠をスクロールしてから動いているページの側の印だけが付け直されても、枠のスクロール位置が変わらない');
+
+    // 同じページを読み込み直しても（HMR の全体の読み込み直しに当たる）、消えた要素の組が変わらなければ枠のスクロール位置は変わらない。
+    await evaluate(`(() => {
+      const frame = document.querySelector('${livePane} .lv-frame');
+      window.__kemiReloaded = false;
+      frame.addEventListener('load', () => { window.__kemiReloaded = true; }, { once: true });
+      frame.src = frame.src;
+      return true;
+    })()`);
+    await waitFor(`window.__kemiReloaded === true`);
+    await waitFor(`${changeList}?.dataset.main === '2'`);
+    await new Promise((done) => setTimeout(done, 1500));
+    image = await shot(refView, shots, 'scroll-reloaded');
+    assert.equal(countPixels(image, button, isBlue), 0, `the reference keeps its scroll across a reload of the same page: ${join(shots, 'scroll-reloaded.png')}`);
+    assert.equal(await evaluate(`${changeList}.dataset.main`), '2', 'the same changes are listed after the reload');
+    console.log('PASS 比べる相手の枠をスクロールしてから同じページを読み込み直しても、消えた要素の組が同じなら枠のスクロール位置が変わらない');
   } finally {
     await stop(kemi);
     await dev.close();

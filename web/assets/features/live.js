@@ -347,7 +347,8 @@ function receive(event) {
     return;
   }
   const page = pageKey(String(message.path ?? "/"));
-  if (page !== live.page) {
+  const moved = page !== live.page;
+  if (moved) {
     live.refNotice = "";
     live.shiftedOpen = false;
     live.listed = { main: 0, shifted: 0 };
@@ -358,10 +359,14 @@ function receive(event) {
   live.describing = false;
   live.reachable = message.reachable !== false;
   live.rewrote = Array.isArray(message.rewrote) ? message.rewrote.map(String) : [];
-  // 読み込み直した・移った後の文書の記述が届くまで、前の文書と比べた一覧と印は出さない（前のページの
-  // 一覧が新しいページの下に、前の印が新しい比べる相手の上に残らないように）。
+  // 移った後の文書の記述が届くまで、前のページと比べた一覧と印は出さない（前のページの一覧が新しいページの
+  // 下に、前の印が新しい比べる相手の上に残らないように）。同じページを読み込み直しただけなら、新しい記述が
+  // 届くまで今の一覧と印を残す: 消すと消えた要素の印が一度外れて付き直し、比べる相手の枠が作り直されて
+  // スクロールが先頭に戻る。比べる相手が別のスナップショットに変われば、refreshChanges が消す。
   live.now = null;
-  setChanges(null, null);
+  if (moved) {
+    setChanges(null, null);
+  }
   render();
   takeStartSnapshot();
 }
@@ -515,6 +520,10 @@ function refreshChanges() {
     return;
   }
   const id = reference.snapshot.id;
+  // 比べる相手が別のスナップショットに変わったら、前のものと比べた一覧は新しい結果が出るまで出さない。
+  if (live.changesFrom !== null && live.changesFrom.snapshot !== id) {
+    setChanges(null, null);
+  }
   if (!live.descriptions.has(id)) {
     void loadSnapshot(id).then(
       () => refreshChanges(),
