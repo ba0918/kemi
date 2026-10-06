@@ -26,6 +26,9 @@
 //                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
 //                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
 //                 `?csp=1` を付けると `style-src 'self'`（インラインのスタイルを止める CSP）を返す
+//   /table.html   先頭にスクリプトが tbody を挟まずに組む表と、その下の兄弟の並び（#items の li）を持つ。
+//                 table.html を書き換えると読み込み直さずに body を差し替え、表は組み直す。中身は tablePage、
+//                 大きさは TABLE_GEOMETRY
 //   /scrolling.html  スクロールで位置の変わる要素を持つページ。上に張り付く見出し（#bar）、中でスクロールする箱
 //                 （#box の中の #row-1〜#row-10）、画面に固定した札（#badge）、高い余白と #start・#end の目印を持つ。
 //                 scrolling.css を書き換えると HMR の知らせで差し替える。大きさは SCROLLING_GEOMETRY
@@ -213,6 +216,53 @@ PAGES['scrolling.html'] = `<!doctype html>
 `;
 PAGES['changing.html'] = changingPage();
 PAGES['changing.css'] = changingCss();
+
+/** /table.html の要素の高さ（左上は 0, 0 から縦に並ぶ）。スクリプトで組む表の 1 行と、その下の兄弟 1 つ。 */
+export const TABLE_GEOMETRY = { row: 40, item: 30 };
+
+/**
+ * /table.html の中身。先頭にスクリプトが DOM で表を組み（tbody を挟まずに tr を足すので、HTML として
+ * 読み直すと tbody が足されて要素の並びが変わる）、その下に `items` の順に兄弟を並べる。
+ * @param {string[]} [items]
+ */
+export function tablePage(items = CHANGING_ITEMS) {
+  const { row, item } = TABLE_GEOMETRY;
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Table</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  table { border-collapse: collapse; border-spacing: 0; }
+  td { height: ${row}px; padding: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  .item { height: ${item}px; }
+  .tail { height: 2000px; }
+</style>
+<script type="module" src="/__hmr.js"></script>
+<script type="module">
+  // body を差し替える HMR の後も組み直す。
+  const build = () => {
+    const slot = document.getElementById('table-slot');
+    if (!slot || slot.firstChild) return;
+    const table = document.createElement('table');
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.textContent = 'Built by script';
+    tr.append(td);
+    table.append(tr);
+    slot.append(table);
+  };
+  build();
+  new MutationObserver(build).observe(document.body, { childList: true });
+</script>
+</head><body>
+<div id="table-slot"></div>
+<ul id="items">${items.map((name) => `<li class="item">${name}</li>`).join('')}</ul>
+<div class="tail"></div>
+</body></html>
+`;
+}
+
+PAGES['table.html'] = tablePage();
 /**
  * /many.html の CSS。`button` はボタンの背景色。
  * @param {string} [button]

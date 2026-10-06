@@ -427,54 +427,49 @@ function changeWhat(change) {
   }
 }
 
-/** スナップショットの写しに入れない要素（ページの記述に入れないものと同じ。web/live/page.js の UNDESCRIBED）。 */
-const UNDESCRIBED = new Set(["head", "script", "style", "link", "meta", "noscript", "template", "title", "base"]);
-
 /** 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。 */
 const REMOVED_MARK_STYLE = "[data-kemi-removed] { outline: 2px solid rgb(214, 69, 69) !important; outline-offset: -2px !important; }";
 
+/** 記述の番号と HTML を読み直した文書での要素の位置の対応を入れる <meta> の name（web/live/page.js の ELEMENT_MAP）。 */
+const ELEMENT_MAP = "kemi-elements";
+
 /**
- * 比べる相手の側の印（消えた要素）を付けたスナップショットの HTML。記述の要素の番号を、写しの要素を
- * ページが記述したのと同じ順（shadow root の中を先に、持ち主の子として）にたどって探し、属性を付ける。
- * shadow root の中には文書の <style> が効かないので、印を付けた shadow root ごとにも <style> を足す。
- * HTML を読み直すと要素の並びが変わることがあり（表に tbody が足されるなど）、タグが記述と合わなく
- * なったら、そこから先には印を付けない（別の要素に付けないため）。
+ * 比べる相手の側の印（消えた要素）を付けたスナップショットの HTML。HTML を読み直すと要素の並びが DOM と
+ * 変わることがあるので、ページがスナップショットに添えた対応（記述の番号ごとの、読み直した文書での要素の
+ * 位置。web/live/page.js の elementMap）で要素を探し、属性を付ける。位置は対応の <meta> を外してから、
+ * 要素を文書の順に（<template> は中身を）数える。shadow root の中には文書の <style> が効かないので、
+ * 印を付けた shadow root ごとにも <style> を足す。
  * @param {string} html
- * @param {import("../live-diff.js").Description} description
- * @param {number[]} indices 印を付ける要素の番号
+ * @param {number[]} indices 印を付ける要素の記述の番号
  * @returns {string}
  */
-export function markRemovedInSnapshot(html, description, indices) {
-  const wanted = new Set(indices);
+export function markRemovedInSnapshot(html, indices) {
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  const map = parsed.head.querySelector(`meta[name="${ELEMENT_MAP}"]`);
+  const runs = (map?.getAttribute("content") ?? "")
+    .split(" ")
+    .filter((run) => run !== "")
+    .map((run) => run.split(",").map(Number));
+  map?.remove();
+  /** @type {Set<number>} */
+  const wanted = new Set();
+  for (const index of indices) {
+    const run = runs.find(([, first, count]) => index >= first && index < first + count);
+    if (run) {
+      wanted.add(run[0] + index - run[1]);
+    }
+  }
   /** @type {Element[]} */
   const marked = [];
-  let next = 0;
-  let aligned = true;
+  let position = 0;
   /** @param {Element} element */
   const visit = (element) => {
-    if (!aligned || UNDESCRIBED.has(element.localName)) {
-      return;
-    }
-    const expected = description.elements[next]?.tag;
-    // canvas は写しでは画像になる。
-    if (expected !== element.localName && !(expected === "canvas" && element.localName === "img")) {
-      aligned = false;
-      return;
-    }
-    if (wanted.has(next)) {
+    if (wanted.has(position)) {
       marked.push(element);
     }
-    next += 1;
-    const shadow = [...element.children].find(
-      (child) => child instanceof HTMLTemplateElement && child.hasAttribute("shadowrootmode"),
-    );
-    if (shadow instanceof HTMLTemplateElement) {
-      for (const child of shadow.content.children) {
-        visit(child);
-      }
-    }
-    for (const child of element.children) {
+    position += 1;
+    const children = element instanceof HTMLTemplateElement ? element.content.children : element.children;
+    for (const child of [...children]) {
       visit(child);
     }
   };

@@ -776,10 +776,9 @@ async function showSnapshot(id) {
     return;
   }
   live.shownFrame = key;
-  const description = live.descriptions.get(id) ?? null;
   // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。
   const frame = /** @type {HTMLIFrameElement} */ (shell.refFrame.cloneNode(false));
-  frame.srcdoc = removed.length > 0 && description !== null ? markRemovedInSnapshot(html, description, removed) : html;
+  frame.srcdoc = removed.length > 0 ? markRemovedInSnapshot(html, removed) : html;
   shell.refFrame.replaceWith(frame);
   shell.refFrame = frame;
   layoutFrames();

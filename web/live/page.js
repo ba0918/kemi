@@ -110,7 +110,7 @@
     'border-style': ['border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style'],
   };
 
-  /** 描かれない要素。記述に入れない。レビュー画面が写しの要素をたどるとき（views/live.js）も同じものを飛ばす。 */
+  /** 描かれない要素。記述に入れない。 */
   const UNDESCRIBED = new Set(['head', 'script', 'style', 'link', 'meta', 'noscript', 'template', 'title', 'base']);
 
   /** 最後に記述を渡した要素。印の番号はこの並びを指す。 */
@@ -128,8 +128,7 @@
   }
 
   /**
-   * <picture> の <source>。スナップショットの写しには入れないので、記述にも入れない（レビュー画面が
-   * 写しの要素を記述の番号でたどれるよう、両側の要素の並びをそろえる）。
+   * <picture> の <source>。描かれず、スナップショットの写しにも入れないので、記述にも入れない。
    * @param {Element} element
    */
   const isPictureSource = (element) => element.localName === 'source' && element.parentElement?.localName === 'picture';
@@ -559,9 +558,10 @@
    * 写しとして使う要素を返す（取り除くときは null）。
    * @param {Element} original
    * @param {Element} copy
+   * @param {Map<Element, number>} indices 記述の要素の番号（写しの要素に目印として付ける）
    * @returns {Promise<Element | null>}
    */
-  async function snapshotElement(original, copy) {
+  async function snapshotElement(original, copy, indices) {
     const owner = /** @type {Document} */ (copy.ownerDocument);
     const tag = original.localName;
     if (original === marksHost) return null;
@@ -656,13 +656,13 @@
       }
     }
     if (tag !== 'textarea') {
-      await snapshotChildren(original, copy);
+      await snapshotChildren(original, copy, indices);
     }
     if (original.shadowRoot) {
       const template = owner.createElement('template');
       template.setAttribute('shadowrootmode', 'open');
       for (const child of [...original.shadowRoot.childNodes]) {
-        const copied = await snapshotNode(child, owner);
+        const copied = await snapshotNode(child, owner, indices);
         if (copied) template.content.append(copied);
       }
       for (const sheet of original.shadowRoot.adoptedStyleSheets) {
@@ -674,40 +674,52 @@
   }
 
   /**
-   * 1 つの節を写す。要素は状態ごと、それ以外はそのまま。
+   * 1 つの節を写す。要素は状態ごと、それ以外はそのまま。記述した要素の写しには、その番号の目印を付ける。
    * @param {Node} original
    * @param {Document} owner
+   * @param {Map<Element, number>} indices 記述の要素の番号
    * @returns {Promise<Node | null>}
    */
-  async function snapshotNode(original, owner) {
+  async function snapshotNode(original, owner, indices) {
     const copy = owner.importNode(original, false);
-    if (original instanceof Element) {
-      return snapshotElement(original, /** @type {Element} */ (copy));
+    if (!(original instanceof Element)) {
+      return copy;
     }
-    return copy;
+    const copied = await snapshotElement(original, /** @type {Element} */ (copy), indices);
+    if (copied) {
+      // ページが同じ名前の属性を持っていても、目印と読み違えないよう外す。
+      copied.removeAttribute(ELEMENT_STAMP);
+      const index = indices.get(original);
+      if (index !== undefined) copied.setAttribute(ELEMENT_STAMP, String(index));
+    }
+    return copied;
   }
 
   /**
    * 子を 1 つずつ写す（浅く写して、子は自分で足す）。
    * @param {Element} original
    * @param {Element} copy
+   * @param {Map<Element, number>} indices 記述の要素の番号
    */
-  async function snapshotChildren(original, copy) {
+  async function snapshotChildren(original, copy, indices) {
     const owner = /** @type {Document} */ (copy.ownerDocument);
     const children = original instanceof HTMLTemplateElement ? original.content.childNodes : original.childNodes;
     const target = copy instanceof HTMLTemplateElement ? copy.content : copy;
     for (const child of [...children]) {
-      const copied = await snapshotNode(child, owner);
+      const copied = await snapshotNode(child, owner, indices);
       if (copied) target.append(copied);
     }
   }
 
   async function captureSnapshot() {
-    // 写す途中で読み込みを待つ間にページが変わることがあるので、記述は写し始める前の同じ DOM から作る。
-    const description = packForUpload(describePage().description);
+    // 写す途中で読み込みを待つ間にページが変わることがあるので、記述は写し始める前の DOM から作り、
+    // 写しの要素とは並びではなく元の要素で結ぶ（写す途中で足された要素は記述に無く、目印も付かない）。
+    const page = describePage();
+    const description = packForUpload(page.description);
+    const indices = new Map(page.elements.map((element, index) => [element, index]));
     inlined = new Map();
     const owner = document.implementation.createHTMLDocument('');
-    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner));
+    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner, indices));
     const head = root.querySelector('head');
     if (head) {
       // 埋め込めなかった相対の参照は、中継のオリジンに解く（読めなくても形は崩れない）。
@@ -719,6 +731,61 @@
       }
     }
     const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
+    const map = elementMap(doctype + root.outerHTML);
+    eachElement(root, (element) => element.removeAttribute(ELEMENT_STAMP));
+    if (head) {
+      const meta = owner.createElement('meta');
+      meta.setAttribute('name', ELEMENT_MAP);
+      meta.setAttribute('content', map);
+      head.prepend(meta);
+    }
     return { html: doctype + root.outerHTML, description: await description };
+  }
+
+  // ---- 写しの要素と記述の番号の対応 ----
+  // レビュー画面は消えた要素の印を付けるため、スナップショットの HTML を読み直して記述の要素を探す
+  // （views/live.js の markRemovedInSnapshot）。読み直すと要素の並びが DOM と変わることがある（スクリプトが
+  // 組んだ表に tbody が足される、p の中の div が外に出るなど）ので、ここで同じように読み直し、記述の番号ごとに
+  // 読み直した文書での要素の位置を求めて HTML に添える。要素ごとの目印は HTML を大きくし 2 MB の上限に
+  // 掛かるので、写す間だけ付けて外し、続いて並ぶ番号をまとめた対応だけを 1 つの <meta> に入れる。
+
+  /** 写す間だけ、記述した要素の写しに付ける目印（記述の番号）。 */
+  const ELEMENT_STAMP = 'data-kemi-element';
+  /** 対応を入れる <meta> の name。レビュー画面（views/live.js）が読んで外す。 */
+  const ELEMENT_MAP = 'kemi-elements';
+
+  /**
+   * 要素とその中の要素を、文書の順に（<template> は中身を）たどる。位置の数え方は views/live.js と同じ。
+   * @param {Element} element
+   * @param {(element: Element) => void} visit
+   */
+  function eachElement(element, visit) {
+    visit(element);
+    const children = element instanceof HTMLTemplateElement ? element.content.children : element.children;
+    for (const child of [...children]) eachElement(child, visit);
+  }
+
+  /**
+   * 目印を付けた HTML を読み直し、記述の番号と読み直した文書での要素の位置の対応を返す。続いて並ぶ
+   * ものは「位置,番号,個数」にまとめ、空白で区切る。
+   * @param {string} html
+   * @returns {string}
+   */
+  function elementMap(html) {
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    /** @type {number[][]} */
+    const runs = [];
+    let position = 0;
+    eachElement(parsed.documentElement, (element) => {
+      const stamp = element.getAttribute(ELEMENT_STAMP);
+      if (stamp !== null) {
+        const index = Number(stamp);
+        const last = runs.at(-1);
+        if (last && last[0] + last[2] === position && last[1] + last[2] === index) last[2] += 1;
+        else runs.push([position, index, 1]);
+      }
+      position += 1;
+    });
+    return runs.map((run) => run.join(',')).join(' ');
   }
 })();

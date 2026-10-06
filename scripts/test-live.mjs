@@ -29,7 +29,8 @@
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
 //   枠のスクロール位置は変わらない。並べる表示の比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
-//   インラインのスタイルを止める CSP のページでも印が付く。スクロールしただけでは変化にならず、印は
+//   インラインのスタイルを止める CSP のページでも印が付く。HTML として読み直すと要素の並びが変わる（スクリプトが
+//   tbody を挟まずに組んだ表の）ページでも、消えた要素の印はスナップショットのその要素に付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 //   一覧の残りも続きを出す操作ですべて見られる。
@@ -43,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, changingCss, changingPage, manyCss, scrollingCss, startDevServer } from './live-dev-server.mjs';
+import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, changingCss, changingPage, manyCss, scrollingCss, startDevServer, tablePage } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -1086,6 +1087,34 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
 }
 
 /**
+ * HTML として読み直すと要素の並びが変わるページでも、消えた要素の印がスナップショットのその要素に付く
+ * （R-PAGE-VIEW の変わったところに必ず印）。スクリプトが tbody を挟まずに組んだ表の後ろの兄弟を消す。
+ */
+async function removedMarksSurviveReparsing(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}table.html`]);
+  const { row, item } = TABLE_GEOMETRY;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'table.html'), tablePage(['one', 'two', 'four']));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    await waitForPixels(`${refPane} .lv-frame:not([hidden])`, shots, 'table-removed', [0, row + 2 * item, 390, row + 3 * item], isRed);
+    console.log('PASS スクリプトが組んだ表（読み直すと tbody が足される）の後ろの要素を消しても、スナップショットのその要素に消えたの印が付く');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * スクロールしただけでは変化にならず、印はスクロールしても要素に付いたまま（R-PAGE-DIFF の位置と大きさの
  * 変化、R-PAGE-VIEW の変わったところに必ず印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。
  */
@@ -1196,6 +1225,7 @@ try {
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
+  await removedMarksSurviveReparsing(repository);
   await scrollingMakesNoChangeAndMarksStay(repository);
   await manyElementsAreRecordedAndCompared(repository);
 } finally {
