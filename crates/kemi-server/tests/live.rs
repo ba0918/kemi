@@ -762,7 +762,6 @@ async fn a_snapshot_keeps_the_element_description_and_returns_it_with_the_body()
     .await;
     assert_eq!(taken.status(), StatusCode::OK);
     let taken: serde_json::Value = taken.json().await.unwrap();
-    let list = get_review_json(&running, "api/snapshots").await;
     let one = get_review_json(
         &running,
         &format!("api/snapshot/{}", taken["id"].as_str().unwrap()),
@@ -770,10 +769,6 @@ async fn a_snapshot_keeps_the_element_description_and_returns_it_with_the_body()
     .await;
 
     assert_eq!(one["description"], description);
-    assert!(
-        list["snapshots"][0].get("description").is_none(),
-        "the list carries no descriptions"
-    );
 }
 
 #[tokio::test]

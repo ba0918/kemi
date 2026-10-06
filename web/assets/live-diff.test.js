@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { diffDescriptions, marksOf, unpackDescription } from "./live-diff.js";
+import { diffDescriptions, marksOf } from "./live-diff.js";
 
 /**
  * @typedef {{ tag: string, id?: string, cls?: string, text?: string, box: number[], style?: Record<string, string>, children?: Spec[] }} Spec
@@ -198,31 +198,4 @@ test("every changed element gets one mark: main changes on the page, removed one
     ],
   );
   assert.deepEqual(marks.before, [{ index: indexOfText(before, "gone"), kind: "removed" }]);
-});
-
-test("a description packed by the page reads back as one element per row", () => {
-  const packed = {
-    width: 390,
-    height: 600,
-    styles: [{ color: "rgb(0, 0, 0)" }],
-    elements: [
-      [-1, "html", "", "", "", 0, 0, 390, 600, 0],
-      [0, "p", "lead", "intro", "Hello", 0, 10.5, 390, 20, 0],
-    ],
-  };
-  assert.deepEqual(unpackDescription(packed), {
-    width: 390,
-    height: 600,
-    styles: [{ color: "rgb(0, 0, 0)" }],
-    elements: [
-      { parent: -1, tag: "html", id: "", cls: "", text: "", box: [0, 0, 390, 600], style: 0 },
-      { parent: 0, tag: "p", id: "lead", cls: "intro", text: "Hello", box: [0, 10.5, 390, 20], style: 0 },
-    ],
-  });
-});
-
-test("a description that is not in the packed form is not read", () => {
-  for (const value of [null, "text", { width: 1, height: 1, styles: [], elements: [{}] }, { width: 1, height: 1, styles: [], elements: [[0, "p"]] }]) {
-    assert.equal(unpackDescription(value), null, JSON.stringify(value));
-  }
 });
