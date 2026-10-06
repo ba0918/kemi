@@ -3167,9 +3167,13 @@ async fn live_prints_the_url_the_results_and_the_review_lines_in_order() {
     let mut kemi =
         Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
 
+    // 結果の保存先の行は文言を契約としないので、review の行の前に 1 行あることだけを見る。
     let mut line = String::new();
     kemi.stderr.read_line(&mut line).unwrap();
-    assert!(line.starts_with("kemi: results are saved to: "), "{line}");
+    assert!(
+        !line.trim().is_empty() && !line.starts_with("kemi: review "),
+        "{line}"
+    );
     line.clear();
     kemi.stderr.read_line(&mut line).unwrap();
     assert!(line.starts_with("kemi: review "), "{line}");

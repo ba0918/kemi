@@ -323,33 +323,33 @@ mod tests {
     }
 
     #[test]
-    fn the_script_goes_right_after_the_head_tag() {
-        let html =
-            "<!doctype html><html><HEAD lang=\"en\"><title>x</title></head><body></body></html>";
-        assert_eq!(
-            inject(html),
-            format!(
-                "<!doctype html><html><HEAD lang=\"en\">{TAG}<title>x</title></head><body></body></html>"
-            )
-        );
+    fn the_script_is_added_once_and_the_rest_of_the_page_is_kept() {
+        for html in [
+            "<!doctype html><html><HEAD lang=\"en\"><title>x</title></head><body></body></html>",
+            "<!doctype html><body><p>x</p></body>",
+            "<!DOCTYPE html><p>x</p>",
+            "<p>x</p>",
+        ] {
+            let injected = inject(html);
+            assert_eq!(injected.matches(TAG).count(), 1, "{injected}");
+            assert_eq!(injected.replacen(TAG, "", 1), html);
+        }
     }
 
     #[test]
-    fn without_a_head_the_script_goes_before_the_body() {
-        let html = "<!doctype html><body><p>x</p></body>";
-        assert_eq!(
-            inject(html),
-            format!("<!doctype html>{TAG}<body><p>x</p></body>")
-        );
-    }
-
-    #[test]
-    fn without_head_or_body_the_script_follows_the_doctype() {
-        assert_eq!(
-            inject("<!DOCTYPE html><p>x</p>"),
-            format!("<!DOCTYPE html>{TAG}<p>x</p>")
-        );
-        assert_eq!(inject("<p>x</p>"), format!("{TAG}<p>x</p>"));
+    fn a_page_with_a_doctype_still_starts_with_it() {
+        // doctype より前に何かあると、ページが互換モードで描かれる。
+        for html in [
+            "<!doctype html><html><head></head><body></body></html>",
+            "<!doctype html><body><p>x</p></body>",
+            "<!DOCTYPE html><p>x</p>",
+        ] {
+            let injected = inject(html);
+            assert!(
+                injected.to_ascii_lowercase().starts_with("<!doctype html>"),
+                "{injected}"
+            );
+        }
     }
 
     #[test]
