@@ -95,6 +95,27 @@ test("an element inserted in the middle of its siblings is the only one added, a
   assert.ok(shifted.includes(indexOfText(now, "four")));
 });
 
+test("among siblings that differ only in appearance, an element inserted in the middle is the only one added", () => {
+  /** @param {string[]} colors */
+  const buttons = (colors) =>
+    page(
+      colors.map((color, index) => ({
+        tag: "button",
+        cls: "buy",
+        text: "Buy",
+        box: [0, index * 40, 100, 40],
+        style: { "background-color": color },
+      })),
+    );
+  const before = buttons(["rgb(255, 0, 0)", "rgb(0, 0, 255)", "rgb(0, 128, 0)"]);
+  const now = buttons(["rgb(255, 0, 0)", "rgb(255, 255, 0)", "rgb(0, 0, 255)", "rgb(0, 128, 0)"]);
+  const changes = diffDescriptions(before, now);
+  assert.deepEqual(
+    changes.filter((change) => change.kind !== "shifted").map((change) => [change.kind, change.now]),
+    [["added", 3]],
+  );
+});
+
 test("an element removed from the middle of its siblings is the only one removed", () => {
   const before = page([list(["one", "two", "gone", "three", "four"])]);
   const now = page([list(["one", "two", "three", "four"])]);

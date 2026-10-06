@@ -99,11 +99,13 @@ const LCS_LIMIT = 4_000_000;
  * @returns {Change[]}
  */
 export function diffDescriptions(before, now) {
-  // 署名の表は両側で共有する（同じ中身なら同じ番号）。
+  // 署名の表とスタイルの表は両側で共有する（同じ中身なら同じ番号）。
   /** @type {Map<string, number>} */
   const signatureTable = new Map();
-  const left = prepare(before, signatureTable);
-  const right = prepare(now, signatureTable);
+  /** @type {Map<string, number>} */
+  const styleTable = new Map();
+  const left = prepare(before, signatureTable, styleTable);
+  const right = prepare(now, signatureTable, styleTable);
   const pairs = pairElements(left, right);
 
   /** @type {Change[]} */
@@ -149,11 +151,13 @@ export function diffDescriptions(before, now) {
 }
 
 /**
- * 比べる前の下ごしらえ: 子の並び、空白を詰めた文字、id を鍵にできる要素、中身の署名。
+ * 比べる前の下ごしらえ: 子の並び、空白を詰めた文字、id を鍵にできる要素、中身の署名（見た目を
+ * 含むものと含まないもの）。
  * @param {Description} description
  * @param {Map<string, number>} signatureTable
+ * @param {Map<string, number>} styleTable
  */
-function prepare(description, signatureTable) {
+function prepare(description, signatureTable, styleTable) {
   const elements = description.elements;
   /** @type {number[][]} */
   const children = elements.map(() => []);
@@ -173,7 +177,19 @@ function prepare(description, signatureTable) {
   }
   // 同じ id が 2 つ以上あるときは鍵にしない（どれと組むか決められない）。
   const keyed = elements.map((element) => element.id !== "" && idCounts.get(element.id) === 1);
-  const signatures = sign(elements, children, texts, signatureTable);
+  // スタイルの番号は記述ごとに違うので、中身で両側に共通の番号に直す。
+  const styleNumbers = description.styles.map((style) => {
+    const key = JSON.stringify(style);
+    let number = styleTable.get(key);
+    if (number === undefined) {
+      number = styleTable.size;
+      styleTable.set(key, number);
+    }
+    return number;
+  });
+  const looks = elements.map((element) => String(styleNumbers[element.style] ?? -1));
+  const signatures = sign(elements, children, texts, looks, signatureTable);
+  const plainSignatures = sign(elements, children, texts, null, signatureTable);
   // 同じタグの兄弟の中の何番目かと、その数（手がかりの :nth-of-type）。変化ごとに兄弟を数え直すと、
   // 兄弟が多いページで変化が多いとき、数の 2 乗の時間がかかる。
   const typeOrder = new Array(elements.length).fill(1);
@@ -194,24 +210,32 @@ function prepare(description, signatureTable) {
       });
     }
   }
-  return { elements, children, texts, keyed, signatures, typeOrder, typeCount };
+  return { elements, children, texts, keyed, signatures, plainSignatures, typeOrder, typeCount };
 }
 
 /**
- * 要素ごとに、タグ・id・class・文字・子の署名から決まる番号を付ける。中身がそっくり同じ部分木は
- * 同じ番号になる。子は自分より後ろにあるので、後ろから決める。
+ * 要素ごとに、タグ・id・class・文字・子の署名（`looks` を渡せば見た目も）から決まる番号を付ける。
+ * 中身がそっくり同じ部分木は同じ番号になる。子は自分より後ろにあるので、後ろから決める。
  * @param {DescribedElement[]} elements
  * @param {number[][]} children
  * @param {string[]} texts
+ * @param {string[] | null} looks 要素ごとの見た目の番号
  * @param {Map<string, number>} signatureTable
  * @returns {number[]}
  */
-function sign(elements, children, texts, signatureTable) {
+function sign(elements, children, texts, looks, signatureTable) {
   /** @type {number[]} */
   const signatures = new Array(elements.length).fill(0);
   for (let index = elements.length - 1; index >= 0; index--) {
     const element = elements[index];
-    const key = [element.tag, element.id, element.cls, texts[index], children[index].map((child) => signatures[child]).join(",")].join("\u0000");
+    const key = [
+      looks === null ? "" : looks[index],
+      element.tag,
+      element.id,
+      element.cls,
+      texts[index],
+      children[index].map((child) => signatures[child]).join(","),
+    ].join("\u0000");
     let number = signatureTable.get(key);
     if (number === undefined) {
       number = signatureTable.size;
@@ -225,9 +249,11 @@ function sign(elements, children, texts, signatureTable) {
 /**
  * 要素を対応させる（live.md の DL2）。
  * - id を鍵にできる要素は、同じ id の要素とだけ組む（親が違ってもよい）。
- * - それ以外は、組んだ親の子の並びの中で、中身がそっくり同じ要素を最長共通部分列で組み、
- *   その間に残った要素を、同じタグどうし並びの順に組む。兄弟の途中に 1 つ入っても、
- *   後ろの兄弟は中身が同じなので組まれ、入ったものだけが残る。
+ * - それ以外は、組んだ親の子の並びの中で、見た目まで中身がそっくり同じ要素を最長共通部分列で組み、
+ *   その間に残った要素を、見た目を除いた中身が同じものどうし、さらに残りを同じタグどうし、
+ *   並びの順に組む。兄弟の途中に 1 つ入っても、後ろの兄弟は中身が同じなので組まれ、入ったものだけが
+ *   残る。見た目だけが違う兄弟（色違いのボタンなど）も見た目で見分ける。親から受け継ぐ色が全体で
+ *   変わったときは、見た目を除いた中身で組む。
  * @param {ReturnType<typeof prepare>} left
  * @param {ReturnType<typeof prepare>} right
  */
@@ -257,27 +283,43 @@ function pairElements(left, right) {
       join(index, partner);
     }
   });
+  /** @type {((x: number, y: number) => boolean)[]} */
+  const likenesses = [
+    (x, y) => left.signatures[x] === right.signatures[y],
+    (x, y) => left.plainSignatures[x] === right.plainSignatures[y],
+    (x, y) => left.elements[x].tag === right.elements[y].tag,
+  ];
   for (let next = 0; next < queue.length; next++) {
     const [a, b] = queue[next];
     const sideA = left.children[a].filter((child) => !left.keyed[child] && beforeToNow[child] === -1);
     const sideB = right.children[b].filter((child) => !right.keyed[child] && nowToBefore[child] === -1);
-    const same = commonSubsequence(sideA, sideB, (x, y) => left.signatures[x] === right.signatures[y]);
-    let fromA = 0;
-    let fromB = 0;
-    for (const [x, y] of [...same, [sideA.length, sideB.length]]) {
-      const gapA = sideA.slice(fromA, x);
-      const gapB = sideB.slice(fromB, y);
-      for (const [i, j] of commonSubsequence(gapA, gapB, (p, q) => left.elements[p].tag === right.elements[q].tag)) {
-        join(gapA[i], gapB[j]);
-      }
-      if (x < sideA.length) {
-        join(sideA[x], sideB[y]);
-      }
-      fromA = x + 1;
-      fromB = y + 1;
-    }
+    pairInOrder(sideA, sideB, likenesses, join);
   }
   return { beforeToNow, nowToBefore };
+}
+
+/**
+ * 2 つの兄弟の並びを、最初の似かたの最長共通部分列で組み、その間に残った並びを次の似かたで組む。
+ * @param {number[]} sideA
+ * @param {number[]} sideB
+ * @param {((x: number, y: number) => boolean)[]} likenesses 強いものから順に
+ * @param {(a: number, b: number) => void} join
+ */
+function pairInOrder(sideA, sideB, likenesses, join) {
+  if (likenesses.length === 0 || sideA.length === 0 || sideB.length === 0) {
+    return;
+  }
+  const [like, ...weaker] = likenesses;
+  let fromA = 0;
+  let fromB = 0;
+  for (const [x, y] of [...commonSubsequence(sideA, sideB, like), [sideA.length, sideB.length]]) {
+    pairInOrder(sideA.slice(fromA, x), sideB.slice(fromB, y), weaker, join);
+    if (x < sideA.length) {
+      join(sideA[x], sideB[y]);
+    }
+    fromA = x + 1;
+    fromB = y + 1;
+  }
 }
 
 /**
