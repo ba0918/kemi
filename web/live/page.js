@@ -159,26 +159,34 @@
     } catch {
       return null;
     }
-    /** @type {string[]} */
-    const imports = [];
-    /** @type {string[]} */
-    const body = [];
-    for (const rule of rules) {
-      if (rule instanceof CSSImportRule) {
-        const href = new URL(rule.href, base).href;
-        const media = rule.media.mediaText;
-        const imported = rule.styleSheet ? await sheetParts(rule.styleSheet, rule.styleSheet.href ?? href) : null;
-        if (imported === null) {
-          imports.push(`@import url("${href}")${media ? ` ${media}` : ''};`);
-        } else {
-          imports.push(...imported.imports);
-          body.push(media ? `@media ${media} {\n${imported.body}\n}` : imported.body);
-        }
-      } else {
-        body.push(await inlineCss(rule.cssText, base));
-      }
+    // 規則ごとの url() の取り寄せは中継との往復なので、順に待たず一度に始め、元の順に並べる。
+    const parts = await Promise.all(rules.map((rule) => ruleParts(rule, base)));
+    return {
+      imports: parts.flatMap((part) => part.imports),
+      body: parts.map((part) => part.body).filter((text) => text !== null).join('\n'),
+    };
+  }
+
+  /**
+   * sheetParts の規則 1 つぶん。import の行と、本文に置く CSS（無ければ null）。
+   * @param {CSSRule} rule
+   * @param {string} base
+   * @returns {Promise<{ imports: string[], body: string | null }>}
+   */
+  async function ruleParts(rule, base) {
+    if (!(rule instanceof CSSImportRule)) {
+      return { imports: [], body: await inlineCss(rule.cssText, base) };
     }
-    return { imports, body: body.join('\n') };
+    const href = new URL(rule.href, base).href;
+    const media = rule.media.mediaText;
+    const imported = rule.styleSheet ? await sheetParts(rule.styleSheet, rule.styleSheet.href ?? href) : null;
+    if (imported === null) {
+      return { imports: [`@import url("${href}")${media ? ` ${media}` : ''};`], body: null };
+    }
+    return {
+      imports: imported.imports,
+      body: media ? `@media ${media} {\n${imported.body}\n}` : imported.body,
+    };
   }
 
   /**
