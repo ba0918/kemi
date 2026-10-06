@@ -13,6 +13,11 @@
 //   /rich.html    shadow DOM・canvas・SVG・入力欄・onclick（押すと背景が黄色になる、左上 (0, 200) の
 //                 300×100 のボタン）を持つ
 //   /siblings.html  兄弟の並び。`?extra=1` で途中に 1 つ足す
+//   /resources.html  CSS・@import・style 属性の url()・<picture> の <source>・video の poster・SVG の
+//                 <image>・<input type=image> で、1 つずつ色の違う 80×80 の箱を描く。別のオリジンの
+//                 CSS は同じサーバを localhost で指す（中継から見て別のオリジン）。箱の位置と色は
+//                 RESOURCE_BOXES。video はスクリプトの止まった枠では操作部が必ず重なるので、動いている
+//                 ページでも controls で重ねておく
 //   /referrer.html  `?image=<url>` の画像を `referrerpolicy="unsafe-url"` 付きで出す（スナップショットが
 //                 外部の画像へ referrer を送るかの確かめ）
 //   /tall.html    高さ 3000px の色の帯（スクロールをそろえる確かめに使う。#band-<n> で移れる）
@@ -102,6 +107,54 @@ ${Array.from({ length: 10 }, (_, index) => `<div class="band" id="band-${index +
 `,
 };
 
+/** /resources.html の箱。名前・左上の位置・色。色の画像は `<名前>.svg` で配る。 */
+export const RESOURCE_BOXES = [
+  { name: 'imported', left: 10, top: 10, color: [0, 120, 0] },
+  { name: 'cross-imported', left: 100, top: 10, color: [0, 0, 160] },
+  { name: 'cross', left: 190, top: 10, color: [160, 0, 160] },
+  { name: 'style', left: 280, top: 10, color: [0, 160, 160] },
+  { name: 'picture', left: 10, top: 100, color: [200, 100, 0] },
+  { name: 'poster', left: 100, top: 100, color: [100, 50, 0] },
+  { name: 'svg-image', left: 190, top: 100, color: [50, 50, 200] },
+  { name: 'input-image', left: 280, top: 100, color: [200, 0, 80] },
+];
+
+const colorSvg = ([r, g, b]) => `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="rgb(${r}, ${g}, ${b})"/></svg>\n`;
+const box = (name) => {
+  const { left, top } = RESOURCE_BOXES.find((entry) => entry.name === name) ?? { left: 0, top: 0 };
+  return `left: ${left}px; top: ${top}px`;
+};
+
+for (const { name, color } of RESOURCE_BOXES) PAGES[`${name}.svg`] = colorSvg(color);
+PAGES['never.svg'] = colorSvg([255, 0, 0]);
+PAGES['imported.css'] = '.imported { background: url(imported.svg); }\n';
+PAGES['cross-imported.css'] = '.cross-imported { background: url(cross-imported.svg); }\n';
+PAGES['cross.css'] = '.cross { background: url(cross.svg); }\n';
+
+/** @param {string} cross 別のオリジンとして指す、このサーバの URL */
+function resourcesPage(cross) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Resources</title>
+<style>
+  @import url("/imported.css");
+  @import url("${cross}cross-imported.css");
+  body { margin: 0; }
+  .box { position: absolute; display: block; width: 80px; height: 80px; margin: 0; padding: 0; border: 0; }
+</style>
+<link rel="stylesheet" href="${cross}cross.css">
+</head><body>
+<div class="box imported" style="${box('imported')}"></div>
+<div class="box cross-imported" style="${box('cross-imported')}"></div>
+<div class="box cross" style="${box('cross')}"></div>
+<div class="box" style="${box('style')}; background: url('/style.svg')"></div>
+<picture><source srcset="/picture.svg"><img class="box" src="/never.svg" alt="" style="${box('picture')}"></picture>
+<video class="box" poster="/poster.svg" controls style="${box('poster')}"></video>
+<svg class="box" style="${box('svg-image')}" viewBox="0 0 80 80"><image href="/svg-image.svg" width="80" height="80" preserveAspectRatio="none"/></svg>
+<input class="box" type="image" src="/input-image.svg" alt="" style="${box('input-image')}">
+</body></html>
+`;
+}
+
 function siblingsPage(extra) {
   const items = ['one', 'two', ...(extra ? ['inserted'] : []), 'three', 'four'];
   return `<!doctype html>
@@ -118,7 +171,7 @@ function referrerPage(image) {
 `;
 }
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
 
 /** WebSocket の受け答え（RFC 6455 の最小）。テキストの送信と、閉じる合図だけを扱う。 */
 function acceptWebSocket(request, socket) {
@@ -155,6 +208,7 @@ export async function startDevServer({ port = 0, dir } = {}) {
   /** @type {Set<{ send: (text: string) => void, socket: import('node:net').Socket }>} */
   const clients = new Set();
   let version = 0;
+  let actual = port;
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     if (url.pathname === '/__hmr.js') {
@@ -175,6 +229,11 @@ export async function startDevServer({ port = 0, dir } = {}) {
     if (url.pathname === '/referrer.html') {
       response.writeHead(200, { 'Content-Type': TYPES['.html'] });
       response.end(referrerPage(url.searchParams.get('image') ?? ''));
+      return;
+    }
+    if (url.pathname === '/resources.html') {
+      response.writeHead(200, { 'Content-Type': TYPES['.html'] });
+      response.end(resourcesPage(`http://localhost:${actual}/`));
       return;
     }
     const name = url.pathname === '/' ? 'index.html' : normalize(url.pathname.slice(1));
@@ -207,7 +266,7 @@ export async function startDevServer({ port = 0, dir } = {}) {
   });
   await new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(undefined)));
   const address = server.address();
-  const actual = typeof address === 'object' && address ? address.port : port;
+  actual = typeof address === 'object' && address ? address.port : port;
   return {
     url: `http://127.0.0.1:${actual}/`,
     port: actual,

@@ -15,7 +15,8 @@
 // - スナップショット: 渡す前は開始時が既定。390 と 1280 で取って切り替える。無い幅・別の URL では
 //   記録されていない旨と取る操作が出る。動いているページと画素を比べる（完全に一致しなければ
 //   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
-//   渡すと取る。
+//   渡すと取る。別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の
+//   poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じ色に出る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
@@ -30,7 +31,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { startDevServer } from './live-dev-server.mjs';
+import { RESOURCE_BOXES, startDevServer } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -533,6 +534,40 @@ async function snapshotsAreTakenShownAndChosen(repository) {
   }
 }
 
+/**
+ * スナップショットが要る資源（R-PAGE-SNAPSHOT の同じ見た目）: スナップショットの枠は中継のポートから
+ * 読めないので、CSS と画像の参照が中継を指したままだと、その箱が描かれない。
+ */
+async function snapshotsCarryTheirResources(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}resources.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(showsSnapshot('Recorded 1'));
+    await new Promise((done) => setTimeout(done, 800));
+    const live = await shot(`${livePane} .lv-frame`, shots, 'resources-live');
+    const snapshot = await shot(`${refPane} .lv-frame`, shots, 'resources-snapshot');
+    const colors = (image) => Object.fromEntries(RESOURCE_BOXES.map(({ name, left, top }) => [name, pixelAt(image, left + 40, top + 40)]));
+    const seen = colors(live);
+    // video の上には操作部が重なるので、色そのものではなく白でない（poster が出た）ことを見る。
+    const { poster, ...plain } = seen;
+    assert.deepEqual(plain, Object.fromEntries(RESOURCE_BOXES.filter(({ name }) => name !== 'poster').map(({ name, color }) => [name, color])), 'the running page draws every box (control)');
+    assert.notDeepEqual(poster, [255, 255, 255], 'the running page draws the poster (control)');
+    assert.deepEqual(colors(snapshot), seen, `the snapshot draws every box as the running page does: ${join(shots, 'resources-snapshot.png')}`);
+    console.log('PASS 別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じに出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 画像の (x, y) の色。 */
 function pixelAt(image, x, y) {
   const at = (y * image.width + x) * 4;
@@ -752,6 +787,7 @@ try {
   await outsideGitFilePages();
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);
+  await snapshotsCarryTheirResources(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);

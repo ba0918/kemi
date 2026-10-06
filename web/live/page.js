@@ -132,16 +132,53 @@
   }
 
   /**
-   * スタイルシートの規則の文字列。読めない（別のオリジンの）ものは空。
+   * スタイルシートの規則を、url() を埋め込んだ CSS の文字列にする。@import は読める
+   * ものを展開し、読めないものは元の URL を指したまま先頭に残す（@import は先頭にしか
+   * 置けない）。シート自身の規則が読めない（別のオリジンの）ときは null。
    * @param {CSSStyleSheet} sheet
-   * @returns {string}
+   * @param {string} base
+   * @returns {Promise<string | null>}
    */
-  function sheetText(sheet) {
+  async function sheetCss(sheet, base) {
+    const parts = await sheetParts(sheet, base);
+    return parts && [...parts.imports, parts.body].join('\n');
+  }
+
+  /**
+   * sheetCss の中身。展開できなかった CSS の import の行と、それ以外の規則を分けて返す。
+   * 展開したシートの中に残った import の行も、外側の先頭へ寄せるため。
+   * @param {CSSStyleSheet} sheet
+   * @param {string} base
+   * @returns {Promise<{ imports: string[], body: string } | null>}
+   */
+  async function sheetParts(sheet, base) {
+    /** @type {CSSRule[]} */
+    let rules;
     try {
-      return [...sheet.cssRules].map((rule) => rule.cssText).join('\n');
+      rules = [...sheet.cssRules];
     } catch {
-      return '';
+      return null;
     }
+    /** @type {string[]} */
+    const imports = [];
+    /** @type {string[]} */
+    const body = [];
+    for (const rule of rules) {
+      if (rule instanceof CSSImportRule) {
+        const href = new URL(rule.href, base).href;
+        const media = rule.media.mediaText;
+        const imported = rule.styleSheet ? await sheetParts(rule.styleSheet, rule.styleSheet.href ?? href) : null;
+        if (imported === null) {
+          imports.push(`@import url("${href}")${media ? ` ${media}` : ''};`);
+        } else {
+          imports.push(...imported.imports);
+          body.push(media ? `@media ${media} {\n${imported.body}\n}` : imported.body);
+        }
+      } else {
+        body.push(await inlineCss(rule.cssText, base));
+      }
+    }
+    return { imports, body: body.join('\n') };
   }
 
   /**
@@ -176,16 +213,24 @@
       const rel = (original.getAttribute('rel') ?? '').toLowerCase().split(/\s+/);
       const sheet = /** @type {HTMLLinkElement} */ (original).sheet;
       if (rel.includes('stylesheet') && sheet) {
-        return styleElement(owner, await inlineCss(sheetText(sheet), sheet.href ?? location.href));
+        const css = await sheetCss(sheet, sheet.href ?? location.href);
+        if (css !== null) return styleElement(owner, css);
+        // 規則を読めない別のオリジンの CSS は、元の URL を指したまま残す。中継を通らないので、
+        // スナップショットの枠からも読める。
+        if (sheet.href) copy.setAttribute('href', sheet.href);
       }
       if (rel.some((value) => ['preload', 'modulepreload', 'prefetch'].includes(value))) return null;
     }
     if (tag === 'style') {
       // 中身の文字列ではなく今の規則から写す。insertRule などで足した規則は文字列に出ない。
       const sheet = /** @type {HTMLStyleElement} */ (original).sheet;
-      const css = sheet ? sheetText(sheet) : (original.textContent ?? '');
-      copy.textContent = await inlineCss(css, document.baseURI);
+      const css = sheet ? await sheetCss(sheet, document.baseURI) : null;
+      copy.textContent = css ?? await inlineCss(original.textContent ?? '', document.baseURI);
       return copy;
+    }
+    // <picture> の <source> は外す。選ばれた画像は <img> の currentSrc として埋め込む。
+    if (tag === 'source' && original.parentElement?.localName === 'picture') {
+      return null;
     }
     if (tag === 'canvas') {
       const canvas = /** @type {HTMLCanvasElement} */ (original);
@@ -208,8 +253,21 @@
       copy.removeAttribute('sizes');
       copy.removeAttribute('loading');
     }
+    if (tag === 'video') {
+      const poster = /** @type {HTMLVideoElement} */ (original).poster;
+      if (poster) copy.setAttribute('poster', await dataUrl(poster));
+    }
+    if (tag === 'image' && original.namespaceURI === 'http://www.w3.org/2000/svg') {
+      for (const namespace of [null, 'http://www.w3.org/1999/xlink']) {
+        const value = original.getAttributeNS(namespace, 'href');
+        if (value) copy.setAttributeNS(namespace, 'href', await dataUrl(new URL(value, document.baseURI).href));
+      }
+    }
     if (tag === 'input') {
       const input = /** @type {HTMLInputElement} */ (original);
+      if (input.type === 'image' && input.src) {
+        copy.setAttribute('src', await dataUrl(input.src));
+      }
       if (input.type === 'checkbox' || input.type === 'radio') {
         if (input.checked) copy.setAttribute('checked', '');
         else copy.removeAttribute('checked');
@@ -229,6 +287,8 @@
     for (const attribute of [...copy.attributes]) {
       if (/^on/i.test(attribute.name) || /^\s*javascript:/i.test(attribute.value) || attribute.name.toLowerCase() === 'referrerpolicy') {
         copy.removeAttribute(attribute.name);
+      } else if (attribute.name.toLowerCase() === 'style' && /url\(/i.test(attribute.value)) {
+        copy.setAttribute(attribute.name, await inlineCss(attribute.value, document.baseURI));
       }
     }
     if (tag !== 'textarea') {
@@ -242,7 +302,7 @@
         if (copied) template.content.append(copied);
       }
       for (const sheet of original.shadowRoot.adoptedStyleSheets) {
-        template.content.append(styleElement(owner, await inlineCss(sheetText(sheet), document.baseURI)));
+        template.content.append(styleElement(owner, (await sheetCss(sheet, document.baseURI)) ?? ''));
       }
       copy.prepend(template);
     }
@@ -289,7 +349,7 @@
       base.setAttribute('href', location.href);
       head.prepend(base);
       for (const sheet of document.adoptedStyleSheets) {
-        head.append(styleElement(owner, await inlineCss(sheetText(sheet), document.baseURI)));
+        head.append(styleElement(owner, (await sheetCss(sheet, document.baseURI)) ?? ''));
       }
     }
     const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
