@@ -196,6 +196,15 @@ export function assignMock(page, path) {
   return postJson("api/mock", { page, path });
 }
 
+/**
+ * モックの URL を読めるか（live-compare.md の R-PAGE-MOCK）。届かなかったときも読めないとする。
+ * @param {string} url
+ * @returns {Promise<boolean>}
+ */
+export function mockReadable(url) {
+  return fetch(url, { cache: "no-store" }).then((response) => response.ok, () => false);
+}
+
 /** 割り当てたモック。 */
 export function listMocks() {
   return getJson("api/mocks");

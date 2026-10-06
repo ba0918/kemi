@@ -1367,21 +1367,19 @@ function showMock(url) {
   shell.refMockFrame.replaceWith(frame);
   shell.refMockFrame = frame;
   // 枠は別のオリジンで中の状態を読めないので、出し始めるときに同じ URL を読めるか先に確かめる。
-  void fetch(url, { cache: "no-store" })
-    .then((response) => response.ok, () => false)
-    .then((readable) => {
-      // 確かめている間に別の条件で出し直した（枠を作り直した）か、モックをやめたなら、この結果は古い。
-      if (shell?.refMockFrame !== frame || live.mockShownKey !== key) {
-        return;
-      }
-      if (readable) {
-        frame.hidden = false;
-        frame.src = url;
-      } else {
-        live.mockUnreadable = key;
-        renderReference();
-      }
-    });
+  void api.mockReadable(url).then((readable) => {
+    // 確かめている間に別の条件で出し直した（枠を作り直した）か、モックをやめたなら、この結果は古い。
+    if (shell?.refMockFrame !== frame || live.mockShownKey !== key) {
+      return;
+    }
+    if (readable) {
+      frame.hidden = false;
+      frame.src = url;
+    } else {
+      live.mockUnreadable = key;
+      renderReference();
+    }
+  });
 }
 
 /**
