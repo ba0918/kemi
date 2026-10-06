@@ -331,6 +331,10 @@ function setSide(side) {
  * @param {number} width
  */
 function setWidth(width) {
+  // 保存している間は、画像を作る表示幅を変えない（R-PAGE-COMMENT の画像は場所のある表示幅で作る）。
+  if (live.saving) {
+    return;
+  }
   live.width = width;
   forgetFailures();
   sendPlaces();
@@ -359,7 +363,8 @@ function applyWidthInput() {
  * @param {string} page
  */
 function openPage(page) {
-  if (!shell) {
+  // 保存している間は、画像を作るページを移らない（読み込み直しも含む）。
+  if (!shell || live.saving) {
     return;
   }
   if (page !== live.page) {
@@ -688,6 +693,10 @@ export function showPageComment(comment) {
  * @param {number} width
  */
 function showPage(url, width) {
+  // 保存している間は表示幅もページも変えられないので、見方だけを切り替えることもしない。
+  if (live.saving) {
+    return;
+  }
   if (live.view !== "page") {
     setView("page");
   }
@@ -741,6 +750,7 @@ async function savePageComment() {
     return;
   }
   live.saving = true;
+  renderBand();
   renderCompose();
   const frame = shell.liveFrame.contentWindow;
   let image = null;
@@ -772,6 +782,7 @@ async function savePageComment() {
     live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
     live.saving = false;
+    renderBand();
     renderCompose();
   }
 }
@@ -1083,7 +1094,9 @@ function renderBand() {
   }
   for (const choice of shell.widthSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(Number(choice.dataset.width) === live.width));
+    choice.disabled = live.saving;
   }
+  shell.widthInput.disabled = live.saving;
   for (const choice of shell.sideSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.side === live.side));
   }

@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけを変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
@@ -1851,14 +1851,30 @@ async function draftsStayWhileSaving(repository) {
     await clickInPane(livePane, 40, 100);
     await new Promise((done) => setTimeout(done, 800));
     assert.equal(await evaluate(draftNumbers), '[1]', 'no place is added while saving');
+    // 画像は場所のあるページとその表示幅で作るので、保存している間は表示幅もページも変えさせない。
+    const widthLocked = `JSON.stringify(Array.from(document.querySelectorAll('.lv-widths button')).every((choice) => choice.disabled) && document.querySelector('.lv-width-input').disabled)`;
+    assert.equal(await evaluate(widthLocked), 'true', 'the width buttons and input are locked while saving');
+    await evaluate(`(() => {
+      window.__kemiPageLoads = 0;
+      window.addEventListener('message', (event) => {
+        if (event.data?.kemi === 'live' && event.data.type === 'page') window.__kemiPageLoads += 1;
+      });
+      return true;
+    })()`);
+    await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-width-tag[data-width="1280"]');
+    await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.equal(await evaluate(`document.querySelector('${livePane} .lv-frame').style.width`), '390px', 'the width is not changed from the page tree while saving');
+    assert.equal(await evaluate(`window.__kemiPageLoads`), 0, 'the page is not opened again while saving');
     await evaluate(`window.__kemiHeldSaves.forEach((release) => release()); true`);
     await waitFor(`${draftNumbers} === '[]'`);
     assert.equal(await evaluate(`document.querySelector('#live-compose .lv-compose-body').readOnly`), false, 'the body can be written again after saving');
+    assert.equal(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('.lv-widths button')).some((choice) => choice.disabled) || document.querySelector('.lv-width-input').disabled)`), 'false', 'the width can be changed again after saving');
     const comment = (await reviewJson(kemi)).comments.at(-1);
     assert.deepEqual([comment.body, comment.page.places.map((place) => place.n)], ['saved as it was', [1]]);
     await clickInPane(livePane, 40, 100);
     await waitFor(`${draftNumbers} === '[1]'`);
-    console.log('PASS ページへのコメントを保存している間は書きかけを変えられず、保存し終えるとまた書ける');
+    console.log('PASS ページへのコメントを保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける');
   } finally {
     await stop(kemi);
     await dev.close();
