@@ -560,7 +560,9 @@
 
   /**
    * 置いた場所を決める。点は画面の座標で届き、文書の座標にして返す。要素は 1 つ、矢印は先端の要素、ペンは
-   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。
+   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。押した点は `at` に入れて返す。
+   * 文書の根（地）を選んだときは、その箱ではなくこの点が画像の範囲と描き込みの位置になる。レビュー画面は
+   * これを画像の頼みにだけ載せ、保存する場所には入れない。
    * @param {string} kind
    * @param {unknown[]} requested
    */
@@ -579,7 +581,7 @@
     const elements = element ? [placeElement(element)] : [];
     if (kind === 'arrow') return { kind, points: points.map(toDocument), elements };
     if (elements.length === 0) return { error: 'no element there' };
-    return { kind: 'element', points: [], elements };
+    return { kind: 'element', points: [], elements, at: toDocument(at) };
   }
 
   /** 場所の描き込みの見た目。書いている途中と、目立たせる保存したものは濃く、ほかの保存したものは控えめに。 */
@@ -628,7 +630,8 @@
     setStyles(/** @type {any} */ (svg), { position: 'absolute', left: '0', top: '0', overflow: 'visible' });
     for (const place of places) {
       if (place.kind === 'element') {
-        for (const { rect } of place.elements) {
+        // 文書の根の箱は文書全体を囲むので描かない。地を選んだ場所は番号だけで示す。
+        for (const { rect } of place.elements.filter(({ root }) => !root)) {
           const box = document.createElementNS(SVG, 'rect');
           for (const [name, value] of Object.entries({ x: rect.x - 2, y: rect.y - 2, width: rect.w + 4, height: rect.h + 4 })) box.setAttribute(name, String(value));
           box.setAttribute('fill', 'none');
@@ -660,7 +663,7 @@
     drawn.push(svg);
     if (style.numbers) {
       for (const place of places) {
-        const anchor = place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
+        const anchor = placeAnchor(place);
         if (!anchor) continue;
         const badge = document.createElement('div');
         badge.textContent = String(place.n);
@@ -1156,7 +1159,7 @@
   /**
    * @typedef {{ x: number, y: number }} Point
    * @typedef {{ x: number, y: number, w: number, h: number }} Rect
-   * @typedef {{ n: number, kind: string, points: Point[], elements: { rect: Rect }[] }} ImagePlace
+   * @typedef {{ n: number, kind: string, points: Point[], elements: { rect: Rect, root: boolean }[], at: Point | null }} ImagePlace
    */
 
   /** @param {unknown} value */
@@ -1169,17 +1172,51 @@
    */
   function readPlaces(places) {
     return places.map((place) => {
-      const { n, kind, points, elements } = /** @type {Record<string, unknown>} */ (place ?? {});
+      const { n, kind, points, elements, at } = /** @type {Record<string, unknown>} */ (place ?? {});
+      const point = /** @type {Record<string, unknown> | null} */ (at && typeof at === 'object' ? at : null);
       return {
         n: finite(n),
         kind: String(kind),
         points: (Array.isArray(points) ? points : []).map((point) => ({ x: finite(point?.x), y: finite(point?.y) })),
         elements: (Array.isArray(elements) ? elements : []).map((element) => {
           const rect = element?.rect ?? {};
-          return { rect: { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) } };
+          return { rect: { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) }, root: isPageRoot(element?.selector) };
         }),
+        at: point ? { x: finite(point.x), y: finite(point.y) } : null,
       };
     });
+  }
+
+  /**
+   * セレクタが文書の根（html か body）を指すか。shadow root の中のセレクタ（` >>> ` を含む）は読めずに false。
+   * @param {unknown} selector
+   */
+  function isPageRoot(selector) {
+    if (typeof selector !== 'string') return false;
+    try {
+      const element = document.querySelector(selector);
+      return element !== null && (element === document.documentElement || element === document.body);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 文書の根だけを指す要素の場所（地を選んだ）の押した点。ほかの場所と、押した点を持たない場所（保存したもの）は null。
+   * @param {ImagePlace} place
+   */
+  function onlyRootAt(place) {
+    return place.kind === 'element' && place.elements.every(({ root }) => root) ? place.at : null;
+  }
+
+  /**
+   * 番号を置く点。要素の場所は文書の根でない最初の要素の左上か、地を選んだなら押した点。矢印とペンは最初の点。
+   * @param {ImagePlace} place
+   * @returns {Point | undefined}
+   */
+  function placeAnchor(place) {
+    if (place.kind !== 'element') return place.points[0];
+    return place.elements.find(({ root }) => !root)?.rect ?? place.at ?? place.elements[0]?.rect;
   }
 
   /**
@@ -1204,9 +1241,15 @@
           xs.push(point.x);
           ys.push(point.y);
         }
-        for (const { rect } of place.elements) {
+        // 文書の根の箱は文書全体なので範囲に入れない。地を選んだ要素の場所は押した点を入れる。
+        for (const { rect } of place.elements.filter(({ root }) => !root)) {
           xs.push(rect.x, rect.x + rect.w);
           ys.push(rect.y, rect.y + rect.h);
+        }
+        const at = onlyRootAt(place);
+        if (at) {
+          xs.push(at.x);
+          ys.push(at.y);
         }
       }
       if (xs.length === 0) throw new Error('no place to draw around');
@@ -1287,7 +1330,8 @@
     context.lineCap = 'round';
     for (const place of places) {
       if (place.kind === 'element') {
-        for (const { rect } of place.elements) context.strokeRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4);
+        // 文書の根の箱は文書全体を囲むので描かない。地を選んだ場所は番号だけで示す。
+        for (const { rect } of place.elements.filter(({ root }) => !root)) context.strokeRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4);
       } else if (place.points.length > 0) {
         context.beginPath();
         context.moveTo(place.points[0].x, place.points[0].y);
@@ -1297,7 +1341,7 @@
       }
     }
     for (const place of places) {
-      const anchor = place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
+      const anchor = placeAnchor(place);
       if (!anchor) continue;
       // 文書の左上の端の場所でも、番号が切れないように内側へ寄せる。
       drawNumber(context, place.n, Math.max(10, anchor.x), Math.max(10, anchor.y));

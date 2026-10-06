@@ -618,7 +618,8 @@ async function finishStroke() {
     return;
   }
   live.composeError = "";
-  setDraft(addPlace(live.draft, { kind, points: answer.points ?? [], elements: answer.elements ?? [] }, page, width));
+  const place = { kind, points: answer.points ?? [], elements: answer.elements ?? [] };
+  setDraft(addPlace(live.draft, answer.at ? { ...place, at: answer.at } : place, page, width));
 }
 
 /**
@@ -767,7 +768,9 @@ async function savePageComment() {
     );
     image = typeof answer.png === "string" ? answer.png : null;
   }
-  const request = { op: "add_page", page: { url: draft.url, width: draft.width, places: draft.places }, body };
+  // 押した点（`at`）は画像の頼みにだけ載せる。保存する場所の形は R-SUBMIT の `page.places`。
+  const places = draft.places.map(({ n, kind, points, elements }) => ({ n, kind, points, elements }));
+  const request = { op: "add_page", page: { url: draft.url, width: draft.width, places }, body };
   try {
     const comment = await api.postComment({ ...request, image }).catch((error) => {
       // 本文と場所に画像を足すと要求の上限を超えるときは、画像なしで保存する（画像は作れないこともある）。

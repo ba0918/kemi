@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写すか null になる。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写すか null になる。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
@@ -1682,6 +1682,18 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
  * ページの地の上の場所（R-PAGE-COMMENT）: どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、その位置の
  * 要素（地では文書の根）が場所の要素になり、座標だけにはならない。
  */
+/** 保存の要求に載せた画像を `window.__kemiSavedImage` に控える。 */
+async function keepSavedImage() {
+  await evaluate(`(() => {
+    const real = window.fetch;
+    window.fetch = (path, init) => {
+      if (String(path).endsWith('api/comment')) window.__kemiSavedImage = JSON.parse(String(init?.body)).image;
+      return real(path, init);
+    };
+    return true;
+  })()`);
+}
+
 async function placesOnTheBackgroundNameThePage(repository) {
   const dev = await startDevServer();
   const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
@@ -1693,6 +1705,7 @@ async function placesOnTheBackgroundNameThePage(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
+    await keepSavedImage();
     // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない地。
     await chooseTool('element');
     await clickInPane(livePane, 350, 450);
@@ -1711,6 +1724,21 @@ async function placesOnTheBackgroundNameThePage(repository) {
       assert.match(place.elements[0].selector, root, `place ${place.n} (${place.kind}) names the page`);
     }
     console.log('PASS どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、文書の根が場所の要素になる');
+    // 画像は文書の根の箱ではなく、場所の周りを写す。要素の場所は押した点（矢印の先端と同じ点）、矢印とペンは線の点。
+    // 範囲は文書（幅 390）の端で切られる。下の端は文書の高さ次第なので、高さは切られない場合を上限にする。
+    const points = places.flatMap((place) => place.points);
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const width = Math.min(390, Math.ceil(Math.max(...xs) + 48)) - Math.max(0, Math.floor(Math.min(...xs) - 48));
+    const height = Math.ceil(Math.max(...ys) + 48) - Math.max(0, Math.floor(Math.min(...ys) - 48));
+    assert.ok(width < 390, `the places leave the left of the page out: ${JSON.stringify(points)}`);
+    const saved = await evaluate('window.__kemiSavedImage ?? null');
+    assert.notEqual(saved, null, 'the image is made');
+    const image = decodePng(Buffer.from(saved, 'base64'));
+    const shown = `${image.width}x${image.height}, places ${JSON.stringify(points)}`;
+    assert.equal(image.width, width, `the image is as wide as the places, not the whole page: ${shown}`);
+    assert.ok(image.height > 0 && image.height <= height, `the image is no taller than the places: ${shown}`);
+    console.log('PASS 地に置いた場所の画像は、文書の根の箱ではなく場所の周りを写す');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -1961,15 +1989,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
-    // 保存の要求に載せた画像を控える。
-    await evaluate(`(() => {
-      const real = window.fetch;
-      window.fetch = (path, init) => {
-        if (String(path).endsWith('api/comment')) window.__kemiSavedImage = JSON.parse(String(init?.body)).image;
-        return real(path, init);
-      };
-      return true;
-    })()`);
+    await keepSavedImage();
     for (const away of ['view', 'side']) {
       await chooseTool('element');
       // 2 番目の帯（文書の y 300〜600）。
@@ -2083,14 +2103,7 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
-    await evaluate(`(() => {
-      const real = window.fetch;
-      window.fetch = (path, init) => {
-        if (String(path).endsWith('api/comment')) window.__kemiSavedImage = JSON.parse(String(init?.body)).image;
-        return real(path, init);
-      };
-      return true;
-    })()`);
+    await keepSavedImage();
     await browser('fill', '#live-compose .lv-compose-body', 'saved while the page moved');
     await holdRequests('image');
     await browser('click', '#live-compose .lv-compose-save');
