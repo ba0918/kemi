@@ -843,8 +843,9 @@ async fn run_review(
                 serving.abort();
                 let _ = serving.await;
             }
-            // サーブのタスクが終わってから片付ける。処理中のスナップショットが後から
-            // `<id>.files/` に書き足さないように。
+            // 片付けた後のセッションは `<id>.files/` に書かない。abort しても接続ごとの
+            // タスクは止まらず、処理中のスナップショットや画像が後から届くことがあるが、
+            // それは書かれず、消した `<id>.files/` は作り直されない。
             close_suspended(stored_session.as_deref());
             print_resume_hint(stored_session.as_deref());
             drop(stored_session);

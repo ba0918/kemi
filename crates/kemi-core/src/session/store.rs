@@ -146,6 +146,7 @@ impl SessionStore {
             state: SessionState::default(),
             copy: CopyState::Pending,
             deleted: false,
+            suspended: false,
             files_limit: self.files_limit,
             _lock: lock,
         })
@@ -179,6 +180,7 @@ impl SessionStore {
             state,
             copy,
             deleted: false,
+            suspended: false,
             files_limit: self.files_limit,
             _lock: lock,
         })
@@ -365,6 +367,9 @@ pub struct OpenSession {
     /// submit で消した後の保存を無視する印。凍結が submit と競争しても、消えた
     /// セッションを作り直さない（R-SESSION）。
     deleted: bool,
+    /// 保留で片付けた後に `<id>.files/` へ書かない印。処理中だった要求が後から届いても、
+    /// 消した `<id>.files/` を作り直さない（R-PAGE-SESSION）。
+    suspended: bool,
     files_limit: u64,
     /// このセッションのロック。フィールドとして持ち、Drop で解放する。
     _lock: SessionLock,
@@ -490,7 +495,9 @@ impl OpenSession {
     /// 保留で終わるとき。会話の無い `--live` のセッションは `<id>.files/` も残さない
     /// （R-PAGE-SESSION）。レビューの途中では会話が無くなっても `<id>.files/` を消さない
     /// （開始時のスナップショットを、後で会話ができたときのために持っておく）。
+    /// 片付けた後は `<id>.files/` に書かない。
     pub fn close_suspended(&mut self) -> Result<(), SessionError> {
+        self.suspended = true;
         if self.deleted || !self.info.mode.is_live() || self.state.has_conversation() {
             return Ok(());
         }
@@ -508,11 +515,16 @@ impl OpenSession {
             written: FileWritten::Failed(error),
             removed_snapshots,
         };
-        if self.deleted {
+        if self.deleted || self.suspended {
+            let reason = if self.deleted {
+                "the session is already deleted"
+            } else {
+                "the session is already suspended"
+            };
             return failed(
                 SessionError::Io {
                     path: dir,
-                    source: std::io::Error::other("the session is already deleted"),
+                    source: std::io::Error::other(reason),
                 },
                 Vec::new(),
             );
@@ -1561,6 +1573,32 @@ mod tests {
         assert!(path.exists());
 
         open.close_suspended().unwrap();
+        assert!(!files_dir(&scratch, open.id()).exists());
+    }
+
+    #[test]
+    fn a_suspended_live_session_writes_nothing_more_into_its_files_directory() {
+        // 保留で片付けた後に、まだ処理中だった要求のスナップショットや画像が届いても、
+        // 消した `<id>.files/` を作り直さない（R-PAGE-SESSION）。
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        saved_path(&open.save_snapshot(
+            &page_snapshot(1, SnapshotKind::Start, "<p></p>"),
+            &no_comments(),
+        ));
+        open.close_suspended().unwrap();
+
+        let snapshot = open.save_snapshot(
+            &page_snapshot(2, SnapshotKind::Manual, "<p></p>"),
+            &no_comments(),
+        );
+        let image = open.save_image("c1", b"png", &no_comments());
+
+        assert!(matches!(snapshot.written, FileWritten::Failed(_)));
+        assert!(matches!(image.written, FileWritten::Failed(_)));
         assert!(!files_dir(&scratch, open.id()).exists());
     }
 
