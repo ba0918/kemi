@@ -22,7 +22,8 @@
 //   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
-//   見る対象の要素が場所になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
+//   その要素 1 つになる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
@@ -1588,6 +1589,44 @@ async function pageCommentPlacesArePutAndSaved(repository) {
   }
 }
 
+/**
+ * ペンの場所の要素（R-PAGE-COMMENT）: 囲んだ範囲を丸ごと含む外側の要素は入らず、1 つの要素の内側だけを囲むと、範囲を
+ * 含む一番内側の要素 1 つになる。
+ */
+async function penPlacesLeaveOutWhatContainsTheLine(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await new Promise((done) => setTimeout(done, 500));
+    await chooseTool('pen');
+    // 1 段目の並び（左上 (0, 0) の幅いっぱいの .row）の中身を囲む。
+    await dragInPane(livePane, [[5, 5], [380, 5], [380, 78], [5, 78], [5, 7]]);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    // ボタン（左上 (0, 200) の 300×100）の内側だけを囲む。
+    await dragInPane(livePane, [[60, 220], [240, 220], [240, 280], [60, 280], [60, 222]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await savePageCommentInThePage('pen places');
+    const [around, inside] = (await reviewJson(kemi)).comments.at(-1).page.places;
+    const xs = around.points.map((point) => point.x);
+    const ys = around.points.map((point) => point.y);
+    const [left, top, right, bottom] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    const contains = ({ rect }) => rect.x <= left && rect.y <= top && rect.x + rect.w >= right && rect.y + rect.h >= bottom;
+    assert.ok(around.elements.length > 0, 'the pen names the elements it encloses');
+    assert.deepEqual(around.elements.filter(contains), [], `no element containing the whole line is named: ${JSON.stringify(around.elements)}`);
+    assert.deepEqual(inside.elements.map((element) => element.selector), ['#button'], 'a line inside one element names that element');
+    console.log('PASS ペンで囲んだ範囲を丸ごと含む外側の要素は場所の要素に入らず、1 つの要素の内側だけを囲むとその要素 1 つになる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）。 */
 async function placesMakeNoChange(repository) {
   const dev = await startDevServer();
@@ -1820,6 +1859,7 @@ try {
   await widthSwitchesWithoutResizingTheDocument(repository);
   await manyElementsAreRecordedAndCompared(repository);
   await pageCommentPlacesArePutAndSaved(repository);
+  await penPlacesLeaveOutWhatContainsTheLine(repository);
   await placesMakeNoChange(repository);
   await savedPageCommentsAreListedShownAndSwitched(repository);
   await handedPageCommentsReachWaitAndSubmit(repository);

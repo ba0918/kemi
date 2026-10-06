@@ -517,7 +517,9 @@
   }
 
   /**
-   * ペンで囲んだ範囲（線の外接矩形）と重なる要素を、重なる面積の大きい順に上限まで。画面の座標で比べる。
+   * ペンで囲んだ範囲（線の外接矩形）と重なる要素を、重なる面積の大きい順に上限まで。画面の座標で比べる。範囲を丸ごと
+   * 含む要素（ページを包む入れ物など）は、重なる面積が範囲いっぱいになって囲んだ要素を押し出すので除く。除くと何も
+   * 残らない（1 つの要素の内側だけを囲んだ）ときは、範囲を含む一番内側の要素 1 つにする。
    * @param {{ x: number, y: number }[]} points 画面の座標
    */
   function enclosedElements(points) {
@@ -527,13 +529,22 @@
     const bottom = Math.max(...points.map((point) => point.y));
     /** @type {{ element: Element, area: number }[]} */
     const found = [];
+    /** @type {{ element: Element | null, area: number }} */
+    const innermost = { element: null, area: Infinity };
     eachPageElement((element) => {
       if (UNPLACED.has(element.localName)) return;
       const rect = element.getBoundingClientRect();
+      if (rect.left <= left && rect.top <= top && rect.right >= right && rect.bottom >= bottom) {
+        // 文書の順にたどるので、面積が同じなら後に来る（内側の）要素を選ぶ。
+        const area = rect.width * rect.height;
+        if (area <= innermost.area) Object.assign(innermost, { element, area });
+        return;
+      }
       const width = Math.min(right, rect.right) - Math.max(left, rect.left);
       const height = Math.min(bottom, rect.bottom) - Math.max(top, rect.top);
       if (width > 0 && height > 0) found.push({ element, area: width * height });
     });
+    if (found.length === 0) return innermost.element ? [placeElement(innermost.element)] : [];
     found.sort((a, b) => b.area - a.area);
     return found.slice(0, ENCLOSED_LIMIT).map(({ element }) => placeElement(element));
   }
