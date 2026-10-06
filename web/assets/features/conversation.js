@@ -223,6 +223,7 @@ export function onConversationScroll(event) {
 export function closeThread() {
   state.conversation.thread = null;
   state.conversation.editing = null;
+  state.conversation.editDraft = null;
   renderConversation({ toEnd: true });
 }
 
@@ -233,7 +234,16 @@ export function closeThread() {
  */
 export function editPageComment(id) {
   state.conversation.editing = id;
+  state.conversation.editDraft = null;
   renderConversation();
+}
+
+/**
+ * 編集しているページへのコメントの本文の書きかけを覚える（会話の描き直しで消えないように）。
+ * @param {string} text
+ */
+export function keepPageCommentDraft(text) {
+  state.conversation.editDraft = text;
 }
 
 /**
@@ -245,6 +255,7 @@ export async function savePageCommentBody(comment, body) {
   try {
     const updated = await api.postComment({ op: "edit", id: comment.id, body });
     state.conversation.editing = null;
+    state.conversation.editDraft = null;
     updateComments((comments) => comments.map((item) => (item.id === updated.id ? updated : item)));
   } catch (error) {
     showToast(`could not edit the comment: ${error instanceof Error ? error.message : String(error)}`);

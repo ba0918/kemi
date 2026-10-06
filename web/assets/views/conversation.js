@@ -324,6 +324,14 @@ function renderThread(comment, options) {
   dom.cvThreadHead.append(acts);
 
   const posts = [comment, ...(comment.replies || [])].map((item) => Number(item.seq) || 0);
+  // 描き直すと編集欄は作り直されるので、書いている途中ならカーソルの位置ごと戻す。
+  const editing = /** @type {HTMLTextAreaElement | null} */ (
+    dom.cvThreadBody.querySelector(".cv-page-edit-text")
+  );
+  const caret =
+    editing && document.activeElement === editing
+      ? { start: editing.selectionStart, end: editing.selectionEnd }
+      : null;
   followScroll(dom.cvThreadBody, options, comment.id, posts, () => {
     dom.cvThreadBody.textContent = "";
     const lines = targetLines(comment);
@@ -381,6 +389,13 @@ function renderThread(comment, options) {
     for (const reply of comment.replies || []) {
       dom.cvThreadBody.append(post(reply.author, reply.body, "cv-reply-post", reply.id));
     }
+    const editor = /** @type {HTMLTextAreaElement | null} */ (
+      opening.querySelector(".cv-page-edit-text")
+    );
+    if (editor && caret) {
+      editor.focus();
+      editor.setSelectionRange(caret.start, caret.end);
+    }
   });
 
   // 返信の欄は、開いたスレッドが変わったときだけ、そのスレッドの書きかけに入れ替える。
@@ -399,8 +414,9 @@ function pageCommentEditor(comment) {
   const box = el("div", "cv-post cv-comment cv-page-edit");
   box.dataset.id = comment.id;
   const text = /** @type {HTMLTextAreaElement} */ (el("textarea", "cv-page-edit-text"));
-  text.value = comment.body;
+  text.value = state.conversation.editDraft ?? comment.body;
   text.rows = 4;
+  text.addEventListener("input", () => actions.keepPageCommentDraft(text.value));
   text.setAttribute("aria-label", "Comment");
   const row = el("div", "cv-page-edit-actions");
   const cancel = button("btn secondary cv-page-edit-cancel");

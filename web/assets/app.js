@@ -58,6 +58,7 @@ import {
   editFromThread,
   editPageComment,
   goToComment,
+  keepPageCommentDraft,
   keepReplyDraft,
   loadCommitGroups,
   markLoaded,
@@ -334,6 +335,7 @@ bindActions({
   showPageComment: (comment) => pageComments.show(comment),
   pageCommentsChanged: () => pageComments.changed(),
   editPageComment,
+  keepPageCommentDraft,
   savePageCommentBody: (comment, body) => void savePageCommentBody(comment, body),
 });
 

@@ -63,6 +63,7 @@ export const THEME_LABELS = {
  *     read: import("./model.js").ReadMarks,
  *     folded: Map<string, boolean>,
  *     editing: string | null,
+ *     editDraft: string | null,
  *   },
  *   replyDrafts: Map<string, string>,
  *   live: { page: string, width: number } | null,
@@ -167,6 +168,8 @@ export const state = {
     folded: new Map(),
     // スレッドの中で本文を編集しているページへのコメント（live.md の R-PAGE-COMMENT）。
     editing: null,
+    // その本文の書きかけ。会話が描き直されても消えないようにここに置く。書き始める前は null。
+    editDraft: null,
   },
   replyDrafts: new Map(),
   // `--live` のページの見方で見ているページと表示幅。ページの見方でなければ null。

@@ -57,6 +57,7 @@
  *   showPageComment: (comment: any) => void,
  *   pageCommentsChanged: () => void,
  *   editPageComment: (id: string | null) => void,
+ *   keepPageCommentDraft: (text: string) => void,
  *   savePageCommentBody: (comment: any, body: string) => void,
  * }} Actions
  */
