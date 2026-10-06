@@ -21,6 +21,7 @@ use crate::AppState;
 use crate::live::LiveInfo;
 use crate::live::files::{clean_path, content_type, resolve};
 use crate::live::rewrite::{root_relative_css, root_relative_html};
+use crate::session::persist;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct MockRequest {
@@ -72,17 +73,24 @@ pub(super) async fn assign_mock(
 ) -> Result<Json<Value>, ApiError> {
     let live = live(&state)?;
     let Some(input) = request.path else {
-        live.mocks
+        state
+            .session
             .lock()
-            .expect("mocks poisoned")
+            .expect("session poisoned")
+            .mocks
             .remove(&request.page);
+        persist(&state);
         return Ok(Json(json!({ "page": request.page, "path": null })));
     };
     let path = mock_path(live, input.trim()).map_err(ApiError::unprocessable)?;
-    live.mocks
+    state
+        .session
         .lock()
-        .expect("mocks poisoned")
+        .expect("session poisoned")
+        .mocks
         .insert(request.page.clone(), path.clone());
+    // 割り当ては保存するが、会話にはならない。会話の無いセッションは残らない（R-PAGE-SESSION）。
+    persist(&state);
     Ok(Json(mock_json(live, &request.page, &path)))
 }
 
@@ -91,7 +99,12 @@ pub(super) async fn list_mocks(
     Path(_token): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let live = live(&state)?;
-    let mocks = live.mocks.lock().expect("mocks poisoned");
+    let mocks = state
+        .session
+        .lock()
+        .expect("session poisoned")
+        .mocks
+        .clone();
     Ok(Json(json!({
         "mocks": mocks
             .iter()

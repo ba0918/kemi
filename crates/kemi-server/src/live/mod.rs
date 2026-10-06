@@ -6,7 +6,6 @@ pub(crate) mod files;
 mod relay;
 pub(crate) mod rewrite;
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -65,9 +64,6 @@ pub(crate) struct LiveInfo {
     pub snapshots: std::sync::Mutex<Snapshots>,
     pub root: PathBuf,
     pub mock_secret: String,
-    /// ページ（パスとクエリ）ごとのモックの割り当て（範囲の根からの相対パス）。保存はまだ
-    /// 無く、メモリにだけ持つ（R-PAGE-MOCK）。
-    pub mocks: std::sync::Mutex<BTreeMap<String, String>>,
 }
 
 /// 比べる相手に選べるスナップショットの一覧と、次に振る番号。
@@ -196,7 +192,6 @@ pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveI
         snapshots: std::sync::Mutex::new(Snapshots::restored(params.snapshots)),
         root: params.root,
         mock_secret: params.mock_secret,
-        mocks: std::sync::Mutex::new(BTreeMap::new()),
     };
     Ok((params.listener, info, params.target))
 }

@@ -2715,6 +2715,31 @@ mod tests {
     }
 
     #[test]
+    fn live_session_roundtrips_its_mock_assignments() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let state = SessionState {
+            mocks: [(
+                "/products?x=1".to_string(),
+                "mocks/products.html".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..state_with_comment()
+        };
+        open.save_state_at(state.clone(), 200).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+
+        let opened = store.open(&id).unwrap();
+
+        assert_eq!(opened.state(), &state);
+    }
+
+    #[test]
     fn live_session_roundtrips_a_file_page_and_its_root() {
         let scratch = Scratch::new();
         let store = SessionStore::new(scratch.dir());

@@ -3856,3 +3856,31 @@ async fn a_live_review_suspended_without_a_comment_leaves_neither_its_session_no
             .exists()
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_mock_assignment_comes_back_after_resuming() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    dir.write("mocks/products.html", "<p>mock</p>\n");
+    let assigned = kemi
+        .post(
+            "api/mock",
+            serde_json::json!({ "page": "/products?x=1", "path": "mocks/products.html" }),
+        )
+        .await;
+    assert_eq!(assigned.status(), 200);
+    kemi.add_live_comment("keep").await;
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let mocks = resumed.get_json("api/mocks").await;
+
+    assert_eq!(mocks["mocks"].as_array().unwrap().len(), 1, "{mocks}");
+    assert_eq!(mocks["mocks"][0]["page"], "/products?x=1");
+    assert_eq!(mocks["mocks"][0]["path"], "mocks/products.html");
+    resumed.kill();
+}

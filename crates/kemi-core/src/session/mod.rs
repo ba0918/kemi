@@ -131,6 +131,9 @@ pub struct SessionState {
     pub last_seq: u32,
     /// エージェントとの往復の続き。
     pub channel: Channel,
+    /// `--live` のモックの割り当て。ページ（パスとクエリ）→ 配れる範囲の根からの相対パス
+    /// （live-compare.md の R-PAGE-MOCK）。
+    pub mocks: BTreeMap<String, String>,
 }
 
 impl SessionState {
@@ -259,6 +262,9 @@ struct StateDto {
     last_seq: u32,
     #[serde(default)]
     channel: ChannelDto,
+    /// 割り当てが無ければ書かない（`--live` の前からある形のまま）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    mocks: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -581,6 +587,7 @@ impl From<&SessionState> for StateDto {
             last_message: state.last_message,
             last_seq: state.last_seq,
             channel: ChannelDto::from(&state.channel),
+            mocks: state.mocks.clone(),
         }
     }
 }
@@ -608,6 +615,7 @@ impl StateDto {
             last_message: self.last_message,
             last_seq: self.last_seq,
             channel: self.channel.into_channel()?,
+            mocks: self.mocks,
         };
         if unnumbered {
             number_in_creation_order(&mut state);
