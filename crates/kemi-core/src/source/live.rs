@@ -22,10 +22,12 @@ pub struct LiveSource {
 /// パスから決まるファイルの id。作業ツリーの差分が振る id は見つけた順の番号で、復元で
 /// 作り直すと別のファイルを指しうる。`--live` は写しを持たずに作り直すので、コメント・
 /// 見た・折りたたみが同じファイルに戻るよう、パスから id を決める（R-PAGE-SESSION）。
-fn stable_id(path: &str) -> String {
+/// 表示のパスは lossy で別のファイルが同じ文字列になりうるので、生のパスのバイト列から決める
+/// （UTF-8 として正しいパスでは表示のパスと同じバイト列なので、id も変わらない）。
+fn stable_id(path: &[u8]) -> String {
     let mut id = String::with_capacity(1 + path.len() * 2);
     id.push('p');
-    for byte in path.bytes() {
+    for byte in path {
         id.push_str(&format!("{byte:02x}"));
     }
     id
@@ -69,9 +71,13 @@ impl ReviewSource for LiveSource {
         let mut review = match &self.code {
             Some(code) => {
                 let mut review = code.review()?;
+                let raw_paths = code.raw_paths();
                 let mut ids = self.ids.lock().expect("ids poisoned");
                 for file in review.groups.iter_mut().flat_map(|group| &mut group.files) {
-                    let stable = stable_id(&file.path);
+                    let raw = raw_paths
+                        .get(&file.id)
+                        .expect("review() records the raw path of every id it hands out");
+                    let stable = stable_id(raw);
                     ids.insert(stable.clone(), std::mem::replace(&mut file.id, stable));
                 }
                 review
@@ -125,7 +131,39 @@ mod tests {
 
     #[test]
     fn a_file_id_is_decided_by_the_path_alone() {
-        assert_eq!(stable_id("a.txt"), stable_id("a.txt"));
-        assert_ne!(stable_id("a.txt"), stable_id("b.txt"));
+        assert_eq!(stable_id(b"a.txt"), stable_id(b"a.txt"));
+        assert_ne!(stable_id(b"a.txt"), stable_id(b"b.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn files_whose_names_differ_only_in_invalid_utf8_bytes_keep_their_own_ids_and_contents() {
+        use std::os::unix::ffi::OsStrExt;
+        let repo = crate::source::testutil::TempRepo::new();
+        repo.write("a.txt", "a\n");
+        repo.add_and_commit("base");
+        let first = std::ffi::OsStr::from_bytes(b"b\xffad.txt");
+        let second = std::ffi::OsStr::from_bytes(b"b\xfead.txt");
+        std::fs::write(repo.path.join(first), "first\n").unwrap();
+        std::fs::write(repo.path.join(second), "second\n").unwrap();
+        let source = LiveSource::new(&LivePage::File("a.txt".to_string()), &repo.path);
+
+        let review = source.review().unwrap();
+        let ids: Vec<&str> = review
+            .groups
+            .iter()
+            .flat_map(|group| &group.files)
+            .filter(|file| file.path.ends_with("ad.txt"))
+            .map(|file| file.id.as_str())
+            .collect();
+
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        let mut contents: Vec<Vec<u8>> = ids
+            .iter()
+            .map(|id| source.content(id).unwrap().new.unwrap())
+            .collect();
+        contents.sort();
+        assert_eq!(contents, vec![b"first\n".to_vec(), b"second\n".to_vec()]);
     }
 }
