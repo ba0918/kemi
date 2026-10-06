@@ -25,6 +25,8 @@
 //   /changing.html  同じ URL のまま中身が変わるページ（差分の確かめに使う）。兄弟の並び（#items の li）と、
 //                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
 //                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
+//   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
+//                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -165,6 +167,19 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 PAGES['changing.html'] = changingPage();
 PAGES['changing.css'] = changingCss();
+PAGES['many.css'] = '.cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px; } .card { width: 160px; border: 1px solid rgb(220, 220, 220); border-radius: 8px; padding: 8px; } .card button { background: rgb(49, 89, 214); color: rgb(255, 255, 255); }\n';
+
+/** @param {number} cards */
+function manyPage(cards) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Many</title>
+<link rel="stylesheet" href="/many.css">
+<script type="module" src="/__hmr.js"></script>
+</head><body><div class="cards">
+${Array.from({ length: cards }, (_, index) => `<div class="card"><h3>Item ${index + 1}</h3><p>Description of item ${index + 1}</p><button>Buy</button></div>`).join('\n')}
+</div></body></html>
+`;
+}
 
 /** /resources.html の箱。名前・左上の位置・色。色の画像は `<名前>.svg` で配る。 */
 export const RESOURCE_BOXES = [
@@ -283,6 +298,11 @@ export async function startDevServer({ port = 0, dir } = {}) {
     if (url.pathname === '/siblings.html') {
       response.writeHead(200, { 'Content-Type': TYPES['.html'] });
       response.end(siblingsPage(url.searchParams.get('extra') === '1'));
+      return;
+    }
+    if (url.pathname === '/many.html') {
+      response.writeHead(200, { 'Content-Type': TYPES['.html'] });
+      response.end(manyPage(Math.min(100_000, Math.max(1, Number(url.searchParams.get('cards')) || 1250))));
       return;
     }
     if (url.pathname === '/referrer.html') {
