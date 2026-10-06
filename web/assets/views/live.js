@@ -74,6 +74,9 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   cancel: HTMLButtonElement,
  *   save: HTMLButtonElement,
  *   error: HTMLElement,
+ *   away: HTMLElement,
+ *   awayText: HTMLElement,
+ *   back: HTMLButtonElement,
  * }} ComposeShell
  */
 
@@ -304,6 +307,12 @@ function buildCompose() {
   box.hidden = true;
   const head = textEl("div", "lv-compose-head", "Places of this comment");
   const list = el("ol", "lv-places");
+  // 書きかけの場所と別の URL か表示幅を見ているときの知らせと、そこへ戻る操作（R-PAGE-COMMENT）。
+  const away = el("div", "lv-compose-away");
+  away.hidden = true;
+  const awayText = el("span", "lv-compose-away-text");
+  const back = button("lv-record lv-compose-back");
+  away.append(awayText, back);
   const body = /** @type {HTMLTextAreaElement} */ (el("textarea", "lv-compose-body"));
   body.rows = 3;
   body.placeholder = "Refer to the places by their numbers (Cmd/Ctrl+Enter to save)";
@@ -319,8 +328,8 @@ function buildCompose() {
   const save = button("btn primary lv-compose-save");
   save.textContent = "Comment";
   actions.append(undo, error, el("span", "lv-spacer"), cancel, save);
-  box.append(head, list, body, actions);
-  return { box, list, body, undo, cancel, save, error };
+  box.append(head, away, list, body, actions);
+  return { box, list, body, undo, cancel, save, error, away, awayText, back };
 }
 
 const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };

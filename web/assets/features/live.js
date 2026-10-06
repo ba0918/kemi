@@ -17,6 +17,7 @@ import {
   liveOrigin,
   overlayPlacement,
   pageKey,
+  draftElsewhere,
   emptyDraft,
   parseWidth,
   removePlace,
@@ -542,6 +543,7 @@ function startComposing(shell) {
     setDraft(emptyDraft(live.page, live.width));
   });
   compose.save.addEventListener("click", () => void savePageComment());
+  compose.back.addEventListener("click", () => showPage(live.draft.url, live.draft.width));
   compose.body.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -577,7 +579,8 @@ async function finishStroke() {
   const stroke = drawing;
   cancelStroke();
   const frame = shell?.liveFrame.contentWindow;
-  if (!stroke || !frame || live.tool === "interact") {
+  // 書きかけの場所と別の URL か表示幅では足さない（書く欄がそのことと戻る操作を出している）。
+  if (!stroke || !frame || live.tool === "interact" || draftElsewhere(live.draft, live.page, live.width)) {
     return;
   }
   const kind = live.tool;
@@ -660,16 +663,25 @@ export function showPageComment(comment) {
   if (state.narrow) {
     closeSheet();
   }
+  showPage(comment.page.url, comment.page.width);
+  renderConversation();
+}
+
+/**
+ * そのページをその表示幅で、ページの見方で見せる。
+ * @param {string} url
+ * @param {number} width
+ */
+function showPage(url, width) {
   if (live.view !== "page") {
     setView("page");
   }
-  if (live.width !== comment.page.width) {
-    setWidth(comment.page.width);
+  if (live.width !== width) {
+    setWidth(width);
   }
-  if (live.page !== comment.page.url) {
-    openPage(comment.page.url);
+  if (live.page !== url) {
+    openPage(url);
   }
-  renderConversation();
 }
 
 function renderCompose() {
@@ -678,11 +690,17 @@ function renderCompose() {
   }
   const compose = shell.compose;
   const places = live.draft.places;
+  const away = draftElsewhere(live.draft, live.page, live.width);
+  compose.away.hidden = away === null;
+  if (away) {
+    compose.awayText.textContent = `These places are on ${away.url} at ${away.width}px. Places can be added and the comment saved there.`;
+    compose.back.textContent = `Back to ${away.url} at ${away.width}px`;
+  }
   compose.box.hidden =
     live.view !== "page" || (live.tool === "interact" && places.length === 0 && compose.body.value === "");
   renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)));
   compose.undo.disabled = places.length === 0;
-  compose.save.disabled = places.length === 0 || live.saving || compose.body.value.trim() === "" || state.submitted;
+  compose.save.disabled = places.length === 0 || away !== null || live.saving || compose.body.value.trim() === "" || state.submitted;
   compose.error.hidden = live.composeError === "";
   compose.error.textContent = live.composeError;
 }
@@ -697,14 +715,15 @@ async function savePageComment() {
   }
   const draft = live.draft;
   const body = shell.compose.body.value.trim();
-  if (draft.places.length === 0 || body === "") {
+  // 画像は場所のあるページで作るので、保存は書きかけの URL と表示幅に戻ってから（R-PAGE-COMMENT）。
+  if (draft.places.length === 0 || body === "" || draftElsewhere(draft, live.page, live.width)) {
     return;
   }
   live.saving = true;
   renderCompose();
   const frame = shell.liveFrame.contentWindow;
   let image = null;
-  if (frame && draft.url === live.page && draft.width === live.width) {
+  if (frame) {
     const answer = await ask(frame, "image", IMAGE_TIMEOUT, { places: draft.places });
     image = typeof answer.png === "string" ? answer.png : null;
   }

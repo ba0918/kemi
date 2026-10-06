@@ -585,6 +585,18 @@ body[data-live-view="code"] .lv-page-only {
   color: var(--ink-3);
 }
 
+.lv-compose-away {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--note-ink);
+}
+
+.lv-compose-away[hidden] {
+  display: none;
+}
+
 .lv-places {
   list-style: none;
   margin: 0;

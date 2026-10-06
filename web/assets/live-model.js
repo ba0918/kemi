@@ -198,7 +198,7 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
 }
 
 /**
- * 書いている途中のページへのコメントの場所（live.md の R-PAGE-COMMENT）。場所は見ている URL と表示幅の
+ * 書いている途中のページへのコメントの場所（live.md の R-PAGE-COMMENT）。場所は最初の場所の URL と表示幅の
  * ものなので、それも覚える。`next` は次に振る番号で、消しても戻さない（本文が番号で指すため）。
  * @typedef {{ selector: string, text: string, rect: { x: number, y: number, w: number, h: number } }} PlaceElement
  * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[] }} NewPlace
@@ -216,8 +216,23 @@ export function emptyDraft(url, width) {
 }
 
 /**
- * 場所を足す。同じ要素をもう一度選んだら、その要素の場所を外す。別の URL か表示幅で足すと、前の場所は
- * 捨てて数え直す（場所の座標と要素はそのページ・その幅のもの）。
+ * 書きかけのコメントの場所が、見ている URL と表示幅のものでないとき、その URL と表示幅（R-PAGE-COMMENT）。
+ * 場所が 1 つも無ければ、どこにも結びついていない。
+ * @param {PlaceDraft} draft
+ * @param {string} url
+ * @param {number} width
+ * @returns {{ url: string, width: number } | null}
+ */
+export function draftElsewhere(draft, url, width) {
+  if (draft.places.length === 0 || (draft.url === url && draft.width === width)) {
+    return null;
+  }
+  return { url: draft.url, width: draft.width };
+}
+
+/**
+ * 場所を足す。同じ要素をもう一度選んだら、その要素の場所を外す。場所は最初の場所の URL と表示幅のものだけなので、
+ * 別の URL か表示幅では足さない。場所が 1 つも無ければ、足す場所の URL と表示幅に移る（番号は戻さない）。
  * @param {PlaceDraft} draft
  * @param {NewPlace} place
  * @param {string} url
@@ -225,7 +240,10 @@ export function emptyDraft(url, width) {
  * @returns {PlaceDraft}
  */
 export function addPlace(draft, place, url, width) {
-  const base = draft.url === url && draft.width === width ? draft : emptyDraft(url, width);
+  if (draftElsewhere(draft, url, width)) {
+    return draft;
+  }
+  const base = { ...draft, url, width };
   const selector = place.kind === "element" ? place.elements[0]?.selector : undefined;
   const chosen = base.places.find((item) => item.kind === "element" && selector !== undefined && item.elements[0]?.selector === selector);
   if (chosen) {

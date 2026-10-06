@@ -5,6 +5,7 @@ import {
   WIDTH_CHOICES,
   addPlace,
   buildPageTree,
+  draftElsewhere,
   emptyDraft,
   removePlace,
   undoPlace,
@@ -205,4 +206,23 @@ test("undo takes away the place added last", () => {
   draft = undoPlace(draft);
   assert.deepEqual(numbers(draft), [1]);
   assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
+});
+
+test("a place at another URL or width is not added to a draft that has places", () => {
+  const draft = addPlace(emptyDraft("/", 390), place("element", "#a"), "/", 390);
+  assert.deepEqual(addPlace(draft, place("arrow"), "/other", 390), draft);
+  assert.deepEqual(addPlace(draft, place("arrow"), "/", 1280), draft);
+});
+
+test("a draft without places takes the URL and width of its first place", () => {
+  const draft = addPlace(emptyDraft("/", 1280), place("element", "#a"), "/cart", 390);
+  assert.deepEqual([draft.url, draft.width, numbers(draft)], ["/cart", 390, [1]]);
+});
+
+test("a draft with places is elsewhere at another URL or width", () => {
+  const draft = addPlace(emptyDraft("/", 390), place("element", "#a"), "/", 390);
+  assert.equal(draftElsewhere(draft, "/", 390), null);
+  assert.deepEqual(draftElsewhere(draft, "/other", 390), { url: "/", width: 390 });
+  assert.deepEqual(draftElsewhere(draft, "/", 1280), { url: "/", width: 390 });
+  assert.equal(draftElsewhere(emptyDraft("/", 390), "/other", 1280), null);
 });

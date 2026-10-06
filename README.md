@@ -196,9 +196,12 @@ compared with; while overlaid, a click reaches the page underneath), and
 click, and clicking it again takes it away; an arrow names the element at its
 head; a pen line names up to five elements it encloses, largest overlap
 first, leaving out elements that contain the whole line (a line drawn inside
-one element names that element). Places are numbered from 1 on the page and in the comment box below
-it, so the comment can refer to them; removing one, undoing the last, or
-pressing Esc while drawing never renumbers the rest. Saving also makes a PNG
+one element names that element). Places are numbered from 1 on the page and
+in the comment box below it, so the comment can refer to them; removing one,
+undoing the last, or pressing Esc while drawing never renumbers the rest. The
+places of a comment being written belong to the URL and width of its first
+place: at another URL or width no place is added, and the comment box says so
+and offers to go back there, where the comment is saved. Saving also makes a PNG
 of the area with the places drawn on it, inside the page and without driving
 the browser, so fonts and some CSS details may differ from the real page. A
 saved comment keeps its places: the conversation panel shows its URL, width,
