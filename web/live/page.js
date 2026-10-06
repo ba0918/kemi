@@ -45,7 +45,11 @@
     }
     if (message.type === 'image') {
       try {
-        const image = await placesImage(message.rect ?? null, Array.isArray(message.places) ? message.places : []);
+        const image = await placesImage(
+          message.rect ?? null,
+          Array.isArray(message.places) ? message.places : [],
+          { page: String(message.page), width: finite(message.width), height: finite(message.height) },
+        );
         post({ type: 'imaged', id: message.id, ...image });
       } catch (error) {
         post({ type: 'imaged', id: message.id, error: String(error) });
@@ -1248,13 +1252,13 @@
    * @param {Rect} area
    * @param {number} width 文書の幅
    * @param {number} height 文書の高さ
+   * @param {{ w: number, h: number }} screen 動いているページの画面の大きさ
    */
-  async function drawPageCopy(context, area, width, height) {
+  async function drawPageCopy(context, area, width, height, screen) {
     const { root } = await copyDocument(new Map());
     flattenShadowRoots(root);
     const body = encodeURIComponent(new XMLSerializer().serializeToString(root));
     const end = encodeURIComponent('</foreignObject></svg>');
-    const screen = { w: Math.max(1, innerWidth), h: Math.max(1, innerHeight) };
     for (let top = area.y; top < area.y + area.h; top += screen.h) {
       const start = `<svg xmlns="http://www.w3.org/2000/svg" width="${screen.w}" height="${screen.h}">`
         + `<foreignObject x="0" y="${-top}" width="${width}" height="${height}">`;
@@ -1364,15 +1368,29 @@
   }
 
   /**
-   * 場所の周りの画像を作る。PNG が上限を超えるときは縮めて描き直し、それでも超えれば諦める。
+   * 頼まれた画像のページと表示幅に、いまの文書が並んでいなければ断る。画像を作る途中でページが移ったり幅が変わったり
+   * すると、場所の座標と写しの並びが合わない画像になる。
+   * @param {{ page: string, width: number }} view
+   */
+  function checkView(view) {
+    if (location.pathname + location.search !== view.page) throw new Error('the page is not the page of the places');
+    if (innerWidth !== view.width) throw new Error('the page is not laid out at the width of the places');
+  }
+
+  /**
+   * 場所の周りの画像を作る。PNG が上限を超えるときは縮めて描き直し、それでも超えれば諦める。画面の大きさは頼まれた値
+   * だけを使い、文書の大きさは始めに 1 回だけ読む（途中で読むと、その間に変わった並びで描く）。
    * @param {unknown} asked 画像にする文書の矩形（無ければ場所から決める）
    * @param {unknown[]} requested 重ねる場所（番号・種類・点・要素の矩形）
+   * @param {{ page: string, width: number, height: number }} view 場所のページ・表示幅・並べた画面の高さ
    * @returns {Promise<{ png: string, width: number, height: number }>} png は base64
    */
-  async function placesImage(asked, requested) {
+  async function placesImage(asked, requested, view) {
+    checkView(view);
     const places = readPlaces(requested);
+    const screen = { w: Math.max(1, view.width), h: Math.max(1, view.height) };
     const width = document.documentElement.clientWidth;
-    const height = Math.max(document.documentElement.scrollHeight, innerHeight);
+    const height = Math.max(document.documentElement.scrollHeight, screen.h);
     const area = imageArea(asked, places, width, height);
     // 写しは最初の縮尺で 1 回だけ描き、上限を超えて縮めるときはそれを縮めて使う。場所は縮尺ごとに描き直す。
     let scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(area.w, area.h));
@@ -1381,7 +1399,8 @@
     pageContext.fillStyle = 'rgb(255, 255, 255)';
     pageContext.fillRect(0, 0, page.width, page.height);
     pageContext.scale(scale, scale);
-    await drawPageCopy(pageContext, area, width, height);
+    await drawPageCopy(pageContext, area, width, height, screen);
+    checkView(view);
     for (let attempt = 0; attempt < 4; attempt += 1, scale *= 0.6) {
       const canvas = sizedCanvas(area, scale);
       const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));

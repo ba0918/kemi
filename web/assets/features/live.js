@@ -755,8 +755,16 @@ async function savePageComment() {
   const frame = shell.liveFrame.contentWindow;
   let image = null;
   if (frame) {
-    // 狭い画面で比べる相手の側を見ていると、動いているページは並べられておらず画像を作れない。
-    const answer = await whileLaidOut(() => ask(frame, "image", IMAGE_TIMEOUT, { places: draft.places }));
+    // 狭い画面で比べる相手の側を見ていると、動いているページは並べられておらず画像を作れない。画像を決める値（ページ・
+    // 表示幅・並べた画面の高さ・場所）は頼みに載せ、ページはそれだけで画像を作り、自分の場所や幅が違えば断る。
+    const answer = await whileLaidOut(() =>
+      ask(frame, "image", IMAGE_TIMEOUT, {
+        page: draft.url,
+        width: draft.width,
+        height: laidOutHeight(),
+        places: draft.places,
+      }),
+    );
     image = typeof answer.png === "string" ? answer.png : null;
   }
   const request = { op: "add_page", page: { url: draft.url, width: draft.width, places: draft.places }, body };
@@ -1053,6 +1061,18 @@ async function describeNow() {
  */
 function liveFrameHidden() {
   return shell === null || shell.liveFrame.getClientRects().length === 0;
+}
+
+/**
+ * 動いているページの枠を並べた画面の高さ（ページの CSS ピクセル）。並べたままにしている間に読む。
+ * @returns {number}
+ */
+function laidOutHeight() {
+  if (!shell) {
+    return 0;
+  }
+  const height = Number.parseFloat(shell.liveFrame.style.height);
+  return Number.isFinite(height) && height > 0 ? height : shell.liveFrame.clientHeight;
 }
 
 /**
