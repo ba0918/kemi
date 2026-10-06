@@ -177,7 +177,7 @@ export function onServerEvent(name, handler) {
 
 /**
  * スナップショットを預ける（live.md の R-PAGE-SNAPSHOT）。
- * @param {{ page: string, width: number, kind: string, html: string }} snapshot
+ * @param {{ page: string, width: number, kind: string, html: string, description: unknown }} snapshot
  */
 export function takeSnapshot(snapshot) {
   return postJson("api/snapshot", snapshot);

@@ -21,6 +21,9 @@
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
 // - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
+// - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
+//   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色つきで主な変化に入る。
+//   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。幅 390px では引き出しの中。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -31,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { RESOURCE_BOXES, startDevServer } from './live-dev-server.mjs';
+import { RESOURCE_BOXES, changingCss, changingPage, startDevServer } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -778,6 +781,82 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
   }
 }
 
+/** 表示中のページの変化の一覧。無ければ null。 */
+const changeList = `document.querySelector('#page-tree .lv-page[data-current="true"] .lv-changes')`;
+
+/** 変化の一覧の主な変化（種類と、出ている文字）。 */
+async function mainChanges() {
+  return JSON.parse(await evaluate(`JSON.stringify(Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).map((item) => ({ kind: item.dataset.kind, text: item.textContent })))`));
+}
+
+/** 差分（R-PAGE-DIFF、R-PAGE-VIEW の変化の一覧、R-PAGE-REF の一覧はスナップショットのときだけ）。 */
+async function changeListFollowsThePage(repository) {
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(join(repository, 'mocks'), { recursive: true });
+  await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await evaluate(`window.__kemiNotReloaded = true; true`);
+    await waitFor(showsSnapshot('Start'));
+    await waitFor(`${changeList}?.dataset.main === '0' && ${changeList}.querySelector('.lv-changes-none') !== null`);
+    console.log('PASS 開始時のスナップショットと変わらないページでは、変化の数 0 と変化が無いことが出る');
+
+    await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    const inserted = await mainChanges();
+    assert.equal(inserted.length, 1, JSON.stringify(inserted));
+    assert.equal(inserted[0].kind, 'added', JSON.stringify(inserted));
+    assert.match(inserted[0].text, /inserted/);
+    console.log('PASS 兄弟の途中に要素を 1 つ足すと、足した要素だけが増えたになり、後ろの要素は増えた・消えたにならない（読み込み直さずに一覧が変わる）');
+
+    await writeFile(join(dev.dir, 'changing.html'), changingPage());
+    await waitFor(`${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    const recolored = await mainChanges();
+    assert.equal(recolored.length, 1, JSON.stringify(recolored));
+    assert.equal(recolored[0].kind, 'visual', JSON.stringify(recolored));
+    assert.match(recolored[0].text, /rgb\(49, 89, 214\)[\s\S]*rgb\(214, 69, 69\)/);
+    console.log('PASS ボタンの背景色を HMR の CSS の差し替えで変えると、そのボタンが主な変化に入り、色の前後の値が出る');
+
+    await post(kemi.url, 'api/message', { body: 'please look' });
+    await handInThePage(kemi, repository, state);
+    await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
+    await browser('fill', '.lv-mock-input', 'mocks/diff-mock.html');
+    await browser('click', '.lv-mock-assign');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('#page-tree .lv-changes') === null`);
+    await browser('click', '.lv-mock-remove');
+    await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
+    console.log('PASS モックを割り当てたページでは変化の一覧が出ず、外すと最後に渡した時点のスナップショットと比べた一覧（変化 0）が出る');
+
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${new URL(kemi.live).origin}/other.html`)}; true`);
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html' && ${notRecorded}`);
+    await browser('click', '.lv-record');
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await browser('click', '#page-tree .lv-page[data-page="/changing.html"] .lv-page-open');
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/changing.html' && ${changeList} !== null`);
+    assert.equal(await evaluate(`document.querySelectorAll('#page-tree .lv-changes').length`), 1);
+    assert.equal(await evaluate(`document.querySelector('#page-tree .lv-page[data-page="/other.html"] .lv-changes')`), null);
+    console.log('PASS 2 つのページにスナップショットがあるとき、変化の数は表示中のページにだけ出る');
+
+    await browser('set', 'viewport', '390', '800');
+    await waitFor(`getComputedStyle(document.querySelector('#page-tree')).visibility === 'hidden'`);
+    await new Promise((done) => setTimeout(done, 500));
+    await browser('click', '#btn-tree');
+    await waitFor(`document.querySelector('#page-tree').dataset.drawer === 'open' && ${visible('#page-tree .lv-changes')}`);
+    console.log('PASS 幅 390px で開くと、変化の一覧が引き出しの中にある');
+    assert.equal(await evaluate(`window.__kemiNotReloaded === true`), true, 'the review page was not reloaded');
+  } finally {
+    await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -791,6 +870,7 @@ try {
   await mocksAreAssignedShownAndKeptApart(repository);
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
+  await changeListFollowsThePage(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

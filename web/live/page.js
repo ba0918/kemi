@@ -19,10 +19,16 @@
   window.addEventListener('message', async (event) => {
     if (event.source !== window.parent || event.origin !== review) return;
     const message = event.data;
-    if (!message || message.kemi !== 'live' || message.type !== 'capture') return;
+    if (!message || message.kemi !== 'live') return;
+    if (message.type === 'describe') {
+      watchChanges();
+      post({ type: 'described', id: message.id, path: location.pathname + location.search, description: describePage() });
+      return;
+    }
+    if (message.type !== 'capture') return;
     try {
-      const html = await captureSnapshot();
-      post({ type: 'captured', id: message.id, path: location.pathname + location.search, html });
+      const { html, description } = await captureSnapshot();
+      post({ type: 'captured', id: message.id, path: location.pathname + location.search, html, description });
     } catch (error) {
       post({ type: 'captured', id: message.id, error: String(error) });
     }
@@ -77,6 +83,141 @@
     announceIfMoved();
   };
   window.addEventListener('popstate', announceIfMoved);
+
+  // ---- 要素の記述（R-PAGE-DIFF、形は DL3） ----
+  // レビュー画面はこのページの DOM もスナップショットの枠の DOM も読めないので、要素ごとに比べる
+  // ための記述をここで作って渡す。比べるのはレビュー画面（live-diff.js）。
+
+  /** 記述に入れる見た目のスタイル。 */
+  const DESCRIBED_STYLES = [
+    'color', 'background-color', 'background-image', 'font-size', 'font-weight', 'font-style', 'font-family',
+    'text-decoration-line', 'border-radius', 'border-color', 'border-width', 'border-style', 'box-shadow',
+    'opacity', 'visibility', 'display',
+  ];
+
+  /** 角や辺ごとの値に分かれるスタイル。まとめた値を返さないブラウザでは、分けた値を並べる。 */
+  /** @type {Record<string, string[]>} */
+  const STYLE_PARTS = {
+    'border-radius': ['border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius'],
+    'border-color': ['border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'],
+    'border-width': ['border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width'],
+    'border-style': ['border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style'],
+  };
+
+  /** 描かれない要素。記述に入れない。 */
+  const UNDESCRIBED = new Set(['head', 'script', 'style', 'link', 'meta', 'noscript', 'template', 'title', 'base']);
+
+  /**
+   * @param {CSSStyleDeclaration} computed
+   * @param {string} property
+   */
+  function styleValue(computed, property) {
+    const value = computed.getPropertyValue(property);
+    const parts = STYLE_PARTS[property];
+    return value !== '' || !parts ? value : parts.map((part) => computed.getPropertyValue(part)).join(' ');
+  }
+
+  /** @param {number} value */
+  const round = (value) => Math.round(value * 100) / 100;
+
+  /**
+   * 今のページの要素の記述。位置と大きさはスクロールに依らない文書の座標。開いている shadow root の
+   * 中の要素は持ち主の子として並べ、閉じた shadow root は読めないので持ち主までにする。
+   */
+  function describePage() {
+    /** @type {{ parent: number, tag: string, id: string, cls: string, text: string, box: number[], style: number }[]} */
+    const elements = [];
+    /** @type {Record<string, string>[]} */
+    const styles = [];
+    /** @type {Map<string, number>} */
+    const styleIndex = new Map();
+    const left = scrollX;
+    const top = scrollY;
+    /**
+     * @param {Element} element
+     * @param {number} parent
+     */
+    const visit = (element, parent) => {
+      if (UNDESCRIBED.has(element.localName)) return;
+      const computed = getComputedStyle(element);
+      /** @type {Record<string, string>} */
+      const style = {};
+      for (const property of DESCRIBED_STYLES) style[property] = styleValue(computed, property);
+      const key = JSON.stringify(style);
+      let number = styleIndex.get(key);
+      if (number === undefined) {
+        number = styles.length;
+        styleIndex.set(key, number);
+        styles.push(style);
+      }
+      let text = '';
+      for (const node of element.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) text += /** @type {Text} */ (node).data;
+      }
+      const rect = element.getBoundingClientRect();
+      const index = elements.length;
+      elements.push({
+        parent,
+        tag: element.localName,
+        id: element.id,
+        cls: element.getAttribute('class') ?? '',
+        text,
+        box: [round(rect.left + left), round(rect.top + top), round(rect.width), round(rect.height)],
+        style: number,
+      });
+      if (element.shadowRoot) {
+        watchRoot(element.shadowRoot);
+        for (const child of element.shadowRoot.children) visit(child, index);
+      }
+      for (const child of element.children) visit(child, index);
+    };
+    visit(document.documentElement, -1);
+    return { width: innerWidth, height: document.documentElement.scrollHeight, styles, elements };
+  }
+
+  // ---- ページの変化の見張り ----
+  // レビュー画面が記述を一度頼んでから見張る。変わったら間を置いてまとめて「変わった」とだけ知らせ、
+  // 記述を作り直すかはレビュー画面が決める。動き続けるページで知らせが続かないよう、知らせの間を空ける。
+
+  /** 最後の変化から知らせるまで待つ時間（ミリ秒）。 */
+  const CHANGE_QUIET = 150;
+  /** 知らせと知らせの間の最小の時間（ミリ秒）。 */
+  const CHANGE_INTERVAL = 500;
+  const OBSERVED = { subtree: true, childList: true, attributes: true, characterData: true };
+  let watching = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let changeTimer = null;
+  let lastNotice = -Infinity;
+  const changed = () => {
+    if (changeTimer !== null) return;
+    const wait = Math.max(CHANGE_QUIET, lastNotice + CHANGE_INTERVAL - performance.now());
+    changeTimer = setTimeout(() => {
+      changeTimer = null;
+      lastNotice = performance.now();
+      post({ type: 'changed' });
+    }, wait);
+  };
+  const mutations = new MutationObserver(changed);
+  const resizes = new ResizeObserver(changed);
+  /** @type {WeakSet<ShadowRoot>} */
+  const watchedRoots = new WeakSet();
+
+  function watchChanges() {
+    if (watching) return;
+    watching = true;
+    mutations.observe(document, OBSERVED);
+    resizes.observe(document.documentElement);
+    // 差し替えた CSS や画像は、要素が変わった後に読み込まれて見た目が変わる。
+    document.addEventListener('load', changed, true);
+    document.fonts?.addEventListener('loadingdone', changed);
+  }
+
+  /** @param {ShadowRoot} root */
+  function watchRoot(root) {
+    if (!watching || watchedRoots.has(root)) return;
+    watchedRoots.add(root);
+    mutations.observe(root, OBSERVED);
+  }
 
   // ---- スナップショット（R-PAGE-SNAPSHOT、形は DL3） ----
   // 今の DOM を写し、スクリプトを除いた 1 つの HTML にする。shadow DOM は宣言的な
@@ -347,6 +488,8 @@
   }
 
   async function captureSnapshot() {
+    // 写す途中で読み込みを待つ間にページが変わることがあるので、記述は写し始める前の同じ DOM から作る。
+    const description = describePage();
     inlined = new Map();
     const owner = document.implementation.createHTMLDocument('');
     const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner));
@@ -361,6 +504,6 @@
       }
     }
     const doctype = document.doctype ? `<!doctype ${document.doctype.name}>` : '';
-    return doctype + root.outerHTML;
+    return { html: doctype + root.outerHTML, description };
   }
 })();

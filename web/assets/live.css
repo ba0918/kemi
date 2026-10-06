@@ -381,3 +381,99 @@ body[data-live-view="code"] .lv-page-only {
 .lv-mock-assign[hidden] {
   display: none;
 }
+
+/* ---- 変化の一覧（R-PAGE-DIFF）: ページのツリーの表示中のページの下 ---- */
+.lv-page {
+  flex-wrap: wrap;
+}
+
+.lv-changes {
+  flex-basis: 100%;
+  margin: 2px 0 4px 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line-soft);
+  font-size: 12.5px;
+}
+
+.lv-changes-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.lv-changes-none {
+  margin: 2px;
+  color: var(--ink-3);
+}
+
+.lv-change-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lv-change {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  column-gap: 6px;
+  padding: 3px 4px;
+  border-radius: 6px;
+}
+
+.lv-change-dot {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: #b9a6d9;
+}
+
+.lv-change[data-kind="visual"] .lv-change-dot,
+.lv-change[data-kind="text"] .lv-change-dot,
+.lv-change[data-kind="removed"] .lv-change-dot {
+  background: #d64545;
+}
+
+.lv-change[data-kind="added"] .lv-change-dot {
+  background: #1a9a4a;
+}
+
+.lv-change-what {
+  overflow-wrap: anywhere;
+}
+
+.lv-change-what s {
+  color: var(--del-ink);
+}
+
+.lv-change-what b {
+  color: var(--add-ink);
+  font-weight: 600;
+}
+
+.lv-change-where {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-change-more {
+  padding: 2px 4px 2px 20px;
+  color: var(--ink-3);
+}
+
+.lv-shifted summary {
+  margin: 4px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  cursor: pointer;
+}

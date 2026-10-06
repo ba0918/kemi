@@ -268,12 +268,13 @@ export function renderCompareOptions(select, options, chosen) {
 
 /**
  * ページのツリー（R-PAGE-VIEW）。ページを押すとそのページへ、表示幅の札を押すとその幅で
- * そのページへ移る。
+ * そのページへ移る。表示中のページの下には、比べた結果があれば変化の一覧を出す。
  * @param {HTMLElement} container
  * @param {import("../live-model.js").PageTreeItem[]} items
- * @param {{ onPage: (page: string) => void, onWidth: (page: string, width: number) => void }} handlers
+ * @param {{ onPage: (page: string) => void, onWidth: (page: string, width: number) => void, onShifted: (open: boolean) => void }} handlers
+ * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean } | null} changes
  */
-export function renderPageTree(container, items, handlers) {
+export function renderPageTree(container, items, handlers, changes) {
   container.textContent = "";
   container.append(textEl("div", "lv-tree-head", `Pages ${items.length}`));
   const list = el("ul", "lv-pages");
@@ -301,7 +302,97 @@ export function renderPageTree(container, items, handlers) {
       tags.append(textEl("span", "lv-mock-tag", "mock"));
     }
     row.append(tags);
+    if (item.current && changes !== null) {
+      row.append(changeList(changes.list, changes.shiftedOpen, handlers.onShifted));
+    }
     list.append(row);
   }
   container.append(list);
+}
+
+/** 一覧に並べる項目の上限。超えた分は数だけ出す（大きなページで描き直しが重くならないように）。 */
+const LISTED_CHANGES = 300;
+
+/**
+ * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。
+ * @param {import("../live-diff.js").Change[]} changes
+ * @param {boolean} shiftedOpen
+ * @param {(open: boolean) => void} onShifted
+ */
+function changeList(changes, shiftedOpen, onShifted) {
+  const main = changes.filter((change) => change.kind !== "shifted");
+  const shifted = changes.filter((change) => change.kind === "shifted");
+  const box = el("div", "lv-changes");
+  box.dataset.main = String(main.length);
+  box.dataset.shifted = String(shifted.length);
+  const head = el("div", "lv-changes-head");
+  head.append(
+    textEl("span", "", `Changes ${main.length}`),
+    textEl("span", "", `${main.length} main · ${shifted.length} shifted`),
+  );
+  box.append(head);
+  if (changes.length === 0) {
+    box.append(textEl("p", "lv-changes-none", "No changes from the snapshot"));
+    return box;
+  }
+  if (main.length > 0) {
+    box.append(changeItems("lv-change-main", main));
+  }
+  if (shifted.length > 0) {
+    const details = /** @type {HTMLDetailsElement} */ (el("details", "lv-shifted"));
+    details.open = shiftedOpen;
+    details.append(textEl("summary", "", `Shifted only ${shifted.length}`));
+    if (shiftedOpen) {
+      details.append(changeItems("lv-change-shifted", shifted));
+    }
+    // 畳んでいる間は項目を作らない（ずれただけは数が多くなりやすい）。
+    details.addEventListener("toggle", () => {
+      onShifted(details.open);
+      if (details.open && !details.querySelector(".lv-change-shifted")) {
+        details.append(changeItems("lv-change-shifted", shifted));
+      }
+    });
+    box.append(details);
+  }
+  return box;
+}
+
+/**
+ * @param {string} className
+ * @param {import("../live-diff.js").Change[]} changes
+ */
+function changeItems(className, changes) {
+  const list = el("ul", `lv-change-list ${className}`);
+  for (const change of changes.slice(0, LISTED_CHANGES)) {
+    const item = el("li", "lv-change");
+    item.dataset.kind = change.kind;
+    const what = el("span", "lv-change-what");
+    what.append(...changeWhat(change));
+    item.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", change.label));
+    list.append(item);
+  }
+  if (changes.length > LISTED_CHANGES) {
+    list.append(textEl("li", "lv-change-more", `${changes.length - LISTED_CHANGES} more`));
+  }
+  return list;
+}
+
+/**
+ * 変化の中身の文。見た目と文字は前後の値を並べる。
+ * @param {import("../live-diff.js").Change} change
+ * @returns {(Node | string)[]}
+ */
+function changeWhat(change) {
+  switch (change.kind) {
+    case "visual":
+      return [`${change.property} `, textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+    case "text":
+      return ["Text ", textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+    case "added":
+      return [change.is === "" ? "Added" : `Added: ${change.is}`];
+    case "removed":
+      return [change.was === "" ? "Removed" : `Removed: ${change.was}`];
+    case "shifted":
+      return ["Moved or resized"];
+  }
 }
