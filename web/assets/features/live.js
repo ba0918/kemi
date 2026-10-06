@@ -229,8 +229,7 @@ export function startLive(info) {
   shell.sideSeg.addEventListener("click", (event) => {
     const side = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.side;
     if (side === "live" || side === "ref") {
-      live.side = side;
-      render();
+      setSide(side);
     }
   });
   shell.compareSelect.addEventListener("change", () => {
@@ -316,6 +315,15 @@ function setView(view) {
     // 隠れていた間に測れなかった差分の枠を測り直させる。
     window.dispatchEvent(new Event("resize"));
   }
+  render();
+}
+
+/**
+ * 狭い画面で見る側（動いているページか比べる相手か）。
+ * @param {"live" | "ref"} side
+ */
+function setSide(side) {
+  live.side = side;
   render();
 }
 
@@ -668,13 +676,17 @@ export function showPageComment(comment) {
 }
 
 /**
- * そのページをその表示幅で、ページの見方で見せる。
+ * そのページをその表示幅で、ページの見方で見せる。狭い画面では動いているページの側を見せる（比べる相手の側を
+ * 見ていると、動いているページと、その上のコメントの場所が隠れたままになる）。
  * @param {string} url
  * @param {number} width
  */
 function showPage(url, width) {
   if (live.view !== "page") {
     setView("page");
+  }
+  if (live.side !== "live") {
+    setSide("live");
   }
   if (live.width !== width) {
     setWidth(width);
