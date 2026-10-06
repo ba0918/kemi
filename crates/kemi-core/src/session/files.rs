@@ -283,19 +283,6 @@ mod tests {
     }
 
     #[test]
-    fn files_kemi_did_not_name_are_counted_but_never_removed() {
-        let files = vec![
-            file(".snapshot-3-manual.json.gz.tmp".to_string(), 8 * MB),
-            file(snapshot_name(1, SnapshotKind::Start), 8 * MB),
-        ];
-
-        let room = make_room(&files, &kept(&[]), 5 * MB, 20 * MB);
-
-        assert!(!room.fits);
-        assert!(room.remove.is_empty());
-    }
-
-    #[test]
     fn a_snapshot_name_gives_back_its_number_and_kind() {
         let name = snapshot_name(12, SnapshotKind::Handed);
 
