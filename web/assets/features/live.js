@@ -1076,6 +1076,13 @@ function laidOutHeight() {
 }
 
 /**
+ * 並べたままにしている間の状態。重なって呼ばれても、並べるのは最初の呼び出し、戻すのは最後に終わった呼び出しだけ
+ * （先に終わった方が戻すと、まだ読んでいる方が並べていない文書を読む）。
+ * @type {{ running: number, revealed: HTMLElement | null, ready: Promise<void> }}
+ */
+const laidOut = { running: 0, revealed: null, ready: Promise.resolve() };
+
+/**
  * task が終わるまで、動いているページの枠を選んだ幅で並べたままにする。隠れていれば、見えず操作も受けないまま並べて
  * から task を呼ぶ。途中で見方や側を変えて枠が隠れても、並べたままにする。スナップショットの記述や画像を隠れた
  * 文書から作ると、隠れた文書は並べられていないので、要素の箱や文書の高さが並べたページと合わない。
@@ -1088,26 +1095,34 @@ async function whileLaidOut(task) {
     return task();
   }
   const { stage, livePane, liveFrame } = shell;
-  // 隠れていれば、コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
-  const revealed = !liveFrameHidden() ? null : stage.getClientRects().length === 0 ? stage : livePane;
-  stage.dataset.measuring = "true";
-  if (revealed) {
-    revealed.inert = true;
-  }
-  try {
+  if (laidOut.running === 0) {
+    // 隠れていれば、コードの見方では舞台ごと、狭い画面で比べる相手の側を見ているときは動いているページの側だけが隠れている。
+    const revealed = !liveFrameHidden() ? null : stage.getClientRects().length === 0 ? stage : livePane;
+    stage.dataset.measuring = "true";
+    laidOut.revealed = revealed;
+    laidOut.ready = Promise.resolve();
     if (revealed) {
+      revealed.inert = true;
       liveFrame.getBoundingClientRect();
       // 枠の大きさがページの文書に届くのを待つ（タブが裏にあって描かれないときも長くは待たない）。
-      await new Promise((done) => {
+      laidOut.ready = new Promise((done) => {
         requestAnimationFrame(() => requestAnimationFrame(() => done(undefined)));
         setTimeout(done, 200);
       });
     }
+  }
+  laidOut.running += 1;
+  try {
+    await laidOut.ready;
     return await task();
   } finally {
-    delete stage.dataset.measuring;
-    if (revealed) {
-      revealed.inert = false;
+    laidOut.running -= 1;
+    if (laidOut.running === 0) {
+      delete stage.dataset.measuring;
+      if (laidOut.revealed) {
+        laidOut.revealed.inert = false;
+      }
+      laidOut.revealed = null;
     }
   }
 }

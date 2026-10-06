@@ -168,15 +168,25 @@ async function post(url, path, body) {
  * 先に待たせておき、渡して返るのを待つ。
  */
 async function handInThePage(kemi, dir, state) {
-  const waiting = new Promise((done, fail) => {
+  const waiting = startWaiting(kemi, dir, state);
+  await pressHand();
+  assert.equal(await waiting, 0, 'kemi wait returns what was handed');
+}
+
+/** kemi wait を走らせる。終了コードで解決する。 */
+function startWaiting(kemi, dir, state) {
+  return new Promise((done, fail) => {
     const child = spawn(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: environment(state), stdio: ['ignore', 'pipe', 'pipe'] });
     child.on('error', fail);
     child.on('exit', (code) => done(code));
   });
+}
+
+/** 「Hand to agent」を押せるようになるのを待って押す。 */
+async function pressHand() {
   const button = `(${visible('#rail-hand')} ? document.querySelector('#rail-hand') : ${visible('#btn-hand')} ? document.querySelector('#btn-hand') : null)`;
   await waitFor(`${button} !== null && !${button}.disabled`);
   await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
-  assert.equal(await waiting, 0, 'kemi wait returns what was handed');
 }
 
 async function stop(kemi) {
@@ -1756,7 +1766,7 @@ async function draftPlacesStayAtTheirWidth(repository) {
  * レビュー画面から動いているページへの、その種類の頼みを預かる（返事の遅いページを作る）。releaseRequests で送る。
  * 預かっている間は枠の contentWindow が差し替わり、ページからの知らせは読まれない。
  */
-async function holdRequests(type) {
+async function holdRequests(...types) {
   await evaluate(`(() => {
     const frame = document.querySelector('${livePane} .lv-frame');
     const real = frame.contentWindow;
@@ -1764,7 +1774,7 @@ async function holdRequests(type) {
     Object.defineProperty(frame, 'contentWindow', {
       configurable: true,
       get: () => ({
-        postMessage: (message, origin) => (message?.type === ${JSON.stringify(type)} ? window.__kemiHeld.push([message, origin]) : real.postMessage(message, origin)),
+        postMessage: (message, origin) => (${JSON.stringify(types)}.includes(message?.type) ? window.__kemiHeld.push([message, origin]) : real.postMessage(message, origin)),
       }),
     });
     return true;
@@ -1774,13 +1784,15 @@ async function holdRequests(type) {
 /** 預かった頼みの数。 */
 const heldRequests = `(window.__kemiHeld ?? []).length`;
 
-/** 枠を元に戻し、預かった頼みをページに送る。 */
-async function releaseRequests() {
+/** 枠を元に戻し、預かった頼み（type を渡せばその種類のものだけ）をページに送る。残りは次に送るまで預かったまま。 */
+async function releaseRequests(type) {
   await evaluate(`(() => {
     const frame = document.querySelector('${livePane} .lv-frame');
     delete frame.contentWindow;
-    for (const [message, origin] of window.__kemiHeld) frame.contentWindow.postMessage(message, origin);
-    window.__kemiHeld = [];
+    const type = ${JSON.stringify(type ?? null)};
+    const sent = window.__kemiHeld.filter(([message]) => type === null || message.type === type);
+    window.__kemiHeld = window.__kemiHeld.filter((held) => !sent.includes(held));
+    for (const [message, origin] of sent) frame.contentWindow.postMessage(message, origin);
     return true;
   })()`);
 }
@@ -1996,6 +2008,55 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
         await new Promise((done) => setTimeout(done, 500));
       }
     }
+  } finally {
+    await browser('set', 'viewport', '1280', '900');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
+ * 保存と渡す前のスナップショットが重なったとき（R-PAGE-COMMENT、R-PAGE-SNAPSHOT）: ページの見方で保存を始め、画像を
+ * 作る頼みがページに届く前にコードの見方へ切り替えて渡す。保存が先に終わっても、まだ取っている渡す前のスナップショットは
+ * 選んだ幅で並べた文書から記述する。ページを変えずにページの見方へ戻せば、それと比べた変化は 0。
+ */
+async function savingAndHandingKeepThePageLaidOut(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    await handInThePage(kemi, repository, state);
+    await new Promise((done) => setTimeout(done, 500));
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await browser('fill', '#live-compose .lv-compose-body', 'saved while handing');
+    await holdRequests('image', 'capture');
+    await browser('click', '#live-compose .lv-compose-save');
+    await waitFor(`${heldRequests} === 1`);
+    await browser('click', '.lv-view button[data-view="code"]');
+    await waitFor(`document.body.dataset.liveView === 'code'`);
+    await post(kemi.url, 'api/message', { body: 'once more' });
+    const waiting = startWaiting(kemi, repository, state);
+    await pressHand();
+    await waitFor(`${heldRequests} === 2`);
+    await releaseRequests('image');
+    await waitFor(`${draftNumbers} === '[]'`, 30000);
+    await releaseRequests();
+    assert.equal(await waiting, 0, 'kemi wait returns what was handed');
+    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 2'))`);
+    await browser('click', '.lv-view button[data-view="page"]');
+    await chooseReference('Handed 2');
+    await waitFor(`${changeList} !== null`);
+    await new Promise((done) => setTimeout(done, 1500));
+    const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
+    assert.equal(await evaluate(counts), '0/0', 'a snapshot taken while a save ends shows no change against the unchanged page');
+    console.log('PASS 保存が終わっても、重なって取っていた渡す前のスナップショットと、変えていないページを比べると変化が 0');
   } finally {
     await browser('set', 'viewport', '1280', '900');
     await stop(kemi);
@@ -2288,6 +2349,7 @@ try {
   await draftsStayWhileSaving(repository);
   await narrowReferenceSideSavesTheImage(repository);
   await switchingWhileSavingKeepsTheImageAroundThePlace(repository);
+  await savingAndHandingKeepThePageLaidOut(repository);
   await movingWhileSavingMakesNoImageOfAnotherPage(repository);
   await placesMakeNoChange(repository);
   await savedPageCommentsAreListedShownAndSwitched(repository);
