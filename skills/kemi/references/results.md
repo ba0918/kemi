@@ -92,9 +92,13 @@
   `element` (a chosen element, `points` is `[]`), `arrow` (the points of the arrow, and the
   element at its head), or `pen` (the points of the line, and up to five elements it encloses,
   largest overlap first). Each element carries a `selector`, its `text`, and its `rect`; all
-  coordinates are CSS pixels of the page, independent of scrolling. `image` is the absolute path
-  of a PNG of the area with the places drawn on it, given only in what `kemi wait` returns; in
-  the result it is always `null`, because the file is removed with the session on submit.
+  coordinates are CSS pixels of the page, independent of scrolling. For an element inside an
+  open shadow root, `selector` joins the host's selector and the selector inside the shadow root
+  with ` >>> ` (for example `#host >>> p:nth-of-type(2)`), which is not CSS: query the host in the
+  document, then its `shadowRoot` with the part after ` >>> ` (repeated for nested roots).
+  `image` is the absolute path of a PNG of the area with the places drawn on it, given only in
+  what `kemi wait` returns; in the result it is always `null`, because the file is removed with
+  the session on submit.
 - `messages` are notes on the whole review rather than on one comment, in creation order, with
   the same `author` values; `[]` when there are none.
 - `comments` come in creation order. `approval` is returned exactly as it was given, and is `[]`

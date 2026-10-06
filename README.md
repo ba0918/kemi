@@ -524,7 +524,10 @@ The JSON printed at the end:
   Each place has a number `n` (in order, possibly with gaps), a `kind`
   (`element`, `arrow`, or `pen`), `points` (`[]` for an element), and
   `elements` with a `selector`, `text`, and `rect`, in CSS pixels of the
-  page. `image`, the PNG of the area with the places drawn on it, is an
+  page. For an element inside an open shadow root, `selector` is the host's
+  selector and the selector inside the shadow root joined by ` >>> `, which
+  is not CSS: query the host, then its `shadowRoot` with the inner part.
+  `image`, the PNG of the area with the places drawn on it, is an
   absolute path only in what `kemi wait` returns, and `null` in the result.
 - `messages` are notes on the whole review, in creation order.
 - `comments` are in creation order.
