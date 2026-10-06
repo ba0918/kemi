@@ -19,8 +19,8 @@ import {
   snapshotLabel,
   snapshotOptions,
 } from "../live-model.js";
-import { diffDescriptions } from "../live-diff.js";
-import { buildShell, renderCompareOptions, renderPageTree } from "../views/live.js";
+import { diffDescriptions, marksOf } from "../live-diff.js";
+import { buildShell, renderCompareOptions, renderPageTree, renderRemovedMarks } from "../views/live.js";
 
 /**
  * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
@@ -539,12 +539,31 @@ function refreshChanges() {
  * @param {{ snapshot: string, now: Description } | null} from
  */
 function setChanges(changes, from) {
-  const shown = live.changes !== null;
+  if (changes === null && live.changes === null) {
+    return;
+  }
   live.changes = changes;
   live.changesFrom = from;
-  if (shown || changes !== null) {
-    renderTree();
+  renderTree();
+  renderMarks();
+}
+
+/**
+ * 変わったところに印を付ける（R-PAGE-VIEW）。今のページにある変化は動いているページの側に、
+ * 差し込んだスクリプトが付ける。消えた要素は比べる相手の側に、枠の上に重ねて付ける。
+ */
+function renderMarks() {
+  if (!shell) {
+    return;
   }
+  const marks = live.changes === null ? { now: [], before: [] } : marksOf(live.changes);
+  shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "marks", marks: marks.now }, live.origin);
+  const before = live.changesFrom ? live.descriptions.get(live.changesFrom.snapshot) : null;
+  renderRemovedMarks(
+    shell.refMarks,
+    before ? marks.before.map((mark) => before.elements[mark.index]?.box ?? [0, 0, 0, 0]) : [],
+  );
+  shell.refMarks.hidden = marks.before.length === 0;
 }
 
 /**
@@ -725,6 +744,8 @@ async function showSnapshot(id) {
   frame.srcdoc = html;
   shell.refFrame.replaceWith(frame);
   shell.refFrame = frame;
+  // 中身の高さは記述と一緒に届くので、届いてから描き直す。
+  layoutFrames();
 }
 
 /** 取り寄せ中のスナップショット（id → 取り寄せ）。同じものを 2 度取りに行かない。 */
@@ -755,6 +776,15 @@ function loadSnapshot(id) {
   return loading;
 }
 
+/**
+ * 並べるときのスナップショットの高さ。中身の高さで描き、外側の枠でスクロールする（印を枠の上に
+ * 重ねるため。枠の中のスクロールはレビュー画面から読めない）。
+ */
+function shownSnapshotHeight() {
+  const description = live.shownSnapshot === "" ? null : live.descriptions.get(live.shownSnapshot);
+  return description?.height ?? 0;
+}
+
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
 function layoutFrames() {
   if (!shell || live.view !== "page") {
@@ -777,11 +807,19 @@ function layoutFrames() {
           scrollY: live.scroll.y,
           contentHeight: live.scroll.height,
         })
-      : { height, transform: `scale(${scale})` };
-  for (const target of [shell.refFrame, shell.refMockFrame]) {
+      : { height: Math.max(height, shownSnapshotHeight()), transform: `scale(${scale})` };
+  for (const target of [shell.refFrame, shell.refMarks]) {
     target.style.width = `${live.width}px`;
     target.style.height = `${placement.height}px`;
     target.style.transform = placement.transform;
+  }
+  // モックは自分の中でスクロールするので、並べるときは見えている高さで描く。
+  shell.refMockFrame.style.width = `${live.width}px`;
+  shell.refMockFrame.style.height = `${live.compare === "overlay" ? placement.height : height}px`;
+  shell.refMockFrame.style.transform = placement.transform;
+  if (live.compare === "overlay") {
+    // 重ねるときのスクロールは変形でそろえる。並べていたときの枠のスクロールを残さない。
+    shell.refViewport.scrollTop = 0;
   }
   shell.stage.style.setProperty("--lv-scale", String(scale));
   if (live.scale !== scale) {

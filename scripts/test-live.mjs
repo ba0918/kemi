@@ -24,6 +24,9 @@
 // - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
 //   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色つきで主な変化に入る。
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。幅 390px では引き出しの中。
+// - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
+//   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
+//   表示でも同じ印。モックと比べる間は付かない。印を付け直しても比べる相手の枠のスクロール位置は変わらない。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -34,7 +37,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { RESOURCE_BOXES, changingCss, changingPage, startDevServer } from './live-dev-server.mjs';
+import { CHANGING_GEOMETRY, RESOURCE_BOXES, changingCss, changingPage, startDevServer } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -857,6 +860,141 @@ async function changeListFollowsThePage(repository) {
   }
 }
 
+/** 画像の範囲 [左, 上, 右, 下) の中で、条件に合う画素の数。 */
+function countPixels(image, [left, top, right, bottom], test) {
+  let count = 0;
+  for (let y = top; y < Math.min(bottom, image.height); y++) {
+    for (let x = left; x < Math.min(right, image.width); x++) {
+      if (test(pixelAt(image, x, y))) count += 1;
+    }
+  }
+  return count;
+}
+
+const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
+const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;
+const isPurple = ([r, g, b]) => r > 150 && r < 210 && g > 140 && g < 190 && b > 195;
+
+/** /changing.html の要素の範囲（文書の座標）。`inserted` は兄弟を 1 つ足したとき。 */
+function changingRegions(inserted) {
+  const { item, button, note } = CHANGING_GEOMETRY;
+  const items = inserted ? 5 : 4;
+  const below = items * item;
+  return {
+    item: (index) => [0, index * item, 390, (index + 1) * item],
+    button: [0, below, button.width, below + button.height],
+    note: [0, below + button.height, 390, below + button.height + note],
+  };
+}
+
+/** 比べる相手を、その見出しで始まる時点に選ぶ。 */
+async function chooseReference(label) {
+  await evaluate(`(() => { const select = document.querySelector('.lv-compare-select'); const option = Array.from(select.options).find((item) => item.textContent.startsWith(${JSON.stringify(label)})); select.value = option.value; select.dispatchEvent(new Event('change')); return true; })()`);
+  await waitFor(showsSnapshot(label));
+}
+
+/** 印（R-PAGE-VIEW の変わったところに必ず印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）。 */
+async function marksFollowTheChanges(repository) {
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(join(repository, 'mocks'), { recursive: true });
+  await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
+  const liveShot = async (name) => {
+    await new Promise((done) => setTimeout(done, 400));
+    return shot(`${livePane} .lv-frame`, shots, name);
+  };
+  const removedMark = `(() => { const mark = document.querySelector('${refPane} .lv-mark[data-kind="removed"]'); if (!mark) return null; const frame = document.querySelector('${refPane} .lv-frame:not([hidden])').getBoundingClientRect(); const box = mark.getBoundingClientRect(); const scale = Number(getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'); return [Math.round((box.left - frame.left) / scale), Math.round((box.top - frame.top) / scale), Math.round(box.width / scale), Math.round(box.height / scale)].join(','); })()`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+
+    let regions = changingRegions(false);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    let image = await liveShot('marks-button');
+    assert.ok(countPixels(image, regions.button, isRed) > 0, `the changed button is marked: ${join(shots, 'marks-button.png')}`);
+    assert.equal(countPixels(image, regions.note, isRed), 0, 'the element below the button is not marked');
+    console.log('PASS ボタンの背景色を変えると、そのボタンに主な変化の印が付き、その下の変わっていない要素には付かない');
+
+    const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
+    const marked = await evaluate(counts);
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.equal(await evaluate(counts), marked, 'marking adds no change');
+    await browser('click', '.lv-compare .lv-record');
+    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
+    await chooseReference('Recorded 2');
+    await waitFor(`${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
+    console.log('PASS 印を付けた後も変化の数が変わらず、印を付けた後に取ったスナップショットと比べると変化が 0');
+
+    await chooseReference('Recorded 1');
+    await writeFile(join(dev.dir, 'changing.css'), changingCss());
+    await waitFor(`${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    regions = changingRegions(true);
+    image = await liveShot('marks-inserted');
+    assert.ok(countPixels(image, regions.item(2), isGreen) > 0, `the inserted element is marked as added: ${join(shots, 'marks-inserted.png')}`);
+    for (const index of [3, 4]) {
+      assert.equal(countPixels(image, regions.item(index), isRed), 0, `sibling ${index} after the inserted one has no main mark`);
+      assert.equal(countPixels(image, regions.item(index), isGreen), 0, `sibling ${index} after the inserted one has no added mark`);
+    }
+    assert.ok(countPixels(image, regions.item(3), isPurple) > 0, 'a sibling that only shifted has the quiet mark');
+    console.log('PASS 兄弟の途中に要素を足すと、足した要素に増えたの印が付き、後ろの兄弟には主な変化の印が付かない');
+
+    await browser('fill', '.lv-mock-input', 'mocks/diff-mock.html');
+    await browser('click', '.lv-mock-assign');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
+    image = await liveShot('marks-mock');
+    assert.equal(countPixels(image, regions.item(2), isGreen), 0, 'no mark while comparing with a mock');
+    await browser('click', '.lv-mock-remove');
+    await chooseReference('Recorded 1');
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    console.log('PASS モックと比べている間は印が付かない');
+
+    await browser('click', '.lv-compare .lv-record');
+    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 3'))`);
+    await chooseReference('Recorded 3');
+    await waitFor(`${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.html'), changingPage());
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    const expected = changingRegions(true).item(2);
+    const removedAt = [expected[0], expected[1], 390, expected[3] - expected[1]].join(',');
+    await waitFor(`${removedMark} === ${JSON.stringify(removedAt)}`);
+    console.log('PASS 兄弟の途中の要素を消すと、スナップショットの側のその要素に消えたの印が付く');
+
+    await browser('click', '.lv-mode button[data-compare="overlay"]');
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay'`);
+    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '0'; range.dispatchEvent(new Event('input')); return true; })()`);
+    await waitFor(`${removedMark} === ${JSON.stringify(removedAt)}`);
+    regions = changingRegions(false);
+    image = await liveShot('marks-overlay');
+    assert.ok(countPixels(image, regions.item(2), isPurple) > 0, `the shifted sibling keeps its mark in the overlay: ${join(shots, 'marks-overlay.png')}`);
+    console.log('PASS 重ねて透かす表示に切り替えても、同じ要素に同じ印がある');
+
+    await browser('click', '.lv-mode button[data-compare="side"]');
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side'`);
+    const viewport = `document.querySelector('${refPane} .lv-viewport')`;
+    await evaluate(`${viewport}.scrollTop = 300; true`);
+    await waitFor(`${viewport}.scrollTop === 300`);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '2'`);
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(await evaluate(`${viewport}.scrollTop`), 300);
+    console.log('PASS 比べる相手の枠をスクロールしてからページを変えて印が付け直されても、枠のスクロール位置が変わらない');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -871,6 +1009,7 @@ try {
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
   await changeListFollowsThePage(repository);
+  await marksFollowTheChanges(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

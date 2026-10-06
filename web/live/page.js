@@ -22,7 +22,13 @@
     if (!message || message.kemi !== 'live') return;
     if (message.type === 'describe') {
       watchChanges();
-      post({ type: 'described', id: message.id, path: location.pathname + location.search, description: describePage() });
+      const { description, elements } = describePage();
+      described = elements;
+      post({ type: 'described', id: message.id, path: location.pathname + location.search, description });
+      return;
+    }
+    if (message.type === 'marks') {
+      drawMarks(Array.isArray(message.marks) ? message.marks : []);
       return;
     }
     if (message.type !== 'capture') return;
@@ -107,6 +113,10 @@
   /** 描かれない要素。記述に入れない。 */
   const UNDESCRIBED = new Set(['head', 'script', 'style', 'link', 'meta', 'noscript', 'template', 'title', 'base']);
 
+  /** 最後に記述を渡した要素。印の番号はこの並びを指す。 */
+  /** @type {Element[]} */
+  let described = [];
+
   /**
    * @param {CSSStyleDeclaration} computed
    * @param {string} property
@@ -127,6 +137,8 @@
   function describePage() {
     /** @type {{ parent: number, tag: string, id: string, cls: string, text: string, box: number[], style: number }[]} */
     const elements = [];
+    /** @type {Element[]} */
+    const originals = [];
     /** @type {Record<string, string>[]} */
     const styles = [];
     /** @type {Map<string, number>} */
@@ -138,7 +150,7 @@
      * @param {number} parent
      */
     const visit = (element, parent) => {
-      if (UNDESCRIBED.has(element.localName)) return;
+      if (UNDESCRIBED.has(element.localName) || element === marksHost) return;
       const computed = getComputedStyle(element);
       /** @type {Record<string, string>} */
       const style = {};
@@ -165,6 +177,7 @@
         box: [round(rect.left + left), round(rect.top + top), round(rect.width), round(rect.height)],
         style: number,
       });
+      originals.push(element);
       if (element.shadowRoot) {
         watchRoot(element.shadowRoot);
         for (const child of element.shadowRoot.children) visit(child, index);
@@ -172,7 +185,68 @@
       for (const child of element.children) visit(child, index);
     };
     visit(document.documentElement, -1);
-    return { width: innerWidth, height: document.documentElement.scrollHeight, styles, elements };
+    return { description: { width: innerWidth, height: document.documentElement.scrollHeight, styles, elements }, elements: originals };
+  }
+
+  // ---- 印（R-PAGE-VIEW の変わったところに必ず印） ----
+  // 変わった要素に枠を重ねる層。ページの見た目を変えないよう、文書の左上に大きさ 0 で置き、閉じた
+  // shadow root の中に描く。この層は記述にもスナップショットにも入れず、見張りも反応させない
+  // （入れると、印そのものが変化として出て、付け直しが繰り返す）。
+
+  /** 印の色。主な変化は赤、増えたは緑、ずれただけは控えめに薄い紫の破線。 */
+  const MARK_STYLE = `
+    div { position: absolute; box-sizing: border-box; pointer-events: none; }
+    div[data-kind="main"] { border: 2px solid rgb(214, 69, 69); }
+    div[data-kind="added"] { border: 2px solid rgb(26, 154, 74); }
+    div[data-kind="shifted"] { border: 1px dashed rgb(185, 166, 217); }
+  `;
+
+  /** @type {HTMLElement | null} */
+  let marksHost = null;
+  /** @type {ShadowRoot | null} */
+  let marksRoot = null;
+
+  /**
+   * 最後に渡した記述の要素に印を描く。前の印は消す。
+   * @param {unknown[]} marks
+   */
+  function drawMarks(marks) {
+    if (marks.length === 0) {
+      marksHost?.remove();
+      return;
+    }
+    if (!marksHost || !marksRoot) {
+      marksHost = document.createElement('div');
+      marksHost.style.cssText = 'position: absolute; left: 0; top: 0; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: visible; pointer-events: none; z-index: 2147483647;';
+      marksRoot = marksHost.attachShadow({ mode: 'closed' });
+    }
+    if (!marksHost.isConnected) document.documentElement.append(marksHost);
+    const origin = marksHost.getBoundingClientRect();
+    const style = document.createElement('style');
+    style.textContent = MARK_STYLE;
+    /** @type {HTMLElement[]} */
+    const boxes = [];
+    for (const mark of marks) {
+      const { index, kind } = /** @type {{ index: unknown, kind: unknown }} */ (mark ?? {});
+      const element = typeof index === 'number' ? described[index] : undefined;
+      if (!element?.isConnected || !['main', 'added', 'shifted'].includes(String(kind))) continue;
+      const rect = element.getBoundingClientRect();
+      const box = document.createElement('div');
+      box.dataset.kind = String(kind);
+      box.style.cssText = `left: ${rect.left - origin.left}px; top: ${rect.top - origin.top}px; width: ${rect.width}px; height: ${rect.height}px;`;
+      boxes.push(box);
+    }
+    marksRoot.replaceChildren(style, ...boxes);
+  }
+
+  /**
+   * 印の層を足し外ししただけの変化か。
+   * @param {MutationRecord} record
+   */
+  function marksOnly(record) {
+    if (record.target === marksHost) return true;
+    const nodes = [...record.addedNodes, ...record.removedNodes];
+    return record.type === 'childList' && nodes.length > 0 && nodes.every((node) => node === marksHost);
   }
 
   // ---- ページの変化の見張り ----
@@ -197,7 +271,9 @@
       post({ type: 'changed' });
     }, wait);
   };
-  const mutations = new MutationObserver(changed);
+  const mutations = new MutationObserver((records) => {
+    if (!records.every(marksOnly)) changed();
+  });
   const resizes = new ResizeObserver(changed);
   /** @type {WeakSet<ShadowRoot>} */
   const watchedRoots = new WeakSet();
@@ -350,6 +426,7 @@
   async function snapshotElement(original, copy) {
     const owner = /** @type {Document} */ (copy.ownerDocument);
     const tag = original.localName;
+    if (original === marksHost) return null;
     if (tag === 'script' || tag === 'noscript' || (tag === 'meta' && /refresh/i.test(original.getAttribute('http-equiv') ?? ''))) {
       return null;
     }
@@ -489,7 +566,7 @@
 
   async function captureSnapshot() {
     // 写す途中で読み込みを待つ間にページが変わることがあるので、記述は写し始める前の同じ DOM から作る。
-    const description = describePage();
+    const { description } = describePage();
     inlined = new Map();
     const owner = document.implementation.createHTMLDocument('');
     const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner));

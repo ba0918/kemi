@@ -34,6 +34,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   refViewport: HTMLElement,
  *   refFrame: HTMLIFrameElement,
  *   refMockFrame: HTMLIFrameElement,
+ *   refMarks: HTMLElement,
  *   refEmpty: HTMLElement,
  *   refEmptyText: HTMLElement,
  *   refRecordButton: HTMLButtonElement,
@@ -169,7 +170,10 @@ export function buildShell() {
   refMockFrame.setAttribute("sandbox", "allow-scripts");
   refMockFrame.referrerPolicy = "no-referrer";
   refMockFrame.hidden = true;
-  ref.box.append(refFrame, refMockFrame, refEmpty);
+  // 消えた要素の印。スナップショットの枠の中は触れないので、枠と同じ大きさと変形で上に重ねる。
+  const refMarks = el("div", "lv-marks");
+  refMarks.hidden = true;
+  ref.box.append(refFrame, refMockFrame, refMarks, refEmpty);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -217,6 +221,7 @@ export function buildShell() {
     refViewport: ref.viewport,
     refFrame,
     refMockFrame,
+    refMarks,
     refEmpty,
     refEmptyText,
     refRecordButton,
@@ -394,5 +399,24 @@ function changeWhat(change) {
       return [change.was === "" ? "Removed" : `Removed: ${change.was}`];
     case "shifted":
       return ["Moved or resized"];
+  }
+}
+
+/**
+ * 比べる相手の側の印（消えた要素）。位置と大きさはスナップショットの文書の座標で、層ごと枠と同じ
+ * 倍率で縮める。
+ * @param {HTMLElement} layer
+ * @param {number[][]} boxes
+ */
+export function renderRemovedMarks(layer, boxes) {
+  layer.textContent = "";
+  for (const [left, top, width, height] of boxes) {
+    const mark = el("div", "lv-mark");
+    mark.dataset.kind = "removed";
+    mark.style.left = `${left}px`;
+    mark.style.top = `${top}px`;
+    mark.style.width = `${width}px`;
+    mark.style.height = `${height}px`;
+    layer.append(mark);
   }
 }

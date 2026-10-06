@@ -23,7 +23,7 @@
 //   /tall.html    高さ 3000px の色の帯（スクロールをそろえる確かめに使う。#band-<n> で移れる）
 //   /other.html   別のページ（ページの移動に使う）
 //   /changing.html  同じ URL のまま中身が変わるページ（差分の確かめに使う）。兄弟の並び（#items の li）と、
-//                 その下のボタン（#buy）と文（.note）を持つ。changing.css を書き換えると HMR の知らせで CSS を
+//                 その下のボタン（#buy）と文（.note）と、高い余白を持つ。changing.css を書き換えると HMR の知らせで CSS を
 //                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
 import { createServer } from 'node:http';
@@ -125,6 +125,13 @@ export const CHANGING_ITEMS = ['one', 'two', 'three', 'four'];
 export const CHANGING_BUTTON = 'rgb(49, 89, 214)';
 
 /**
+ * /changing.html の要素の高さ（左上は 0, 0 から縦に並ぶ）。兄弟 1 つ、ボタン（幅も）、文、末尾の余白。
+ * 末尾の余白は、スナップショットの枠をスクロールできる高さにするため。
+ */
+export const CHANGING_GEOMETRY = { item: 30, button: { width: 200, height: 60 }, note: 40 };
+const CHANGING_TAIL = 2000;
+
+/**
  * /changing.html の中身。`items` の順に兄弟を並べる。
  * @param {string[]} [items]
  */
@@ -137,6 +144,7 @@ export function changingPage(items = CHANGING_ITEMS) {
 <ul id="items">${items.map((item) => `<li class="item">${item}</li>`).join('')}</ul>
 <button id="buy" class="buy">Buy</button>
 <p class="note">Below the button</p>
+<div class="tail"></div>
 </body></html>
 `;
 }
@@ -148,9 +156,10 @@ export function changingPage(items = CHANGING_ITEMS) {
 export function changingCss(button = CHANGING_BUTTON) {
   return `body { margin: 0; font: 16px sans-serif; }
 ul { margin: 0; padding: 0; list-style: none; }
-.item { height: 30px; }
-.buy { display: block; width: 200px; height: 60px; border: 0; color: rgb(255, 255, 255); background: ${button}; }
-.note { margin: 0; height: 40px; }
+.item { height: ${CHANGING_GEOMETRY.item}px; }
+.buy { display: block; width: ${CHANGING_GEOMETRY.button.width}px; height: ${CHANGING_GEOMETRY.button.height}px; border: 0; color: rgb(255, 255, 255); background: ${button}; }
+.note { margin: 0; height: ${CHANGING_GEOMETRY.note}px; }
+.tail { height: ${CHANGING_TAIL}px; }
 `;
 }
 
