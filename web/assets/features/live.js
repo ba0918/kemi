@@ -727,12 +727,15 @@ async function savePageComment() {
     const answer = await ask(frame, "image", IMAGE_TIMEOUT, { places: draft.places });
     image = typeof answer.png === "string" ? answer.png : null;
   }
+  const request = { op: "add_page", page: { url: draft.url, width: draft.width, places: draft.places }, body };
   try {
-    const comment = await api.postComment({
-      op: "add_page",
-      page: { url: draft.url, width: draft.width, places: draft.places },
-      body,
-      image,
+    const comment = await api.postComment({ ...request, image }).catch((error) => {
+      // 本文と場所に画像を足すと要求の上限を超えるときは、画像なしで保存する（画像は作れないこともある）。
+      // 上限を超えた要求はサーバが読まずに断るので、送り直しても二重にはならない。
+      if (image !== null && error?.status === api.TOO_LARGE) {
+        return api.postComment({ ...request, image: null });
+      }
+      throw error;
     });
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];

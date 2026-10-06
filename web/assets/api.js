@@ -22,6 +22,9 @@ async function getJson(path) {
   return response.json();
 }
 
+/** 要求の本文が大きすぎてサーバが読まずに断ったときの status。 */
+export const TOO_LARGE = 413;
+
 /**
  * @param {string} path
  * @param {unknown} body
@@ -43,7 +46,8 @@ async function postJson(path, body) {
     } catch {
       // JSON でないエラーは status のまま
     }
-    throw new Error(message);
+    // 断られた理由で振る舞いを変える呼び手のために、status も持たせる。
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return response.json();
 }
