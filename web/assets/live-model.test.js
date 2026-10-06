@@ -62,11 +62,30 @@ test("the page tree lists the shown page and the pages with snapshots or mocks, 
       { page: "/a", width: 1280 },
     ],
     mocks: new Set(["/c"]),
+    comments: [],
   });
   assert.deepEqual(tree, [
-    { page: "/a", widths: [390, 1280], current: false, mock: false },
-    { page: "/b", widths: [], current: true, mock: false },
-    { page: "/c", widths: [], current: false, mock: true },
+    { page: "/a", widths: [390, 1280], current: false, mock: false, comments: 0 },
+    { page: "/b", widths: [], current: true, mock: false, comments: 0 },
+    { page: "/c", widths: [], current: false, mock: true, comments: 0 },
+  ]);
+});
+
+test("the page tree lists pages with only comments, with the comment count and the widths they were left at", () => {
+  const tree = buildPageTree({
+    current: "/",
+    snapshots: [{ page: "/", width: 1280 }],
+    mocks: new Set(),
+    comments: [
+      { page: "/cart", width: 390 },
+      { page: "/cart", width: 768 },
+      { page: "/cart", width: 390 },
+      { page: "/", width: 1280 },
+    ],
+  });
+  assert.deepEqual(tree, [
+    { page: "/", widths: [1280], current: true, mock: false, comments: 1 },
+    { page: "/cart", widths: [390, 768], current: false, mock: false, comments: 3 },
   ]);
 });
 

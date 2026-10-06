@@ -33,6 +33,7 @@ import {
   renderPageTree,
   renderPlaces,
 } from "../views/live.js";
+import { closeSheet } from "./conversation.js";
 import { renderConversation } from "../views/conversation.js";
 import { renderHeader } from "../views/header.js";
 import { refreshCommentBadges } from "../views/tree.js";
@@ -422,6 +423,7 @@ function receive(event) {
   render();
   takeStartSnapshot();
   // 読み込み直した文書には前の描き込みが無いので、描き直させる。
+  sentPlaces = "";
   sendPlaces();
 }
 
@@ -607,18 +609,67 @@ function setDraft(draft) {
   sendPlaces();
 }
 
-/** ページの上に場所を描かせる。書いているコメントの場所は、そのページ・その幅を見ているときだけ。 */
+/** 保存したページへのコメント（`page` を持つもの）。 */
+function pageComments() {
+  return state.allComments.filter((comment) => comment.page);
+}
+
+/** 最後にページへ送った描き込み。同じなら送り直さない（会話が描き直されるたびに呼ばれる）。 */
+let sentPlaces = "";
+
+/**
+ * ページの上に場所を描かせる。保存したコメントの場所は、そのコメントの URL と表示幅で見ているときに控えめな
+ * 印で、開いているスレッドのものは目立たせる。書いているコメントの場所も、そのページ・その幅を見ているときだけ。
+ */
 function sendPlaces() {
   const frame = shell?.liveFrame.contentWindow;
   if (!frame) {
     return;
   }
+  const here = (/** @type {string} */ url, /** @type {number} */ width) => url === live.page && width === live.width;
+  const sets = pageComments()
+    .filter((comment) => here(comment.page.url, comment.page.width))
+    .map((comment) => ({ places: comment.page.places, look: state.conversation.thread === comment.id ? "focus" : "saved" }));
   const draft = live.draft;
-  const shown = draft.url === live.page && draft.width === live.width ? draft.places : [];
-  frame.postMessage(
-    { kemi: "live", type: "places", sets: shown.length > 0 ? [{ places: shown, look: "draft" }] : [] },
-    live.origin,
-  );
+  if (here(draft.url, draft.width) && draft.places.length > 0) {
+    sets.push({ places: draft.places, look: "draft" });
+  }
+  const message = JSON.stringify(sets);
+  if (message === sentPlaces) {
+    return;
+  }
+  sentPlaces = message;
+  frame.postMessage({ kemi: "live", type: "places", sets }, live.origin);
+}
+
+/** 会話の中身が変わった（コメントが増えた・消えた、スレッドを開いた）。印とページのツリーを合わせる。 */
+export function refreshPageComments() {
+  sendPlaces();
+  renderTree();
+}
+
+/**
+ * ページへのコメントを、付けた URL と表示幅のページの見方で見せる（R-PAGE-COMMENT）。狭い画面では
+ * 会話のシートを閉じてページを見せる。
+ * @param {any} comment
+ */
+export function showPageComment(comment) {
+  if (!comment.page) {
+    return;
+  }
+  if (state.narrow) {
+    closeSheet();
+  }
+  if (live.view !== "page") {
+    setView("page");
+  }
+  if (live.width !== comment.page.width) {
+    setWidth(comment.page.width);
+  }
+  if (live.page !== comment.page.url) {
+    openPage(comment.page.url);
+  }
+  renderConversation();
 }
 
 function renderCompose() {
@@ -729,6 +780,13 @@ async function capture(kind) {
 }
 
 function render() {
+  const shown = live.view === "page" ? { page: live.page, width: live.width } : null;
+  const moved = JSON.stringify(shown) !== JSON.stringify(state.live);
+  state.live = shown;
+  if (moved) {
+    // 開いているスレッドの「付けた幅」の札は、見ているページと表示幅で変わる。
+    renderConversation();
+  }
   renderBand();
   renderCompose();
   renderReference();
@@ -1051,7 +1109,12 @@ function renderTree() {
   }
   renderPageTree(
     shell.pageTree,
-    buildPageTree({ current: live.page, snapshots: live.snapshots, mocks: new Set(live.mocks.keys()) }),
+    buildPageTree({
+      current: live.page,
+      snapshots: live.snapshots,
+      mocks: new Set(live.mocks.keys()),
+      comments: pageComments().map((comment) => ({ page: comment.page.url, width: comment.page.width })),
+    }),
     {
       onPage: openPage,
       onWidth: (page, width) => {

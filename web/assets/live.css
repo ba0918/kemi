@@ -245,6 +245,16 @@ body[data-live-view="code"] .lv-page-only {
   padding: 0 6px;
 }
 
+.lv-comment-count {
+  border-radius: 999px;
+  background: var(--star);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  padding: 0 6px;
+}
+
 .lv-mock-tag {
   border-color: var(--star);
   color: var(--star);
@@ -643,4 +653,23 @@ body[data-live-view="code"] .lv-page-only {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* ページへのコメントのスレッドの、本文の編集欄（views/conversation.js）。 */
+.cv-page-edit textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.cv-page-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
 }

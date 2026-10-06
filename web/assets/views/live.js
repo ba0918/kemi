@@ -431,6 +431,11 @@ export function renderPageTree(container, items, handlers, changes) {
     if (item.mock) {
       tags.append(textEl("span", "lv-mock-tag", "mock"));
     }
+    if (item.comments > 0) {
+      const count = textEl("span", "lv-comment-count", String(item.comments));
+      count.title = item.comments === 1 ? "1 comment on this page" : `${item.comments} comments on this page`;
+      tags.append(count);
+    }
     row.append(tags);
     if (item.current && changes !== null) {
       row.append(changeList(changes, handlers));

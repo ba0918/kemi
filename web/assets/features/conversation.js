@@ -19,7 +19,7 @@ import { followsNewest, threadLastSeq } from "../model.js";
 import { onResize, remeasureAndRender } from "./display.js";
 import { jumpToEntry } from "./files.js";
 import { refreshRendered } from "./rendered.js";
-import { openCommentEditor } from "./comments.js";
+import { openCommentEditor, updateComments } from "./comments.js";
 import { postMessage, replyTo } from "./agent.js";
 import { switchUnit } from "./units.js";
 import { renderConversation } from "../views/conversation.js";
@@ -222,7 +222,33 @@ export function onConversationScroll(event) {
 /** 開いたスレッドから一覧へ戻る。 */
 export function closeThread() {
   state.conversation.thread = null;
+  state.conversation.editing = null;
   renderConversation({ toEnd: true });
+}
+
+/**
+ * ページへのコメントの本文の編集を、開いたスレッドの中で始める（null でやめる）。場所は変えない
+ * （live.md の R-PAGE-COMMENT。コードへのコメントは差分の中の入力欄で編集する）。
+ * @param {string | null} id
+ */
+export function editPageComment(id) {
+  state.conversation.editing = id;
+  renderConversation();
+}
+
+/**
+ * ページへのコメントの本文を保存する。
+ * @param {any} comment
+ * @param {string} body
+ */
+export async function savePageCommentBody(comment, body) {
+  try {
+    const updated = await api.postComment({ op: "edit", id: comment.id, body });
+    state.conversation.editing = null;
+    updateComments((comments) => comments.map((item) => (item.id === updated.id ? updated : item)));
+  } catch (error) {
+    showToast(`could not edit the comment: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**

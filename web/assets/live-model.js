@@ -58,38 +58,47 @@ export function liveOrigin(protocol, hostname, port) {
 
 /**
  * @typedef {{ page: string, width: number }} PageWidth
- * @typedef {{ page: string, widths: number[], current: boolean, mock: boolean }} PageTreeItem
+ * @typedef {{ page: string, widths: number[], current: boolean, mock: boolean, comments: number }} PageTreeItem
  */
 
 /**
- * ページのツリー（R-PAGE-VIEW）。表示中のページと、スナップショットかモックの割り当てが
- * あるページを、パスの順に並べる。各ページにはスナップショットのある表示幅を小さい順に。
- * @param {{ current: string, snapshots: PageWidth[], mocks: Set<string> }} input
+ * ページのツリー（R-PAGE-VIEW）。表示中のページと、スナップショット・コメント・モックの割り当てのいずれかが
+ * あるページを、パスの順に並べる。各ページには、スナップショットを取った表示幅とコメントを付けた表示幅を
+ * 小さい順に、コメントの数とともに。
+ * @param {{ current: string, snapshots: PageWidth[], mocks: Set<string>, comments: PageWidth[] }} input
  * @returns {PageTreeItem[]}
  */
-export function buildPageTree({ current, snapshots, mocks }) {
-  /** @type {Map<string, Set<number>>} */
+export function buildPageTree({ current, snapshots, mocks, comments }) {
+  /** @type {Map<string, { widths: Set<number>, comments: number }>} */
   const pages = new Map();
   const add = (/** @type {string} */ page) => {
-    if (!pages.has(page)) {
-      pages.set(page, new Set());
+    let item = pages.get(page);
+    if (!item) {
+      item = { widths: new Set(), comments: 0 };
+      pages.set(page, item);
     }
-    return /** @type {Set<number>} */ (pages.get(page));
+    return item;
   };
   add(current);
   for (const snapshot of snapshots) {
-    add(snapshot.page).add(snapshot.width);
+    add(snapshot.page).widths.add(snapshot.width);
+  }
+  for (const comment of comments) {
+    const item = add(comment.page);
+    item.widths.add(comment.width);
+    item.comments += 1;
   }
   for (const page of mocks) {
     add(page);
   }
   return [...pages.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([page, widths]) => ({
+    .map(([page, item]) => ({
       page,
-      widths: [...widths].sort((left, right) => left - right),
+      widths: [...item.widths].sort((left, right) => left - right),
       current: page === current,
       mock: mocks.has(page),
+      comments: item.comments,
     }));
 }
 

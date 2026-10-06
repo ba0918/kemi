@@ -20,6 +20,11 @@
 // - コメントの画像: ページの中で写しを描いて作った描き込み無しの画像を、動いているページの同じ範囲と画素で比べる
 //   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
 //   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。
+// - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
+//   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
+//   見る対象の要素が場所になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
+//   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
@@ -1614,6 +1619,77 @@ async function placesMakeNoChange(repository) {
   }
 }
 
+/** API でページへのコメントを足す（画面の操作は pageCommentPlacesArePutAndSaved で確かめる）。 */
+async function addPageComment(kemi, url, width, body) {
+  return post(kemi.url, 'api/comment', {
+    op: 'add_page',
+    page: { url, width, places: [{ n: 1, kind: 'element', points: [], elements: [{ selector: '#button', text: 'Press', rect: { x: 0, y: 200, w: 300, h: 100 } }] }] },
+    body,
+  });
+}
+
+/**
+ * 保存したページへのコメント（R-PAGE-COMMENT、R-PAGE-VIEW、R-PAGE-SESSION）: コメントだけがあるページがツリーに
+ * コメントの数とともに出て、表示幅の札でそのページのその幅に移る。別の幅で付けたコメントのスレッドは付けた幅を出し、
+ * 押すとその幅に切り替わり、場所の印がページの上に出る。本文だけを編集できる。保留して復元しても出る。
+ */
+async function savedPageCommentsAreListedShownAndSwitched(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    const other = await addPageComment(kemi, '/other.html', 390, 'only a comment here');
+    const rich = await addPageComment(kemi, '/rich.html', 390, 'the button is too wide');
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    const commentCount = (page) => `document.querySelector('#page-tree .lv-page[data-page="${page}"] .lv-comment-count')?.textContent`;
+    await waitFor(`${commentCount('/other.html')} === '1' && ${commentCount('/rich.html')} === '1'`);
+    await browser('click', '#page-tree .lv-page[data-page="/other.html"] .lv-width-tag[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/other.html') && document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    console.log('PASS コメントだけがあるページがページのツリーにコメントの数とともに出て、表示幅の札を押すとそのページのその幅に切り替わる');
+
+    await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
+    await browser('click', '.lv-widths button[data-width="1280"]');
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/rich.html') && document.querySelector('${livePane} .lv-frame').style.width === '1280px'`);
+    await browser('click', '#cv-rail');
+    await browser('click', `.cv-card[data-id="${rich.id}"]`);
+    await waitFor(`document.querySelector('#cv-thread .cv-page-width')?.textContent === '390px'`);
+    await browser('click', '#cv-thread .cv-page-width');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/rich.html') && document.querySelector('#cv-thread .cv-page-width') === null`);
+    console.log('PASS 390 で付けたコメントのスレッドを 1280 で開くと付けた幅が出て、押すと 390 に切り替わる');
+    await new Promise((done) => setTimeout(done, 800));
+    const marked = await shot(`${livePane} .lv-frame`, shots, 'saved-places');
+    // 会話パネルを開いた分だけ枠が縮んでいるので、ボタンの周りの範囲も同じ倍率で縮める。
+    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    const around = [0, 195, 305, 305].map((value) => Math.round(value * scale));
+    assert.ok(countPixels(marked, around, isPlaceInk) > 0, `the place of the open thread is drawn on the page: ${join(shots, 'saved-places.png')}`);
+    console.log('PASS スレッドを開いたコメントの場所が、そのコメントの URL と表示幅で見ているときにページの上に出る');
+
+    await browser('click', '#cv-thread .cv-edit');
+    await browser('fill', '#cv-thread .cv-page-edit textarea', 'the button is far too wide');
+    await browser('click', '#cv-thread .cv-page-edit-save');
+    await waitFor(`document.querySelector('#cv-thread .cv-page-edit') === null`);
+    const edited = (await reviewJson(kemi)).comments.find((comment) => comment.id === rich.id);
+    assert.equal(edited.body, 'the button is far too wide');
+    assert.deepEqual(edited.page, rich.page);
+    assert.deepEqual(JSON.parse(await evaluate(`JSON.stringify(window.__kemiErrors ?? [])`)), []);
+    console.log('PASS ページへのコメントは本文だけを編集でき、場所は変わらない');
+
+    await stop(kemi);
+    kemi = await startKemi(repository, state, ['--resume', kemi.id]);
+    await browser('open', kemi.url);
+    await waitFor(`${commentCount('/other.html')} === '1' && ${commentCount('/rich.html')} === '1'`);
+    await browser('click', '#cv-rail');
+    await waitFor(`document.querySelector('.cv-card[data-id="${other.id}"]') !== null && document.querySelector('.cv-card[data-id="${rich.id}"]') !== null`);
+    console.log('PASS ページへのコメントを持つレビューを保留して復元すると、会話パネルとページのツリーにそのコメントが出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -1639,6 +1715,7 @@ try {
   await manyElementsAreRecordedAndCompared(repository);
   await pageCommentPlacesArePutAndSaved(repository);
   await placesMakeNoChange(repository);
+  await savedPageCommentsAreListedShownAndSwitched(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

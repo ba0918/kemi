@@ -26,6 +26,7 @@ import {
   firstLine,
   followsNewest,
   handShown,
+  pageCommentElsewhere,
   threadChip,
   unreadCount,
 } from "../model.js";
@@ -39,6 +40,8 @@ const CONTEXT_LINES = 2;
  * @param {{ toEnd?: boolean }} [options]
  */
 export function renderConversation(options = {}) {
+  // ページへのコメントの印とページのツリーの数は、会話の中身が変わるたびに合わせる（`--live` のときだけ働く）。
+  actions.pageCommentsChanged();
   const shown = conversationShown();
   dom.conversation.dataset.open = String(shown);
   dom.conversation.style.setProperty("--cv-width", `${state.conversation.width}px`);
@@ -213,7 +216,7 @@ function place(comment, info) {
     where.append(textEl("span", "cv-unit", unitLabel(info.unit)));
   }
   where.append(
-    textEl("span", "cv-path", comment.path),
+    textEl("span", "cv-path", comment.page ? comment.page.url : comment.path),
     textEl("span", "cv-where", commentLabel(comment)),
   );
   return where;
@@ -279,7 +282,15 @@ function renderThread(comment, options) {
   dom.cvThreadHead.append(top);
 
   const acts = el("div", "cv-acts");
-  if (!info.vanished) {
+  if (comment.page) {
+    // 別の表示幅か別のページで付けたコメントには付けた幅を出し、押すとそこへ移る（R-PAGE-COMMENT）。
+    const away = pageCommentElsewhere(comment, state.live);
+    const go = button(away === null ? "cv-go" : "cv-go cv-page-width");
+    go.textContent = away === null ? "Show on page" : `${away}px`;
+    go.title = `Show ${comment.page.url} at ${comment.page.width}px`;
+    go.addEventListener("click", () => actions.showPageComment(comment));
+    acts.append(go);
+  } else if (!info.vanished) {
     const go = button("cv-go");
     go.textContent = "Go to line";
     go.addEventListener("click", () => actions.goToComment(comment, info.unit));
@@ -299,7 +310,9 @@ function renderThread(comment, options) {
   if (!state.submitted && !info.vanished) {
     const edit = button("cv-edit");
     edit.textContent = "Edit";
-    edit.addEventListener("click", () => actions.editFromThread(comment, info.unit));
+    edit.addEventListener("click", () =>
+      comment.page ? actions.editPageComment(comment.id) : actions.editFromThread(comment, info.unit),
+    );
     acts.append(edit);
   }
   if (!state.submitted) {
@@ -335,7 +348,10 @@ function renderThread(comment, options) {
     if (marks.childElementCount > 0) {
       dom.cvThreadBody.append(marks);
     }
-    const opening = post("reviewer", comment.body, "cv-comment", comment.id);
+    const opening =
+      state.conversation.editing === comment.id && comment.page
+        ? pageCommentEditor(comment)
+        : post("reviewer", comment.body, "cv-comment", comment.id);
     if (comment.suggestion) {
       const box = el("div", "t-suggestion");
       box.append(textEl("div", "sug-head", "Suggested change"));
@@ -372,6 +388,41 @@ function renderThread(comment, options) {
     dom.cvReply.dataset.thread = comment.id;
     dom.cvReplyText.value = state.replyDrafts.get(comment.id) ?? "";
   }
+}
+
+/**
+ * ページへのコメントの本文を、開いたスレッドの中で編集する欄。場所は変えない（R-PAGE-COMMENT）。
+ * @param {any} comment
+ * @returns {HTMLElement}
+ */
+function pageCommentEditor(comment) {
+  const box = el("div", "cv-post cv-comment cv-page-edit");
+  box.dataset.id = comment.id;
+  const text = /** @type {HTMLTextAreaElement} */ (el("textarea", "cv-page-edit-text"));
+  text.value = comment.body;
+  text.rows = 4;
+  text.setAttribute("aria-label", "Comment");
+  const row = el("div", "cv-page-edit-actions");
+  const cancel = button("btn secondary cv-page-edit-cancel");
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => actions.editPageComment(null));
+  const save = button("btn primary cv-page-edit-save");
+  save.textContent = "Save";
+  const submit = () => {
+    if (text.value.trim() !== "") {
+      actions.savePageCommentBody(comment, text.value.trim());
+    }
+  };
+  save.addEventListener("click", submit);
+  text.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submit();
+    }
+  });
+  row.append(cancel, save);
+  box.append(text, row);
+  return box;
 }
 
 /**

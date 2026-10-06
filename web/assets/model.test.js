@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  pageCommentElsewhere,
   buildTree,
   collapseDefault,
   commentLabel,
@@ -363,6 +364,21 @@ test("commentLabel_marks_file_wide_and_ranges", () => {
   assert.equal(commentLabel({ side: "new", start_line: null, end_line: null }), "Whole file");
   assert.equal(commentLabel({ side: "new", start_line: 3, end_line: 3 }), "New side 3");
   assert.equal(commentLabel({ side: "old", start_line: 4, end_line: 6 }), "Old side 4–6");
+});
+
+test("a comment on a running page is labelled by its width and the number of its places", () => {
+  const page = (/** @type {number} */ count) => ({ url: "/cart", width: 390, places: Array.from({ length: count }, (_, i) => ({ n: i + 1 })) });
+  assert.equal(commentLabel({ side: null, start_line: null, page: page(1) }), "390px · 1 place");
+  assert.equal(commentLabel({ side: null, start_line: null, page: page(3) }), "390px · 3 places");
+});
+
+test("a page comment left at another page or width tells the width to switch to", () => {
+  const comment = { page: { url: "/cart", width: 390, places: [] } };
+  assert.equal(pageCommentElsewhere(comment, { page: "/cart", width: 390 }), null);
+  assert.equal(pageCommentElsewhere(comment, { page: "/cart", width: 1280 }), 390);
+  assert.equal(pageCommentElsewhere(comment, { page: "/", width: 390 }), 390);
+  assert.equal(pageCommentElsewhere(comment, null), 390);
+  assert.equal(pageCommentElsewhere({ page: null }, { page: "/", width: 390 }), null);
 });
 
 test("suggestionAllowed_only_on_new_side", () => {
