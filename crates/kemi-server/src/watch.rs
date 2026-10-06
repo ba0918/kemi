@@ -95,6 +95,11 @@ pub(crate) fn start_served(root: PathBuf, reload: broadcast::Sender<()>) -> Serv
         };
         let root = canonical(root);
         let whole = watcher.watch(&root, RecursiveMode::Recursive).is_ok();
+        if !whole {
+            // 再帰の見張りは途中で失敗しても、それまでに足した見張りを残す。残すと上限を
+            // 使い切ったまま、配ったファイルの見張りもコードの見方の監視も足せない。
+            let _ = watcher.unwatch(&root);
+        }
         let mut files: HashSet<PathBuf> = HashSet::new();
         let mut directories: HashSet<PathBuf> = HashSet::new();
         let mut debounce = Debounce::new(DEBOUNCE);
