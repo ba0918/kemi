@@ -7,6 +7,7 @@ import {
   buildPageTree,
   draftElsewhere,
   emptyDraft,
+  imageUnsavedNotice,
   removePlace,
   undoPlace,
   chooseReference,
@@ -18,6 +19,7 @@ import {
   parseWidth,
   snapshotLabel,
   snapshotOptions,
+  unsavedSnapshotNotice,
 } from "./live-model.js";
 
 test("the width choices are 390, 768 and 1280", () => {
@@ -127,6 +129,30 @@ test("the points to choose from are the snapshots of the page, newest first", ()
     { id: "s3", label: "Recorded 1 · 390" },
     { id: "s1", label: "Start · 1280" },
   ]);
+});
+
+test("a snapshot that was not saved is told apart among the points to choose from", () => {
+  const saved = snap("s1", "manual");
+  const [unsaved] = snapshotOptions([{ ...saved, unsaved: true }], "/");
+  const [plain] = snapshotOptions([saved], "/");
+  assert.notEqual(unsaved.label, plain.label);
+  assert.ok(unsaved.label.startsWith(plain.label), unsaved.label);
+});
+
+test("only a snapshot that was not saved carries a notice that it is gone after resuming", () => {
+  assert.notEqual(unsavedSnapshotNotice({ ...snap("s1", "manual"), unsaved: true }), "");
+  assert.equal(unsavedSnapshotNotice({ ...snap("s1", "manual"), unsaved: false }), "");
+  assert.equal(unsavedSnapshotNotice(snap("s1", "manual")), "");
+});
+
+test("a chosen point that is no longer among the snapshots shows that nothing is recorded", () => {
+  const snapshots = [snap("s1", "start"), snap("s3", "manual")];
+  assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "s2" }), { type: "none" });
+});
+
+test("only a page comment whose image was not saved carries a notice", () => {
+  assert.notEqual(imageUnsavedNotice({ image_unsaved: true }), "");
+  assert.equal(imageUnsavedNotice({}), "");
 });
 
 test("a page with a mock compares with the mock unless something else is chosen", () => {

@@ -28,6 +28,9 @@
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
+// - 保留と復元: コメントと手で取ったスナップショットのあるレビューを保留して復元すると、比べる相手の選択に開始時と
+//   手で取ったものが出て、開始時が既定になる。開始時のものは保留の前と同じ id と HTML で 1 つだけ（取り直さない）。
+//   モックを割り当てて保留し、モックのファイルを消してから復元すると、読めない旨が出る。
 // - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
@@ -53,7 +56,7 @@
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
@@ -2322,6 +2325,64 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
   }
 }
 
+/** ページと同じオリジンから API を読む。 */
+async function getJson(url, path) {
+  const response = await fetch(new URL(path, url));
+  assert.equal(response.status, 200, path);
+  return response.json();
+}
+
+/**
+ * 保留と復元（R-PAGE-SESSION、R-PAGE-REF、R-PAGE-MOCK）: スナップショットとモックの割り当てが戻り、開始時の
+ * スナップショットが既定の比べる相手のまま取り直されない。消したモックは読めない旨が出る。
+ */
+async function snapshotsAndMocksComeBackAfterResuming(repository) {
+  await mkdir(join(repository, 'mocks'), { recursive: true });
+  const mockFile = join(repository, 'mocks', 'resumed.html');
+  await writeFile(mockFile, '<!doctype html><p>mock to be deleted</p>\n');
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const options = `Array.from(document.querySelectorAll('.lv-compare-select option')).map((option) => option.textContent)`;
+  let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  let start;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-compare .lv-record');
+    await waitFor(`${options}.some((label) => label.startsWith('Recorded 1'))`);
+    const [listed] = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'start');
+    start = await getJson(kemi.url, `api/snapshot/${listed.id}`);
+    await addPageComment(kemi, '/rich.html', 1280, 'keep this review');
+    await post(kemi.url, 'api/mock', { page: '/other.html', path: 'mocks/resumed.html' });
+  } finally {
+    await stop(kemi);
+  }
+  await rm(mockFile);
+
+  kemi = await startKemi(repository, state, ['--resume', kemi.id]);
+  try {
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && ${options}.some((label) => label.startsWith('Recorded 1'))`);
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-page="/rich.html"] .lv-comment-count')?.textContent === '1'`);
+    // 動いているページが読み込まれた後も、開始時のものを取り直さない。
+    await new Promise((done) => setTimeout(done, 1500));
+    const starts = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'start');
+    assert.equal(starts.length, 1, JSON.stringify(starts));
+    const restored = await getJson(kemi.url, `api/snapshot/${starts[0].id}`);
+    assert.equal(restored.id, start.id);
+    assert.equal(restored.html, start.html);
+    console.log('PASS コメントと手で取ったスナップショットのあるレビューを保留して復元すると、開始時と手で取ったものが選択に出て開始時が既定になり、開始時のものは同じ id と HTML で 1 つだけ');
+
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${kemi.live.replace(/\/rich\.html$/, '')}/other.html`)}; true`);
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && ${visible(`${refPane} .lv-empty`)} && !${visible(`${refPane} .lv-empty .lv-record`)}`);
+    console.log('PASS モックを割り当てて保留し、モックのファイルを消してから復元すると、比べる相手の場所に読めない旨が出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 const repository = await makeRepository();
 try {
   await relayCarriesHmrAndHidesTheCookie(repository);
@@ -2359,6 +2420,7 @@ try {
   await placesMakeNoChange(repository);
   await savedPageCommentsAreListedShownAndSwitched(repository);
   await handedPageCommentsReachWaitAndSubmit(repository);
+  await snapshotsAndMocksComeBackAfterResuming(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

@@ -104,7 +104,8 @@ export function buildPageTree({ current, snapshots, mocks, comments }) {
 
 /**
  * スナップショットの見出し（中身は持たない）。
- * @typedef {{ id: string, kind: string, page: string, width: number }} SnapshotSummary
+ * `unsaved` は、セッションがあるのに保存できなかったもの（live.md の R-PAGE-SESSION）。
+ * @typedef {{ id: string, kind: string, page: string, width: number, unsaved?: boolean }} SnapshotSummary
  */
 
 /**
@@ -159,7 +160,32 @@ export function snapshotOptions(snapshots, page) {
   return snapshots
     .filter((snapshot) => snapshot.page === page)
     .reverse()
-    .map((snapshot) => ({ id: snapshot.id, label: `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}` }));
+    .map((snapshot) => {
+      const label = `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}`;
+      return { id: snapshot.id, label: snapshot.unsaved ? `${label} · not saved` : label };
+    });
+}
+
+/**
+ * 保存できなかったスナップショットの知らせ。レビューの間は使えるが、復元すると消える
+ * （live.md の R-PAGE-SESSION）。保存したものでは空。
+ * @param {SnapshotSummary} snapshot
+ * @returns {string}
+ */
+export function unsavedSnapshotNotice(snapshot) {
+  return snapshot.unsaved ? "Not saved: this snapshot is gone when the review is resumed" : "";
+}
+
+/**
+ * ページへのコメントを足した応答から、画像を保存できなかった知らせを作る（20 MB の規則。
+ * live.md の R-PAGE-SESSION）。保存したとき・画像が無いときは空。
+ * @param {{ image_unsaved?: boolean }} answer
+ * @returns {string}
+ */
+export function imageUnsavedNotice(answer) {
+  return answer.image_unsaved === true
+    ? "The comment was saved without its image: the session's files would exceed 20 MB"
+    : "";
 }
 
 /**
