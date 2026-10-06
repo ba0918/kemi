@@ -174,7 +174,27 @@ function prepare(description, signatureTable) {
   // 同じ id が 2 つ以上あるときは鍵にしない（どれと組むか決められない）。
   const keyed = elements.map((element) => element.id !== "" && idCounts.get(element.id) === 1);
   const signatures = sign(elements, children, texts, signatureTable);
-  return { elements, children, texts, keyed, signatures };
+  // 同じタグの兄弟の中の何番目かと、その数（手がかりの :nth-of-type）。変化ごとに兄弟を数え直すと、
+  // 兄弟が多いページで変化が多いとき、数の 2 乗の時間がかかる。
+  const typeOrder = new Array(elements.length).fill(1);
+  const typeCount = new Array(elements.length).fill(1);
+  for (const siblings of children) {
+    /** @type {Map<string, number[]>} */
+    const byTag = new Map();
+    for (const child of siblings) {
+      const tag = elements[child].tag;
+      const same = byTag.get(tag) ?? [];
+      same.push(child);
+      byTag.set(tag, same);
+    }
+    for (const same of byTag.values()) {
+      same.forEach((child, order) => {
+        typeOrder[child] = order + 1;
+        typeCount[child] = same.length;
+      });
+    }
+  }
+  return { elements, children, texts, keyed, signatures, typeOrder, typeCount };
 }
 
 /**
@@ -403,9 +423,8 @@ function segment(side, index) {
   }
   const first = element.cls.trim().split(/\s+/)[0];
   let text = first ? `${element.tag}.${first}` : element.tag;
-  const siblings = element.parent === -1 ? [index] : side.children[element.parent].filter((other) => side.elements[other].tag === element.tag);
-  if (siblings.length > 1) {
-    text += `:nth-of-type(${siblings.indexOf(index) + 1})`;
+  if (side.typeCount[index] > 1) {
+    text += `:nth-of-type(${side.typeOrder[index]})`;
   }
   return text;
 }
