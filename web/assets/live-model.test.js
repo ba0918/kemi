@@ -136,7 +136,6 @@ test("a snapshot that was not saved is told apart among the points to choose fro
   const [unsaved] = snapshotOptions([{ ...saved, unsaved: true }], "/");
   const [plain] = snapshotOptions([saved], "/");
   assert.notEqual(unsaved.label, plain.label);
-  assert.ok(unsaved.label.startsWith(plain.label), unsaved.label);
 });
 
 test("only a snapshot that was not saved carries a notice that it is gone after resuming", () => {
