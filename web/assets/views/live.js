@@ -315,6 +315,41 @@ export function renderPageTree(container, items, handlers, changes) {
   container.append(list);
 }
 
+/** 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。 */
+const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-change-show", ".lv-change-shifted .lv-change-show"];
+
+/**
+ * 表示中のページの下の変化の一覧だけを描き直す（R-PAGE-DIFF）。ページの行とその操作は作り直さない（動き続ける
+ * ページで比べ直すたびに、押そうとしている操作やフォーカスが入れ替わらないように）。一覧の中の操作に
+ * フォーカスがあれば、描き直した一覧の同じ操作に移す。表示中のページの行がまだ無ければ何もしない
+ * （renderPageTree が描く）。
+ * @param {HTMLElement} container renderPageTree で描いたツリー
+ * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
+ * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean, listed: { main: number, shifted: number } } | null} changes
+ */
+export function renderChanges(container, handlers, changes) {
+  const row = container.querySelector('.lv-page[data-current="true"]');
+  if (!row) {
+    return;
+  }
+  const old = row.querySelector(":scope > .lv-changes");
+  const active = container.ownerDocument.activeElement;
+  const focused = old && active && old.contains(active) ? FOCUSABLE_IN_CHANGES.find((selector) => active.matches(selector)) : undefined;
+  if (changes === null) {
+    old?.remove();
+    return;
+  }
+  const box = changeList(changes, handlers);
+  if (old) {
+    old.replaceWith(box);
+  } else {
+    row.append(box);
+  }
+  if (focused) {
+    /** @type {HTMLElement | null} */ (box.querySelector(focused))?.focus();
+  }
+}
+
 /**
  * 一覧に一度に足す項目の数。大きなページで描き直しが重くならないよう、最初はこの数だけ並べ、
  * 残りは続きを出す操作で足す。

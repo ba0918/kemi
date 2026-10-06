@@ -245,17 +245,20 @@
   let marksHost = null;
   /** @type {ShadowRoot | null} */
   let marksRoot = null;
-  /** 描いている印と、その要素と、要素を切って見せる祖先（中身をはみ出させない箱）。 */
-  /** @type {{ box: HTMLElement, element: Element, clippers: Element[] }[]} */
+  /** 描いている印と、その要素と枠の線と、要素を切って見せる祖先（中身をはみ出させない箱）。 */
+  /** @type {{ box: HTMLElement, element: Element, border: string, clippers: Element[] }[]} */
   let shownMarks = [];
 
   /**
-   * 最後に渡した記述の要素に印を描く。前の印は消す。
+   * 最後に渡した記述の要素に印を描く。前の印は消す。同じ要素に同じ印なら、印の要素は作り直さずに置き直す
+   * （動き続けるページで比べ直すたびに、同じ印を作り直さないように）。
    * @param {unknown[]} marks
    */
   function drawMarks(marks) {
+    const previous = shownMarks;
     shownMarks = [];
     if (marks.length === 0) {
+      marksRoot?.replaceChildren();
       marksHost?.remove();
       return;
     }
@@ -270,16 +273,24 @@
     if (!marksHost.isConnected) document.documentElement.append(marksHost);
     /** @type {Map<Element, boolean>} */
     const clips = new Map();
+    /** @type {{ element: Element, border: string }[]} */
+    const wanted = [];
     for (const mark of marks) {
       const { index, kind } = /** @type {{ index: unknown, kind: unknown }} */ (mark ?? {});
       const element = typeof index === 'number' ? described[index] : undefined;
       const border = Object.hasOwn(MARK_BORDERS, String(kind)) ? MARK_BORDERS[String(kind)] : undefined;
       if (!element?.isConnected || border === undefined) continue;
-      const box = document.createElement('div');
-      setStyles(box, { position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border });
-      shownMarks.push({ box, element, clippers: clippersOf(element, clips) });
+      wanted.push({ element, border });
     }
-    marksRoot.replaceChildren(...shownMarks.map((mark) => mark.box));
+    const unchanged =
+      wanted.length === previous.length &&
+      wanted.every(({ element, border }, at) => element === previous[at].element && border === previous[at].border);
+    shownMarks = wanted.map(({ element, border }, at) => {
+      const box = unchanged ? previous[at].box : document.createElement('div');
+      if (!unchanged) setStyles(box, { position: 'absolute', 'box-sizing': 'border-box', 'pointer-events': 'none', border });
+      return { box, element, border, clippers: clippersOf(element, clips) };
+    });
+    if (!unchanged) marksRoot.replaceChildren(...shownMarks.map((mark) => mark.box));
     placeMarks();
   }
 

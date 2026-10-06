@@ -519,3 +519,29 @@ export function marksOf(changes) {
   const list = (/** @type {Map<number, Mark["kind"]>} */ marks) => [...marks].map(([index, kind]) => ({ index, kind }));
   return { now: list(now), before: list(before) };
 }
+
+/**
+ * 2 つの変化の一覧が同じか（どちらも無しも同じ）。比べ直した結果が前と同じなら、一覧も印も作り直さないために使う。
+ * @param {Change[] | null} left
+ * @param {Change[] | null} right
+ */
+export function sameChanges(left, right) {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return (
+    left.length === right.length &&
+    left.every((change, index) => {
+      const other = right[index];
+      return (
+        change.kind === other.kind &&
+        change.before === other.before &&
+        change.now === other.now &&
+        change.label === other.label &&
+        change.property === other.property &&
+        change.was === other.was &&
+        change.is === other.is
+      );
+    })
+  );
+}

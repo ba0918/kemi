@@ -19,8 +19,8 @@ import {
   snapshotLabel,
   snapshotOptions,
 } from "../live-model.js";
-import { diffDescriptions, marksOf, unpackDescription } from "../live-diff.js";
-import { buildShell, markRemovedInSnapshot, renderCompareOptions, renderPageTree } from "../views/live.js";
+import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
+import { buildShell, markRemovedInSnapshot, renderChanges, renderCompareOptions, renderPageTree } from "../views/live.js";
 
 /**
  * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
@@ -555,12 +555,19 @@ function refreshChanges() {
  * @param {{ snapshot: string, now: Description } | null} from
  */
 function setChanges(changes, from) {
-  if (changes === null && live.changes === null) {
+  const same = sameChanges(changes, live.changes);
+  live.changesFrom = from;
+  if (same && changes === null) {
     return;
   }
-  live.changes = changes;
-  live.changesFrom = from;
-  renderTree();
+  // 結果が前と同じなら一覧は描き直さない。印は送り直す: ページは記述を作り直すたびに要素を数え直すので、
+  // 要素が作り直されていれば同じ番号でも別の要素を指す（同じ要素のままなら、ページは印を作り直さない）。
+  if (!same) {
+    live.changes = changes;
+    if (shell) {
+      renderChanges(shell.pageTree, changeHandlers, changesToList());
+    }
+  }
   renderMarks();
 }
 
@@ -665,6 +672,21 @@ function renderBand() {
   }
 }
 
+/** 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。 */
+const changeHandlers = {
+  onShifted: (/** @type {boolean} */ open) => {
+    live.shiftedOpen = open;
+  },
+  onListed: (/** @type {"main" | "shifted"} */ group, /** @type {number} */ count) => {
+    live.listed[group] = count;
+  },
+};
+
+/** ページのツリーに渡す、表示中のページの変化の一覧。 */
+function changesToList() {
+  return live.changes === null ? null : { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed };
+}
+
 function renderTree() {
   if (!shell) {
     return;
@@ -678,14 +700,9 @@ function renderTree() {
         setWidth(width);
         openPage(page);
       },
-      onShifted: (open) => {
-        live.shiftedOpen = open;
-      },
-      onListed: (group, count) => {
-        live.listed[group] = count;
-      },
+      ...changeHandlers,
     },
-    live.changes === null ? null : { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed },
+    changesToList(),
   );
 }
 
