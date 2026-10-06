@@ -605,7 +605,6 @@ pub(crate) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), 
     Ok(())
 }
 
-/// あれば消す。無いのは成功と同じに扱う。
 /// セッションに添えたファイルの置き場所（`<id>.files/`）。
 fn files_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.files"))
@@ -623,6 +622,7 @@ fn remove_dir_if_present(path: &Path) -> Result<(), SessionError> {
     }
 }
 
+/// あれば消す。無いのは成功と同じに扱う。
 pub(crate) fn remove_if_present(path: &Path) -> Result<(), SessionError> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
