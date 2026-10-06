@@ -9,7 +9,7 @@
 //! 親ディレクトリを監視し、パスの照合で loose ref の作成を検知する。
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
@@ -64,9 +64,9 @@ pub(crate) fn start(paths: Vec<PathBuf>, events: broadcast::Sender<Event>) {
     });
 }
 
-/// 配れる範囲のうち、配ったファイルを見張る（R-LIVE の `--live <ファイル>`）。範囲を
-/// 再帰で見張ると大きな作業ツリーで監視が破綻するので、配ったファイルの親ディレクトリ
-/// だけを見張り、配ったファイルの変更だけを知らせる。
+/// 配れる範囲を見張る（R-PAGE-MODE の `--live <ファイル>`）。範囲の中のファイルが保存・作成
+/// されたら知らせる。範囲を再帰で見張れないとき（Linux の inotify の見張りの数の上限など）は、
+/// 配ったファイルの親ディレクトリだけを見張り、配ったファイルの変更だけを知らせる。
 pub(crate) struct ServedWatch {
     sender: std::sync::mpsc::Sender<RangeMessage>,
 }
@@ -77,14 +77,14 @@ enum RangeMessage {
 }
 
 impl ServedWatch {
-    /// 配ったファイル（実体の場所）を見張りに足す。
+    /// 配ったファイル（実体の場所）を知らせる。範囲を再帰で見張れないときに見張りへ足す。
     pub(crate) fn served(&self, file: PathBuf) {
         let _ = self.sender.send(RangeMessage::Served(file));
     }
 }
 
-/// 配ったファイルが変わったら `reload` に知らせる。
-pub(crate) fn start_served(reload: broadcast::Sender<()>) -> ServedWatch {
+/// 範囲の中のファイルが変わったら `reload` に知らせる。
+pub(crate) fn start_served(root: PathBuf, reload: broadcast::Sender<()>) -> ServedWatch {
     let (sender, receiver) = std::sync::mpsc::channel();
     let events = sender.clone();
     std::thread::spawn(move || {
@@ -93,6 +93,8 @@ pub(crate) fn start_served(reload: broadcast::Sender<()>) -> ServedWatch {
         }) else {
             return;
         };
+        let root = canonical(root);
+        let whole = watcher.watch(&root, RecursiveMode::Recursive).is_ok();
         let mut files: HashSet<PathBuf> = HashSet::new();
         let mut directories: HashSet<PathBuf> = HashSet::new();
         let mut debounce = Debounce::new(DEBOUNCE);
@@ -102,6 +104,7 @@ pub(crate) fn start_served(reload: broadcast::Sender<()>) -> ServedWatch {
                 Some(wait) => receiver.recv_timeout(wait),
             };
             match received {
+                Ok(RangeMessage::Served(_)) if whole => {}
                 Ok(RangeMessage::Served(file)) => {
                     let file = canonical(file);
                     if let Some(parent) = file.parent()
@@ -111,7 +114,10 @@ pub(crate) fn start_served(reload: broadcast::Sender<()>) -> ServedWatch {
                     }
                     files.insert(file);
                 }
-                Ok(RangeMessage::Changed(Ok(event))) if changes_a_watched_file(&event, &files) => {
+                Ok(RangeMessage::Changed(Ok(event)))
+                    if (whole && changes_the_range(&event, &root))
+                        || changes_a_watched_file(&event, &files) =>
+                {
                     debounce.note(Instant::now());
                 }
                 Ok(RangeMessage::Changed(_)) | Err(RecvTimeoutError::Timeout) => {}
@@ -123,6 +129,20 @@ pub(crate) fn start_served(reload: broadcast::Sender<()>) -> ServedWatch {
         }
     });
     ServedWatch { sender }
+}
+
+/// 範囲（`root` の下、`.git` の中を除く）のファイルを変えるイベントか。
+fn changes_the_range(event: &notify::Event, root: &Path) -> bool {
+    if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
+        return false;
+    }
+    event.paths.iter().any(|path| {
+        path.strip_prefix(root).is_ok_and(|inside| {
+            !inside
+                .components()
+                .any(|component| component == Component::Normal(".git".as_ref()))
+        })
+    })
 }
 
 fn changes_a_watched_file(event: &notify::Event, files: &HashSet<PathBuf>) -> bool {
@@ -190,6 +210,37 @@ mod tests {
 
     fn at(base: Instant, millis: u64) -> Instant {
         base + Duration::from_millis(millis)
+    }
+
+    fn event(kind: EventKind, path: &str) -> notify::Event {
+        notify::Event::new(kind).add_path(PathBuf::from(path))
+    }
+
+    #[test]
+    fn a_file_created_or_saved_anywhere_in_the_range_outside_dot_git_reloads() {
+        use notify::event::{AccessKind, CreateKind, ModifyKind};
+        let root = Path::new("/range");
+
+        assert!(changes_the_range(
+            &event(EventKind::Create(CreateKind::File), "/range/img/new.png"),
+            root
+        ));
+        assert!(changes_the_range(
+            &event(EventKind::Modify(ModifyKind::Any), "/range/other/page.css"),
+            root
+        ));
+        assert!(!changes_the_range(
+            &event(EventKind::Modify(ModifyKind::Any), "/range/.git/index"),
+            root
+        ));
+        assert!(!changes_the_range(
+            &event(EventKind::Modify(ModifyKind::Any), "/elsewhere/a.css"),
+            root
+        ));
+        assert!(!changes_the_range(
+            &event(EventKind::Access(AccessKind::Any), "/range/page.html"),
+            root
+        ));
     }
 
     #[test]

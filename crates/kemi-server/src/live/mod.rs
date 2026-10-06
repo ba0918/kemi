@@ -131,9 +131,9 @@ pub(crate) struct LiveState {
     pub assets: Arc<dyn Assets>,
     /// レビュー画面の待ち受けポート。`frame-ancestors` に入れる。
     pub review_port: u16,
-    /// 配ったファイルの見張り（`<ファイル>` のときだけ）。
+    /// 配れる範囲の見張り（`<ファイル>` のときだけ）。
     pub served: Option<crate::watch::ServedWatch>,
-    /// 配ったファイルが保存されたときの知らせ。ページは読み込み直す（R-LIVE の例外）。
+    /// 配れる範囲のファイルが保存されたときの知らせ。ページは読み込み直す（R-LIVE の例外）。
     pub reload: tokio::sync::broadcast::Sender<()>,
 }
 
@@ -147,7 +147,10 @@ impl LiveState {
         let (reload, _) = tokio::sync::broadcast::channel(16);
         let served = match &target {
             LiveTarget::Url { .. } => None,
-            LiveTarget::File { .. } => Some(crate::watch::start_served(reload.clone())),
+            LiveTarget::File { .. } => Some(crate::watch::start_served(
+                info.root.clone(),
+                reload.clone(),
+            )),
         };
         LiveState {
             info,
@@ -247,7 +250,7 @@ async fn own_file(state: &LiveState, path: &str, query: Option<&str>) -> Respons
     }
 }
 
-/// 配ったファイルが保存されたら `reload` を送る SSE（R-LIVE の `--live <ファイル>`）。
+/// 配れる範囲のファイルが保存されたら `reload` を送る SSE（R-LIVE の `--live <ファイル>`）。
 fn reload_events(state: &LiveState) -> Response {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use futures_util::StreamExt;
