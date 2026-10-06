@@ -1066,8 +1066,8 @@ async function marksFollowTheChanges(repository) {
       return true;
     })()`);
     await waitFor(`window.__kemiReloaded === true`);
-    await waitFor(`${changeList}?.dataset.main === '2'`);
-    await new Promise((done) => setTimeout(done, 1500));
+    // 読み込み直した文書には印が無く、新しい記述と比べ直して初めて付く。印が付くのを待って、比べ直した後を見る。
+    await waitForPixels(`${livePane} .lv-frame`, shots, 'scroll-reloaded-marks', changingRegions(false).button, isRed);
     image = await shot(refView, shots, 'scroll-reloaded');
     assert.equal(countPixels(image, button, isBlue), 0, `the reference keeps its scroll across a reload of the same page: ${join(shots, 'scroll-reloaded.png')}`);
     assert.equal(await evaluate(`${changeList}.dataset.main`), '2', 'the same changes are listed after the reload');
