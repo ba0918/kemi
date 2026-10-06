@@ -7,6 +7,16 @@ import { button, el, textEl } from "../dom.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 
 /**
+ * 表示中のページの変化の一覧の中身。`unmarked` は、消えた要素をスナップショットの側に印で示せないこと。
+ * @typedef {{
+ *   list: import("../live-diff.js").Change[],
+ *   shiftedOpen: boolean,
+ *   listed: { main: number, shifted: number },
+ *   unmarked: boolean,
+ * }} ChangeListState
+ */
+
+/**
  * @typedef {{
  *   band: HTMLElement,
  *   viewSeg: HTMLElement,
@@ -277,7 +287,7 @@ export function renderCompareOptions(select, options, chosen) {
  *   onShifted: (open: boolean) => void,
  *   onListed: (group: "main" | "shifted", count: number) => void,
  * }} handlers
- * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean, listed: { main: number, shifted: number } } | null} changes
+ * @param {ChangeListState | null} changes
  */
 export function renderPageTree(container, items, handlers, changes) {
   container.textContent = "";
@@ -325,7 +335,7 @@ const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-chan
  * （renderPageTree が描く）。
  * @param {HTMLElement} container renderPageTree で描いたツリー
  * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
- * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean, listed: { main: number, shifted: number } } | null} changes
+ * @param {ChangeListState | null} changes
  */
 export function renderChanges(container, handlers, changes) {
   const row = container.querySelector('.lv-page[data-current="true"]');
@@ -358,7 +368,7 @@ const LISTED_CHANGES = 300;
 
 /**
  * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。
- * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean, listed: { main: number, shifted: number } }} state
+ * @param {ChangeListState} state
  * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
  */
 function changeList(state, handlers) {
@@ -374,6 +384,9 @@ function changeList(state, handlers) {
     textEl("span", "", `${main.length} main · ${shifted.length} shifted`),
   );
   box.append(head);
+  if (state.unmarked) {
+    box.append(textEl("p", "lv-changes-unmarked", "Not marked: removed elements cannot be located in the snapshot"));
+  }
   if (changes.length === 0) {
     box.append(textEl("p", "lv-changes-none", "No changes from the snapshot"));
     return box;
@@ -473,10 +486,10 @@ const ELEMENT_MAP = "kemi-elements";
  * 変わることがあるので、ページがスナップショットに添えた対応（記述の番号ごとの、読み直した文書での要素の
  * 位置。web/live/page.js の elementMap）で要素を探し、属性を付ける。位置は対応の <meta> を外してから、
  * 要素を文書の順に（<template> は中身を）数える。shadow root の中には文書の <style> が効かないので、
- * 印を付けた shadow root ごとにも <style> を足す。
+ * 印を付けた shadow root ごとにも <style> を足す。`mapped` は、ページが対応を添えていたか（無ければ印は付けられない）。
  * @param {string} html
  * @param {number[]} indices 印を付ける要素の記述の番号
- * @returns {string}
+ * @returns {{ html: string, mapped: boolean }}
  */
 export function markRemovedInSnapshot(html, indices) {
   const parsed = new DOMParser().parseFromString(html, "text/html");
@@ -522,5 +535,5 @@ export function markRemovedInSnapshot(html, indices) {
     }
   }
   const doctype = parsed.doctype ? `<!doctype ${parsed.doctype.name}>` : "";
-  return doctype + parsed.documentElement.outerHTML;
+  return { html: doctype + parsed.documentElement.outerHTML, mapped: map !== null };
 }

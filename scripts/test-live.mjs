@@ -29,7 +29,8 @@
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
 //   枠のスクロール位置は変わらない。同じページを読み込み直しても、消えた要素の組が同じなら変わらない。並べる表示の比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
-//   インラインのスタイルを止める CSP のページでも印が付く。HTML として読み直すと要素の並びが変わる（スクリプトが
+//   インラインのスタイルを止める CSP のページでも印が付く。Trusted Types を求める CSP のページで要素を消すと、一覧には出し、
+//   スナップショットに印を付けられないことを出す。HTML として読み直すと要素の並びが変わる（スクリプトが
 //   tbody を挟まずに組んだ表の）ページでも、消えた要素の印はスナップショットのその要素に付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
 // - CSSOM だけの変化: 構築したスタイルシートを replaceSync で差し替えると、DOM が変わらなくても変化の一覧が変わる。
@@ -1026,6 +1027,7 @@ async function marksFollowTheChanges(repository) {
     await waitFor(`${changeList}?.dataset.main === '1'`);
     const removedAt = changingRegions(true).item(2);
     await waitForPixels(refFrame, shots, 'marks-removed', removedAt, isRed);
+    assert.equal(await evaluate(`${changeList}.querySelector('.lv-changes-unmarked')`), null, 'no notice that removed elements are not marked');
     console.log('PASS 兄弟の途中の要素を消すと、スナップショットの側のその要素に消えたの印が付く');
 
     await browser('click', '.lv-mode button[data-compare="overlay"]');
@@ -1124,6 +1126,13 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     console.log("PASS require-trusted-types-for 'script' の CSP を返すページでも、スナップショットが撮れて変化の一覧が出る");
+
+    // このページのスナップショットは要素の対応を持たないので、消えた要素の印は付けられない。一覧には出し、そのことを出す。
+    // Trusted Types は試験用の HMR の body の差し替え（DOMParser）も止めるので、ページを読み込み直して反映する。
+    await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'four']));
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src; return true; })()`);
+    await waitFor(`${changeList}?.querySelector('.lv-change[data-kind="removed"]') && ${changeList}.querySelector('.lv-changes-unmarked') !== null`);
+    console.log("PASS require-trusted-types-for 'script' の CSP を返すページで要素を消すと、一覧に出し、スナップショットに印を付けられないことを出す");
   } finally {
     await stop(kemi);
     await dev.close();

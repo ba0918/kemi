@@ -73,6 +73,8 @@ const live = {
   shownSnapshot: "",
   /** 比べる相手の枠に今入れている中身（スナップショットの id と、印を付けた消えた要素の番号）。 */
   shownFrame: "",
+  /** @type {Map<string, boolean>} スナップショットが要素の対応を持つか（id → 持つか）。枠に出したときに分かる。 */
+  mapped: new Map(),
   /** @type {Map<string, { path: string, url: string }>} ページごとのモックの割り当て */
   mocks: new Map(),
   /** モックを出し始めたときの条件。変わったら読み直す（R-PAGE-MOCK の読むきっかけ）。 */
@@ -691,9 +693,17 @@ const changeHandlers = {
   },
 };
 
-/** ページのツリーに渡す、表示中のページの変化の一覧。 */
+/**
+ * ページのツリーに渡す、表示中のページの変化の一覧。
+ * @returns {import("../views/live.js").ChangeListState | null}
+ */
 function changesToList() {
-  return live.changes === null ? null : { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed };
+  if (live.changes === null) {
+    return null;
+  }
+  const snapshot = live.changesFrom?.snapshot ?? "";
+  const unmarked = live.mapped.get(snapshot) === false && live.changes.some((change) => change.kind === "removed");
+  return { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
 }
 
 function renderTree() {
@@ -805,10 +815,16 @@ async function showSnapshot(id) {
   // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。印が無くても通すのは、
   // ページが添えた要素の対応の <meta> を外すため（残すと head の先頭の子になり、head を前提にしたセレクタが変わる）。
   const frame = /** @type {HTMLIFrameElement} */ (shell.refFrame.cloneNode(false));
-  frame.srcdoc = markRemovedInSnapshot(html, removed);
+  const marked = markRemovedInSnapshot(html, removed);
+  frame.srcdoc = marked.html;
   shell.refFrame.replaceWith(frame);
   shell.refFrame = frame;
   layoutFrames();
+  if (live.mapped.get(id) !== marked.mapped) {
+    // 一覧は対応の有無が分かる前に描いていることがあるので、印を付けられないことを出し直す。
+    live.mapped.set(id, marked.mapped);
+    renderChanges(shell.pageTree, changeHandlers, changesToList());
+  }
 }
 
 /** 取り寄せ中のスナップショット（id → 取り寄せ）。同じものを 2 度取りに行かない。 */

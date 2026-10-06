@@ -410,6 +410,11 @@ body[data-live-view="code"] .lv-page-only {
   color: var(--ink-3);
 }
 
+.lv-changes-unmarked {
+  margin: 2px 2px 4px;
+  color: var(--note-ink);
+}
+
 .lv-change-list {
   list-style: none;
   margin: 0;
