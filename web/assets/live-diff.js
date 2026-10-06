@@ -283,11 +283,12 @@ function pairElements(left, right) {
       join(index, partner);
     }
   });
-  /** @type {((x: number, y: number) => boolean)[]} */
+  // 似かたは、両側の要素から比べる鍵を引く関数の対で表す（鍵が同じなら似ている）。
+  /** @type {Likeness[]} */
   const likenesses = [
-    (x, y) => left.signatures[x] === right.signatures[y],
-    (x, y) => left.plainSignatures[x] === right.plainSignatures[y],
-    (x, y) => left.elements[x].tag === right.elements[y].tag,
+    [(x) => left.signatures[x], (y) => right.signatures[y]],
+    [(x) => left.plainSignatures[x], (y) => right.plainSignatures[y]],
+    [(x) => left.elements[x].tag, (y) => right.elements[y].tag],
   ];
   for (let next = 0; next < queue.length; next++) {
     const [a, b] = queue[next];
@@ -299,10 +300,15 @@ function pairElements(left, right) {
 }
 
 /**
+ * 似かた 1 つ。前と今の要素の番号から、比べる鍵を引く関数の対。
+ * @typedef {[(x: number) => number | string, (y: number) => number | string]} Likeness
+ */
+
+/**
  * 2 つの兄弟の並びを、最初の似かたの最長共通部分列で組み、その間に残った並びを次の似かたで組む。
  * @param {number[]} sideA
  * @param {number[]} sideB
- * @param {((x: number, y: number) => boolean)[]} likenesses 強いものから順に
+ * @param {Likeness[]} likenesses 強いものから順に
  * @param {(a: number, b: number) => void} join
  */
 function pairInOrder(sideA, sideB, likenesses, join) {
@@ -327,10 +333,11 @@ function pairInOrder(sideA, sideB, likenesses, join) {
  * 中だけを表で解く。表が大きすぎるときは、前から順に貪欲に組む。
  * @param {number[]} a
  * @param {number[]} b
- * @param {(x: number, y: number) => boolean} equal
+ * @param {Likeness} likeness
  * @returns {[number, number][]}
  */
-function commonSubsequence(a, b, equal) {
+function commonSubsequence(a, b, [keyOfA, keyOfB]) {
+  const equal = (/** @type {number} */ x, /** @type {number} */ y) => keyOfA(x) === keyOfB(y);
   /** @type {[number, number][]} */
   const head = [];
   let start = 0;
@@ -375,14 +382,37 @@ function commonSubsequence(a, b, equal) {
       }
     }
   } else if (n > 0 && m > 0) {
+    // 前から順に、まだ使っていない位置のうち最初に鍵が合うものと組む。鍵ごとに b の位置を並べておき、
+    // 使った位置より前を捨てながら引く（全体を見渡すと、何も合わないときに数の 2 乗の時間がかかる）。
+    /** @type {Map<number | string, number[]>} */
+    const positions = new Map();
+    for (let k = 0; k < m; k++) {
+      const key = keyOfB(b[start + k]);
+      const list = positions.get(key);
+      if (list === undefined) {
+        positions.set(key, [k]);
+      } else {
+        list.push(k);
+      }
+    }
+    /** @type {Map<number | string, number>} 鍵ごとに、次に見る positions の中の場所 */
+    const cursors = new Map();
     let j = 0;
     for (let i = 0; i < n && j < m; i++) {
-      for (let k = j; k < m; k++) {
-        if (equal(a[start + i], b[start + k])) {
-          middle.push([start + i, start + k]);
-          j = k + 1;
-          break;
-        }
+      const key = keyOfA(a[start + i]);
+      const list = positions.get(key);
+      if (list === undefined) {
+        continue;
+      }
+      let cursor = cursors.get(key) ?? 0;
+      while (cursor < list.length && list[cursor] < j) {
+        cursor++;
+      }
+      cursors.set(key, cursor);
+      if (cursor < list.length) {
+        const k = list[cursor];
+        middle.push([start + i, start + k]);
+        j = k + 1;
       }
     }
   }
