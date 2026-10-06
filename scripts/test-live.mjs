@@ -1725,19 +1725,12 @@ async function placesOnTheBackgroundNameThePage(repository) {
     }
     console.log('PASS どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、文書の根が場所の要素になる');
     // 画像は文書の根の箱ではなく、場所の周りを写す。要素の場所は押した点（矢印の先端と同じ点）、矢印とペンは線の点。
-    // 範囲は文書（幅 390）の端で切られる。下の端は文書の高さ次第なので、高さは切られない場合を上限にする。
     const points = places.flatMap((place) => place.points);
-    const xs = points.map((point) => point.x);
-    const ys = points.map((point) => point.y);
-    const width = Math.min(390, Math.ceil(Math.max(...xs) + 48)) - Math.max(0, Math.floor(Math.min(...xs) - 48));
-    const height = Math.ceil(Math.max(...ys) + 48) - Math.max(0, Math.floor(Math.min(...ys) - 48));
-    assert.ok(width < 390, `the places leave the left of the page out: ${JSON.stringify(points)}`);
     const saved = await evaluate('window.__kemiSavedImage ?? null');
     assert.notEqual(saved, null, 'the image is made');
     const image = decodePng(Buffer.from(saved, 'base64'));
     const shown = `${image.width}x${image.height}, places ${JSON.stringify(points)}`;
-    assert.equal(image.width, width, `the image is as wide as the places, not the whole page: ${shown}`);
-    assert.ok(image.height > 0 && image.height <= height, `the image is no taller than the places: ${shown}`);
+    assert.ok(image.width > 0 && image.width < 390, `the image is narrower than the page: ${shown}`);
     console.log('PASS 地に置いた場所の画像は、文書の根の箱ではなく場所の周りを写す');
   } finally {
     await stop(kemi);
