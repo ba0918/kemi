@@ -1867,6 +1867,7 @@ async function draftsStayWhileSaving(repository) {
   const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
+    const earlier = await addPageComment(kemi, '/rich.html', 1280, 'an earlier comment');
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -1877,6 +1878,10 @@ async function draftsStayWhileSaving(repository) {
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
     await browser('fill', '#live-compose .lv-compose-body', 'saved as it was');
+    // 別の幅で付けたコメントのスレッドを開いておく（付けた幅へ移る操作が出る）。
+    await browser('click', '#cv-rail');
+    await browser('click', `.cv-card[data-id="${earlier.id}"]`);
+    await waitFor(`document.querySelector('#cv-thread .cv-page-width')?.disabled === false`);
     // 保存の要求を、届け直すまで止める。
     await evaluate(`(() => {
       const real = window.fetch;
@@ -1896,6 +1901,8 @@ async function draftsStayWhileSaving(repository) {
     // 画像は場所のあるページとその表示幅で作るので、保存している間は表示幅もページも変えさせない。
     const widthLocked = `JSON.stringify(Array.from(document.querySelectorAll('.lv-widths button')).every((choice) => choice.disabled) && document.querySelector('.lv-width-input').disabled)`;
     assert.equal(await evaluate(widthLocked), 'true', 'the width buttons and input are locked while saving');
+    const moving = `Array.from(document.querySelectorAll('#page-tree .lv-page-open, #page-tree .lv-width-tag, #cv-thread .cv-go'))`;
+    assert.equal(await evaluate(`${moving}.length >= 3 && ${moving}.every((choice) => choice.disabled)`), true, 'the page tree and the thread show their moves locked while saving');
     await evaluate(`(() => {
       window.__kemiPageLoads = 0;
       window.addEventListener('message', (event) => {
@@ -1912,11 +1919,13 @@ async function draftsStayWhileSaving(repository) {
     await waitFor(`${draftNumbers} === '[]'`);
     assert.equal(await evaluate(`document.querySelector('#live-compose .lv-compose-body').readOnly`), false, 'the body can be written again after saving');
     assert.equal(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('.lv-widths button')).some((choice) => choice.disabled) || document.querySelector('.lv-width-input').disabled)`), 'false', 'the width can be changed again after saving');
+    assert.equal(await evaluate(`${moving}.some((choice) => choice.disabled)`), false, 'the page tree and the thread can move again after saving');
     const comment = (await reviewJson(kemi)).comments.at(-1);
+    assert.notEqual(comment.id, earlier.id, 'the draft is saved as a new comment');
     assert.deepEqual([comment.body, comment.page.places.map((place) => place.n)], ['saved as it was', [1]]);
     await clickInPane(livePane, 40, 100);
     await waitFor(`${draftNumbers} === '[1]'`);
-    console.log('PASS ページへのコメントを保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける');
+    console.log('PASS ページへのコメントを保存している間は書きかけも表示幅もページも変えられず（ツリーとスレッドの移る操作も使えないと出る）、保存し終えるとまた書ける');
   } finally {
     await stop(kemi);
     await dev.close();

@@ -67,6 +67,7 @@ export const THEME_LABELS = {
  *   },
  *   replyDrafts: Map<string, string>,
  *   live: { page: string, width: number } | null,
+ *   liveSaving: boolean,
  *   entries: Entry[],
  *   visible: Entry[],
  *   current: Entry|null,
@@ -174,6 +175,8 @@ export const state = {
   replyDrafts: new Map(),
   // `--live` のページの見方で見ているページと表示幅。ページの見方でなければ null。
   live: null,
+  // `--live` のページへのコメントを保存している間。ページも表示幅も変えられない（live.md の R-PAGE-COMMENT）。
+  liveSaving: false,
   entries: [],
   visible: [],
   current: null,

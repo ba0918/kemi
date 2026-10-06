@@ -677,7 +677,8 @@ export function refreshPageComments() {
  * @param {any} comment
  */
 export function showPageComment(comment) {
-  if (!comment.page) {
+  // 保存している間は移れない（showPage が何もしない）ので、狭い画面のシートも閉じない。
+  if (!comment.page || live.saving) {
     return;
   }
   if (state.narrow) {
@@ -750,9 +751,7 @@ async function savePageComment() {
   if (draft.places.length === 0 || body === "" || draftElsewhere(draft, live.page, live.width)) {
     return;
   }
-  live.saving = true;
-  renderBand();
-  renderCompose();
+  setSaving(true);
   const frame = shell.liveFrame.contentWindow;
   let image = null;
   if (frame) {
@@ -792,10 +791,21 @@ async function savePageComment() {
   } catch (error) {
     live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
-    live.saving = false;
-    renderBand();
-    renderCompose();
+    setSaving(false);
   }
+}
+
+/**
+ * 保存の始まりと終わり。保存している間は書きかけ・表示幅・ページを変える操作を使えないと出す。
+ * @param {boolean} saving
+ */
+function setSaving(saving) {
+  live.saving = saving;
+  state.liveSaving = saving;
+  renderBand();
+  renderCompose();
+  renderTree();
+  renderConversation();
 }
 
 /**
@@ -1226,6 +1236,7 @@ function renderTree() {
       ...changeHandlers,
     },
     changesToList(),
+    live.saving,
   );
 }
 

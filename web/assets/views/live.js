@@ -414,8 +414,9 @@ export function renderCompareOptions(select, options, chosen) {
  *   onListed: (group: "main" | "shifted", count: number) => void,
  * }} handlers
  * @param {ChangeListState | ChangeNotice | null} changes
+ * @param {boolean} locked ページと表示幅を変えられない間（コメントの保存中）。移る操作を使えないと出す
  */
-export function renderPageTree(container, items, handlers, changes) {
+export function renderPageTree(container, items, handlers, changes, locked) {
   container.textContent = "";
   container.append(textEl("div", "lv-tree-head", `Pages ${items.length}`));
   const list = el("ul", "lv-pages");
@@ -427,6 +428,7 @@ export function renderPageTree(container, items, handlers, changes) {
     }
     const open = button("lv-page-open");
     open.title = item.page;
+    open.disabled = locked;
     open.append(textEl("span", "lv-page-path", item.page));
     open.addEventListener("click", () => handlers.onPage(item.page));
     row.append(open);
@@ -436,6 +438,7 @@ export function renderPageTree(container, items, handlers, changes) {
       tag.textContent = String(width);
       tag.dataset.width = String(width);
       tag.title = `Show ${item.page} at ${width}px`;
+    tag.disabled = locked;
       tag.addEventListener("click", () => handlers.onWidth(item.page, width));
       tags.append(tag);
     }
