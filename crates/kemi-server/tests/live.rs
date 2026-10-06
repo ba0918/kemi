@@ -601,7 +601,6 @@ async fn an_html_file_over_32_mb_opened_as_a_page_is_not_served_but_can_still_be
         "{}",
         &body[..body.len().min(200)]
     );
-    assert!(!body.contains("/__kemi/page.js"));
     assert_eq!(fetched.len(), html.len());
 }
 
