@@ -597,6 +597,8 @@ async function finishStroke() {
   if (kind !== "element" && length < MIN_STROKE) {
     return;
   }
+  // 返事を待つ間に別のページや表示幅へ移っても、場所は押したときのページのもの。
+  const { page, width } = live;
   const answer = await ask(frame, "place", PLACE_TIMEOUT, {
     kind,
     points: kind === "element" ? stroke.points.slice(0, 1) : stroke.points,
@@ -607,7 +609,7 @@ async function finishStroke() {
     return;
   }
   live.composeError = "";
-  setDraft(addPlace(live.draft, { kind, points: answer.points ?? [], elements: answer.elements ?? [] }, live.page, live.width));
+  setDraft(addPlace(live.draft, { kind, points: answer.points ?? [], elements: answer.elements ?? [] }, page, width));
 }
 
 /**
