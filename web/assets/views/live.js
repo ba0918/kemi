@@ -14,6 +14,8 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   listed: { main: number, shifted: number },
  *   unmarked: boolean,
  * }} ChangeListState
+ * 比べられないときに一覧の代わりに出す知らせ。
+ * @typedef {{ notice: string }} ChangeNotice
  */
 
 /**
@@ -287,7 +289,7 @@ export function renderCompareOptions(select, options, chosen) {
  *   onShifted: (open: boolean) => void,
  *   onListed: (group: "main" | "shifted", count: number) => void,
  * }} handlers
- * @param {ChangeListState | null} changes
+ * @param {ChangeListState | ChangeNotice | null} changes
  */
 export function renderPageTree(container, items, handlers, changes) {
   container.textContent = "";
@@ -335,7 +337,7 @@ const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-chan
  * （renderPageTree が描く）。
  * @param {HTMLElement} container renderPageTree で描いたツリー
  * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
- * @param {ChangeListState | null} changes
+ * @param {ChangeListState | ChangeNotice | null} changes
  */
 export function renderChanges(container, handlers, changes) {
   const row = container.querySelector('.lv-page[data-current="true"]');
@@ -367,11 +369,17 @@ export function renderChanges(container, handlers, changes) {
 const LISTED_CHANGES = 300;
 
 /**
- * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。
- * @param {ChangeListState} state
+ * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。比べられないときは、
+ * 一覧の代わりにそのことを出す（R-PAGE-VIEW）。
+ * @param {ChangeListState | ChangeNotice} state
  * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
  */
 function changeList(state, handlers) {
+  if ("notice" in state) {
+    const box = el("div", "lv-changes lv-changes-failed");
+    box.append(textEl("p", "lv-changes-notice", state.notice));
+    return box;
+  }
   const changes = state.list;
   const main = changes.filter((change) => change.kind !== "shifted");
   const shifted = changes.filter((change) => change.kind === "shifted");

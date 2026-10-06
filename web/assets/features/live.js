@@ -99,6 +99,10 @@ const live = {
   describedAt: -1,
   /** 記述を頼んで返事を待っている。 */
   describing: false,
+  /** 最後に頼んだ記述が返らなかった・読めなかったときの知らせ。次のきっかけ（ページの変化、読み込み、表示幅）まで頼み直さない。 */
+  describeFailure: "",
+  /** @type {Set<string>} 取り寄せられなかったスナップショット（id）。次のきっかけまで取りに行かない。 */
+  unloadable: new Set(),
   /** ページが読み込みを知らせてきた回数。 */
   pageLoads: 0,
   /** 表示中のページの変化の一覧。比べていなければ null（R-PAGE-DIFF）。 */
@@ -107,6 +111,8 @@ const live = {
   /** 変化の一覧を計算したときの比べる相手と記述。変わらなければ計算し直さない。 */
   /** @type {{ snapshot: string, now: Description } | null} */
   changesFrom: null,
+  /** 比べられないときに一覧の代わりに出す知らせ（R-PAGE-VIEW）。比べられたら空。 */
+  changesNotice: "",
   /** ずれただけを開いているか。同じページの間だけ保ち、ページを移ったら畳む。 */
   shiftedOpen: false,
   /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
@@ -277,6 +283,7 @@ function setView(view) {
  */
 function setWidth(width) {
   live.width = width;
+  forgetFailures();
   if (shell) {
     shell.widthInput.value = "";
     shell.widthError.hidden = true;
@@ -333,6 +340,7 @@ function receive(event) {
   }
   if (message.type === "changed") {
     live.pageChanges += 1;
+    forgetFailures();
     refreshChanges();
     return;
   }
@@ -359,12 +367,14 @@ function receive(event) {
   live.pageChanges += 1;
   live.pageLoads += 1;
   live.describing = false;
+  forgetFailures();
   live.reachable = message.reachable !== false;
   live.rewrote = Array.isArray(message.rewrote) ? message.rewrote.map(String) : [];
   // 移った後の文書の記述が届くまで、前のページと比べた一覧と印は出さない（前のページの一覧が新しいページの
   // 下に、前の印が新しい比べる相手の上に残らないように）。同じページを読み込み直しただけなら、新しい記述が
   // 届くまで今の一覧と印を残す: 消すと消えた要素の印が一度外れて付き直し、比べる相手の枠が作り直されて
   // スクロールが先頭に戻る。比べる相手が別のスナップショットに変われば、refreshChanges が消す。
+  // 読み込み直した文書の記述が返らなければ、残した一覧は前の文書のものなので、describeNow が比べられないことに替える。
   live.now = null;
   if (moved) {
     setChanges(null, null);
@@ -526,20 +536,32 @@ function refreshChanges() {
   if (live.changesFrom !== null && live.changesFrom.snapshot !== id) {
     setChanges(null, null);
   }
+  if (live.unloadable.has(id)) {
+    setChanges(null, null, "Not compared: the snapshot could not be loaded");
+    return;
+  }
   if (!live.descriptions.has(id)) {
     void loadSnapshot(id).then(
       () => refreshChanges(),
-      () => live.descriptions.set(id, null),
+      () => {
+        live.unloadable.add(id);
+        refreshChanges();
+      },
     );
     return;
   }
   const before = live.descriptions.get(id) ?? null;
   if (before === null) {
-    setChanges(null, null);
+    setChanges(null, null, "Not compared: the snapshot has no element description");
     return;
   }
   const now = live.now;
   if (now === null || live.describedAt !== live.pageChanges) {
+    // 返らなかった記述は描くたびには頼み直さない（大きなページでは、記述を作るたびに全要素をたどる）。
+    if (live.describeFailure !== "") {
+      setChanges(null, null, live.describeFailure);
+      return;
+    }
     void describeNow();
     return;
   }
@@ -552,21 +574,31 @@ function refreshChanges() {
   if (live.changesFrom?.snapshot === id && live.changesFrom.now === now.description) {
     return;
   }
-  let changes = null;
+  const from = { snapshot: id, now: now.description };
+  let changes;
   try {
     changes = diffDescriptions(before, now.description);
   } catch {
-    // 形の崩れた記述は比べない。一覧は出さない。
+    // 形の崩れた記述は比べない。一覧の代わりにそのことを出す。
+    setChanges(null, from, "Not compared: the element descriptions could not be read");
+    return;
   }
-  setChanges(changes, { snapshot: id, now: now.description });
+  setChanges(changes, from);
+}
+
+/** 記述やスナップショットを得られなかったことを忘れ、次に描くときに頼み直させる。 */
+function forgetFailures() {
+  live.describeFailure = "";
+  live.unloadable.clear();
 }
 
 /**
  * @param {Change[] | null} changes
  * @param {{ snapshot: string, now: Description } | null} from
+ * @param {string} [notice] 比べられないとき、一覧の代わりに出す知らせ
  */
-function setChanges(changes, from) {
-  const same = sameChanges(changes, live.changes);
+function setChanges(changes, from, notice = "") {
+  const same = sameChanges(changes, live.changes) && notice === live.changesNotice;
   live.changesFrom = from;
   if (same && changes === null) {
     return;
@@ -575,6 +607,7 @@ function setChanges(changes, from) {
   // 要素が作り直されていれば同じ番号でも別の要素を指す（同じ要素のままなら、ページは印を作り直さない）。
   if (!same) {
     live.changes = changes;
+    live.changesNotice = notice;
     if (shell) {
       renderChanges(shell.pageTree, changeHandlers, changesToList());
     }
@@ -614,7 +647,8 @@ function removedMarksOf(id) {
 
 /**
  * 動いているページに今の記述を頼む。返事を待つ間に頼み直しはしない。ページが読み込まれ直したら
- * 待つのをやめる（読み込み直す前の文書に頼んだものは返らないことがある）。
+ * 待つのをやめる（読み込み直す前の文書に頼んだものは返らないことがある）。返らない・読めないときは
+ * 比べられないことを出し、次のきっかけまで頼み直さない。
  */
 async function describeNow() {
   const frame = shell?.liveFrame.contentWindow;
@@ -632,6 +666,9 @@ async function describeNow() {
   // 動いているページの記述は postMessage で届くので縮めない（縮めて戻す手間のほうが大きい）。
   const description = unpackDescription(answer.description);
   if (description === null) {
+    live.now = null;
+    live.describeFailure = `Not compared: ${answer.error ?? "the page did not describe its elements"}`;
+    refreshChanges();
     return;
   }
   live.now = { page: pageKey(String(answer.path ?? "/")), description };
@@ -694,12 +731,12 @@ const changeHandlers = {
 };
 
 /**
- * ページのツリーに渡す、表示中のページの変化の一覧。
- * @returns {import("../views/live.js").ChangeListState | null}
+ * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。
+ * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | null}
  */
 function changesToList() {
   if (live.changes === null) {
-    return null;
+    return live.changesNotice === "" ? null : { notice: live.changesNotice };
   }
   const snapshot = live.changesFrom?.snapshot ?? "";
   const unmarked = live.mapped.get(snapshot) === false && live.changes.some((change) => change.kind === "removed");

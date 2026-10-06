@@ -410,7 +410,8 @@ body[data-live-view="code"] .lv-page-only {
   color: var(--ink-3);
 }
 
-.lv-changes-unmarked {
+.lv-changes-unmarked,
+.lv-changes-notice {
   margin: 2px 2px 4px;
   color: var(--note-ink);
 }
