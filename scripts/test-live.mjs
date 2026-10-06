@@ -33,6 +33,8 @@
 //   tbody を挟まずに組んだ表の）ページでも、消えた要素の印はスナップショットのその要素に付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
 // - CSSOM だけの変化: 構築したスタイルシートを replaceSync で差し替えると、DOM が変わらなくても変化の一覧が変わる。
+// - 表示幅の切り替え: <html> の min-width より狭い幅どうしで切り替えても（文書の幅は変わらない）、切り替えた幅の
+//   変化の一覧が出る。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
@@ -1230,6 +1232,35 @@ async function cssomChangesAreFollowed(repository) {
 }
 
 /**
+ * 表示幅を切り替えても文書の幅が変わらないページ（<html> の min-width より狭い幅どうし）でも、切り替えた幅の
+ * 変化の一覧が出る（R-PAGE-VIEW の今の表示幅での変化の一覧）。
+ */
+async function widthSwitchesWithoutResizingTheDocument(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}wide.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
+    await browser('click', '.lv-widths button[data-width="768"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(notRecorded);
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 2')} && ${changeList}?.dataset.main === '0'`);
+    await browser('click', '.lv-widths button[data-width="768"]');
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    console.log('PASS 表示幅を変えても文書の幅が変わらないページでも、切り替えた幅の変化の一覧が出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 要素の多いページ（R-PAGE-SNAPSHOT の 2 MB は HTML に掛ける）: HTML が 2 MB 未満のページは、要素の記述が
  * 大きくても取れて、変化の一覧が出る。
  */
@@ -1282,6 +1313,7 @@ try {
   await removedMarksSurviveReparsing(repository);
   await scrollingMakesNoChangeAndMarksStay(repository);
   await cssomChangesAreFollowed(repository);
+  await widthSwitchesWithoutResizingTheDocument(repository);
   await manyElementsAreRecordedAndCompared(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});

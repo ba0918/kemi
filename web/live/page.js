@@ -404,6 +404,9 @@
     // 差し替えた CSS や画像は、要素が変わった後に読み込まれて見た目が変わる。
     document.addEventListener('load', changed, true);
     document.fonts?.addEventListener('loadingdone', changed);
+    // 表示幅を切り替えると、文書の大きさが変わらなくても（<html> の min-width より狭い幅どうしなど）記述の
+    // 表示幅が変わる。レビュー画面は今の表示幅の記述を待っている。
+    window.addEventListener('resize', changed);
     watchCssom();
   }
 

@@ -33,6 +33,7 @@
 //   /scrolling.html  スクロールで位置の変わる要素を持つページ。上に張り付く見出し（#bar）、中でスクロールする箱
 //                 （#box の中の #row-1〜#row-10）、画面に固定した札（#badge）、高い余白と #start・#end の目印を持つ。
 //                 scrolling.css を書き換えると HMR の知らせで差し替える。大きさは SCROLLING_GEOMETRY
+//   /wide.html    <html> に min-width: 1024px を持つページ（表示幅を 1024px より狭くしても文書の幅が変わらない）
 //   /adopted.html  構築したスタイルシート（adoptedStyleSheets）だけで見た目を付けるページ。adopted.css を書き換えると、
 //                 DOM を変えずにそのシートの中身を replaceSync で差し替える
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
@@ -284,6 +285,11 @@ export function adoptedCss(button = CHANGING_BUTTON) {
   return `body { margin: 0; } .buy { display: block; width: 200px; height: 60px; border: 0; color: rgb(255, 255, 255); background: ${button}; }\n`;
 }
 
+PAGES['wide.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Wide</title>
+<style>html { min-width: 1024px; } body { margin: 0; } .box { height: 100px; background: rgb(200, 200, 200); }</style>
+</head><body><div class="box">Wide</div></body></html>
+`;
 PAGES['adopted.css'] = adoptedCss();
 // /__hmr.js は読まない。その HMR は CSS を差し替えるたびに <html> の属性を変え、DOM の変化として見張りに掛かる。
 PAGES['adopted.html'] = `<!doctype html>
