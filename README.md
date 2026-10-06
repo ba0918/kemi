@@ -149,8 +149,9 @@ The page has two views, switched in the band above it:
   width — 390, 768, 1280, or any width from 320 to 3840 — scaled down
   together when they do not fit. The page may change on its own (hot reload,
   a saved file). The left column lists the pages: the one shown and every
-  page with a snapshot or a mock, with the widths of its snapshots; click a
-  page or a width to go there. On a narrow screen the two are shown one at a
+  page with a snapshot, a comment, or a mock, with the widths of its
+  snapshots and comments and the number of its comments; click a page or a
+  width to go there. On a narrow screen the two are shown one at a
   time, the page list is a drawer, and the conversation is a sheet.
 - **Code**: the same diff as `--worktree`. Outside a git repository there is
   no code view; the page says why.
@@ -187,6 +188,25 @@ marked on the page: red for a main change, green for an added element, and a
 light dashed outline for one that only moved; a removed element is marked on
 the snapshot. The list and the marks follow the page as it changes. A page
 compared with a mock gets neither.
+
+You can comment on the page itself. The tools **Element**, **Arrow**, and
+**Pen** in the band put places on the running page (never on what it is
+compared with; while overlaid, a click reaches the page underneath), and
+**Interact** uses the page as usual. An element place is the element you
+click, and clicking it again takes it away; an arrow names the element at its
+head; a pen line names up to five elements it encloses, largest overlap
+first. Places are numbered from 1 on the page and in the comment box below
+it, so the comment can refer to them; removing one, undoing the last, or
+pressing Esc while drawing never renumbers the rest. Saving also makes a PNG
+of the area with the places drawn on it, inside the page and without driving
+the browser, so fonts and some CSS details may differ from the real page. A
+saved comment keeps its places: the conversation panel shows its URL, width,
+and number of places, the page shows its places as quiet numbered marks at
+that URL and width (stronger while its thread is open), and a comment left
+at another width shows that width and switches to it when pressed. Only its
+text can be edited. On a narrow screen, places are drawn with a finger and
+elements chosen by tapping. The agent gets the places and the image path
+through `kemi wait`; see `page` in the [submit contract](#submit-contract).
 
 **Side by side** puts the two next to each other. **Overlay** lays what the
 page is compared with over the page at the same width, with an opacity
