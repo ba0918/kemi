@@ -22,6 +22,9 @@
 //                 外部の画像へ referrer を送るかの確かめ）
 //   /tall.html    高さ 3000px の色の帯（スクロールをそろえる確かめに使う。#band-<n> で移れる）
 //   /other.html   別のページ（ページの移動に使う）
+//   /changing.html  同じ URL のまま中身が変わるページ（差分の確かめに使う）。兄弟の並び（#items の li）と、
+//                 その下のボタン（#buy）と文（.note）を持つ。changing.css を書き換えると HMR の知らせで CSS を
+//                 差し替え、changing.html を書き換えると読み込み直さずに body を差し替える。中身は CHANGING_*
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -44,6 +47,14 @@ socket.addEventListener('message', (event) => {
     }
   }
   document.documentElement.dataset.hmr = String(change.version);
+});
+// HTML の書き換えは、読み込み直さずに body を差し替える（フレームワークの HMR が DOM を直すのに当たる）。
+socket.addEventListener('message', async (event) => {
+  const change = JSON.parse(event.data);
+  if (change.type !== 'html' || change.path !== location.pathname) return;
+  const html = await (await fetch(location.href, { cache: 'no-store' })).text();
+  document.body.innerHTML = new DOMParser().parseFromString(html, 'text/html').body.innerHTML;
+  document.documentElement.dataset.hmrHtml = String(change.version);
 });
 socket.addEventListener('open', () => { document.documentElement.dataset.hmrConnected = 'true'; });
 `;
@@ -106,6 +117,45 @@ ${Array.from({ length: 10 }, (_, index) => `<div class="band" id="band-${index +
 <body><h1 id="other">Other page</h1><a id="to-index" href="/">Back</a></body></html>
 `,
 };
+
+/** /changing.html の兄弟の並び。 */
+export const CHANGING_ITEMS = ['one', 'two', 'three', 'four'];
+
+/** /changing.html のボタンの背景色。 */
+export const CHANGING_BUTTON = 'rgb(49, 89, 214)';
+
+/**
+ * /changing.html の中身。`items` の順に兄弟を並べる。
+ * @param {string[]} [items]
+ */
+export function changingPage(items = CHANGING_ITEMS) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Changing</title>
+<link rel="stylesheet" href="/changing.css">
+<script type="module" src="/__hmr.js"></script>
+</head><body>
+<ul id="items">${items.map((item) => `<li class="item">${item}</li>`).join('')}</ul>
+<button id="buy" class="buy">Buy</button>
+<p class="note">Below the button</p>
+</body></html>
+`;
+}
+
+/**
+ * /changing.html の CSS。`button` はボタンの背景色。
+ * @param {string} [button]
+ */
+export function changingCss(button = CHANGING_BUTTON) {
+  return `body { margin: 0; font: 16px sans-serif; }
+ul { margin: 0; padding: 0; list-style: none; }
+.item { height: 30px; }
+.buy { display: block; width: 200px; height: 60px; border: 0; color: rgb(255, 255, 255); background: ${button}; }
+.note { margin: 0; height: 40px; }
+`;
+}
+
+PAGES['changing.html'] = changingPage();
+PAGES['changing.css'] = changingCss();
 
 /** /resources.html の箱。名前・左上の位置・色。色の画像は `<名前>.svg` で配る。 */
 export const RESOURCE_BOXES = [
@@ -260,9 +310,10 @@ export async function startDevServer({ port = 0, dir } = {}) {
     socket.on('close', () => clients.delete(client));
   });
   const watcher = watch(root, (_, file) => {
-    if (file !== 'style.css') return;
+    const type = file?.endsWith('.css') ? 'css' : file?.endsWith('.html') ? 'html' : null;
+    if (!type) return;
     version += 1;
-    for (const client of clients) client.send(JSON.stringify({ type: 'css', path: '/style.css', version }));
+    for (const client of clients) client.send(JSON.stringify({ type, path: `/${file}`, version }));
   });
   await new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(undefined)));
   const address = server.address();
