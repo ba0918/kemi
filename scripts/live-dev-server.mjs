@@ -33,6 +33,8 @@
 //   /scrolling.html  スクロールで位置の変わる要素を持つページ。上に張り付く見出し（#bar）、中でスクロールする箱
 //                 （#box の中の #row-1〜#row-10）、画面に固定した札（#badge）、高い余白と #start・#end の目印を持つ。
 //                 scrolling.css を書き換えると HMR の知らせで差し替える。大きさは SCROLLING_GEOMETRY
+//   /adopted.html  構築したスタイルシート（adoptedStyleSheets）だけで見た目を付けるページ。adopted.css を書き換えると、
+//                 DOM を変えずにそのシートの中身を replaceSync で差し替える
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
 //                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
@@ -273,6 +275,31 @@ export function manyCss(button = CHANGING_BUTTON) {
 }
 
 PAGES['many.css'] = manyCss();
+
+/**
+ * /adopted.css の中身（/adopted.html が構築したスタイルシートに入れる）。`button` はボタンの背景色。
+ * @param {string} [button]
+ */
+export function adoptedCss(button = CHANGING_BUTTON) {
+  return `body { margin: 0; } .buy { display: block; width: 200px; height: 60px; border: 0; color: rgb(255, 255, 255); background: ${button}; }\n`;
+}
+
+PAGES['adopted.css'] = adoptedCss();
+// /__hmr.js は読まない。その HMR は CSS を差し替えるたびに <html> の属性を変え、DOM の変化として見張りに掛かる。
+PAGES['adopted.html'] = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Adopted</title>
+<script type="module">
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(${JSON.stringify(adoptedCss())});
+document.adoptedStyleSheets = [sheet];
+const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/__hmr');
+socket.addEventListener('message', async (event) => {
+  if (JSON.parse(event.data).path !== '/adopted.css') return;
+  sheet.replaceSync(await (await fetch('/adopted.css', { cache: 'no-store' })).text());
+});
+</script>
+</head><body><button id="buy" class="buy">Buy</button></body></html>
+`;
 
 /** @param {number} cards */
 function manyPage(cards) {

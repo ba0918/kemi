@@ -32,6 +32,7 @@
 //   インラインのスタイルを止める CSP のページでも印が付く。HTML として読み直すと要素の並びが変わる（スクリプトが
 //   tbody を挟まずに組んだ表の）ページでも、消えた要素の印はスナップショットのその要素に付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
+// - CSSOM だけの変化: 構築したスタイルシートを replaceSync で差し替えると、DOM が変わらなくても変化の一覧が変わる。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
@@ -44,7 +45,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, changingCss, changingPage, manyCss, scrollingCss, startDevServer, tablePage } from './live-dev-server.mjs';
+import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer, tablePage } from './live-dev-server.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -1202,6 +1203,33 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
 }
 
 /**
+ * DOM を変えずに CSSOM だけで見た目が変わるページ（構築したスタイルシートの replaceSync）でも、変化の一覧が
+ * 今のページに合わせて変わる（R-PAGE-DIFF、R-PAGE-VIEW の変わったところに印）。
+ */
+async function cssomChangesAreFollowed(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}adopted.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
+    // 見張りを始めた直後の知らせ（ResizeObserver は始めに必ず一度知らせる）を待ってから変える。先に変えると、
+    // その知らせで比べ直されて、CSSOM の変化を見張れていなくても一覧が変わってしまう。
+    await new Promise((done) => setTimeout(done, 1000));
+    await writeFile(join(dev.dir, 'adopted.css'), adoptedCss('rgb(214, 69, 69)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    const recolored = await mainChanges();
+    assert.equal(recolored[0].kind, 'visual', JSON.stringify(recolored));
+    assert.match(recolored[0].text, /rgb\(49, 89, 214\)[\s\S]*rgb\(214, 69, 69\)/);
+    console.log('PASS 構築したスタイルシートを replaceSync で差し替えてボタンの背景色を変えると、DOM が変わらなくても主な変化に入る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 要素の多いページ（R-PAGE-SNAPSHOT の 2 MB は HTML に掛ける）: HTML が 2 MB 未満のページは、要素の記述が
  * 大きくても取れて、変化の一覧が出る。
  */
@@ -1253,6 +1281,7 @@ try {
   await snapshotsAreTakenUnderTrustedTypes(repository);
   await removedMarksSurviveReparsing(repository);
   await scrollingMakesNoChangeAndMarksStay(repository);
+  await cssomChangesAreFollowed(repository);
   await manyElementsAreRecordedAndCompared(repository);
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});

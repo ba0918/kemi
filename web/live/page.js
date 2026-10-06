@@ -404,6 +404,63 @@
     // 差し替えた CSS や画像は、要素が変わった後に読み込まれて見た目が変わる。
     document.addEventListener('load', changed, true);
     document.fonts?.addEventListener('loadingdone', changed);
+    watchCssom();
+  }
+
+  /**
+   * CSSOM だけで見た目を変える操作（構築したスタイルシートの replaceSync、既存のシートへの insertRule、規則の
+   * スタイルの書き換えなど）は DOM を変えず、ほかの見張りに掛からない。その操作を包んで、変わったと知らせる。
+   * 要素の style 属性のスタイル（parentRule が無い）は DOM の変化として見張っているので、ここでは知らせない
+   * （印の層のスタイルを入れるたびに知らせて、付け直しが繰り返さないように）。
+   * 規則のスタイルに `rule.style.color = …` と代入するもの、adoptedStyleSheets の配列に push するものは包めない。
+   */
+  function watchCssom() {
+    /**
+     * @param {any} owner
+     * @param {string} name
+     * @param {(target: any) => boolean} [applies]
+     */
+    const wrapMethod = (owner, name, applies) => {
+      const original = owner?.[name];
+      if (typeof original !== 'function') return;
+      owner[name] = function (/** @type {unknown[]} */ ...args) {
+        const result = original.apply(this, args);
+        if (!applies || applies(this)) {
+          changed();
+          // replace は中身を読み終えてから効く。
+          if (result instanceof Promise) result.then(changed, () => {});
+        }
+        return result;
+      };
+    };
+    /**
+     * @param {any} owner
+     * @param {string} name
+     * @param {(target: any) => boolean} [applies]
+     */
+    const wrapSetter = (owner, name, applies) => {
+      const descriptor = owner && Object.getOwnPropertyDescriptor(owner, name);
+      const set = descriptor?.set;
+      if (!descriptor || !set) return;
+      Object.defineProperty(owner, name, {
+        ...descriptor,
+        set(/** @type {unknown} */ value) {
+          set.call(this, value);
+          if (!applies || applies(this)) changed();
+        },
+      });
+    };
+    /** @param {CSSStyleDeclaration} declaration */
+    const inRule = (declaration) => declaration.parentRule !== null;
+    for (const name of ['insertRule', 'deleteRule', 'addRule', 'removeRule', 'replace', 'replaceSync']) {
+      wrapMethod(globalThis.CSSStyleSheet?.prototype, name);
+    }
+    for (const name of ['insertRule', 'deleteRule']) wrapMethod(globalThis.CSSGroupingRule?.prototype, name);
+    wrapSetter(globalThis.StyleSheet?.prototype, 'disabled');
+    wrapSetter(Document.prototype, 'adoptedStyleSheets');
+    wrapSetter(ShadowRoot.prototype, 'adoptedStyleSheets');
+    for (const name of ['setProperty', 'removeProperty']) wrapMethod(CSSStyleDeclaration.prototype, name, inRule);
+    wrapSetter(CSSStyleDeclaration.prototype, 'cssText', inRule);
   }
 
   /** @param {ShadowRoot} root */
