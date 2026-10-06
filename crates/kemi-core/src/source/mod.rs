@@ -5,6 +5,7 @@ pub mod git;
 mod live;
 pub mod manifest;
 mod origin;
+pub mod work_tree;
 
 pub use frozen::FrozenSource;
 pub use live::LiveSource;
@@ -96,6 +97,10 @@ pub trait ReviewSource: Send + Sync {
     /// 監視する「新側の供給元」のパス（R-LIVE）。空なら監視しない。
     fn watch_paths(&self) -> Vec<PathBuf> {
         Vec::new()
+    }
+    /// 全体を見張る作業ツリー（R-LIVE の worktree）。None なら `watch_paths` だけを見張る。
+    fn work_tree(&self) -> Option<work_tree::WorkTree> {
+        None
     }
     /// リポジトリの中のファイルを、描画の時点で読めるか（R-RENDER の相対パス画像）。
     /// git の入力モードだけが真で、manifest と復元は偽。

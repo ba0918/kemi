@@ -11,6 +11,7 @@ use crate::domain::focus::FocusTargets;
 use crate::domain::noise::{NoiseInput, classify, linguist_generated};
 use crate::domain::review::{FileEntry, Group, ReviewMeta, Side, Status};
 use crate::source::origin::{OriginPaths, OriginRange, file_origin};
+use crate::source::work_tree::WorkTree;
 use crate::source::{FileOrigin, Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError};
 
 /// 内容を読まずに統計だけを出す untracked の上限（D6）。
@@ -513,6 +514,13 @@ impl ReviewSource for GitSource {
         }
     }
 
+    fn work_tree(&self) -> Option<WorkTree> {
+        match &self.mode {
+            GitMode::Worktree => Some(WorkTree::new(self.repo.clone())),
+            GitMode::Staged | GitMode::Range { .. } => None,
+        }
+    }
+
     fn reads_repository(&self) -> bool {
         true
     }
@@ -836,13 +844,13 @@ pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
 
 /// `path_from_bytes` の逆。運んだパスを git が返したときのバイト列に戻す。
 #[cfg(unix)]
-fn path_bytes(path: &Path) -> Vec<u8> {
+pub(crate) fn path_bytes(path: &Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
 }
 
 #[cfg(not(unix))]
-fn path_bytes(path: &Path) -> Vec<u8> {
+pub(crate) fn path_bytes(path: &Path) -> Vec<u8> {
     path.to_string_lossy().into_owned().into_bytes()
 }
 
@@ -2041,6 +2049,19 @@ mod watch_tests {
         source.review().unwrap();
 
         assert_eq!(source.watch_paths(), vec![repo.path.join("a.txt")]);
+    }
+
+    #[test]
+    fn only_the_worktree_mode_watches_its_work_tree() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+
+        let worktree = GitSource::new(repo.path.clone(), GitMode::Worktree);
+        let staged = GitSource::new(repo.path.clone(), GitMode::Staged);
+
+        assert_eq!(worktree.work_tree(), Some(WorkTree::new(repo.path.clone())));
+        assert_eq!(staged.work_tree(), None);
     }
 
     #[test]
