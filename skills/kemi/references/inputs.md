@@ -102,8 +102,8 @@ The resumed page shows the diff as frozen when the review started, so the workin
 repository may have moved on; only origin notes then read "Cannot determine". A `--live` review is
 the exception: resuming it reads the working tree as it is then and connects to the same page again
 ([above](#reviewing-a-running-page)). `--resume` is not an input mode to combine with the others:
-it takes only `--port`, `--bind`, `--no-open`, and `--serve`, and any input mode or `--digest`
-beside it is a usage error (exit `2`). Without an id and without a terminal it prints the resumable
+it takes only `--port`, `--bind`, `--no-open`, `--serve`, and `--live-port`, and any input mode or
+`--digest` beside it is a usage error (exit `2`). Without an id and without a terminal it prints the resumable
 sessions as tab-separated lines (id, last update, workspace, mode, seen/total, newest first) and
 exits `0`, or exits `2` with nothing on stdout when there are none.
 
