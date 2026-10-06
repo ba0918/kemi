@@ -354,6 +354,10 @@ function receive(event) {
   live.describing = false;
   live.reachable = message.reachable !== false;
   live.rewrote = Array.isArray(message.rewrote) ? message.rewrote.map(String) : [];
+  // 読み込み直した・移った後の文書の記述が届くまで、前の文書と比べた一覧と印は出さない（前のページの
+  // 一覧が新しいページの下に、前の印が新しい比べる相手の上に残らないように）。
+  live.now = null;
+  setChanges(null, null);
   render();
   takeStartSnapshot();
 }

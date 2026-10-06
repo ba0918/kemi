@@ -23,7 +23,8 @@
 // - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
 // - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
 //   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色つきで主な変化に入る。
-//   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。幅 390px では引き出しの中。
+//   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
+//   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
@@ -849,6 +850,27 @@ async function changeListFollowsThePage(repository) {
     assert.equal(await evaluate(`document.querySelectorAll('#page-tree .lv-changes').length`), 1);
     assert.equal(await evaluate(`document.querySelector('#page-tree .lv-page[data-page="/other.html"] .lv-changes')`), null);
     console.log('PASS 2 つのページにスナップショットがあるとき、変化の数は表示中のページにだけ出る');
+
+    // 変化のあるページから別のページへ移ると、前のページの一覧を新しいページの下に出さない。
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    await evaluate(`(() => {
+      window.__kemiListed = [];
+      const record = () => {
+        const current = document.querySelector('#page-tree .lv-page[data-current="true"]');
+        const changes = current?.querySelector('.lv-changes');
+        if (changes) window.__kemiListed.push(current.dataset.page + ' ' + changes.dataset.main);
+      };
+      new MutationObserver(record).observe(document.querySelector('#page-tree'), { childList: true, subtree: true, attributes: true });
+      return true;
+    })()`);
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${new URL(kemi.live).origin}/other.html`)}; true`);
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html' && ${changeList}?.dataset.main === '0'`);
+    const listed = JSON.parse(await evaluate(`JSON.stringify(window.__kemiListed)`));
+    assert.ok(!listed.includes('/other.html 1'), `the list of the previous page is not shown under the new one: ${JSON.stringify(listed)}`);
+    await browser('click', '#page-tree .lv-page[data-page="/changing.html"] .lv-page-open');
+    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/changing.html' && ${changeList}?.dataset.main === '1'`);
+    console.log('PASS 変化のあるページから別のページへ移ると、前のページの変化の一覧を新しいページの下に出さない');
 
     await browser('set', 'viewport', '390', '800');
     await waitFor(`getComputedStyle(document.querySelector('#page-tree')).visibility === 'hidden'`);
