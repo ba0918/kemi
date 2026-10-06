@@ -32,6 +32,7 @@
 //   インラインのスタイルを止める CSP のページでも印が付く。スクロールしただけでは変化にならず、印は
 //   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
+//   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -1165,6 +1166,14 @@ async function manyElementsAreRecordedAndCompared(repository) {
     await writeFile(join(dev.dir, 'many.css'), manyCss('rgb(214, 69, 69)'));
     await waitFor(`${changeList}?.dataset.main === '${cards}'`, 120000);
     console.log(`PASS HTML が 2 MB 未満で要素が ${cards * 4} を超えるページのスナップショットが取れ、変化の一覧が出る`);
+    // 一覧は一度に全部は描かないが、続きを出す操作で残りもすべて見られる。
+    const listed = await evaluate(`(() => {
+      const list = ${changeList};
+      for (let more = list.querySelector('.lv-change-more:not([hidden]) button'); more; more = list.querySelector('.lv-change-more:not([hidden]) button')) more.click();
+      return list.querySelectorAll('.lv-change-main .lv-change').length;
+    })()`);
+    assert.equal(listed, cards, 'every change can be listed');
+    console.log('PASS 変化が多いときも、続きを出す操作で一覧の残りをすべて見られる');
   } finally {
     await stop(kemi);
     await dev.close();

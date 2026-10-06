@@ -470,6 +470,17 @@ body[data-live-view="code"] .lv-page-only {
   color: var(--ink-3);
 }
 
+.lv-change-show {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: var(--panel);
+  cursor: pointer;
+}
+
 .lv-shifted summary {
   margin: 4px 2px;
   font-size: 12px;

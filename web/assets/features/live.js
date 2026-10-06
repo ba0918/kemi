@@ -107,6 +107,8 @@ const live = {
   changesFrom: null,
   /** ずれただけを開いているか。同じページの間だけ保ち、ページを移ったら畳む。 */
   shiftedOpen: false,
+  /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
+  listed: { main: 0, shifted: 0 },
 };
 
 /** @type {import("../views/live.js").LiveShell | null} */
@@ -303,6 +305,7 @@ function openPage(page) {
   }
   if (page !== live.page) {
     live.shiftedOpen = false;
+    live.listed = { main: 0, shifted: 0 };
   }
   live.page = page;
   shell.liveFrame.src = live.origin + page;
@@ -347,6 +350,7 @@ function receive(event) {
   if (page !== live.page) {
     live.refNotice = "";
     live.shiftedOpen = false;
+    live.listed = { main: 0, shifted: 0 };
   }
   live.page = page;
   live.pageChanges += 1;
@@ -677,8 +681,11 @@ function renderTree() {
       onShifted: (open) => {
         live.shiftedOpen = open;
       },
+      onListed: (group, count) => {
+        live.listed[group] = count;
+      },
     },
-    live.changes === null ? null : { list: live.changes, shiftedOpen: live.shiftedOpen },
+    live.changes === null ? null : { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed },
   );
 }
 

@@ -271,8 +271,13 @@ export function renderCompareOptions(select, options, chosen) {
  * そのページへ移る。表示中のページの下には、比べた結果があれば変化の一覧を出す。
  * @param {HTMLElement} container
  * @param {import("../live-model.js").PageTreeItem[]} items
- * @param {{ onPage: (page: string) => void, onWidth: (page: string, width: number) => void, onShifted: (open: boolean) => void }} handlers
- * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean } | null} changes
+ * @param {{
+ *   onPage: (page: string) => void,
+ *   onWidth: (page: string, width: number) => void,
+ *   onShifted: (open: boolean) => void,
+ *   onListed: (group: "main" | "shifted", count: number) => void,
+ * }} handlers
+ * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean, listed: { main: number, shifted: number } } | null} changes
  */
 export function renderPageTree(container, items, handlers, changes) {
   container.textContent = "";
@@ -303,23 +308,26 @@ export function renderPageTree(container, items, handlers, changes) {
     }
     row.append(tags);
     if (item.current && changes !== null) {
-      row.append(changeList(changes.list, changes.shiftedOpen, handlers.onShifted));
+      row.append(changeList(changes, handlers));
     }
     list.append(row);
   }
   container.append(list);
 }
 
-/** 一覧に並べる項目の上限。超えた分は数だけ出す（大きなページで描き直しが重くならないように）。 */
+/**
+ * 一覧に一度に足す項目の数。大きなページで描き直しが重くならないよう、最初はこの数だけ並べ、
+ * 残りは続きを出す操作で足す。
+ */
 const LISTED_CHANGES = 300;
 
 /**
  * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。
- * @param {import("../live-diff.js").Change[]} changes
- * @param {boolean} shiftedOpen
- * @param {(open: boolean) => void} onShifted
+ * @param {{ list: import("../live-diff.js").Change[], shiftedOpen: boolean, listed: { main: number, shifted: number } }} state
+ * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
  */
-function changeList(changes, shiftedOpen, onShifted) {
+function changeList(state, handlers) {
+  const changes = state.list;
   const main = changes.filter((change) => change.kind !== "shifted");
   const shifted = changes.filter((change) => change.kind === "shifted");
   const box = el("div", "lv-changes");
@@ -336,20 +344,22 @@ function changeList(changes, shiftedOpen, onShifted) {
     return box;
   }
   if (main.length > 0) {
-    box.append(changeItems("lv-change-main", main));
+    box.append(changeItems("lv-change-main", main, state.listed.main, (count) => handlers.onListed("main", count)));
   }
   if (shifted.length > 0) {
     const details = /** @type {HTMLDetailsElement} */ (el("details", "lv-shifted"));
-    details.open = shiftedOpen;
+    const shiftedItems = () =>
+      changeItems("lv-change-shifted", shifted, state.listed.shifted, (count) => handlers.onListed("shifted", count));
+    details.open = state.shiftedOpen;
     details.append(textEl("summary", "", `Shifted only ${shifted.length}`));
-    if (shiftedOpen) {
-      details.append(changeItems("lv-change-shifted", shifted));
+    if (state.shiftedOpen) {
+      details.append(shiftedItems());
     }
     // 畳んでいる間は項目を作らない（ずれただけは数が多くなりやすい）。
     details.addEventListener("toggle", () => {
-      onShifted(details.open);
+      handlers.onShifted(details.open);
       if (details.open && !details.querySelector(".lv-change-shifted")) {
-        details.append(changeItems("lv-change-shifted", shifted));
+        details.append(shiftedItems());
       }
     });
     box.append(details);
@@ -358,22 +368,42 @@ function changeList(changes, shiftedOpen, onShifted) {
 }
 
 /**
+ * 変化の項目を `listed` 個まで並べ、残りがあれば続きを出す操作を置く。押すと次の LISTED_CHANGES 個を足し、
+ * 並べた数を `onListed` に知らせる（描き直しても同じ数まで並べるため）。
  * @param {string} className
  * @param {import("../live-diff.js").Change[]} changes
+ * @param {number} listed
+ * @param {(count: number) => void} onListed
  */
-function changeItems(className, changes) {
+function changeItems(className, changes, listed, onListed) {
   const list = el("ul", `lv-change-list ${className}`);
-  for (const change of changes.slice(0, LISTED_CHANGES)) {
-    const item = el("li", "lv-change");
-    item.dataset.kind = change.kind;
-    const what = el("span", "lv-change-what");
-    what.append(...changeWhat(change));
-    item.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", change.label));
-    list.append(item);
-  }
-  if (changes.length > LISTED_CHANGES) {
-    list.append(textEl("li", "lv-change-more", `${changes.length - LISTED_CHANGES} more`));
-  }
+  let shown = 0;
+  const more = el("li", "lv-change-more");
+  const remaining = textEl("span", "", "");
+  const showMore = button("lv-change-show");
+  showMore.textContent = "Show more";
+  more.append(remaining, showMore);
+  /** @param {number} count */
+  const showUpTo = (count) => {
+    const items = changes.slice(shown, count).map((change) => {
+      const item = el("li", "lv-change");
+      item.dataset.kind = change.kind;
+      const what = el("span", "lv-change-what");
+      what.append(...changeWhat(change));
+      item.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", change.label));
+      return item;
+    });
+    more.before(...items);
+    shown = Math.min(count, changes.length);
+    remaining.textContent = `${changes.length - shown} more `;
+    more.hidden = shown >= changes.length;
+  };
+  list.append(more);
+  showUpTo(Math.max(listed, LISTED_CHANGES));
+  showMore.addEventListener("click", () => {
+    showUpTo(shown + LISTED_CHANGES);
+    onListed(shown);
+  });
   return list;
 }
 
