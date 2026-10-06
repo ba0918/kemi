@@ -434,8 +434,11 @@
   const ENCLOSED_LIMIT = 5;
   /** 要素の文字として渡す長さの上限。 */
   const TEXT_LIMIT = 200;
-  /** 場所の要素として選ばない要素（ページ全体を覆う）。 */
-  const UNPLACED = new Set(['html', 'body']);
+  /**
+   * ペンで囲んだ範囲と重なる要素に入れない要素（ページ全体を覆い、囲んだ要素を押し出す）。押した・指した位置の要素や、
+   * 範囲を含む一番内側の要素としては選ぶ（どの要素にも掛からない地では、これが場所の要素になる）。
+   */
+  const PAGE_ROOTS = new Set(['html', 'body']);
 
   /**
    * 画面の座標のその点にある要素。開いている shadow root の中まで下りる。
@@ -518,8 +521,9 @@
 
   /**
    * ペンで囲んだ範囲（線の外接矩形）と重なる要素を、重なる面積の大きい順に上限まで。画面の座標で比べる。範囲を丸ごと
-   * 含む要素（ページを包む入れ物など）は、重なる面積が範囲いっぱいになって囲んだ要素を押し出すので除く。除くと何も
-   * 残らない（1 つの要素の内側だけを囲んだ）ときは、範囲を含む一番内側の要素 1 つにする。
+   * 含む要素（ページを包む入れ物など）と、文書の根（html と body）は、重なる面積が範囲いっぱいになって囲んだ要素を
+   * 押し出すので除く。除くと何も残らない（1 つの要素の内側だけか、地だけを囲んだ）ときは、範囲を含む一番内側の要素
+   * 1 つにする。
    * @param {{ x: number, y: number }[]} points 画面の座標
    */
   function enclosedElements(points) {
@@ -532,7 +536,6 @@
     /** @type {{ element: Element | null, area: number }} */
     const innermost = { element: null, area: Infinity };
     eachPageElement((element) => {
-      if (UNPLACED.has(element.localName)) return;
       const rect = element.getBoundingClientRect();
       if (rect.left <= left && rect.top <= top && rect.right >= right && rect.bottom >= bottom) {
         // 文書の順にたどるので、面積が同じなら後に来る（内側の）要素を選ぶ。
@@ -540,11 +543,13 @@
         if (area <= innermost.area) Object.assign(innermost, { element, area });
         return;
       }
+      if (PAGE_ROOTS.has(element.localName)) return;
       const width = Math.min(right, rect.right) - Math.max(left, rect.left);
       const height = Math.min(bottom, rect.bottom) - Math.max(top, rect.top);
       if (width > 0 && height > 0) found.push({ element, area: width * height });
     });
-    if (found.length === 0) return innermost.element ? [placeElement(innermost.element)] : [];
+    // 文書の根の箱より外（中身の短いページの下の地）でも、地は文書の根のものとして描かれる。
+    if (found.length === 0) return [placeElement(innermost.element ?? document.documentElement)];
     found.sort((a, b) => b.area - a.area);
     return found.slice(0, ENCLOSED_LIMIT).map(({ element }) => placeElement(element));
   }
@@ -567,7 +572,7 @@
     }
     const at = kind === 'arrow' ? points[points.length - 1] : points[0];
     const element = elementAt(at.x, at.y);
-    const elements = element && !UNPLACED.has(element.localName) ? [placeElement(element)] : [];
+    const elements = element ? [placeElement(element)] : [];
     if (kind === 'arrow') return { kind, points: points.map(toDocument), elements };
     if (elements.length === 0) return { error: 'no element there' };
     return { kind: 'element', points: [], elements };

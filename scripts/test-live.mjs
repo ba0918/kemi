@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
 //   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけを変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になる。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけを変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
@@ -1667,6 +1667,45 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
 }
 
 /**
+ * ページの地の上の場所（R-PAGE-COMMENT）: どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、その位置の
+ * 要素（地では文書の根）が場所の要素になり、座標だけにはならない。
+ */
+async function placesOnTheBackgroundNameThePage(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await new Promise((done) => setTimeout(done, 500));
+    // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない地。
+    await chooseTool('element');
+    await clickInPane(livePane, 350, 450);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await chooseTool('arrow');
+    await dragInPane(livePane, [[200, 360], [300, 420], [350, 450]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await chooseTool('pen');
+    await dragInPane(livePane, [[320, 360], [380, 360], [380, 500], [320, 500], [320, 362]]);
+    await waitFor(`${draftNumbers} === '[1,2,3]'`);
+    await savePageCommentInThePage('the empty space');
+    const places = (await reviewJson(kemi)).comments.at(-1).page.places;
+    const root = /^html( > body)?$/;
+    for (const place of places) {
+      assert.equal(place.elements.length, 1, `place ${place.n} (${place.kind}) names one element: ${JSON.stringify(place.elements)}`);
+      assert.match(place.elements[0].selector, root, `place ${place.n} (${place.kind}) names the page`);
+    }
+    console.log('PASS どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、文書の根が場所の要素になる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 書きかけのコメントの場所の URL と表示幅（R-PAGE-COMMENT）: 別の表示幅では場所が足されず、書きかけの URL と表示幅に
  * 戻る操作で戻ると場所を足せ、保存したコメントはその表示幅を持つ。
  */
@@ -2110,6 +2149,7 @@ try {
   await manyElementsAreRecordedAndCompared(repository);
   await pageCommentPlacesArePutAndSaved(repository);
   await penPlacesLeaveOutWhatContainsTheLine(repository);
+  await placesOnTheBackgroundNameThePage(repository);
   await draftPlacesStayAtTheirWidth(repository);
   await latePlacesKeepTheirWidth(repository);
   await draftsStayWhileSaving(repository);
