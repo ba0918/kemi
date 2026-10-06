@@ -582,6 +582,27 @@ async fn a_file_page_in_another_encoding_is_served_with_its_own_bytes_and_declar
 }
 
 #[tokio::test]
+async fn an_html_file_over_32_mb_opened_as_a_page_is_not_served_but_can_still_be_fetched() {
+    let root = Scratch::new("large");
+    let mut html = b"<html><body><p>large page</p>".to_vec();
+    html.resize(32 * 1024 * 1024 + 1, b' ');
+    std::fs::write(root.0.join("page.html"), &html).unwrap();
+    let running = start_file_review(&root, "page.html").await;
+
+    let page = open_as_page(&running, "/page.html").await;
+    let fetched = get_as(&running, "/page.html", "empty").await;
+
+    let body = page.text().await.unwrap();
+    assert!(
+        !body.contains("large page"),
+        "{}",
+        &body[..body.len().min(200)]
+    );
+    assert!(!body.contains("/__kemi/page.js"));
+    assert_eq!(fetched.len(), html.len());
+}
+
+#[tokio::test]
 async fn a_file_review_needs_the_relay_cookie_too() {
     let root = Scratch::new("cookie");
     root.write("page.html", "<p>file page</p>");

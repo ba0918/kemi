@@ -11,7 +11,16 @@ use tokio::net::TcpStream;
 use super::{LiveState, LiveTarget, rewrite};
 
 /// 書き換える HTML の上限。これより大きい HTML は書き換えずに断る。
-const HTML_LIMIT: usize = 32 * 1024 * 1024;
+pub(super) const HTML_LIMIT: usize = 32 * 1024 * 1024;
+
+/// ページとして開かれる HTML が上限を超えたときの応答。
+pub(super) fn too_large() -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        "kemi: the page is too large to relay",
+    )
+        .into_response()
+}
 
 /// 開発サーバにつながるか、配るファイルがあるか（待っているページが確かめる）。
 pub(super) async fn reachable(state: &LiveState, path: Option<&str>) -> bool {
@@ -94,13 +103,7 @@ pub(super) async fn forward(
     }
     let bytes = match axum::body::to_bytes(Body::new(body), HTML_LIMIT).await {
         Ok(bytes) => bytes,
-        Err(_) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                "kemi: the page is too large to relay",
-            )
-                .into_response();
-        }
+        Err(_) => return too_large(),
     };
     let injected = rewrite::inject_script(
         &bytes,

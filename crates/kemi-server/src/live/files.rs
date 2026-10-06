@@ -66,6 +66,10 @@ pub(super) async fn serve(state: &LiveState, root: &Path, request: Request) -> R
         }
         return not_found();
     };
+    let page = is_html(&relative) && relay::opened_as_page(request.headers());
+    if page && std::fs::metadata(&real).is_ok_and(|meta| meta.len() > relay::HTML_LIMIT as u64) {
+        return relay::too_large();
+    }
     let reading = real.clone();
     let bytes = match tokio::task::spawn_blocking(move || std::fs::read(reading)).await {
         Ok(Ok(bytes)) => bytes,
@@ -78,7 +82,7 @@ pub(super) async fn serve(state: &LiveState, root: &Path, request: Request) -> R
         (header::CONTENT_TYPE, content_type(&relative, &bytes)),
         (header::CACHE_CONTROL, "no-store".to_string()),
     ];
-    if is_html(&relative) && relay::opened_as_page(request.headers()) {
+    if page {
         let host = relay::request_host(request.headers());
         let tag = relay::script_tag(state, &host, &[], true, None);
         return (headers, rewrite::inject_script(&bytes, &tag)).into_response();
