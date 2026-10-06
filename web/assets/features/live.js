@@ -802,9 +802,10 @@ async function showSnapshot(id) {
     return;
   }
   live.shownFrame = key;
-  // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。
+  // 同じ中身の srcdoc を入れ直しても読み込み直されないことがあるので、枠ごと作り直す。印が無くても通すのは、
+  // ページが添えた要素の対応の <meta> を外すため（残すと head の先頭の子になり、head を前提にしたセレクタが変わる）。
   const frame = /** @type {HTMLIFrameElement} */ (shell.refFrame.cloneNode(false));
-  frame.srcdoc = removed.length > 0 ? markRemovedInSnapshot(html, removed) : html;
+  frame.srcdoc = markRemovedInSnapshot(html, removed);
   shell.refFrame.replaceWith(frame);
   shell.refFrame = frame;
   layoutFrames();
