@@ -745,7 +745,8 @@ async function savePageComment() {
   const frame = shell.liveFrame.contentWindow;
   let image = null;
   if (frame) {
-    const answer = await ask(frame, "image", IMAGE_TIMEOUT, { places: draft.places });
+    // 狭い画面で比べる相手の側を見ていると、動いているページは並べられておらず画像を作れない。
+    const answer = await whileLaidOut(() => ask(frame, "image", IMAGE_TIMEOUT, { places: draft.places }));
     image = typeof answer.png === "string" ? answer.png : null;
   }
   const request = { op: "add_page", page: { url: draft.url, width: draft.width, places: draft.places }, body };
