@@ -318,6 +318,9 @@ fn add_page_comment(
         (format!("c{}", session.last_comment), session.next_seq())
     };
     // 画像はセッションのロックの外で書く。書けなくてもコメントは画像なしで残す。
+    // 書いてからコメントが入るまでは保存を止める。その間に空のセッションが保存されると
+    // `<id>.files/` ごと消え、画像のパスだけが残る。ロックは persist → session の順。
+    let saving = state.persist.lock().expect("persist poisoned");
     let image = image.and_then(|image| save_image(state, &id, &image));
     let comment = Comment {
         id,
@@ -343,6 +346,7 @@ fn add_page_comment(
         .partition_point(|other| other.seq < comment.seq);
     session.comments.insert(at, comment.clone());
     drop(session);
+    drop(saving);
     persist(state);
     notify_agent_state(state);
     if let CommentTarget::Page(page) = &comment.target {

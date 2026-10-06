@@ -16,7 +16,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use kemi_core::domain::review::ReviewMeta;
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
-use kemi_server::{Asset, Assets, LiveParams, LiveTarget, Notice, NoticeSink, ServeParams, serve};
+use kemi_server::{
+    Asset, Assets, LiveParams, LiveTarget, Notice, NoticeSink, ServeParams, SessionSink, serve,
+};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -139,6 +141,14 @@ async fn start_review(authority: &str) -> Running {
 }
 
 async fn start_review_of(target: LiveTarget, root: std::path::PathBuf) -> Running {
+    start_review_with_session(target, root, None).await
+}
+
+async fn start_review_with_session(
+    target: LiveTarget,
+    root: std::path::PathBuf,
+    session: Option<Arc<dyn SessionSink>>,
+) -> Running {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let review_port = listener.local_addr().unwrap().port();
     let live_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -148,7 +158,7 @@ async fn start_review_of(target: LiveTarget, root: std::path::PathBuf) -> Runnin
         assets: Arc::new(PageAssets),
         token: "test-token".to_string(),
         results: None,
-        session: None,
+        session,
         notices: Arc::new(Quiet),
         share_address: None,
         agent: None,
@@ -1073,4 +1083,166 @@ async fn editing_a_page_comment_changes_only_its_body() {
     let edited: serde_json::Value = edited.json().await.unwrap();
     assert_eq!(edited["body"], "make it smaller");
     assert_eq!(edited["page"], added["page"]);
+}
+
+/// 割り込む要求。画像を書いた直後に別のスレッドで送り、応答の状態を返す。
+type Interruption = Box<dyn FnOnce() -> std::sync::mpsc::Receiver<StatusCode> + Send>;
+
+/// 実際のセッションに書く sink。画像を書いた直後に、割り込む要求を送って少し待つ。
+struct InterruptedImageSink {
+    open: std::sync::Mutex<kemi_core::session::OpenSession>,
+    interruption: std::sync::Mutex<Option<Interruption>>,
+    answer: std::sync::Mutex<Option<std::sync::mpsc::Receiver<StatusCode>>>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl SessionSink for InterruptedImageSink {
+    fn describe_review(&self, _title: &str, _total_files: usize) {}
+
+    fn save_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), kemi_core::session::SessionError> {
+        self.open.lock().unwrap().save_state(state)
+    }
+
+    fn save_copy(
+        &self,
+        copy: kemi_core::session::SessionCopy,
+    ) -> Result<(), kemi_core::session::SessionError> {
+        self.open.lock().unwrap().save_copy(copy)
+    }
+
+    fn mark_unresumable(&self, reason: &str) -> Result<(), kemi_core::session::SessionError> {
+        self.open.lock().unwrap().mark_unresumable(reason)
+    }
+
+    fn delete(&self) -> Result<(), kemi_core::session::SessionError> {
+        self.open.lock().unwrap().delete()
+    }
+
+    fn save_file(
+        &self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<std::path::PathBuf, kemi_core::session::SessionError> {
+        let path = self.open.lock().unwrap().save_file(name, bytes)?;
+        let interruption = self.interruption.lock().unwrap().take();
+        if let Some(interrupt) = interruption {
+            let answer = interrupt();
+            // この作業スレッドが止まっている間も、ほかの作業スレッドに入出力を見させる。
+            // 何かを起こさないと、寝ている作業スレッドは割り込んだ要求に気づかない。この
+            // スレッドから spawn すると止まっているこのスレッドに積まれるので、外から積む。
+            let runtime = self.runtime.clone();
+            std::thread::spawn(move || drop(runtime.spawn(async {})))
+                .join()
+                .unwrap();
+            // 保存が画像の書き込みを待つなら、割り込んだ要求はこの間には終わらない。
+            let answer = match answer.recv_timeout(std::time::Duration::from_millis(300)) {
+                Ok(status) => {
+                    let (send, again) = std::sync::mpsc::channel();
+                    send.send(status).unwrap();
+                    again
+                }
+                Err(_) => answer,
+            };
+            *self.answer.lock().unwrap() = Some(answer);
+        }
+        Ok(path)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_page_comment_keeps_its_image_when_the_session_is_emptied_while_the_image_is_written() {
+    use kemi_core::session::{SessionInfo, SessionMode, SessionStore};
+
+    let (authority, _dev) = start_dev_server().await;
+    let sessions = Scratch::new("interrupted-image-sessions");
+    let root = Scratch::new("interrupted-image");
+    let open = SessionStore::new(sessions.0.clone())
+        .create(SessionInfo {
+            id: "01HF7YAT00PAGE000000000000".to_string(),
+            created: 1,
+            updated: 1,
+            workspace: root.0.clone(),
+            workspace_key: "00000000000000aa".to_string(),
+            mode: SessionMode::Live {
+                page: kemi_core::domain::live::LivePage::Url(format!("http://{authority}/")),
+                root: root.0.clone(),
+            },
+            title: "live".to_string(),
+            total_files: 0,
+        })
+        .unwrap();
+    let sink = Arc::new(InterruptedImageSink {
+        open: std::sync::Mutex::new(open),
+        interruption: std::sync::Mutex::new(None),
+        answer: std::sync::Mutex::new(None),
+        runtime: tokio::runtime::Handle::current(),
+    });
+    let running = start_review_with_session(
+        LiveTarget::Url {
+            authority: authority.clone(),
+            start: "/".to_string(),
+            display: format!("http://{authority}/"),
+        },
+        root.0.clone(),
+        Some(sink.clone()),
+    )
+    .await;
+    let first: serde_json::Value =
+        add_page_comment(&running, serde_json::json!([page_place(1, "element")]))
+            .await
+            .json()
+            .await
+            .unwrap();
+    // 画像を書いた後、コメントが入る前に、ただ 1 つのコメントを消してセッションを空にする。
+    let review = running.review.clone();
+    let origin = review.trim_end_matches("/s/test-token/").to_string();
+    let id = first["id"].clone();
+    *sink.interruption.lock().unwrap() = Some(Box::new(move || {
+        let (send, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let status = runtime.block_on(async {
+                reqwest::Client::new()
+                    .post(format!("{review}api/comment"))
+                    .header(header::ORIGIN, origin)
+                    .json(&serde_json::json!({ "op": "delete", "id": id }))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+            });
+            send.send(status).unwrap();
+        });
+        answer
+    }));
+
+    let second = post_review(
+        &running,
+        "api/comment",
+        serde_json::json!({
+            "op": "add_page",
+            "page": { "url": "/", "width": 390, "places": [page_place(1, "element")] },
+            "body": "second",
+            "image": "AAAA",
+        }),
+    )
+    .await;
+
+    assert_eq!(second.status(), StatusCode::OK);
+    let answer = sink.answer.lock().unwrap().take().unwrap();
+    assert_eq!(answer.recv().unwrap(), StatusCode::OK);
+    let open = sink.open.lock().unwrap();
+    let saved = &open.state().comments;
+    assert_eq!(saved.len(), 1);
+    let kemi_core::domain::review::CommentTarget::Page(page) = &saved[0].target else {
+        panic!("{saved:?}");
+    };
+    let image = page.image.as_deref().unwrap();
+    assert_eq!(std::fs::read(image).unwrap(), vec![0u8; 3], "{image}");
 }
