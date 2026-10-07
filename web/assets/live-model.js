@@ -236,13 +236,19 @@ function mockLabel(path) {
 
 /**
  * 見比べ方の見出し（R-PAGE-REF）。重ねて透かす間は、両方の名前と透かし具合。透かし具合が端のときは見えている方を
- * 出し、重ねていることも分かる書き方にする（見る対象だけの見出しと同じにしない）。
- * @param {{ compare: "now" | "side" | "overlay", reference: string, opacity: number }} input
- *   reference は比べる相手の名前、opacity は重ねた比べる相手の不透明度（0〜100）
+ * 出し、重ねていることも分かる書き方にする（見る対象だけの見出しと同じにしない）。狭い画面では見比べ方によらず
+ * 1 枚ずつ見る（R-PAGE-VIEW）ので、見ている 1 枚に合わせる: 動いているページなら見る対象だけの見出し、比べる相手
+ * ならその名前。
+ * @param {{ compare: "now" | "side" | "overlay", reference: string, opacity: number, shown?: "live" | "ref" | null }} input
+ *   reference は比べる相手の名前、opacity は重ねた比べる相手の不透明度（0〜100）、shown は狭い画面で見ている 1 枚
+ *   （広い画面では null）
  * @returns {string}
  */
-export function compareHeading({ compare, reference, opacity }) {
-  if (compare === "now") {
+export function compareHeading({ compare, reference, opacity, shown = null }) {
+  if (shown === "ref") {
+    return reference;
+  }
+  if (compare === "now" || shown === "live") {
     return "Now";
   }
   if (compare === "side") {

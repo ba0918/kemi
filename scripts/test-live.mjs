@@ -1220,16 +1220,20 @@ async function narrowPageViewFitsOneRow(repository) {
 
 /**
  * 開いたまま狭い画面との境をまたぐ（R-PAGE-VIEW の狭い画面、R-PAGE-REF）: 等倍で見る対象だけのまま狭くすると、帯のメニューに
- * 比べる相手の選択が出る。広くすると比べる相手の選択がまた隠れる。
+ * 比べる相手の選択が出る。比べる相手の 1 枚を見ている間は、見出しが比べる相手の名前（選択に出ている名前に含まれる）になる。
+ * 動いているページに戻すと見出しは見る対象だけのときと同じになり、広くすると比べる相手の選択がまた隠れる。並べたまま
+ * 狭くしても、見出しは見る対象だけのときと同じになる。
  */
 async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
   const dev = await startDevServer();
   const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
+  const heading = `document.querySelector('.lv-stage-name').textContent`;
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('${refPane}').dataset.reference === 'snapshot'`);
+    const nowHeading = await evaluate(heading);
     await browser('click', '.lv-zoom button[data-zoom="full"]');
     await waitFor(`${liveScale} === 1`);
     await browser('set', 'viewport', '390', '844');
@@ -1242,9 +1246,21 @@ async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
     await waitFor(`!${visible('.lv-menu')}`);
     console.log('PASS 等倍で見る対象だけのまま幅 390px にすると、帯のメニューに比べる相手の選択がある');
 
+    await browser('click', '.lv-side button[data-side="ref"]');
+    await waitFor(`${visible(refPane)} && !${visible(livePane)}`);
+    await waitFor(`${heading} !== '' && ${heading} !== ${JSON.stringify(nowHeading)} && document.querySelector('.lv-compare-select').selectedOptions[0].textContent.includes(${heading})`);
+    console.log('PASS 幅 390px で比べる相手の 1 枚を見ると、見出しがその名前になる');
+
+    await browser('click', '.lv-side button[data-side="live"]');
+    await waitFor(`${visible(livePane)} && ${heading} === ${JSON.stringify(nowHeading)}`);
     await browser('set', 'viewport', '1280', '900');
     await waitFor(`!${visible('.lv-side')} && !${visible('.lv-compare-select')} && !${visible(refPane)}`);
-    console.log('PASS 広い画面に戻すと、見る対象だけのまま比べる相手の選択が隠れる');
+    console.log('PASS 動いているページに戻すと見出しが見る対象だけのときと同じになり、広い画面に戻すと見る対象だけのまま比べる相手の選択が隠れる');
+
+    await chooseCompare('side');
+    await browser('set', 'viewport', '390', '844');
+    await waitFor(`${visible('.lv-side')} && ${visible(livePane)} && ${heading} === ${JSON.stringify(nowHeading)}`);
+    console.log('PASS 並べたまま幅 390px にすると、見出しが見る対象だけのときと同じになる');
   } finally {
     await browser('set', 'viewport', '1280', '800');
     await stop(kemi);

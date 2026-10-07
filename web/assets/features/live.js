@@ -1374,7 +1374,7 @@ function renderBand() {
   }
 }
 
-/** 舞台の見出し: 見比べ方の名前。重ねて透かす間は、両方の名前と透かし具合（R-PAGE-REF）。 */
+/** 舞台の見出し: 見比べ方の名前。重ねて透かす間は、両方の名前と透かし具合（R-PAGE-REF）。狭い画面では見ている 1 枚の名前。 */
 function renderStageName() {
   if (!shell) {
     return;
@@ -1383,6 +1383,7 @@ function renderStageName() {
     compare: live.compare,
     reference: referenceName(live.snapshots, currentReference()),
     opacity: live.opacity,
+    shown: state.narrow ? live.side : null,
   });
 }
 

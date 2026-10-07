@@ -195,6 +195,15 @@ test("the heading in the middle of an overlay names both sides and the opacity",
   assert.ok(heading.includes("Start · 1280") && heading.includes("60"), heading);
 });
 
+test("on a narrow screen the heading follows the one page shown, whatever the way to compare", () => {
+  const reference = "Start · 1280";
+  const alone = compareHeading({ compare: "now", reference, opacity: 50 });
+  for (const compare of /** @type {const} */ (["now", "side", "overlay"])) {
+    assert.equal(compareHeading({ compare, reference, opacity: 50, shown: "live" }), alone);
+    assert.equal(compareHeading({ compare, reference, opacity: 50, shown: "ref" }), reference);
+  }
+});
+
 test("a snapshot that was not saved is told apart among the points to choose from", () => {
   const saved = snap("s1", "manual");
   const [unsaved] = snapshotOptions([{ ...saved, unsaved: true }], "/");
