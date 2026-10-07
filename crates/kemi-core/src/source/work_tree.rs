@@ -48,7 +48,9 @@ impl WorkTree {
         start: &Path,
         limit: usize,
     ) -> Result<WatchDirectories, SourceError> {
-        if !self.inside(start) || !start.is_dir() {
+        // symlink は辿らない（辿った先は作業ツリーの外かもしれず、git もその下を判定しない）。
+        let is_directory = std::fs::symlink_metadata(start).is_ok_and(|meta| meta.is_dir());
+        if !self.inside(start) || !is_directory {
             return Ok(WatchDirectories::default());
         }
         if !self.ignored(&[start.to_path_buf()])?.is_empty() {
@@ -66,7 +68,8 @@ impl WorkTree {
         self.ask(paths, Index::Consult)
     }
 
-    /// `paths` を `git check-ignore` に聞き、無視されるものを返す。
+    /// `paths` を `git check-ignore` に聞き、無視されるものを返す。git が判定を断ったパス
+    /// （symlink の先など）も見張らないので、無視されるものに含める。
     fn ask(&self, paths: &[PathBuf], index: Index) -> Result<HashSet<PathBuf>, SourceError> {
         let asked: Vec<(&PathBuf, Vec<u8>)> = paths
             .iter()
@@ -81,18 +84,48 @@ impl WorkTree {
         if asked.is_empty() {
             return Ok(HashSet::new());
         }
-        let mut input = Vec::new();
-        for (_, relative) in &asked {
-            input.extend_from_slice(relative);
-            input.push(0);
-        }
-        let output = check_ignore(&self.root, &input, index)?;
-        let matched: HashSet<&[u8]> = split_z(&output).into_iter().collect();
+        let relatives: Vec<&[u8]> = asked
+            .iter()
+            .map(|(_, relative)| relative.as_slice())
+            .collect();
+        let matched = match check_ignore(&self.root, &relatives, index)? {
+            Answer::Matched(matched) => matched,
+            Answer::Refused(reason) => {
+                // 何も渡さなくても断るなら、パスではなく git かリポジトリの問題。
+                if let Answer::Refused(_) = check_ignore(&self.root, &[], index)? {
+                    return Err(SourceError::Git(format!(
+                        "git check-ignore failed: {reason}"
+                    )));
+                }
+                self.ask_each_half(&relatives, index)?
+            }
+        };
         Ok(asked
             .into_iter()
             .filter(|(_, relative)| matched.contains(relative.as_slice()))
             .map(|(path, _)| path.clone())
             .collect())
+    }
+
+    /// git が 1 つのパスを断ると、まとめて渡した全部が答えをもらえない。半分ずつ聞き直し、
+    /// 断られたパスだけを無視されるもの（見張らない）にする。
+    fn ask_each_half(
+        &self,
+        relatives: &[&[u8]],
+        index: Index,
+    ) -> Result<HashSet<Vec<u8>>, SourceError> {
+        match check_ignore(&self.root, relatives, index)? {
+            Answer::Matched(matched) => Ok(matched),
+            Answer::Refused(_) if relatives.len() == 1 => {
+                Ok(HashSet::from([relatives[0].to_vec()]))
+            }
+            Answer::Refused(_) => {
+                let (left, right) = relatives.split_at(relatives.len() / 2);
+                let mut matched = self.ask_each_half(left, index)?;
+                matched.extend(self.ask_each_half(right, index)?);
+                Ok(matched)
+            }
+        }
     }
 
     /// 追跡しているファイルを持つディレクトリ（根からの相対、`/` 区切り）。
@@ -190,9 +223,19 @@ enum Index {
     Skip,
 }
 
-/// `git check-ignore -z --stdin` に NUL 区切りのパスを渡し、無視されるパスを NUL 区切りで返す。
+/// `git check-ignore` の答え。
+enum Answer {
+    /// 無視されるパス（作業ツリーの根からの相対）。
+    Matched(HashSet<Vec<u8>>),
+    /// git が判定を断った（終了コード 128）。理由は git の stderr。
+    Refused(String),
+}
+
+/// `git check-ignore -z --stdin` に NUL 区切りのパスを渡し、無視されるパスを返す。
 /// 1 つも無視されないとき git は終了コード 1 を返すので、それは空の結果として扱う。
-fn check_ignore(root: &Path, input: &[u8], index: Index) -> Result<Vec<u8>, SourceError> {
+///
+/// パスは `./` を付けて渡す。付けないと `:(glob)x` のような名前を pathspec の指定として読む。
+fn check_ignore(root: &Path, relatives: &[&[u8]], index: Index) -> Result<Answer, SourceError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -200,6 +243,12 @@ fn check_ignore(root: &Path, input: &[u8], index: Index) -> Result<Vec<u8>, Sour
         path: root.to_path_buf(),
         source,
     };
+    let mut input = Vec::new();
+    for relative in relatives {
+        input.extend_from_slice(b"./");
+        input.extend_from_slice(relative);
+        input.push(0);
+    }
     let mut child = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -215,13 +264,20 @@ fn check_ignore(root: &Path, input: &[u8], index: Index) -> Result<Vec<u8>, Sour
         .map_err(io_error)?;
     // 出力が詰まって書き込みが止まらないよう、入力は別スレッドで書く。
     let mut stdin = child.stdin.take().expect("stdin is piped");
-    let input = input.to_vec();
     let writer = std::thread::spawn(move || stdin.write_all(&input));
     let output = child.wait_with_output().map_err(io_error)?;
     let _ = writer.join();
     match output.status.code() {
-        Some(0) => Ok(output.stdout),
-        Some(1) => Ok(Vec::new()),
+        Some(0) => Ok(Answer::Matched(
+            split_z(&output.stdout)
+                .into_iter()
+                .map(|path| path.strip_prefix(b"./").unwrap_or(path).to_vec())
+                .collect(),
+        )),
+        Some(1) => Ok(Answer::Matched(HashSet::new())),
+        Some(128) => Ok(Answer::Refused(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        )),
         _ => Err(SourceError::Git(format!(
             "git check-ignore failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
@@ -348,6 +404,64 @@ mod tests {
 
         assert!(ignored.directories.is_empty());
         assert!(git.directories.is_empty());
+    }
+
+    // Windows はパスに `:` を使えない。
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_named_like_pathspec_magic_is_judged_by_its_plain_name() {
+        let repo = repo_with_ignored_build();
+        repo.write(".gitignore", "build/\n*.log\n:(glob)ignored\n");
+        std::fs::create_dir_all(repo.path.join(":(glob)x/inner")).unwrap();
+        std::fs::create_dir_all(repo.path.join(":(glob)ignored")).unwrap();
+        let tree = WorkTree::new(repo.path.clone());
+
+        let found = tree.directories(WATCH_DIRECTORY_LIMIT).unwrap();
+
+        assert!(
+            found
+                .directories
+                .contains(&repo.path.join(":(glob)x/inner"))
+        );
+        assert!(found.ignored.contains(&repo.path.join(":(glob)ignored")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directories_under_a_symlink_to_a_directory_are_empty() {
+        let repo = repo_with_ignored_build();
+        let outside = TempRepo::new();
+        std::fs::create_dir_all(outside.path.join("deep")).unwrap();
+        std::os::unix::fs::symlink(&outside.path, repo.path.join("link")).unwrap();
+        let tree = WorkTree::new(repo.path.clone());
+
+        let found = tree
+            .directories_under(&repo.path.join("link"), WATCH_DIRECTORY_LIMIT)
+            .unwrap();
+
+        assert_eq!(found, WatchDirectories::default());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_git_refuses_is_not_watched_and_the_others_are_still_judged() {
+        let repo = repo_with_ignored_build();
+        let outside = TempRepo::new();
+        std::os::unix::fs::symlink(&outside.path, repo.path.join("link")).unwrap();
+        let tree = WorkTree::new(repo.path.clone());
+
+        let ignored = tree
+            .ignored(&[
+                repo.path.join("link/x"),
+                repo.path.join("debug.log"),
+                repo.path.join("src/a.rs"),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            ignored,
+            HashSet::from([repo.path.join("link/x"), repo.path.join("debug.log")])
+        );
     }
 
     #[test]
