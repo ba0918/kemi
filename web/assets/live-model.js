@@ -476,35 +476,77 @@ export function undoPlace(draft) {
 }
 
 /**
- * 本文を書き換える。宙に浮いた範囲は、前後の一致する部分の外で変わった区間に合わせてずらし、区間にかかった
- * もの（範囲の中を編集・削除した、後ろに数字を続けて別の番号にした）は外す。
+ * 書く欄の 1 回の入力で書き換わった、前の本文の区間。入力の前の選択と、入力の後のカーソルの位置から求める
+ * （打つ・貼るは選択を置き換えてその後ろにカーソルが来て、Backspace はカーソルの前を、Delete は後ろを消す）。
+ * 前後の字面の比べ合わせでは、同じ字面が続く所で区間を決められないため。
+ * @param {Span} selection 入力の前の選択
+ * @param {number} caret 入力の後のカーソルの位置
+ * @param {number} delta 本文の長さの増減
+ * @returns {Span}
+ */
+export function editedSpan(selection, caret, delta) {
+  return { start: Math.min(selection.start, caret), end: caret - delta };
+}
+
+/**
+ * 本文を書き換える。`edit` は書き換わった前の本文の区間（書く欄の選択から求めたもの）。宙に浮いた範囲は、
+ * 区間より前ならそのまま、後ろなら増減だけずらし、区間にかかったもの（範囲の中を編集・削除した、後ろに数字を
+ * 続けて別の番号にした）は外す。`edit` が前後の本文と合わないとき（取り消しの操作など、書く欄が区間を
+ * 正しく示さない入力）は、前後の一致する部分の外を書き換わった区間とみなす。
  * @param {PlaceDraft} draft
  * @param {string} body
+ * @param {Span} edit
  * @returns {PlaceDraft}
  */
-export function editBody(draft, body) {
+export function editBody(draft, body, edit) {
   const before = draft.body;
-  const limit = Math.min(before.length, body.length);
-  let prefix = 0;
-  while (prefix < limit && before[prefix] === body[prefix]) {
-    prefix += 1;
-  }
-  let suffix = 0;
-  while (suffix < limit - prefix && before[before.length - 1 - suffix] === body[body.length - 1 - suffix]) {
-    suffix += 1;
-  }
-  const changedEnd = before.length - suffix;
   const delta = body.length - before.length;
+  const { start, end } = fitsEdit(before, body, edit) ? edit : guessedEdit(before, body);
   /** @type {Span[]} */
   const dangling = [];
   for (const span of draft.dangling) {
-    const moved =
-      span.end <= prefix ? span : span.start >= changedEnd ? { start: span.start + delta, end: span.end + delta } : null;
+    const moved = span.end <= start ? span : span.start >= end ? { start: span.start + delta, end: span.end + delta } : null;
     if (moved && body.slice(moved.start, moved.end) === before.slice(span.start, span.end) && !/\d/.test(body[moved.end] ?? "")) {
       dangling.push(moved);
     }
   }
   return { ...draft, body, dangling };
+}
+
+/**
+ * 前の本文の `edit` の区間だけを書き換えると後の本文になるか。
+ * @param {string} before
+ * @param {string} after
+ * @param {Span} edit
+ */
+function fitsEdit(before, after, edit) {
+  const inserted = edit.end - edit.start + after.length - before.length;
+  return (
+    edit.start >= 0 &&
+    edit.end <= before.length &&
+    inserted >= 0 &&
+    after.slice(0, edit.start) === before.slice(0, edit.start) &&
+    after.slice(edit.start + inserted) === before.slice(edit.end)
+  );
+}
+
+/**
+ * 前後の一致する部分の外を、書き換わった区間とみなす。
+ * @param {string} before
+ * @param {string} after
+ * @returns {Span}
+ */
+function guessedEdit(before, after) {
+  const limit = Math.min(before.length, after.length);
+  let prefix = 0;
+  while (prefix < limit && before[prefix] === after[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (suffix < limit - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) {
+    suffix += 1;
+  }
+  return { start: prefix, end: before.length - suffix };
 }
 
 /**

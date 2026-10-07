@@ -8,6 +8,7 @@ import {
   commentShortName,
   draftElsewhere,
   editBody,
+  editedSpan,
   emptyDraft,
   strayRefs,
   imageUnsavedNotice,
@@ -289,7 +290,7 @@ test("places of a comment are numbered from 1 in the order they are added", () =
 const threePlaces = (body) => {
   let draft = emptyDraft("/", 390);
   for (const kind of /** @type {const} */ (["element", "arrow", "pen"])) draft = addPlace(draft, place(kind, `#${kind}`), "/", 390);
-  return editBody(draft, body);
+  return editBody(draft, body, { start: 0, end: 0 });
 };
 
 test("removing a place renumbers the rest from 1 in the order they were put, and the body follows", () => {
@@ -309,7 +310,7 @@ test("choosing the same element again takes its place away and renumbers the res
   let draft = emptyDraft("/", 390);
   draft = addPlace(draft, place("element", "#a"), "/", 390);
   draft = addPlace(draft, place("element", "#b"), "/", 390);
-  draft = editBody(draft, "see #2");
+  draft = editBody(draft, "see #2", { start: 0, end: 0 });
   draft = addPlace(draft, place("element", "#a"), "/", 390);
   assert.deepEqual(draft.places.map((item) => [item.n, item.elements[0].selector]), [[1, "#b"]]);
   assert.equal(draft.body, "see #1");
@@ -328,17 +329,45 @@ test("a reference to a removed place stays as written and is told apart from the
   let draft = emptyDraft("/", 390);
   draft = addPlace(draft, place("element", "#a"), "/", 390);
   draft = addPlace(draft, place("element", "#b"), "/", 390);
-  draft = removePlace(editBody(draft, "#1 #2"), 1);
+  draft = removePlace(editBody(draft, "#1 #2", { start: 0, end: 0 }), 1);
   assert.equal(draft.body, "#1 #1");
   assert.deepEqual(strayRefs(draft), [{ start: 0, end: 2, n: 1, removed: true }]);
 });
 
 test("a reference to a removed place moves with text written before it and is no longer stray once edited", () => {
   let draft = removePlace(threePlaces("x #2 y"), 2);
-  draft = editBody(draft, "ab x #2 y");
+  draft = editBody(draft, "ab x #2 y", { start: 0, end: 0 });
   assert.deepEqual(strayRefs(draft), [{ start: 5, end: 7, n: 2, removed: true }]);
-  assert.deepEqual(strayRefs(editBody(draft, "ab x # y")), []);
-  assert.deepEqual(strayRefs(editBody(draft, "ab x  y")), []);
+  assert.deepEqual(strayRefs(editBody(draft, "ab x # y", { start: 6, end: 7 })), []);
+  assert.deepEqual(strayRefs(editBody(draft, "ab x  y", { start: 5, end: 7 })), []);
+});
+
+test("deleting the text before a reference to a removed place keeps that reference stray even when the deleted text looks the same", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("element", "#b"), "/", 390);
+  draft = removePlace(editBody(draft, "#2 #1", { start: 0, end: 0 }), 1);
+  assert.equal(draft.body, "#1 #1");
+  assert.deepEqual(strayRefs(draft), [{ start: 3, end: 5, n: 1, removed: true }]);
+  draft = editBody(draft, "#1", { start: 0, end: 3 });
+  assert.deepEqual(strayRefs(draft), [{ start: 0, end: 2, n: 1, removed: true }]);
+});
+
+test("a reference inserted before a reference to a removed place points at its place, and the old one stays stray", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("element", "#b"), "/", 390);
+  draft = removePlace(editBody(draft, "#1", { start: 0, end: 0 }), 1);
+  assert.deepEqual(strayRefs(draft), [{ start: 0, end: 2, n: 1, removed: true }]);
+  draft = editBody(draft, "#1 #1", { start: 0, end: 0 });
+  assert.deepEqual(strayRefs(draft), [{ start: 3, end: 5, n: 1, removed: true }]);
+});
+
+test("the edited span of the text box comes from its selection before the input and its caret after", () => {
+  // 選んだ 2..5 に 1 文字を打つ、3 の前を 1 文字消す（Backspace）、3 の後を 1 文字消す（Delete）。
+  assert.deepEqual(editedSpan({ start: 2, end: 5 }, 3, -2), { start: 2, end: 5 });
+  assert.deepEqual(editedSpan({ start: 3, end: 3 }, 2, -1), { start: 2, end: 3 });
+  assert.deepEqual(editedSpan({ start: 3, end: 3 }, 3, -1), { start: 3, end: 4 });
 });
 
 test("a reference to a removed place is not rewritten by a later renumbering", () => {

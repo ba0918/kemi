@@ -23,6 +23,7 @@ import {
   pageKey,
   draftElsewhere,
   editBody,
+  editedSpan,
   emptyDraft,
   imageUnsavedNotice,
   parseWidth,
@@ -735,7 +736,16 @@ function startComposing(shell) {
       void savePageComment();
     }
   });
-  compose.body.addEventListener("input", () => setDraft(editBody(live.draft, compose.body.value)));
+  // 書き換わった区間は、入力の前の選択と入力の後のカーソルから求める（宙に浮いた参照を字面で見分けられないため）。
+  let selection = { start: 0, end: 0 };
+  compose.body.addEventListener("beforeinput", () => {
+    selection = { start: compose.body.selectionStart, end: compose.body.selectionEnd };
+  });
+  compose.body.addEventListener("input", () => {
+    const value = compose.body.value;
+    const edit = editedSpan(selection, compose.body.selectionEnd, value.length - live.draft.body.length);
+    setDraft(editBody(live.draft, value, edit));
+  });
 }
 
 /**
@@ -825,9 +835,10 @@ function insertReference(n) {
   if (!body || live.saving) {
     return;
   }
-  body.setRangeText(`#${n}`, body.selectionStart, body.selectionEnd, "end");
+  const edit = { start: body.selectionStart, end: body.selectionEnd };
+  body.setRangeText(`#${n}`, edit.start, edit.end, "end");
   body.focus();
-  setDraft(editBody(live.draft, body.value));
+  setDraft(editBody(live.draft, body.value, edit));
 }
 
 /** ポインタの下の保存したコメントをページに尋ねている間の、次に尋ねる点（尋ねている間に動いた分はまとめる）。 */
