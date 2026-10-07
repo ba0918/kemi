@@ -1159,6 +1159,54 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
   }
 }
 
+/**
+ * 狭い画面のページの見方（R-PAGE-VIEW の狭い画面、R-NARROW の `--live` の 1 段目のタブ、R-PAGE-MODE）: 幅 390px で開くと、
+ * ページの見方の操作の帯が 1 行に収まり、その行にエージェントの状態があり、見たの進捗が見えず、重ねて透かす操作が無い。
+ * 帯の「…」のメニューに比べる相手の選択・手で取る操作・枠に合わせると等倍・モックのファイルがある。上部バーの「…」の
+ * メニューには表示の操作のうちテーマだけがある。1 段目のタブでコードの見方に切り替わる。
+ */
+async function narrowPageViewFitsOneRow(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  const band = '#live-band';
+  try {
+    await browser('set', 'viewport', '390', '844');
+    await browser('open', kemi.url);
+    await waitFor(`${visible(livePane)} && ${visible('.lv-side')} && ${visible(`${band} .lv-menu-button`)}`);
+    const tops = await evaluate(`JSON.stringify(Array.from(document.querySelector('${band}').children).filter((child) => child.getClientRects().length > 0 && getComputedStyle(child).visibility !== 'hidden').map((child) => Math.round(child.getBoundingClientRect().top)))`);
+    assert.ok(JSON.parse(tops).length >= 4 && new Set(JSON.parse(tops)).size === 1, `the band is one row: ${tops}`);
+    await waitFor(`${visible(`${band} .lv-band-agent`)} && document.querySelector('${band} .lv-band-agent').dataset.status === document.querySelector('#agent-status').dataset.status`);
+    assert.equal(await evaluate(visible('#progress')), false, 'the seen progress is not shown');
+    assert.equal(await evaluate(`${visible('.lv-mode button[data-compare="overlay"]')} || ${visible('.lv-opacity')}`), false, 'no overlay on a narrow screen');
+    await browser('click', `${band} .lv-menu-button`);
+    await waitFor(`${visible('.lv-menu .lv-compare-select')} && ${visible('.lv-menu .lv-record-now')} && ${visible('.lv-menu .lv-zoom')} && ${visible('.lv-menu .lv-mock-input')}`);
+    await browser('click', '.lv-menu .lv-zoom button[data-zoom="full"]');
+    await waitFor(`${liveScale} === 1 && ${visible('.lv-menu')}`);
+    await browser('press', 'Escape');
+    await waitFor(`!${visible('.lv-menu')}`);
+    console.log('PASS 幅 390px のページの見方では、操作の帯が 1 行でエージェントの状態があり、見たの進捗と重ねて透かす操作が無く、帯のメニューに比べる相手の選択・手で取る操作・枠に合わせると等倍・モックのファイルがある');
+
+    await browser('click', '#btn-more');
+    await waitFor(visible('#view-menu'));
+    assert.deepEqual(
+      JSON.parse(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('#view-menu .menu-item')).filter((item) => item.getClientRects().length > 0).map((item) => item.id))`)),
+      ['menu-theme'],
+    );
+    await browser('press', 'Escape');
+    console.log('PASS 幅 390px のページの見方では、上部バーの「…」のメニューに表示の操作のうちテーマだけがある');
+
+    await waitFor(visible('.topbar .lv-view button[data-view="code"] .lv-modetab-short'));
+    await browser('click', '.topbar .lv-view button[data-view="code"]');
+    await waitFor(`document.body.dataset.liveView === 'code' && ${visible('#progress')}`);
+    console.log('PASS 幅 390px で上部バーの 1 段目のタブを押すと、コードの見方に切り替わる');
+  } finally {
+    await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 表示中のページの変化の一覧。無ければ null。 */
 const changeList = `document.querySelector('#page-tree .lv-page[data-current="true"] .lv-changes')`;
 
@@ -1278,9 +1326,10 @@ async function changeListFollowsThePage(repository) {
     // 比べる相手の側を見ている（動いているページの枠が隠れている）間に取ったスナップショットも、選んだ幅で
     // 並べた文書から記述する。ページを変えずに動いているページの側に戻せば、それと比べた変化は 0。
     await evaluate(`document.querySelector('.lv-side button[data-side="ref"]').click(); true`);
-    await waitFor(`!${visible(`${livePane} .lv-frame`)} && ${visible('.lv-band .lv-record-now')}`);
-    // ページのツリーの引き出しが開いたままなので、押すのはスクリプトで。
-    await evaluate(`document.querySelector('.lv-band .lv-record-now').click(); true`);
+    // 狭い画面では手で取る操作は帯の「…」のメニューの中。ページのツリーの引き出しが開いたままなので、押すのはスクリプトで。
+    await evaluate(`document.querySelector('#live-band .lv-menu-button').click(); true`);
+    await waitFor(`!${visible(`${livePane} .lv-frame`)} && ${visible('.lv-menu .lv-record-now')}`);
+    await evaluate(`document.querySelector('.lv-menu .lv-record-now').click(); document.querySelector('.lv-menu').hidePopover(); true`);
     await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
     await chooseReference('Recorded 2');
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
@@ -2753,6 +2802,7 @@ try {
   await sideBySidePagesShareTheirTop(repository);
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
+  await narrowPageViewFitsOneRow(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);

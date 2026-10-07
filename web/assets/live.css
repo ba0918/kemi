@@ -514,27 +514,133 @@ body[data-live-view="code"] .lv-page-only {
   display: none;
 }
 
+/* 狭い画面でだけ使う帯の要素。 */
+.lv-band-page,
+.lv-band-width,
+.lv-band-agent,
+.lv-menu-button {
+  display: none;
+}
+
+/* 狭い画面の帯の「…」のメニュー。開いていないときはブラウザ既定の [popover] の規則で隠れる。 */
+.lv-menu:popover-open {
+  display: grid;
+  gap: 10px;
+  inset: auto;
+  right: 8px;
+  margin: 0;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+}
+
+.lv-menu .lv-widths,
+.lv-menu .lv-compare,
+.lv-menu .lv-mock {
+  flex-wrap: wrap;
+}
+
+.lv-menu > * {
+  justify-self: start;
+}
+
+/* ページの見方の間は、上部バーの「…」のメニューに表示の操作のうちテーマだけを出す（R-PAGE-VIEW の狭い画面）。 */
+body[data-live-view="page"] #menu-wrap,
+body[data-live-view="page"] #menu-focus,
+body[data-live-view="page"] #menu-sort,
+body[data-live-view="page"] #menu-comments {
+  display: none;
+}
+
 /* ---- 狭い画面（R-NARROW と同じしきい値）: 1 枚ずつ切り替えて見る ---- */
 @media (max-width: 719.98px) {
-  /* 帯は横に流さず折り返す。横に流すと、押した操作が帯の外へ流れて見えなくなる。 */
+  /* 上部バーの 1 段目に短いタブを置く。ページの URL とエージェントの状態は下の帯に出す。 */
+  .lv-modetabs {
+    order: 2;
+    padding: 2px;
+  }
+
+  .lv-modetab {
+    height: 28px;
+    padding: 0 8px;
+    gap: 5px;
+    font-size: 13px;
+  }
+
+  .lv-modetab-long,
+  .lv-topmeta,
+  .lv-top-agent {
+    display: none;
+  }
+
+  .lv-modetab-short {
+    display: inline;
+  }
+
+  /* 帯は 1 行: 動いているページと比べる相手の切り替え、ページの名前、表示幅、エージェントの状態、メニュー。
+     知らせがあるときだけ、その下に出す。 */
   .lv-band {
+    flex-wrap: wrap;
+    align-items: stretch;
     gap: 6px 8px;
     padding: 6px 8px;
   }
 
-  .lv-widths,
-  .lv-compare,
-  .lv-mock {
-    flex-wrap: wrap;
-  }
-
-  /* 今どちらを見ているかの切り替えは、帯の先頭に置く。 */
   .lv-side {
     display: inline-flex;
-    order: -1;
+    flex-shrink: 0;
   }
 
-  .lv-spacer {
+  .lv-band-page,
+  .lv-band-width {
+    line-height: 26px;
+  }
+
+  .lv-band-page {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+
+  .lv-band-width {
+    display: inline;
+    flex-shrink: 0;
+    color: var(--ink-3);
+  }
+
+  .lv-band-agent,
+  .lv-menu-button {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .lv-menu-button {
+    height: 26px;
+    padding: 0 6px;
+  }
+
+  .lv-menu-button svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .lv-band > .lv-band-notice {
+    order: 1;
+    flex: 0 1 100%;
+  }
+
+  .lv-spacer,
+  .lv-mode,
+  .lv-opacity {
     display: none;
   }
 

@@ -233,6 +233,12 @@ export function startLive(info) {
   topbar = buildTopbar();
   dom.titleBlock.before(topbar.tabs, topbar.meta, topbar.agent);
   mirrorAgentState(topbar.agent);
+  mirrorAgentState(shell.bandAgent);
+  const menu = shell.menu;
+  // 狭い画面の帯のメニューは、帯のすぐ下に開く。
+  menu.addEventListener("beforetoggle", () => {
+    menu.style.top = `${Math.round(shell?.band.getBoundingClientRect().bottom ?? 0) + 4}px`;
+  });
   topbar.tabs.addEventListener("click", (event) => {
     const view = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.view;
     if (view === "page" || view === "code") {
@@ -310,6 +316,7 @@ export function startLive(info) {
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
   new ResizeObserver(() => {
+    placeControls();
     layoutFrames();
     // 狭い画面との境をまたぐと、並べたまま隠れている側も変わる。
     syncLaidOutInert();
@@ -1278,10 +1285,33 @@ async function whileLaidOut(task) {
   }
 }
 
+/**
+ * 狭い画面では、手で取る操作・表示幅の選択・モック・比べる相手の選択・枠に合わせると等倍を帯の「…」のメニューに移し、
+ * 広い画面では元の場所に戻す（R-PAGE-VIEW の狭い画面）。幅をまたいだら閉じる。
+ */
+function placeControls() {
+  if (!shell) {
+    return;
+  }
+  const { menu, compareSlot, zoomSeg, recordButton, widthGroup, mockGroup, refNotice, stageName, reloadButton } = shell;
+  const inMenu = menu.contains(compareSlot);
+  if (state.narrow && !inMenu) {
+    menu.append(compareSlot, zoomSeg, recordButton, widthGroup, mockGroup);
+  } else if (!state.narrow && inMenu) {
+    menu.hidePopover();
+    refNotice.before(widthGroup, recordButton, mockGroup);
+    stageName.after(zoomSeg);
+    reloadButton.before(compareSlot);
+  }
+}
+
 function renderBand() {
   if (!shell) {
     return;
   }
+  placeControls();
+  shell.bandPage.textContent = live.page;
+  shell.bandWidth.textContent = String(live.width);
   renderTopbar();
   for (const choice of shell.widthSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(Number(choice.dataset.width) === live.width));
@@ -1302,7 +1332,7 @@ function renderBand() {
   }
   shell.reloadButton.disabled = live.saving;
   // 比べる相手の選択は、比べる相手を出している間だけ出す（R-PAGE-REF）。
-  shell.compareSlot.hidden = live.compare === "now";
+  shell.compareSlot.hidden = live.compare === "now" && !state.narrow;
   shell.opacity.hidden = live.compare !== "overlay";
   const mock = live.mocks.get(live.page) ?? null;
   renderCompareOptions(

@@ -21,6 +21,13 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 /**
  * @typedef {{
  *   band: HTMLElement,
+ *   bandPage: HTMLElement,
+ *   bandWidth: HTMLElement,
+ *   bandAgent: HTMLElement,
+ *   menu: HTMLElement,
+ *   widthGroup: HTMLElement,
+ *   mockGroup: HTMLElement,
+ *   stageHead: HTMLElement,
  *   widthSeg: HTMLElement,
  *   widthInput: HTMLInputElement,
  *   widthError: HTMLElement,
@@ -212,7 +219,34 @@ export function buildShell() {
     toolSeg.append(choice);
   }
 
-  band.append(widthGroup, recordButton, mockGroup, refNotice, el("span", "lv-spacer"), sideSeg);
+  // 狭い画面では帯を 1 行にまとめ、ページの名前・表示幅・エージェントの状態と「…」のメニューを出す。手で取る操作・
+  // 表示幅の選択・モック・比べる相手の選択・枠に合わせると等倍は、そのメニューに移す（features/live.js）。
+  const bandPage = el("span", "lv-band-page");
+  const bandWidth = el("span", "lv-band-width");
+  const bandAgent = el("span", "agent-status lv-band-agent");
+  bandAgent.setAttribute("role", "status");
+  const menu = el("div", "lv-menu");
+  menu.id = "live-menu";
+  menu.setAttribute("popover", "");
+  menu.setAttribute("aria-label", "Page view options");
+  const menuButton = button("iconbtn lv-menu-button");
+  menuButton.title = "Page view options";
+  menuButton.setAttribute("aria-label", "Page view options");
+  menuButton.setAttribute("popovertarget", menu.id);
+  menuButton.append(svgIcon(MORE_ICON));
+  band.append(
+    widthGroup,
+    recordButton,
+    mockGroup,
+    refNotice,
+    el("span", "lv-spacer"),
+    sideSeg,
+    bandPage,
+    bandWidth,
+    bandAgent,
+    menuButton,
+    menu,
+  );
 
   // 道具は見る対象の枠のすぐ上に、始め方の案内はその下に置く（R-PAGE-COMMENT）。
   const toolbar = el("div", "lv-toolbar");
@@ -276,6 +310,13 @@ export function buildShell() {
 
   return {
     band,
+    bandPage,
+    bandWidth,
+    bandAgent,
+    menu,
+    widthGroup,
+    mockGroup,
+    stageHead,
     widthSeg,
     widthInput,
     widthError,
@@ -323,6 +364,9 @@ export function buildShell() {
 /** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
 const RELOAD_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3.3H9.7"/></svg>';
+
+const MORE_ICON =
+  '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="12.5" cy="8" r="1.5"/></svg>';
 
 /** 見比べ方（live-compare.md の R-PAGE-REF）。値、名前、アイコン。 */
 const COMPARE_MODES = /** @type {const} */ ([
