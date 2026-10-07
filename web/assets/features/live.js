@@ -786,6 +786,8 @@ async function assignMock(path, page = live.page) {
     live.mocks.set(page, { path: mock.path, url: mock.url });
     // 割り当てたページは既定でモックと比べる。
     live.chosen.delete(page);
+    // 選び直したので、前に外したモックへ戻す取り消しは消す（押すと選んだモックが替わってしまう。R-PAGE-REF）。
+    forgetRemovedMock();
     panel.error.hidden = true;
     if (panel.box.matches(":popover-open")) {
       panel.box.hidePopover();
@@ -820,14 +822,19 @@ async function removeMock() {
   render();
 }
 
-/** 外したモックを、同じパスで割り当て直す。 */
-function undoRemovedMock() {
-  const removed = live.removedMock;
+/** 外したモックの取り消しを消す。 */
+function forgetRemovedMock() {
   live.removedMock = null;
   if (undoMockTimer !== null) {
     clearTimeout(undoMockTimer);
     undoMockTimer = null;
   }
+}
+
+/** 外したモックを、同じパスで割り当て直す。 */
+function undoRemovedMock() {
+  const removed = live.removedMock;
+  forgetRemovedMock();
   if (removed) {
     void assignMock(removed.path, removed.page);
   }

@@ -205,7 +205,8 @@ What the page is compared with is chosen per page (path and query):
   the directory or a file that is not HTML is refused with the reason.
   While a mock is assigned, the choice shows its path, and the **…** next to
   it holds **Reload mock** and **Remove mock**; removing it says so in the
-  band with **Undo**, which assigns the same file again. A page with a mock
+  band with **Undo**, which assigns the same file again (assigning another
+  file in the meantime drops the **Undo**). A page with a mock
   is compared with it by default; removing the mock goes back to the
   snapshots. The mock runs its scripts in
   a sandboxed frame on an opaque origin, and kemi serves it and the files it

@@ -1253,6 +1253,15 @@ async function mockMenuRemovesAndUndoes(repository) {
     await browser('click', '.lv-mock-menu .lv-mock-remove');
     await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main !== undefined`);
     console.log('PASS 見る対象だけのとき、変化の一覧の見出しに割り当てたファイルの名前が出て、そこから開いたメニューでモックを外せる');
+
+    // 外した後に別のモックを選び直したら、前に外したモックへ戻す操作は残さない（選び直すまで比べる相手を変えない。R-PAGE-REF）。
+    await writeFile(join(repository, 'mocks', 'menu-mock-b.html'), '<!doctype html><p>menu mock b</p>\n');
+    await waitFor(visible(bandNoticeAction));
+    await chooseCompare('side');
+    await assignMockByPath('mocks/menu-mock-b.html');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('${refPane} .lv-bar-label').textContent.includes('mocks/menu-mock-b.html')`);
+    assert.equal(await evaluate(visible(bandNoticeAction)), false, 'no undo is left that would replace the newly chosen mock');
+    console.log('PASS モックを外した後に別のモックを割り当てると、前のモックへ戻す取り消しの操作は残らない');
   } finally {
     await stop(kemi);
     await dev.close();
