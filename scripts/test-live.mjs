@@ -15,7 +15,8 @@
 // - スナップショット: 渡す前は開始時が既定。390 と 1280 で取って切り替える。無い幅・別の URL では
 //   記録されていない旨と取る操作が出る。動いているページと画素を比べる（完全に一致しなければ
 //   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
-//   渡すと取る。別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の
+//   渡すと取る。手で取ると比べる相手がそれに切り替わって知らせが出て、見る対象だけのときは知らせの操作で並べ、幅 390px では
+//   比べる相手の 1 枚にする。その後に渡しても変わらず、読み込み直すと自動に戻る。別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の
 //   poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じ色に出る。
 // - コメントの画像: ページの中で写しを描いて作った描き込み無しの画像を、動いているページの同じ範囲と画素で比べる
 //   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
@@ -561,6 +562,11 @@ async function comparePixels(left, right, diffPath) {
 const refPane = '#live-stage .lv-pane[data-side="ref"]';
 const livePane = '#live-stage .lv-pane[data-side="live"]';
 
+/** 比べる相手の選択を自動に戻す。 */
+async function chooseAuto() {
+  await evaluate(`(() => { const select = document.querySelector('.lv-compare-select'); select.value = 'latest'; select.dispatchEvent(new Event('change')); return true; })()`);
+}
+
 /** 比べる相手の枠に、その id のスナップショットが出るのを待つ。 */
 const showsSnapshot = (label) => `document.querySelector('${refPane}').dataset.reference === 'snapshot' && document.querySelector('${refPane} .lv-bar-label').textContent.startsWith(${JSON.stringify(label)})`;
 const notRecorded = `document.querySelector('${refPane}').dataset.reference === 'none' && ${visible(`${refPane} .lv-empty`)}`;
@@ -595,7 +601,10 @@ async function snapshotsAreTakenShownAndChosen(repository) {
       await evaluate(`document.querySelector('${refPane} .lv-frame').style.width === document.querySelector('${livePane} .lv-frame').style.width && document.querySelector('${livePane} .lv-frame').style.width === '390px'`),
       true,
     );
+    // 手で取ると比べる相手がその時点に切り替わり、選んだ時点は今の幅で探すので、1280 では記録されていない。
     await browser('click', '.lv-widths button[data-width="1280"]');
+    await waitFor(notRecorded);
+    await chooseAuto();
     await waitFor(showsSnapshot('Start'));
     assert.equal(await evaluate(`document.querySelector('${refPane} .lv-frame').style.width`), '1280px');
     console.log('PASS 390 と 1280 で取ってから幅を切り替えると、動いているページと比べる相手が同じ幅で描かれ、無い幅では記録されていない旨と取る操作が出る');
@@ -1039,6 +1048,56 @@ async function referenceNamesHeadingsAndNotices(repository) {
     await browser('open', kemi.url);
     await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('.lv-zoom button[data-zoom="fit"]').getAttribute('aria-pressed') === 'true'`);
     console.log('PASS 並べると等倍にしてから画面を読み込み直すと、見る対象だけ・枠に合わせるに戻る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/** 帯の知らせ（取れたこと・取れなかったこと）と、その操作。 */
+const bandNotice = '#live-band .lv-band-notice';
+const bandNoticeAction = `${bandNotice} .lv-notice-action`;
+
+/**
+ * 手で取ったときの比べる相手（R-PAGE-REF、R-PAGE-SNAPSHOT）: 見る対象だけの見比べ方で手で取ると、見比べ方は変わらず、
+ * 比べる相手が取ったスナップショットになり、取ったことの知らせが出る。知らせの操作を押すと並べる見比べ方になり、取った
+ * スナップショットが並ぶ。その後に渡しても比べる相手は取ったスナップショットのままで、レビュー画面を読み込み直すと自動に
+ * 戻る。幅 390px で手で取ると知らせの操作で比べる相手の 1 枚に切り替わり、取ったスナップショットが出る。
+ */
+async function recordingNowSwitchesTheReference(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && document.querySelector('#live-stage').dataset.compare === 'now'`);
+    await browser('click', '.lv-band .lv-record-now');
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${visible(bandNotice)} && document.querySelector('${bandNotice}').dataset.kind === 'done'`);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now', 'recording keeps the way of comparing');
+    await browser('click', bandNoticeAction);
+    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side' && ${visible(refPane)} && ${showsSnapshot('Recorded 1')}`);
+    console.log('PASS 見る対象だけで手で取ると、見比べ方は変わらず比べる相手が取ったものになって知らせが出て、知らせの操作で並べるとそれが並ぶ');
+
+    await post(kemi.url, 'api/message', { body: 'please look' });
+    await handInThePage(kemi, repository, state);
+    await new Promise((done) => setTimeout(done, 1000));
+    assert.equal(await evaluate(showsSnapshot('Recorded 1')), true, 'handing does not move the reference away from the recorded snapshot');
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await waitFor(`document.querySelector('.lv-compare-select').value === 'latest' && ${showsSnapshot('Handed 1')}`);
+    console.log('PASS 手で取った後に渡しても比べる相手は取ったもののままで、読み込み直すと自動に戻る');
+
+    await browser('set', 'viewport', '390', '844');
+    await browser('open', kemi.url);
+    await waitFor(`${visible(livePane)} && ${visible('#live-band .lv-menu-button')} && document.querySelector('#live-stage').dataset.side === 'live'`);
+    await browser('click', '#live-band .lv-menu-button');
+    await waitFor(visible('.lv-menu .lv-record-now'));
+    await evaluate(`document.querySelector('.lv-menu .lv-record-now').click(); document.querySelector('.lv-menu').hidePopover(); true`);
+    await waitFor(`${showsSnapshot('Recorded 2')} && ${visible(bandNoticeAction)}`);
+    await browser('click', bandNoticeAction);
+    await waitFor(`document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)} && ${showsSnapshot('Recorded 2')}`);
+    console.log('PASS 幅 390px で手で取ると知らせが出て、その操作で比べる相手の 1 枚に切り替わり、取ったものが出る');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -1918,7 +1977,10 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
     await waitFor(`${showsSnapshot('Recorded 2')} && ${changeList}?.dataset.main === '0'`);
+    // 390 で取ったものに切り替わっているので、768 では記録されていない。768 で取ったものを選び直す。
     await browser('click', '.lv-widths button[data-width="768"]');
+    await waitFor(notRecorded);
+    await chooseReference('Recorded 1');
     await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
     console.log('PASS 表示幅を変えても文書の幅が変わらないページでも、切り替えた幅の変化の一覧が出る');
   } finally {
@@ -3152,6 +3214,7 @@ try {
   await overlayFollowsTheScrollAndTheOpacity(repository);
   await compareModesScaleAndReload(repository);
   await referenceNamesHeadingsAndNotices(repository);
+  await recordingNowSwitchesTheReference(repository);
   await sideBySidePagesShareTheirTop(repository);
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);

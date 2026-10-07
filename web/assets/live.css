@@ -414,6 +414,28 @@ body[data-live-view="code"] #main > .lv-band {
   color: var(--note-ink);
 }
 
+/* 手で取れて、比べる相手を取ったものに切り替えた知らせ（live-compare.md の R-PAGE-REF）。 */
+.lv-notice[data-kind="done"] {
+  border-color: var(--add-mark);
+  background: var(--add-bg);
+  color: var(--add-ink);
+}
+
+.lv-notice-action {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lv-notice-action[hidden] {
+  display: none;
+}
+
 .lv-viewport {
   position: relative;
   flex: 1;

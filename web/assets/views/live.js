@@ -50,6 +50,8 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   refBar: HTMLElement,
  *   refLabel: HTMLElement,
  *   refNotice: HTMLElement,
+ *   refNoticeText: HTMLElement,
+ *   refNoticeAction: HTMLButtonElement,
  *   refViewport: HTMLElement,
  *   refFrame: HTMLIFrameElement,
  *   refMockFrame: HTMLIFrameElement,
@@ -168,10 +170,15 @@ export function buildShell() {
   mockError.setAttribute("role", "alert");
   mockError.hidden = true;
   mockGroup.append(mockInput, mockAssign, mockRemove, mockReload, mockError);
-  // 取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
+  // 取れた・取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
+  // 取れたときは、取ったものを並べて見る操作を添える（live-compare.md の R-PAGE-REF）。
   const refNotice = el("span", "lv-notice lv-band-notice");
   refNotice.setAttribute("role", "status");
   refNotice.hidden = true;
+  const refNoticeText = el("span", "lv-notice-text");
+  const refNoticeAction = button("lv-notice-action");
+  refNoticeAction.hidden = true;
+  refNotice.append(refNoticeText, refNoticeAction);
 
   // 舞台の見出し: 見比べ方の名前、倍率の切り替え、比べる相手の選択、読み込み直す操作、見比べ方の切り替え。
   const stageHead = el("div", "lv-stage-head");
@@ -369,6 +376,8 @@ export function buildShell() {
     refBar: ref.bar,
     refLabel: ref.label,
     refNotice,
+    refNoticeText,
+    refNoticeAction,
     refViewport: ref.viewport,
     refFrame,
     refMockFrame,

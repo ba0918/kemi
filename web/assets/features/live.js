@@ -111,6 +111,12 @@ const live = {
   snapshotsListed: false,
   /** 取れなかったときの知らせ。次に描くまで出す。 */
   refNotice: "",
+  /**
+   * 手で取って比べる相手を切り替えたスナップショット。取れたことを知らせる（live-compare.md の R-PAGE-REF）。次に撮るか、
+   * ページを移るか、比べる相手を選び直すまで知らせておく。
+   * @type {{ page: string, id: string } | null}
+   */
+  recorded: null,
   /** @type {Map<string, string>} 中身の写し（id → HTML） */
   bodies: new Map(),
   /** 比べる相手の枠に今出しているスナップショット。 */
@@ -278,6 +284,7 @@ export function startLive(info) {
       return;
     }
     live.chosen.set(live.page, shell.compareSelect.value);
+    live.recorded = null;
     render();
   });
   shell.modeSeg.addEventListener("click", (event) => {
@@ -324,6 +331,15 @@ export function startLive(info) {
   shell.recordButton.addEventListener("click", () => void capture("manual"));
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
+  // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
+  shell.refNoticeAction.addEventListener("click", () => {
+    if (state.narrow) {
+      setSide("ref");
+      return;
+    }
+    live.compare = "side";
+    render();
+  });
   window.addEventListener("message", receive);
   const resized = new ResizeObserver(() => {
     // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
@@ -590,6 +606,7 @@ function receive(event) {
   const moved = page !== live.page;
   if (moved) {
     live.refNotice = "";
+    live.recorded = null;
     live.shiftedOpen = false;
     live.listed = { main: 0, shifted: 0 };
   }
@@ -1158,6 +1175,9 @@ async function capture(kind) {
   }
   const page = live.page;
   const width = live.width;
+  if (kind === "manual") {
+    live.recorded = null;
+  }
   const answer = await whileLaidOut(() => ask(frame, "capture", CAPTURE_TIMEOUT));
   if (typeof answer.html !== "string") {
     live.refNotice = `Not recorded: ${answer.error ?? "the page could not be copied"}`;
@@ -1171,8 +1191,9 @@ async function capture(kind) {
   }
   const description = await readUploadedDescription(answer.description);
   try {
+    const takenPage = pageKey(String(answer.path ?? page));
     const taken = await api.takeSnapshot({
-      page: pageKey(String(answer.path ?? page)),
+      page: takenPage,
       width,
       kind,
       html: answer.html,
@@ -1185,6 +1206,11 @@ async function capture(kind) {
     live.bodies.set(taken.id, answer.html);
     live.descriptions.set(taken.id, description);
     live.refNotice = "";
+    // 手で取ったら、そのページの比べる相手を取ったものに切り替え、取れたことを知らせる。見比べ方は変えない（R-PAGE-REF）。
+    if (kind === "manual") {
+      live.chosen.set(takenPage, taken.id);
+      live.recorded = { page: takenPage, id: taken.id };
+    }
   } catch (error) {
     live.refNotice = `Not recorded: ${error instanceof Error ? error.message : String(error)}`;
   }
@@ -1656,11 +1682,7 @@ function renderReference() {
   }
   const mock = live.mocks.get(live.page) ?? null;
   const reference = currentReference();
-  const notice =
-    live.refNotice !== "" || reference.type !== "snapshot" ? live.refNotice : unsavedSnapshotNotice(reference.snapshot);
-  shell.refNotice.hidden = notice === "";
-  shell.refNotice.textContent = notice;
-  shell.refNotice.dataset.kind = "waiting";
+  renderBandNotice(reference);
   if (reference.type !== "mock") {
     shell.refMockFrame.hidden = true;
     live.mockShownKey = "";
@@ -1700,6 +1722,42 @@ function renderReference() {
     live.shownSnapshot = snapshot.id;
     void showSnapshot(snapshot.id);
   }
+}
+
+/**
+ * 帯の知らせ: 取れなかった理由、手で取って比べる相手を切り替えたこと、保存できなかったスナップショットの順に 1 つ。
+ * 手で取ったことの知らせには、取ったものを見ていない間（見る対象だけ、狭い画面で動いているページの側）だけ、
+ * それを見る操作を添える（live-compare.md の R-PAGE-REF）。
+ * @param {import("../live-model.js").Reference} reference
+ */
+function renderBandNotice(reference) {
+  if (!shell) {
+    return;
+  }
+  const recorded =
+    live.recorded !== null &&
+    live.recorded.page === live.page &&
+    live.chosen.get(live.page) === live.recorded.id &&
+    reference.type === "snapshot" &&
+    reference.snapshot.id === live.recorded.id
+      ? reference.snapshot
+      : null;
+  let text = live.refNotice;
+  let kind = "waiting";
+  let action = false;
+  if (text === "" && recorded !== null) {
+    text = `${snapshotLabel(live.snapshots, recorded)} · now compared with it`;
+    kind = "done";
+    action = state.narrow ? live.side === "live" : live.compare === "now";
+  } else if (text === "" && reference.type === "snapshot") {
+    text = unsavedSnapshotNotice(reference.snapshot);
+  }
+  shell.refNotice.hidden = text === "";
+  shell.refNotice.dataset.kind = kind;
+  shell.refNoticeText.textContent = text;
+  shell.refNoticeAction.hidden = !action;
+  shell.refNoticeAction.textContent = "Compare →";
+  shell.refNoticeAction.title = state.narrow ? "Show the recorded snapshot" : "Show the recorded snapshot side by side";
 }
 
 /**

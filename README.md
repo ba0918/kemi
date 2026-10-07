@@ -188,7 +188,12 @@ What the page is compared with is chosen per page (path and query):
   width changes, and a width it lacks says it has not been recorded. The
   choices are listed as Auto, then the hand-overs, the start, the recorded
   ones, and the mock; Auto names the snapshot it picks for the page and
-  width shown, and a note under it says how it picks.
+  width shown, and a note under it says how it picks. A snapshot taken with
+  **Record now** becomes what the page is compared with, as if you had
+  picked it, and the band says so; while the page is shown alone, the notice
+  offers **Compare →** to put it side by side (on a narrow screen, to show
+  it). Handing to the agent does not move the comparison away from it;
+  reloading the review page goes back to Auto.
 - A **mock** is an HTML file in the served directory that you assign to the
   page by its path. A page with a mock is compared with it by default;
   removing the mock goes back to the snapshots. The mock runs its scripts in
