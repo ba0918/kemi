@@ -12,6 +12,8 @@ import {
   undoPlace,
   chooseReference,
   chooseSnapshot,
+  compareHeading,
+  referenceOptions,
   fitScale,
   overlayPlacement,
   liveOrigin,
@@ -124,12 +126,59 @@ test("points are named by when they were taken, counted per kind", () => {
   assert.deepEqual(snapshots.map((s) => snapshotLabel(snapshots, s)), ["Start", "Handed 1", "Recorded 1", "Handed 2"]);
 });
 
-test("the points to choose from are the snapshots of the page, newest first", () => {
-  const snapshots = [snap("s1", "start"), snap("s2", "handed", "/other"), snap("s3", "manual", "/", 390)];
-  assert.deepEqual(snapshotOptions(snapshots, "/"), [
-    { id: "s3", label: "Recorded 1 · 390" },
-    { id: "s1", label: "Start · 1280" },
-  ]);
+test("the points to choose from are the snapshots of the page: handed, then start, then recorded, newest first in each", () => {
+  const snapshots = [
+    snap("s1", "start"),
+    snap("s2", "manual"),
+    snap("s3", "handed"),
+    snap("s4", "handed", "/other"),
+    snap("s5", "manual", "/", 390),
+    snap("s6", "handed"),
+  ];
+  assert.deepEqual(
+    snapshotOptions(snapshots, "/").map((option) => option.id),
+    ["s6", "s3", "s1", "s5", "s2"],
+  );
+});
+
+test("the reference choices are auto first and the mock last", () => {
+  const snapshots = [snap("s1", "start"), snap("s2", "handed")];
+  const values = referenceOptions({ snapshots, page: "/", width: 1280, mock: "docs/m.html" }).map((option) => option.value);
+  assert.deepEqual(values, ["latest", "s2", "s1", "mock"]);
+});
+
+test("auto is named after the snapshot it picks, the same way as that snapshot's own choice", () => {
+  const before = [snap("s1", "start")];
+  const handedTwice = [...before, snap("s2", "handed"), snap("s3", "manual"), snap("s4", "handed")];
+  for (const { snapshots, picked } of [{ snapshots: before, picked: "s1" }, { snapshots: handedTwice, picked: "s4" }]) {
+    const options = referenceOptions({ snapshots, page: "/", width: 1280, mock: null });
+    const auto = options.find((option) => option.value === "latest");
+    const own = options.find((option) => option.value === picked);
+    assert.ok(auto && own);
+    assert.ok(auto.label.includes(own.label), `${auto.label} names ${own.label}`);
+  }
+});
+
+test("auto with nothing recorded at this width says so instead of naming a snapshot", () => {
+  const options = referenceOptions({ snapshots: [snap("s1", "start", "/", 390)], page: "/", width: 1280, mock: null });
+  const auto = options.find((option) => option.value === "latest");
+  assert.ok(auto && !auto.label.includes(options[1].label));
+});
+
+test("the heading while overlaid differs in the middle, at either end, and from the page alone", () => {
+  const reference = "Start · 1280";
+  const headings = [
+    compareHeading({ compare: "now", reference, opacity: 50 }),
+    compareHeading({ compare: "overlay", reference, opacity: 0 }),
+    compareHeading({ compare: "overlay", reference, opacity: 50 }),
+    compareHeading({ compare: "overlay", reference, opacity: 100 }),
+  ];
+  assert.equal(new Set(headings).size, headings.length, JSON.stringify(headings));
+});
+
+test("the heading in the middle of an overlay names both sides and the opacity", () => {
+  const heading = compareHeading({ compare: "overlay", reference: "Start · 1280", opacity: 60 });
+  assert.ok(heading.includes("Start · 1280") && heading.includes("60"), heading);
 });
 
 test("a snapshot that was not saved is told apart among the points to choose from", () => {
