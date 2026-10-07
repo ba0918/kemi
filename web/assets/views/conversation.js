@@ -46,6 +46,9 @@ export function renderConversation(options = {}) {
   actions.pageCommentsChanged();
   const shown = conversationShown();
   dom.conversation.dataset.open = String(shown);
+  // 狭い画面のシートを開いている間は、浮かぶ「Hand to agent」を出さない（シートの中に同じ操作があり、浮かぶものが
+  // シートの操作を覆うため）。
+  dom.handFloatBar.dataset.conversationOpen = String(shown);
   dom.conversation.style.setProperty("--cv-width", `${state.conversation.width}px`);
   dom.btnComments.setAttribute("aria-expanded", String(shown));
   renderAgentState();

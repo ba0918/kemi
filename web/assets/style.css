@@ -3026,6 +3026,10 @@ ul.files ul {
     max-width: calc(100vw - 28px);
   }
 
+  .hand-float[data-conversation-open="true"] {
+    display: none;
+  }
+
   .hand-float .hand-note {
     margin: 0;
     padding: 4px 8px;

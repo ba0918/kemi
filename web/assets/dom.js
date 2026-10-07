@@ -92,6 +92,7 @@ export const dom = {
   btnHand: /** @type {HTMLButtonElement} */ (must("#btn-hand")),
   handCount: must("#hand-count"),
   handNote: must("#hand-note"),
+  handFloatBar: must("#hand-float-bar"),
   handFloat: /** @type {HTMLButtonElement} */ (must("#hand-float")),
   handFloatCount: must("#hand-float-count"),
   handFloatNote: must("#hand-float-note"),
