@@ -48,7 +48,8 @@ import { renderHeader } from "../views/header.js";
 import { refreshCommentBadges } from "../views/tree.js";
 
 /**
- * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
+ * `page_comment_saved` は、このレビューでページへのコメントを一度でも保存したか（始め方の案内を出すかを決める）。
+ * @typedef {{ port: number, start: string, page: string, code: boolean, page_comment_saved?: boolean }} LiveInfo
  * @typedef {import("../live-model.js").SnapshotSummary} SnapshotSummary
  * @typedef {import("../live-diff.js").Description} Description
  * @typedef {import("../live-diff.js").Change} Change
@@ -158,9 +159,11 @@ const live = {
   shiftedOpen: false,
   /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
   listed: { main: 0, shifted: 0 },
-  /** 選んでいる道具（R-PAGE-COMMENT）。「操作」ではページを普通に触れる。 */
+  /** 選んでいる道具（R-PAGE-COMMENT）。既定は要素。「操作」ではページを普通に触れる。 */
   /** @type {"element" | "arrow" | "pen" | "interact"} */
-  tool: "interact",
+  tool: "element",
+  /** ページへのコメントを一度でも保存したか。保存するまで始め方の案内を出す（R-PAGE-COMMENT）。 */
+  pageCommentSaved: false,
   /** 書いているコメントの場所。 */
   draft: emptyDraft("/", DEFAULT_WIDTH),
   /** コメントを保存している途中。 */
@@ -214,6 +217,7 @@ export function startLive(info) {
   live.info = info;
   live.origin = liveOrigin(location.protocol, location.hostname, info.port);
   live.page = pageKey(info.start);
+  live.pageCommentSaved = info.page_comment_saved === true;
   const stylesheet = document.createElement("link");
   stylesheet.rel = "stylesheet";
   stylesheet.href = "assets/live.css";
@@ -838,8 +842,8 @@ function renderCompose() {
     compose.awayText.textContent = `These places are on ${away.url} at ${away.width}px. Places can be added and the comment saved there.`;
     compose.back.textContent = `Back to ${away.url} at ${away.width}px`;
   }
-  compose.box.hidden =
-    live.view !== "page" || (live.tool === "interact" && places.length === 0 && compose.body.value === "");
+  // 道具を選んだだけでは開かず、最初の場所を置いたときに開く（R-PAGE-COMMENT）。
+  compose.box.hidden = live.view !== "page" || (places.length === 0 && compose.body.value === "");
   // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
   renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)), live.saving);
   compose.undo.disabled = places.length === 0 || live.saving;
@@ -894,6 +898,7 @@ async function savePageComment() {
     });
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
+    live.pageCommentSaved = true;
     const notice = imageUnsavedNotice(comment);
     if (notice !== "") {
       live.refNotice = notice;
@@ -1315,6 +1320,7 @@ function renderBand() {
     choice.disabled = state.submitted && choice.dataset.tool !== "interact";
   }
   shell.capture.hidden = live.tool === "interact" || state.submitted;
+  shell.hint.hidden = live.pageCommentSaved;
   shell.capture.dataset.tool = live.tool;
   // 今の倍率はいつも見る対象の見出しに出す（R-PAGE-VIEW）。
   shell.liveLabel.textContent = `${live.page} · ${live.width} · ×${live.scale.toFixed(2)}`;

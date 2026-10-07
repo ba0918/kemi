@@ -208,6 +208,63 @@ body[data-live-view="code"] .lv-page-only {
   font-size: 12.5px;
 }
 
+.lv-toolbar,
+.lv-hint {
+  flex: 0 0 100%;
+}
+
+.lv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 始め方の 3 つの手順（R-PAGE-COMMENT）。 */
+.lv-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--ai-soft);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-2);
+}
+
+.lv-hint[hidden] {
+  display: none;
+}
+
+.lv-hint-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.lv-hint-n {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ai);
+  color: #fff;
+  font-size: 11px;
+}
+
+.lv-hint-arrow {
+  color: var(--ink-3);
+}
+
+.lv-hint-end {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
 .lv-stage-name {
   font-weight: 700;
   color: var(--ink);

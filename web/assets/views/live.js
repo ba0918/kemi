@@ -58,6 +58,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   noCode: HTMLElement,
  *   pageTree: HTMLElement,
  *   toolSeg: HTMLElement,
+ *   hint: HTMLElement,
  *   capture: HTMLElement,
  *   stroke: SVGPolylineElement,
  *   compose: ComposeShell,
@@ -211,7 +212,13 @@ export function buildShell() {
     toolSeg.append(choice);
   }
 
-  band.append(widthGroup, recordButton, mockGroup, refNotice, el("span", "lv-spacer"), toolSeg, sideSeg);
+  band.append(widthGroup, recordButton, mockGroup, refNotice, el("span", "lv-spacer"), sideSeg);
+
+  // 道具は見る対象の枠のすぐ上に、始め方の案内はその下に置く（R-PAGE-COMMENT）。
+  const toolbar = el("div", "lv-toolbar");
+  toolbar.append(toolSeg);
+  const hint = buildHint();
+  stageHead.prepend(toolbar, hint);
 
   const stage = el("div", "lv-stage");
   stage.id = "live-stage";
@@ -306,6 +313,7 @@ export function buildShell() {
     noCode,
     pageTree,
     toolSeg,
+    hint,
     capture,
     stroke,
     compose,
@@ -369,6 +377,26 @@ export function buildTopbar() {
   const agent = el("span", "agent-status lv-top-agent");
   agent.setAttribute("role", "status");
   return { tabs, codeCount, meta, metaPage, metaWidth, agent };
+}
+
+/** 始め方の 3 つの手順（R-PAGE-COMMENT）。ページへのコメントを初めて保存するまで出す。 */
+const HINT_STEPS = ["Point at a place on the page", "Write, then Comment", "Hand to agent"];
+
+/** @returns {HTMLElement} */
+function buildHint() {
+  const hint = el("div", "lv-hint");
+  hint.setAttribute("role", "note");
+  hint.setAttribute("aria-label", "How to start");
+  for (const [index, step] of HINT_STEPS.entries()) {
+    if (index > 0) {
+      hint.append(textEl("span", "lv-hint-arrow", "→"));
+    }
+    const item = el("span", "lv-hint-step");
+    item.append(textEl("span", "lv-hint-n", String(index + 1)), step);
+    hint.append(item);
+  }
+  hint.append(textEl("span", "lv-hint-end", "Shown until you save your first page comment"));
+  return hint;
 }
 
 /** @returns {ComposeShell} */

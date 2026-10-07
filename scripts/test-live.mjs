@@ -407,6 +407,7 @@ async function outsideGitFilePages() {
 
     await browser('click', '.lv-view button[data-view="page"]');
     await waitFor(visible('#page-tree'));
+    await chooseTool('interact');
     await clickInLiveFrame(100, 100);
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html'`);
     console.log('PASS ファイルのページの中で範囲の別の HTML へのリンクを押すと、見る対象が移り、ページのツリーにそのページが出る');
@@ -598,6 +599,7 @@ async function snapshotsAreTakenShownAndChosen(repository) {
       console.log(`CHECK スナップショットと動いているページの画素が ${compared.different} / ${compared.total}（${(compared.ratio * 100).toFixed(3)}%）違う。差の画像: ${join(shots, 'diff.png')}（人が確かめる）`);
     }
 
+    await chooseTool('interact');
     await clickInPane(refPane, 150, 250);
     await new Promise((done) => setTimeout(done, 300));
     const afterClick = await shot(`${refPane} .lv-frame`, shots, 'snapshot-clicked');
@@ -923,6 +925,7 @@ async function compareModesScaleAndReload(repository) {
     await waitFor(`${liveScale} === 1 && document.querySelector('${livePane} .lv-viewport').scrollWidth > document.querySelector('${livePane} .lv-viewport').clientWidth`);
     const middle = await evaluate(`(() => { const r = document.querySelector('${livePane} .lv-viewport').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), height: Math.floor(r.height) }; })()`);
     // 別のオリジンの枠にはホイールが届かないので、ページを押してから End を押す。
+    await chooseTool('interact');
     await browser('mouse', 'move', String(middle.x), String(middle.y));
     await browser('mouse', 'down');
     await browser('mouse', 'up');
@@ -1083,6 +1086,76 @@ async function changesShowWithThePageAlone(repository) {
   } finally {
     await stop(kemi);
     await dev.close();
+  }
+}
+
+/**
+ * 道具の既定と始め方の案内（R-PAGE-COMMENT）: 開いた直後の道具は要素で、ページを押すと場所が置かれる。道具を選び直した
+ * だけでは書く欄が開かず、場所を置くと開く。案内はページへのコメントを保存すると消え、そのコメントを消しても出ない。
+ * 要素の道具のまま等倍にしても、横にも下端までもスクロールできる。
+ */
+async function toolsAndTheHintStartTheFirstComment(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  const compose = '#live-compose';
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
+    assert.equal(await evaluate(`document.querySelector('.lv-tools button[aria-pressed="true"]')?.dataset.tool`), 'element');
+    await waitFor(`${visible('.lv-hint')} && !${visible(compose)}`);
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]' && ${visible(compose)}`);
+    console.log('PASS 開いた直後の道具は要素で、案内が出ていて、ページを押すと場所が置かれる');
+
+    await browser('click', `${compose} .lv-compose-cancel`);
+    await waitFor(`!${visible(compose)}`);
+    for (const tool of ['arrow', 'pen', 'interact', 'element']) {
+      await chooseTool(tool);
+      await new Promise((done) => setTimeout(done, 200));
+      assert.equal(await evaluate(visible(compose)), false, `choosing ${tool} opens no comment box`);
+    }
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]' && ${visible(compose)}`);
+    console.log('PASS 道具を選び直しただけでは書く欄が開かず、場所を置くと開く');
+
+    await savePageCommentInThePage('the button');
+    await waitFor(`!${visible('.lv-hint')}`);
+    const [saved] = (await reviewJson(kemi)).comments;
+    await post(kemi.url, 'api/comment', { op: 'delete', id: saved.id });
+    await browser('open', kemi.url);
+    await waitFor(`${visible('.lv-tools')} && document.querySelector('#comment-count').textContent === '0'`);
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(await evaluate(visible('.lv-hint')), false, 'the hint does not come back after the comment is deleted');
+    console.log('PASS 案内はページへのコメントを保存すると消え、そのコメントを消して開き直しても出ない');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+
+  const tallDev = await startDevServer();
+  const tall = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${tallDev.url}tall.html`]);
+  try {
+    await browser('open', tall.url);
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
+    assert.equal(await evaluate(`document.querySelector('.lv-tools button[aria-pressed="true"]')?.dataset.tool`), 'element');
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await waitFor(`${liveScale} === 1`);
+    const viewport = `document.querySelector('${livePane} .lv-viewport')`;
+    const height = await evaluate(`Math.floor(${viewport}.getBoundingClientRect().height)`);
+    // agent-browser のホイールは押した位置に届かない（画面の左上に届く）ので、道具の層の上で回したホイールを作って送る。
+    const wheel = (x, y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaX: ${x}, deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
+    await wheel(300, 0);
+    await waitFor(`${viewport}.scrollLeft > 0`);
+    await wheel(0, 6000);
+    await waitForPixels(`${livePane} .lv-viewport`, shots, 'element-tool-bottom', [0, height - 60, 300, height - 30], isLastBand);
+    assert.equal(await evaluate(draftNumbers), '[]', 'scrolling puts no place');
+    console.log('PASS 要素の道具のまま等倍にしても、横にも下端までもスクロールできる');
+  } finally {
+    await stop(tall);
+    await tallDev.close();
   }
 }
 
@@ -2679,6 +2752,7 @@ try {
   await referenceNamesHeadingsAndNotices(repository);
   await sideBySidePagesShareTheirTop(repository);
   await changesShowWithThePageAlone(repository);
+  await toolsAndTheHintStartTheFirstComment(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
