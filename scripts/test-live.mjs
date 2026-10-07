@@ -168,7 +168,7 @@ async function post(url, path, body) {
 }
 
 /**
- * 画面の「Hand to agent」で渡す。ボタンはエージェントが kemi wait を呼んだレビューにだけ出るので、
+ * 画面の「Hand to agent」で渡す。ボタンはエージェントが kemi wait を呼んだレビューでだけ押せるので、
  * 先に待たせておき、渡して返るのを待つ。
  */
 async function handInThePage(kemi, dir, state) {
@@ -2491,7 +2491,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await post(kemi.url, 'api/message', { body: 'let me show you' });
-    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 500));
     await chooseTool('element');
@@ -2601,7 +2601,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
     await post(kemi.url, 'api/message', { body: 'let me show you' });
-    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 500));
     await chooseTool('element');
@@ -2821,7 +2821,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await post(kemi.url, 'api/message', { body: 'let me show you' });
-    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);

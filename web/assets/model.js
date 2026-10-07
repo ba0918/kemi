@@ -1563,7 +1563,8 @@ export function effectiveDisplay(settings) {
 /**
  * 渡した 1 回分の行（R-AGENT-HAND）。`thread` が null なら発言だけの 1 回分の、並びの末尾の行。
  * @typedef {{ thread: string | null, state: "pending" | "working" }} HandLine
- * @typedef {{ called: boolean, status: string, unhanded: number, lines?: HandLine[] }} AgentState
+ * `review` は写す `kemi wait <id>` の id。エージェント用の API が無いレビューでは null。
+ * @typedef {{ called: boolean, status: string, unhanded: number, lines?: HandLine[], review?: string | null }} AgentState
  */
 
 /**
@@ -1598,13 +1599,25 @@ export function handLineState(lines, thread) {
 }
 
 /**
- * 「Hand to agent」を出すか。`kemi wait` が一度でも呼ばれたレビューでだけ出す
- * （R-AGENT-STATE）。状態・会話パネル・返信・解決はどのレビューでも出す。
- * @param {AgentState | null} agent
- * @returns {boolean}
+ * 「Hand to agent」の押せる・押せないと、そばに出す案内（R-AGENT-STATE）。ボタンは状態によらず出す。
+ * `kemi wait` の前は押せず、渡せるようになる `kemi wait <id>` を写せるようにする。エージェント用の API が無い
+ * レビュー（`review` が null）は写すものが無いので、つながれないことを言う。呼ばれた後は、渡すもの（前に渡した
+ * 後の変化）があるときだけ押せる。
+ * @param {AgentState} agent
+ * @param {boolean} submitted
+ * @returns {{ disabled: boolean, note: "connect" | "unavailable" | "nothing" | null, command: string | null }}
  */
-export function handShown(agent) {
-  return Boolean(agent && agent.called);
+export function handControl(agent, submitted) {
+  if (!agent.called) {
+    const review = agent.review ?? null;
+    return review === null
+      ? { disabled: true, note: "unavailable", command: null }
+      : { disabled: true, note: "connect", command: `kemi wait ${review}` };
+  }
+  if (agent.unhanded === 0) {
+    return { disabled: true, note: "nothing", command: null };
+  }
+  return { disabled: submitted, note: null, command: null };
 }
 
 /**
@@ -1646,7 +1659,8 @@ export function addMessage(messages, message) {
  * @returns {string | null}
  */
 export function unhandedNotice(agent) {
-  if (!handShown(agent) || !agent || agent.unhanded === 0) {
+  // 確認の件数は、一度でも kemi wait が呼ばれたレビューでだけ出す（R-SUBMIT）。
+  if (!agent || !agent.called || agent.unhanded === 0) {
     return null;
   }
   const one = agent.unhanded === 1;

@@ -182,7 +182,8 @@ export async function postMessage(body) {
 
 /** 前に渡した後に書いたものを、まとめてエージェントに渡す。 */
 export async function handToAgent() {
-  if (state.submitted) {
+  // kemi wait の前は渡せない（R-AGENT-STATE）。ボタンも押せないが、キーなどほかの入口でも同じにする。
+  if (state.submitted || !state.agent.called) {
     return;
   }
   try {

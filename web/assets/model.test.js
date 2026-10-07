@@ -58,7 +58,7 @@ import {
   shownLineNumbers,
   effectiveDisplay,
   agentStatusLabel,
-  handShown,
+  handControl,
   authorLabel,
   replaceComment,
   addMessage,
@@ -1443,10 +1443,37 @@ test("待機中は渡せること、返事済みは返事が届いたことが�
   assert.match(agentStatusLabel("replied"), /replied/i);
 });
 
-test("kemi wait が一度でも呼ばれたレビューでだけ「Hand to agent」を出す", () => {
-  assert.equal(handShown({ called: false, status: "not-connected", unhanded: 2 }), false);
-  assert.equal(handShown({ called: true, status: "working", unhanded: 0 }), true);
-  assert.equal(handShown(null), false);
+test("「Hand to agent」は kemi wait の前は押せず、写す kemi wait <id> と案内を添える", () => {
+  assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 2, review: "01K5ABC" }, false), {
+    disabled: true,
+    note: "connect",
+    command: "kemi wait 01K5ABC",
+  });
+});
+
+test("エージェントがつながれないレビューでは「Hand to agent」は押せず、写すコマンドは無い", () => {
+  assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 2, review: null }, false), {
+    disabled: true,
+    note: "unavailable",
+    command: null,
+  });
+});
+
+test("kemi wait が呼ばれたら、渡すものがあるときだけ「Hand to agent」を押せる", () => {
+  assert.deepEqual(handControl({ called: true, status: "waiting", unhanded: 2, review: "r" }, false), {
+    disabled: false,
+    note: null,
+    command: null,
+  });
+  assert.deepEqual(handControl({ called: true, status: "replied", unhanded: 0, review: "r" }, false), {
+    disabled: true,
+    note: "nothing",
+    command: null,
+  });
+});
+
+test("submit した後は「Hand to agent」を押せない", () => {
+  assert.equal(handControl({ called: true, status: "waiting", unhanded: 2, review: "r" }, true).disabled, true);
 });
 
 test("渡した 1 回分の行は、スレッドごとと、発言だけの並びの末尾のものを見分ける", () => {

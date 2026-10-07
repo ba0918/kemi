@@ -3518,6 +3518,17 @@ async fn the_first_load_carries_replies_messages_and_the_agent_state() {
 }
 
 #[tokio::test]
+async fn the_page_gets_the_review_id_to_copy_only_when_an_agent_can_connect() {
+    let server = AgentServer::start().await;
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["agent"]["review"], "01TESTREVIEW");
+
+    let (alone, _sink) = TestServer::with_recording_session().await;
+    let review: Value = alone.get("api/review").await.json().await.unwrap();
+    assert!(review["agent"]["review"].is_null(), "{}", review["agent"]);
+}
+
+#[tokio::test]
 async fn a_review_where_kemi_wait_was_never_called_is_not_connected() {
     let (server, _sink) = TestServer::with_recording_session().await;
 
@@ -3565,6 +3576,7 @@ impl AgentServer {
             agent: Some(AgentParams {
                 listener: agent_listener,
                 token: "agent-secret".to_string(),
+                review: "01TESTREVIEW".to_string(),
                 control: kemi_server::ServeControl::new(),
             }),
             live: None,

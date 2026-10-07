@@ -70,6 +70,7 @@ pub(super) async fn hand_api(
 
 /// エージェントの状態・未渡しの件数・渡した 1 回分の行（R-AGENT-STATE, R-AGENT-HAND）。
 /// 行の形は画面とサーバの間だけのもの（`thread` が null なら発言だけの 1 回分の、並びの末尾の行）。
+/// `review` は画面が写す `kemi wait <id>` の id で、エージェント用の API が無いレビューでは null。
 pub(crate) fn agent_json(state: &AppState) -> Value {
     let (called, unhanded) = {
         let session = state.session.lock().expect("session poisoned");
@@ -93,7 +94,13 @@ pub(crate) fn agent_json(state: &AppState) -> Value {
             json!({ "thread": thread, "state": line.state.as_str() })
         })
         .collect();
-    json!({ "called": called, "status": status.as_str(), "unhanded": unhanded, "lines": lines })
+    json!({
+        "called": called,
+        "status": status.as_str(),
+        "unhanded": unhanded,
+        "lines": lines,
+        "review": state.review_id,
+    })
 }
 
 /// エージェントの状態か未渡しの件数が変わったかもしれないとき、ページへ知らせる。

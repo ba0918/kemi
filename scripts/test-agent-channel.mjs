@@ -5,7 +5,7 @@
 //   node scripts/test-agent-channel.mjs <kemi-bin>
 //
 // 確かめること: kemi wait を呼ぶ前から返信の欄・解決・会話パネルの書く欄と未接続の状態が出て、
-// 「Hand to agent」だけが無い、会話パネルの開閉と幅が読み込み直しても残る、ページの起動中に
+// 「Hand to agent」は押せないまま kemi wait <id> を写す操作が添えられる（畳んだ帯でも）、会話パネルの開閉と幅が読み込み直しても残る、ページの起動中に
 // kemi wait と kemi reply の発言が来ても待機中と渡すと発言が出る、kemi wait を待たせると待機中、
 // 返った後は作業中に変わり渡すが出る、畳んだまま返信が届くとパネルは開かず札と帯に新着が出て
 // スレッドを開くと消える、一番下を見ているときだけ並びが新しいものについていき、上を見ている
@@ -18,7 +18,9 @@
 // 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない、まだ読んで
 // いないファイルのスレッドを開いても、開いたまま表示色の明暗を切り替えても対象の行の前後が見える、
 // 畳んだ帯にも未渡しの件数つきで渡すが出る、渡した 1 回分の行が受け取り待ち → 作業中 → 返信で消える
-// と変わり、状態が未接続 → 待機中 → 作業中 → 返事済みと変わる。
+// と変わり、状態が未接続 → 待機中 → 作業中 → 返事済みと変わる、渡した直後は渡すが押せず返信を書くと
+// 押せる、kemi wait を一度も呼ばないレビューやエージェントがつながれないレビューでも渡すが押せないまま出て、
+// submit は今どおり終わる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -208,15 +210,25 @@ try {
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
 
   // (1) kemi wait を呼ぶ前から、返信の欄・解決・会話パネルの書く欄と状態（未接続）は出る。
-  // 「Hand to agent」だけが無い。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いて
-  // そのスレッドになる。
+  // 「Hand to agent」は出ているが押せず、そばに kemi wait を始めると渡せることと、kemi wait <id> を
+  // 写す操作が出る（畳んだ帯でも）。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いてそのスレッドになる。
+  await evaluate(`window.__kemiCopied = []; navigator.clipboard.writeText = async (text) => { window.__kemiCopied.push(text); }; true`);
   assert.equal(await evaluate(panelClosed), true);
-  assert.equal(await evaluate(shown('#rail-hand')), false);
+  assert.equal(await evaluate(`${shown('#rail-hand')} && document.querySelector('#rail-hand').disabled`), true, 'the folded rail shows Hand to agent, not pressable');
+  // 畳んだ帯の案内は、帯にポインタを乗せている間だけ出る（出したままだと差分を覆う）。
+  assert.equal(await evaluate(shown('#rail-hand-note')), false, 'the note does not cover the diff by itself');
+  await browser('hover', '#rail-hand');
+  await waitFor(`${shown('#rail-hand-note')} && document.querySelector('#rail-hand-note .hand-command')?.textContent === ${JSON.stringify(`kemi wait ${kemi.id}`)}`);
+  await browser('click', '#rail-hand-note .hand-copy');
+  await waitFor(`window.__kemiCopied.length === 1`);
+  assert.deepEqual(JSON.parse(await evaluate(`JSON.stringify(window.__kemiCopied)`)), [`kemi wait ${kemi.id}`]);
+  console.log('PASS kemi wait の前は、畳んだ帯に「Hand to agent」が押せないまま出て、乗せると出る kemi wait <id> を写す操作で写したものがこのレビューの id のコマンド');
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);
   assert.equal(await evaluate(statusIs('not-connected')), true);
-  assert.equal(await evaluate(shown('#btn-hand')), false);
+  assert.equal(await evaluate(`${shown('#btn-hand')} && document.querySelector('#btn-hand').disabled`), true);
+  assert.equal(await evaluate(`${shown('#hand-note .hand-command')} && document.querySelector('#hand-note .hand-command').textContent`), `kemi wait ${kemi.id}`);
   assert.equal(await evaluate(shown('#cv-reply-text')), true);
   assert.equal(await evaluate(shown('#cv-thread-head .cv-resolve')), true);
   // 解決すると札は解決済みの印つきで 1 行に縮み、取り消すと戻る。
@@ -227,7 +239,7 @@ try {
   await browser('click', '#cv-thread-head .cv-back');
   await waitFor(`!document.querySelector('#cv-list').hidden`);
   assert.equal(await evaluate(shown('#cv-message')), true);
-  console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」だけが無い。札を押すとパネルでスレッドが開き、解決できる');
+  console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」は押せないまま案内とコマンドが出る。札を押すとパネルでスレッドが開き、解決できる');
 
   // (1a) 会話パネルの幅は左の縁を掴んで変えられ、開閉と幅は読み込み直しても残る。
   const widthBefore = await evaluate(`document.querySelector('#conversation').getBoundingClientRect().width`);
@@ -273,11 +285,12 @@ try {
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
   await waitFor(statusIs('waiting'));
   assert.equal(await evaluate(shown('#btn-hand')), true);
+  await waitFor(`!document.querySelector('#btn-hand').disabled && document.querySelector('#hand-note').hidden`);
   await waitFor(`${panelOpen} && ${agentMessage('Looking at it now.')}`);
   const loadingWaited = await loadingWait;
   assert.equal(loadingWaited.code, 3, `the wait should time out: ${JSON.stringify(loadingWaited)}`);
   await waitFor(statusIs('working'));
-  console.log('PASS ページの起動中に kemi wait と kemi reply の発言が来ても、待機中と「Hand to agent」と発言が出る');
+  console.log('PASS ページの起動中に kemi wait と kemi reply の発言が来ても、待機中と押せる「Hand to agent」と発言が出る');
 
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
   const waiting = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '2']);
@@ -574,6 +587,11 @@ try {
   await addComment(3, 'first thread');
   await pressHand();
   await waitFor(`${lineOf('c1')} === 'pending'`);
+  await waitFor(`document.querySelector('#btn-hand').disabled && document.querySelector('#hand-note .hand-note-text')?.textContent === 'Nothing new to hand'`);
+  await post(handKemi.url, 'api/comment', { op: 'reply', id: 'c1', body: 'also the caller' });
+  await waitFor(`!document.querySelector('#btn-hand').disabled && document.querySelector('#hand-note').hidden`);
+  console.log('PASS 渡した直後は「Hand to agent」が押せず渡すものが無いと出て、返信を 1 つ書くと押せる');
+  await pressHand();
   const pickedUp = waitOnce(30);
   await waitFor(`${lineOf('c1')} === 'working'`);
   assert.equal((await pickedUp).code, 0);
@@ -627,5 +645,67 @@ try {
 } finally {
   handKemi.child.kill('SIGTERM');
   await handKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (12) kemi wait を一度も呼ばずに起動したレビュー（R-AGENT-FLOW）: 「Hand to agent」は出ていて押せず、
+// submit すると今どおり stdout に JSON が出て終わる。未渡しのコメントがあっても、確認に未渡しの件数は出ない（R-SUBMIT）。
+const quietFixture = await makeFixture();
+const quietState = await mkdtemp(join(tmpdir(), 'kemi-agent-quiet-state-'));
+const quietKemi = await startKemi(quietFixture, quietState);
+try {
+  const quietFile = (await (await fetch(new URL('api/review', quietKemi.url))).json()).groups[0].files[0].id;
+  await post(quietKemi.url, 'api/comment', { op: 'add', file_id: quietFile, side: 'new', start_line: 3, end_line: 3, body: 'never handed' });
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', quietKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${statusIs('not-connected')}`);
+  const pressable = `(${shown('#rail-hand')} && !document.querySelector('#rail-hand').disabled) || (${shown('#btn-hand')} && !document.querySelector('#btn-hand').disabled)`;
+  assert.equal(await evaluate(`${shown('#rail-hand')} || ${shown('#btn-hand')}`), true, 'Hand to agent is shown');
+  assert.equal(await evaluate(pressable), false, 'Hand to agent cannot be pressed');
+  await browser('click', '#btn-approve');
+  await waitFor(`!document.querySelector('#modal').hidden`);
+  assert.equal(await evaluate(`document.querySelector('#unhanded-notice') === null`), true, 'no unhanded count without kemi wait');
+  await browser('click', '#modal-ok');
+  const { code, stdout } = await quietKemi.exited;
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(stdout).comments[0].body, 'never handed');
+  console.log('PASS kemi wait を一度も呼ばないレビューでは「Hand to agent」が出ていて押せず、submit すると stdout に JSON が出て終わる');
+} finally {
+  quietKemi.child.kill('SIGTERM');
+  await quietKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (13) エージェントがつながれないレビュー（状態の置き場所が決まらず、review の行もエンドポイントも無い）でも、
+// 「Hand to agent」は押せないまま出て、写すコマンドは無く、つながれないことを言う。
+const aloneFixture = await makeFixture();
+const aloneEnv = { ...process.env };
+for (const name of ['XDG_STATE_HOME', 'HOME', 'LOCALAPPDATA']) delete aloneEnv[name];
+const alone = spawn(binary, ['--worktree', '--port', '0', '--no-open'], { cwd: aloneFixture, env: aloneEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+let aloneStderr = '';
+alone.stdout.resume();
+const aloneUrl = await new Promise((resolve, reject) => {
+  alone.stderr.on('data', (chunk) => {
+    aloneStderr += chunk;
+    const url = aloneStderr.match(/^kemi: (http:\/\/\S+)/m);
+    if (url) resolve(url[1]);
+  });
+  alone.on('exit', (code) => reject(new Error(`kemi exited before serving (${code}): ${aloneStderr}`)));
+});
+const aloneExited = new Promise((resolve) => alone.on('exit', resolve));
+try {
+  assert.equal(/^kemi: review /m.test(aloneStderr), false, 'no review line without a state location');
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', aloneUrl);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await waitFor(`${shown('#rail-hand')} && document.querySelector('#rail-hand').disabled`);
+  await browser('hover', '#rail-hand');
+  await waitFor(shown('#rail-hand-note'));
+  assert.equal(await evaluate(`document.querySelector('#rail-hand-note .hand-command') === null`), true, 'no command to copy');
+  assert.match(await evaluate(`document.querySelector('#rail-hand-note').textContent`), /no agent can connect/i);
+  console.log('PASS エージェントがつながれないレビューでも「Hand to agent」は押せないまま出て、写すコマンドは無く、つながれないことを言う');
+} finally {
+  alone.kill('SIGTERM');
+  await aloneExited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

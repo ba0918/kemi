@@ -310,9 +310,15 @@ hand-over, each thread it carried ends with a line saying the agent has yet
 to pick it up, which turns into "working" when `kemi wait` returns it and
 goes away when the agent replies in that thread (a hand-over of messages
 only puts one line at the end of the list, gone at the agent's next
-message); the line carries `data-kemi-hand-line="pending"` or `"working"`. Only the
-**Hand to agent** button waits until `kemi wait` has been called once in that
-review. The agent API listens on
+message); the line carries `data-kemi-hand-line="pending"` or `"working"`.
+**Hand to agent** is always shown, also on the folded rail, but cannot be
+pressed until `kemi wait` has been called once in that review: next to it the
+page says that comments can be handed once the agent runs `kemi wait <id>`,
+with that command (this review's id) to copy (on the folded rail, while the
+pointer is on it). It also cannot be pressed, and
+says so, while there is nothing new to hand. In a review the agent cannot
+connect to (no session, so no `kemi: review` line), it stays unpressable
+and says that no agent can connect. The agent API listens on
 `127.0.0.1` whatever `--bind` says, accepts only
 requests without an `Origin` carrying its own token, and the token is kept in
 `<id>.endpoint` next to the session (owner-only; on Windows under

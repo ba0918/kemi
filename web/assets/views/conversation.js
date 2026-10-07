@@ -26,7 +26,7 @@ import {
   firstLine,
   followsNewest,
   handLineState,
-  handShown,
+  handControl,
   pageCommentElsewhere,
   threadChip,
   unreadCount,
@@ -60,6 +60,7 @@ export function renderConversation(options = {}) {
   const row = comment ? dom.cvReplyActions : dom.cvComposeActions;
   if (dom.btnHand.parentElement !== row) {
     row.prepend(dom.btnHand);
+    row.after(dom.handNote);
   }
   if (comment) {
     renderThread(comment, options);
@@ -79,7 +80,7 @@ function openThreadComment() {
 
 /**
  * エージェントの状態（見出しと畳んだ帯）と「Hand to agent」（書く欄の並びと畳んだ帯）。
- * 「Hand to agent」は `kemi wait` が一度でも呼ばれたレビューでだけ出す（R-AGENT-STATE）。
+ * 「Hand to agent」は状態によらず出し、押せないときはそのわけをそばに出す（R-AGENT-STATE）。
  */
 export function renderAgentState() {
   const agent = state.agent;
@@ -89,9 +90,13 @@ export function renderAgentState() {
   dom.railStatus.dataset.kemiAgentState = agent.status;
   dom.railStatus.title = label;
   const count = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
+  const control = handControl(agent, state.submitted);
   for (const hand of [dom.btnHand, dom.railHand]) {
-    hand.hidden = !handShown(agent);
-    hand.disabled = state.submitted || agent.unhanded === 0;
+    hand.disabled = control.disabled;
+    hand.dataset.handNote = control.note ?? "";
+  }
+  for (const note of [dom.handNote, dom.railHandNote]) {
+    renderHandNote(note, control);
   }
   dom.handCount.textContent = count;
   dom.railHandCount.textContent = count;
@@ -103,6 +108,52 @@ export function renderAgentState() {
     "aria-label",
     unread > 0 ? `Open the conversation (${unread} new)` : "Open the conversation",
   );
+}
+
+/** 「Hand to agent」を押せないわけ（画面モックの状態 1）。 */
+const HAND_NOTES = {
+  connect: "You can hand comments once the agent runs",
+  unavailable: "No agent can connect to this review. Submit to finish it.",
+  nothing: "Nothing new to hand",
+};
+
+/**
+ * 「Hand to agent」のそばの案内。`kemi wait` の前は、渡せるようになるコマンドとそれを写す操作も出す。
+ * 中身が同じなら作り直さない（状態の知らせのたびに描き直され、写した印が消えるため）。
+ * @param {HTMLElement} note
+ * @param {ReturnType<typeof handControl>} control
+ */
+function renderHandNote(note, control) {
+  const key = `${control.note ?? ""} ${control.command ?? ""}`;
+  if (note.dataset.key === key) {
+    return;
+  }
+  note.dataset.key = key;
+  note.textContent = "";
+  note.hidden = control.note === null;
+  if (control.note === null) {
+    return;
+  }
+  note.append(textEl("span", "hand-note-text", HAND_NOTES[control.note]));
+  const command = control.command;
+  if (command === null) {
+    return;
+  }
+  const code = textEl("code", "hand-command", command);
+  const copy = button("hand-copy");
+  copy.textContent = "Copy";
+  copy.title = `Copy ${command}`;
+  copy.addEventListener("click", () => {
+    navigator.clipboard.writeText(command).then(
+      () => {
+        copy.textContent = "Copied";
+      },
+      (error) => {
+        copy.textContent = `Could not copy: ${error}`;
+      },
+    );
+  });
+  note.append(" ", code, copy);
 }
 
 /**
