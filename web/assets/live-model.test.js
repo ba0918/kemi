@@ -6,7 +6,9 @@ import {
   addPlace,
   buildPageTree,
   draftElsewhere,
+  editBody,
   emptyDraft,
+  strayRefs,
   imageUnsavedNotice,
   removePlace,
   undoPlace,
@@ -278,23 +280,76 @@ test("places of a comment are numbered from 1 in the order they are added", () =
   assert.deepEqual(draft.places.map((item) => item.kind), ["element", "arrow", "pen"]);
 });
 
-test("removing a place keeps the other numbers and its number is not given again", () => {
+/**
+ * 場所を 3 つ置き、本文を書いた書きかけ。
+ * @param {string} body
+ */
+const threePlaces = (body) => {
   let draft = emptyDraft("/", 390);
   for (const kind of /** @type {const} */ (["element", "arrow", "pen"])) draft = addPlace(draft, place(kind, `#${kind}`), "/", 390);
-  draft = removePlace(draft, 2);
-  assert.deepEqual(numbers(draft), [1, 3]);
-  draft = addPlace(draft, place("arrow"), "/", 390);
-  assert.deepEqual(numbers(draft), [1, 3, 4]);
+  return editBody(draft, body);
+};
+
+test("removing a place renumbers the rest from 1 in the order they were put, and the body follows", () => {
+  const draft = removePlace(threePlaces("#1 と #3 と 3"), 2);
+  assert.deepEqual(numbers(draft), [1, 2]);
+  assert.deepEqual(draft.places.map((item) => item.kind), ["element", "pen"]);
+  assert.equal(draft.body, "#1 と #2 と 3");
+  assert.deepEqual(strayRefs(draft), []);
 });
 
-test("choosing the same element again takes its place away", () => {
+test("a place put after a removal takes the next number in the sequence", () => {
+  const draft = addPlace(removePlace(threePlaces(""), 2), place("arrow"), "/", 390);
+  assert.deepEqual(numbers(draft), [1, 2, 3]);
+});
+
+test("choosing the same element again takes its place away and renumbers the rest", () => {
   let draft = emptyDraft("/", 390);
   draft = addPlace(draft, place("element", "#a"), "/", 390);
   draft = addPlace(draft, place("element", "#b"), "/", 390);
+  draft = editBody(draft, "see #2");
   draft = addPlace(draft, place("element", "#a"), "/", 390);
-  assert.deepEqual(draft.places.map((item) => [item.n, item.elements[0].selector]), [[2, "#b"]]);
+  assert.deepEqual(draft.places.map((item) => [item.n, item.elements[0].selector]), [[1, "#b"]]);
+  assert.equal(draft.body, "see #1");
   draft = addPlace(draft, place("element", "#a"), "/", 390);
-  assert.deepEqual(numbers(draft), [2, 3]);
+  assert.deepEqual(numbers(draft), [1, 2]);
+});
+
+test("undo renumbers nothing but leaves a reference to the undone place pointing nowhere", () => {
+  const draft = undoPlace(threePlaces("#1 #3"));
+  assert.deepEqual(numbers(draft), [1, 2]);
+  assert.equal(draft.body, "#1 #3");
+  assert.deepEqual(strayRefs(draft), [{ start: 3, end: 5, n: 3, removed: true }]);
+});
+
+test("a reference to a removed place stays as written and is told apart from the same number after renumbering", () => {
+  let draft = emptyDraft("/", 390);
+  draft = addPlace(draft, place("element", "#a"), "/", 390);
+  draft = addPlace(draft, place("element", "#b"), "/", 390);
+  draft = removePlace(editBody(draft, "#1 #2"), 1);
+  assert.equal(draft.body, "#1 #1");
+  assert.deepEqual(strayRefs(draft), [{ start: 0, end: 2, n: 1, removed: true }]);
+});
+
+test("a reference to a removed place moves with text written before it and is no longer stray once edited", () => {
+  let draft = removePlace(threePlaces("x #2 y"), 2);
+  draft = editBody(draft, "ab x #2 y");
+  assert.deepEqual(strayRefs(draft), [{ start: 5, end: 7, n: 2, removed: true }]);
+  assert.deepEqual(strayRefs(editBody(draft, "ab x # y")), []);
+  assert.deepEqual(strayRefs(editBody(draft, "ab x  y")), []);
+});
+
+test("a reference to a removed place is not rewritten by a later renumbering", () => {
+  let draft = removePlace(threePlaces("#2 #3"), 2);
+  assert.equal(draft.body, "#2 #2");
+  draft = removePlace(draft, 1);
+  assert.equal(draft.body, "#2 #1");
+  assert.deepEqual(strayRefs(draft), [{ start: 0, end: 2, n: 2, removed: true }]);
+});
+
+test("a reference beyond the number of places points nowhere, and a number without # is not a reference", () => {
+  const draft = threePlaces("#9 と 9 と #3");
+  assert.deepEqual(strayRefs(draft), [{ start: 0, end: 2, n: 9, removed: false }]);
 });
 
 test("undo takes away the place added last", () => {

@@ -88,7 +88,8 @@
 
   `url` is the path and query the person was viewing, and `width` the viewport width in CSS
   pixels. `places` are where the comment points, in order of `n`; the body refers to them by
-  number, and numbers may skip (a place removed while writing keeps its number gone). `kind` is
+  number as `#n` (`#2` is the place whose `n` is 2; a number without `#` is not a reference), and
+  the numbers run from 1 without gaps. `kind` is
   `element` (a chosen element, `points` is `[]`), `arrow` (the points of the arrow, and the
   element at its head), or `pen` (the points of the line, and up to five elements that overlap
   the area it encloses, even partly, largest overlap first; elements that contain the whole line, such as a wrapper around the

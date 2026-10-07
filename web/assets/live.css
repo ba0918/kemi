@@ -1036,6 +1036,13 @@ body[data-live-view="page"] #menu-comments {
   font-weight: 700;
   display: grid;
   place-items: center;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.lv-place-n:disabled {
+  cursor: default;
 }
 
 .lv-place-kind {
@@ -1072,6 +1079,38 @@ body[data-live-view="page"] #menu-comments {
   color: var(--ink);
   font: inherit;
   resize: vertical;
+}
+
+/* どの場所も指さない本文の `#n`（R-PAGE-COMMENT）。 */
+.lv-compose-stray {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--del-ink);
+}
+
+.lv-compose-stray[hidden] {
+  display: none;
+}
+
+.lv-stray-ref {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.lv-ref-dead {
+  font-family: var(--mono);
+  font-weight: 700;
+  background: var(--del-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+  text-decoration: line-through wavy var(--del-ink);
+  box-shadow: 0 0 0 1.5px var(--del-ink);
 }
 
 .lv-compose-actions {

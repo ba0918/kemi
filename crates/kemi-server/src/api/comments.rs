@@ -440,6 +440,9 @@ fn place_error_message(error: PlaceError) -> String {
         PlaceError::NoPlace => "a page comment needs at least one place".to_string(),
         PlaceError::NumberFromOne => "place numbers start at 1".to_string(),
         PlaceError::DuplicateNumber(n) => format!("place number {n} is used twice"),
+        PlaceError::MissingNumber(n) => {
+            format!("place numbers run from 1 without gaps, and {n} is missing")
+        }
     }
 }
 

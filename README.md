@@ -222,9 +222,14 @@ when the comments are deleted or the review is suspended and resumed. An element
 click, and clicking it again takes it away; an arrow names the element at its
 head; a pen line names up to five elements that overlap the area it
 encloses, even partly, largest overlap first, leaving out elements that contain the whole line (a line drawn inside
-one element names that element). Places are numbered from 1 on the page and
-in the comment box below it, so the comment can refer to them; removing one,
-undoing the last, or pressing Esc while drawing never renumbers the rest. The
+one element names that element). Places are numbered from 1 in the order they
+were put, on the page and in the comment box below it; the text refers to a
+place as `#n`, and clicking a place number in the box inserts `#n` where you
+are typing (a number without `#` is not a reference). Removing a place —
+from the list, by undoing the last, or by choosing the same element again —
+renumbers the rest from 1 and rewrites the `#n` in the text to match. A `#n`
+that pointed at the removed place, or a number beyond the places, is shown
+in the box, and the comment cannot be saved until the text is changed. The
 places of a comment being written belong to the URL and width of its first
 place: at another URL or width no place is added, and the comment box says so
 and offers to go back there, where the comment is saved. Saving also makes a PNG
@@ -568,7 +573,8 @@ The JSON printed at the end:
   `start_line`, `end_line`, and `suggestion` `null`, `quote` `[]`, and
   `outdated` `false`, and its `page` is
   `{ "url": "/products?x=1", "width": 390, "places": [...], "image": null }`.
-  Each place has a number `n` (in order, possibly with gaps), a `kind`
+  Each place has a number `n` (in order, running from 1 without gaps; the
+  body refers to a place as `#n`), a `kind`
   (`element`, `arrow`, or `pen`), `points` (`[]` for an element), and
   `elements` with a `selector`, `text`, and `rect`, in CSS pixels of the
   page. For an element inside an open shadow root, `selector` is the host's

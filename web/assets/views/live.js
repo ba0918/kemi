@@ -78,6 +78,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   box: HTMLElement,
  *   list: HTMLElement,
  *   body: HTMLTextAreaElement,
+ *   stray: HTMLElement,
  *   undo: HTMLButtonElement,
  *   cancel: HTMLButtonElement,
  *   save: HTMLButtonElement,
@@ -482,8 +483,12 @@ function buildCompose() {
   away.append(awayText, back);
   const body = /** @type {HTMLTextAreaElement} */ (el("textarea", "lv-compose-body"));
   body.rows = 3;
-  body.placeholder = "Refer to the places by their numbers (Cmd/Ctrl+Enter to save)";
+  body.placeholder = "Refer to a place as #1, #2… (click a place number to insert it) · Cmd/Ctrl+Enter to save";
   body.setAttribute("aria-label", "Comment");
+  // どの場所も指さない `#n` の箇所（R-PAGE-COMMENT）。直すまで保存できない。
+  const stray = el("div", "lv-compose-stray");
+  stray.setAttribute("role", "alert");
+  stray.hidden = true;
   const error = el("span", "lv-width-error lv-compose-error");
   error.setAttribute("role", "alert");
   error.hidden = true;
@@ -495,20 +500,20 @@ function buildCompose() {
   const save = button("btn primary lv-compose-save");
   save.textContent = "Comment";
   actions.append(undo, error, el("span", "lv-spacer"), cancel, save);
-  box.append(head, away, list, body, actions);
-  return { box, list, body, undo, cancel, save, error, away, awayText, back };
+  box.append(head, away, list, body, stray, actions);
+  return { box, list, body, stray, undo, cancel, save, error, away, awayText, back };
 }
 
 const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
 
 /**
- * 書いているコメントの場所の一覧。番号・種類・指している要素と、一覧から外す ×。
+ * 書いているコメントの場所の一覧。番号（押すと本文に `#n` を入れる）・種類・指している要素と、一覧から外す ×。
  * @param {ComposeShell} compose
  * @param {import("../live-model.js").Place[]} places
- * @param {(n: number) => void} onRemove
+ * @param {{ remove: (n: number) => void, insert: (n: number) => void }} handlers
  * @param {boolean} locked 保存している間は外せない
  */
-export function renderPlaces(compose, places, onRemove, locked) {
+export function renderPlaces(compose, places, handlers, locked) {
   compose.list.textContent = "";
   for (const place of places) {
     const row = el("li", "lv-place");
@@ -528,9 +533,37 @@ export function renderPlaces(compose, places, onRemove, locked) {
     remove.title = `Remove place ${place.n}`;
     remove.setAttribute("aria-label", `Remove place ${place.n}`);
     remove.disabled = locked;
-    remove.addEventListener("click", () => onRemove(place.n));
-    row.append(textEl("span", "lv-place-n", String(place.n)), textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what), remove);
+    remove.addEventListener("click", () => handlers.remove(place.n));
+    const number = button("lv-place-n");
+    number.textContent = String(place.n);
+    number.title = `Insert #${place.n} into the text`;
+    number.setAttribute("aria-label", `Insert #${place.n} into the text`);
+    number.disabled = locked;
+    number.addEventListener("click", () => handlers.insert(place.n));
+    row.append(number, textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what), remove);
     compose.list.append(row);
+  }
+}
+
+/**
+ * どの場所も指さない本文の `#n` を示す。押すと本文のその箇所を選ぶ。
+ * @param {ComposeShell} compose
+ * @param {import("../live-model.js").StrayRef[]} stray
+ * @param {(ref: import("../live-model.js").StrayRef) => void} onShow
+ */
+export function renderStrayRefs(compose, stray, onShow) {
+  compose.stray.textContent = "";
+  compose.stray.hidden = stray.length === 0;
+  for (const ref of stray) {
+    const item = button("lv-stray-ref");
+    item.dataset.start = String(ref.start);
+    item.append(textEl("span", "lv-ref-dead", `#${ref.n}`), ref.removed ? " points to a removed place" : " has no place");
+    item.title = "Show it in the text";
+    item.addEventListener("click", () => onShow(ref));
+    compose.stray.append(item);
+  }
+  if (stray.length > 0) {
+    compose.stray.append(textEl("span", "lv-stray-why", "Change or delete it to save."));
   }
 }
 

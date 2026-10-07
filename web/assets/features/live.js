@@ -21,12 +21,14 @@ import {
   overlayPlacement,
   pageKey,
   draftElsewhere,
+  editBody,
   emptyDraft,
   imageUnsavedNotice,
   parseWidth,
   referenceName,
   referenceOptions,
   removePlace,
+  strayRefs,
   snapshotLabel,
   startSnapshotDue,
   undoPlace,
@@ -41,6 +43,7 @@ import {
   renderCompareOptions,
   renderPageTree,
   renderPlaces,
+  renderStrayRefs,
 } from "../views/live.js";
 import { closeSheet } from "./conversation.js";
 import { refresh } from "./files.js";
@@ -683,7 +686,6 @@ function startComposing(shell) {
   const compose = shell.compose;
   compose.undo.addEventListener("click", () => setDraft(undoPlace(live.draft)));
   compose.cancel.addEventListener("click", () => {
-    compose.body.value = "";
     live.composeError = "";
     setDraft(emptyDraft(live.page, live.width));
   });
@@ -695,7 +697,7 @@ function startComposing(shell) {
       void savePageComment();
     }
   });
-  compose.body.addEventListener("input", () => renderCompose());
+  compose.body.addEventListener("input", () => setDraft(editBody(live.draft, compose.body.value)));
 }
 
 /**
@@ -760,8 +762,34 @@ async function finishStroke() {
  */
 function setDraft(draft) {
   live.draft = draft;
+  showDraftBody();
   renderCompose();
   sendPlaces();
+}
+
+/** 書きかけの本文を書く欄に出す（詰め直しで書き換わったとき）。入力位置は同じ所に置く。 */
+function showDraftBody() {
+  const body = shell?.compose.body;
+  if (!body || body.value === live.draft.body) {
+    return;
+  }
+  const caret = body.selectionStart;
+  body.value = live.draft.body;
+  body.setSelectionRange(Math.min(caret, body.value.length), Math.min(caret, body.value.length));
+}
+
+/**
+ * 本文の入力位置に `#n` を入れる（R-PAGE-COMMENT の、場所の一覧の番号を押す）。
+ * @param {number} n
+ */
+function insertReference(n) {
+  const body = shell?.compose.body;
+  if (!body || live.saving) {
+    return;
+  }
+  body.setRangeText(`#${n}`, body.selectionStart, body.selectionEnd, "end");
+  body.focus();
+  setDraft(editBody(live.draft, body.value));
 }
 
 /** 保存したページへのコメント（`page` を持つもの）。 */
@@ -858,13 +886,19 @@ function renderCompose() {
     compose.back.textContent = `Back to ${away.url} at ${away.width}px`;
   }
   // 道具を選んだだけでは開かず、最初の場所を置いたときに開く（R-PAGE-COMMENT）。
-  compose.box.hidden = live.view !== "page" || (places.length === 0 && compose.body.value === "");
+  compose.box.hidden = live.view !== "page" || (places.length === 0 && live.draft.body === "");
   // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
-  renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)), live.saving);
+  renderPlaces(compose, places, { remove: (n) => setDraft(removePlace(live.draft, n)), insert: insertReference }, live.saving);
+  const stray = strayRefs(live.draft);
+  renderStrayRefs(compose, stray, (ref) => {
+    compose.body.focus();
+    compose.body.setSelectionRange(ref.start, ref.end);
+  });
   compose.undo.disabled = places.length === 0 || live.saving;
   compose.cancel.disabled = live.saving;
   compose.body.readOnly = live.saving;
-  compose.save.disabled = places.length === 0 || away !== null || live.saving || compose.body.value.trim() === "" || state.submitted;
+  compose.save.disabled =
+    places.length === 0 || away !== null || live.saving || live.draft.body.trim() === "" || stray.length > 0 || state.submitted;
   compose.error.hidden = live.composeError === "";
   compose.error.textContent = live.composeError;
 }
@@ -878,9 +912,10 @@ async function savePageComment() {
     return;
   }
   const draft = live.draft;
-  const body = shell.compose.body.value.trim();
+  const body = draft.body.trim();
   // 画像は場所のあるページで作るので、保存は書きかけの URL と表示幅に戻ってから（R-PAGE-COMMENT）。
-  if (draft.places.length === 0 || body === "" || draftElsewhere(draft, live.page, live.width)) {
+  // どの場所も指さない `#n` が本文にある間は保存しない（R-PAGE-COMMENT）。
+  if (draft.places.length === 0 || body === "" || strayRefs(draft).length > 0 || draftElsewhere(draft, live.page, live.width)) {
     return;
   }
   setSaving(true);
@@ -922,9 +957,9 @@ async function savePageComment() {
     refreshCommentBadges(before);
     renderHeader();
     renderConversation();
-    shell.compose.body.value = "";
     live.composeError = "";
     live.draft = emptyDraft(live.page, live.width);
+    showDraftBody();
     sendPlaces();
   } catch (error) {
     live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;

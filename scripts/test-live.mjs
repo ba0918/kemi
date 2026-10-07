@@ -21,8 +21,8 @@
 //   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
 //   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。範囲が表示幅より狭く画面の高さと違っても、
 //   動いているページと同じ幅の CSS と vh で描く。
-// - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
-//   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
+// - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消すと番号と本文の #n が
+//   詰まり、渡した JSON も同じ。消した場所を指す #n があると保存できない。一覧の番号を押すと本文に #n が入る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
 //   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
@@ -2031,9 +2031,11 @@ async function reviewJson(kemi) {
 const isPlaceInk = ([r, g, b]) => r > 95 && r < 160 && g > 50 && g < 120 && b > 170;
 
 /**
- * ページへのコメントの場所（R-PAGE-COMMENT、R-PAGE-REF）: 要素・矢印・ペンで場所を置き、2 番目を消して保存すると
- * 番号が 1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かして
- * いる間に要素を選ぶと見る対象の要素が場所になる。保存した後も画面は例外を出さない。
+ * ページへのコメントの場所（R-PAGE-COMMENT、R-PAGE-REF、R-SUBMIT）: 要素・矢印・ペンで場所を置き、本文に `#1 と #3 と 3` と
+ * 書いて 2 番目を消すと、番号が 1 と 2 に詰まり本文が `#1 と #2 と 3` になり、保存して渡すと `kemi wait` の JSON も同じ。
+ * 矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間に要素を選ぶと見る対象の
+ * 要素が場所になる。消した場所を指す `#1` が本文にある間は保存できず、本文から消すとできる。一覧の番号を押すと本文に
+ * `#n` が入る。保存した後も画面は例外を出さない。
  */
 async function pageCommentPlacesArePutAndSaved(repository) {
   const dev = await startDevServer();
@@ -2049,6 +2051,9 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューで押せるので、先に一度渡しておく。
+    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await handInThePage(kemi, repository, state);
 
     await chooseTool('element');
     await clickInPane(refPane, 150, 250);
@@ -2068,19 +2073,22 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     assert.ok(countPixels(drawn, [0, 195, 305, 305], isPlaceInk) > 0, `the places are drawn on the page: ${join(shots, 'places-drawn.png')}`);
     console.log('PASS 要素・ペン・矢印で場所を置くと、1 から番号が振られ、ページの上に描かれる。並べた比べる相手の側を押しても場所は増えない');
 
+    const body = `document.querySelector('#live-compose .lv-compose-body').value`;
+    await browser('fill', '#live-compose .lv-compose-body', '#1 と #3 と 3');
     await browser('click', '#live-compose .lv-place[data-n="2"] .lv-place-remove');
-    await waitFor(`${draftNumbers} === '[1,3]'`);
-    await browser('fill', '#live-compose .lv-compose-body', '1 and 3 point at the button');
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    assert.equal(await evaluate(body), '#1 と #2 と 3');
     await browser('click', '#live-compose .lv-compose-save');
     await waitFor(`${draftNumbers} === '[]'`);
-    const review = await reviewJson(kemi);
-    const comment = review.comments.at(-1);
-    assert.equal(comment.body, '1 and 3 point at the button');
-    assert.deepEqual(comment.page.places.map((place) => [place.n, place.kind]), [[1, 'element'], [3, 'arrow']]);
+    const answer = await handAndWait(kemi, repository, state);
+    const comment = answer.events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+    assert.ok(comment, `a page comment is handed: ${JSON.stringify(answer)}`);
+    assert.equal(comment.body, '#1 と #2 と 3');
+    assert.deepEqual(comment.page.places.map((place) => [place.n, place.kind]), [[1, 'element'], [2, 'arrow']]);
     assert.equal(comment.page.url, '/rich.html');
     assert.equal(comment.page.width, 390);
     assert.equal(comment.page.places[0].elements[0].selector, '#button');
-    console.log('PASS 2 番目の場所を消してから保存すると、場所の番号が 1 と 3 のまま残る');
+    console.log('PASS 本文に #1 と #3 と 3 と書いて 2 番目の場所を消すと、番号が 1 と 2 に詰まって本文が #1 と #2 と 3 になり、渡した JSON も同じ');
     assert.equal(comment.page.places[1].elements[0].selector, '#button', 'the arrow points at the element at its head');
     const head = comment.page.places[1].points.at(-1);
     assert.ok(Math.abs(head.x - 150) <= 1 && Math.abs(head.y - 250) <= 1, `the arrow ends where it was drawn: ${JSON.stringify(head)}`);
@@ -2093,6 +2101,25 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await waitFor(`${draftNumbers} === '[1]'`);
     assert.equal(await evaluate(`document.querySelector('#live-compose .lv-place[data-n="1"]').dataset.selector`), '#button');
     console.log('PASS 重ねて透かしている間に要素を選ぶと、下の見る対象の要素が場所になる');
+
+    // 場所が 0 になると、それだけで保存は押せないので、場所を 2 つにしておく。
+    await chooseTool('pen');
+    await dragInPane(livePane, [[20, 90], [260, 90], [260, 140], [20, 140], [20, 92]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    const save = `document.querySelector('#live-compose .lv-compose-save')`;
+    await browser('fill', '#live-compose .lv-compose-body', 'see #1');
+    await waitFor(`!${save}.disabled`);
+    await browser('click', '#live-compose .lv-place[data-n="1"] .lv-place-remove');
+    await waitFor(`${draftNumbers} === '[1]' && ${visible('#live-compose .lv-compose-stray')} && ${save}.disabled`);
+    assert.equal(await evaluate(body), 'see #1');
+    await browser('fill', '#live-compose .lv-compose-body', 'see');
+    await waitFor(`!${save}.disabled && !${visible('#live-compose .lv-compose-stray')}`);
+    console.log('PASS 消した場所を指す #1 が本文にあると、その箇所が示されて保存を押せず、本文から消すと押せる');
+
+    await evaluate(`(() => { const area = document.querySelector('#live-compose .lv-compose-body'); area.setSelectionRange(3, 3); return true; })()`);
+    await browser('click', '#live-compose .lv-place[data-n="1"] .lv-place-n');
+    await waitFor(`${body} === 'see#1'`);
+    console.log('PASS 場所の一覧の番号を押すと、本文の入力位置に #n が入る');
 
     await browser('click', '#cv-rail');
     await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);

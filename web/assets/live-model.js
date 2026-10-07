@@ -321,13 +321,18 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
 }
 
 /**
- * 書いている途中のページへのコメントの場所（live.md の R-PAGE-COMMENT）。場所は最初の場所の URL と表示幅の
- * ものなので、それも覚える。`next` は次に振る番号で、消しても戻さない（本文が番号で指すため）。
+ * 書いている途中のページへのコメント（live.md の R-PAGE-COMMENT）。場所は最初の場所の URL と表示幅のものなので、
+ * それも覚える。場所の番号は置いた順に 1 からの連番で、場所を消すと詰め直し、本文の `#n` も同じ対応で書き換える。
+ * `dangling` は、消した場所を指していた `#n` の本文の中の範囲。詰め直した後の番号と同じ字面になりうるので、
+ * 字面ではなく範囲で覚え、本文の編集に合わせて動かす。
  * @typedef {{ selector: string, text: string, rect: { x: number, y: number, w: number, h: number } }} PlaceElement
  * `at` は要素の場所の押した点（文書の座標）。画像の頼みにだけ載せ、保存する場所には入れない。
  * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[], at?: { x: number, y: number } }} NewPlace
  * @typedef {NewPlace & { n: number }} Place
- * @typedef {{ url: string, width: number, places: Place[], next: number }} PlaceDraft
+ * @typedef {{ start: number, end: number }} Span
+ * @typedef {{ url: string, width: number, places: Place[], body: string, dangling: Span[] }} PlaceDraft
+ * 本文の中の、どの場所も指さない `#n`。`removed` は消した場所を指していたもの、そうでなければ場所の数を超える番号。
+ * @typedef {Span & { n: number, removed: boolean }} StrayRef
  */
 
 /**
@@ -336,7 +341,7 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
  * @returns {PlaceDraft}
  */
 export function emptyDraft(url, width) {
-  return { url, width, places: [], next: 1 };
+  return { url, width, places: [], body: "", dangling: [] };
 }
 
 /**
@@ -356,7 +361,7 @@ export function draftElsewhere(draft, url, width) {
 
 /**
  * 場所を足す。同じ要素をもう一度選んだら、その要素の場所を外す。場所は最初の場所の URL と表示幅のものだけなので、
- * 別の URL か表示幅では足さない。場所が 1 つも無ければ、足す場所の URL と表示幅に移る（番号は戻さない）。
+ * 別の URL か表示幅では足さない。場所が 1 つも無ければ、足す場所の URL と表示幅に移る。
  * @param {PlaceDraft} draft
  * @param {NewPlace} place
  * @param {string} url
@@ -373,16 +378,60 @@ export function addPlace(draft, place, url, width) {
   if (chosen) {
     return removePlace(base, chosen.n);
   }
-  return { ...base, places: [...base.places, { ...place, n: base.next }], next: base.next + 1 };
+  return { ...base, places: [...base.places, { ...place, n: base.places.length + 1 }] };
 }
 
 /**
+ * 場所を消し、残りを置いた順に 1 から振り直す。本文の `#n` は同じ対応で書き換え、消した場所を指していたものは
+ * 字面のまま残して宙に浮いた範囲として覚える。前から宙に浮いている範囲は書き換えない。
  * @param {PlaceDraft} draft
  * @param {number} n
  * @returns {PlaceDraft}
  */
 export function removePlace(draft, n) {
-  return { ...draft, places: draft.places.filter((item) => item.n !== n) };
+  const kept = draft.places.filter((item) => item.n !== n);
+  if (kept.length === draft.places.length) {
+    return draft;
+  }
+  /** @type {Map<number, number>} */
+  const renumbered = new Map(kept.map((item, index) => [item.n, index + 1]));
+  let body = "";
+  let from = 0;
+  /** @type {Span[]} */
+  const dangling = [];
+  let shift = 0;
+  let old = 0;
+  const shiftedUpTo = (/** @type {number} */ position) => {
+    while (old < draft.dangling.length && draft.dangling[old].start < position) {
+      const span = draft.dangling[old];
+      dangling.push({ start: span.start + shift, end: span.end + shift });
+      old += 1;
+    }
+  };
+  for (const ref of references(draft.body)) {
+    if (draft.dangling.some((span) => span.start === ref.start)) {
+      continue;
+    }
+    shiftedUpTo(ref.start);
+    body += draft.body.slice(from, ref.start);
+    from = ref.end;
+    const start = ref.start + shift;
+    const next = renumbered.get(ref.n);
+    const text = ref.n === n || next === undefined ? draft.body.slice(ref.start, ref.end) : `#${next}`;
+    if (ref.n === n) {
+      dangling.push({ start, end: start + text.length });
+    }
+    body += text;
+    shift += text.length - (ref.end - ref.start);
+  }
+  shiftedUpTo(Infinity);
+  body += draft.body.slice(from);
+  return {
+    ...draft,
+    places: kept.map((item, index) => ({ ...item, n: index + 1 })),
+    body,
+    dangling: dangling.sort((left, right) => left.start - right.start),
+  };
 }
 
 /**
@@ -391,6 +440,63 @@ export function removePlace(draft, n) {
  * @returns {PlaceDraft}
  */
 export function undoPlace(draft) {
-  const last = Math.max(0, ...draft.places.map((item) => item.n));
-  return removePlace(draft, last);
+  const last = draft.places.at(-1);
+  return last ? removePlace(draft, last.n) : draft;
+}
+
+/**
+ * 本文を書き換える。宙に浮いた範囲は、前後の一致する部分の外で変わった区間に合わせてずらし、区間にかかった
+ * もの（範囲の中を編集・削除した、後ろに数字を続けて別の番号にした）は外す。
+ * @param {PlaceDraft} draft
+ * @param {string} body
+ * @returns {PlaceDraft}
+ */
+export function editBody(draft, body) {
+  const before = draft.body;
+  const limit = Math.min(before.length, body.length);
+  let prefix = 0;
+  while (prefix < limit && before[prefix] === body[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (suffix < limit - prefix && before[before.length - 1 - suffix] === body[body.length - 1 - suffix]) {
+    suffix += 1;
+  }
+  const changedEnd = before.length - suffix;
+  const delta = body.length - before.length;
+  /** @type {Span[]} */
+  const dangling = [];
+  for (const span of draft.dangling) {
+    const moved =
+      span.end <= prefix ? span : span.start >= changedEnd ? { start: span.start + delta, end: span.end + delta } : null;
+    if (moved && body.slice(moved.start, moved.end) === before.slice(span.start, span.end) && !/\d/.test(body[moved.end] ?? "")) {
+      dangling.push(moved);
+    }
+  }
+  return { ...draft, body, dangling };
+}
+
+/**
+ * 本文の中の、どの場所も指さない `#n`（消した場所を指していたものと、場所の数を超える番号）。本文の順に。
+ * @param {PlaceDraft} draft
+ * @returns {StrayRef[]}
+ */
+export function strayRefs(draft) {
+  return references(draft.body).flatMap((ref) => {
+    const removed = draft.dangling.some((span) => span.start === ref.start);
+    return removed || ref.n < 1 || ref.n > draft.places.length ? [{ ...ref, removed }] : [];
+  });
+}
+
+/**
+ * 本文の `#n`: `#` に続く数字の続く限り。`#` の付かない数字は参照ではない（R-PAGE-COMMENT）。
+ * @param {string} body
+ * @returns {(Span & { n: number })[]}
+ */
+function references(body) {
+  return [...body.matchAll(/#(\d+)/g)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    n: Number(match[1]),
+  }));
 }

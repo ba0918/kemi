@@ -47,10 +47,12 @@ pub enum PlaceError {
     NoPlace,
     NumberFromOne,
     DuplicateNumber(u32),
+    /// 番号が 1 からの連番でない。値は抜けている番号。
+    MissingNumber(u32),
 }
 
 /// ページへのコメントの場所の規約（live.md の R-PAGE-COMMENT）を検証し、番号の順に並べて返す。
-/// 場所は 1 つ以上で、番号は 1 から、重ならない（消した番号は飛んでよい）。
+/// 場所は 1 つ以上で、番号は 1 からの連番（画面は場所を消すと詰め直す。R-SUBMIT の `places`）。
 pub fn validate_places(mut places: Vec<Place>) -> Result<Vec<Place>, PlaceError> {
     if places.is_empty() {
         return Err(PlaceError::NoPlace);
@@ -61,6 +63,12 @@ pub fn validate_places(mut places: Vec<Place>) -> Result<Vec<Place>, PlaceError>
     }
     if let Some(pair) = places.windows(2).find(|pair| pair[0].n == pair[1].n) {
         return Err(PlaceError::DuplicateNumber(pair[0].n));
+    }
+    if let Some((expected, _)) = (1u32..)
+        .zip(&places)
+        .find(|(expected, place)| place.n != *expected)
+    {
+        return Err(PlaceError::MissingNumber(expected));
     }
     Ok(places)
 }
@@ -203,10 +211,22 @@ mod tests {
     }
 
     #[test]
-    fn page_comment_places_are_kept_in_number_order_with_gaps() {
-        let places = validate_places(vec![place(3), place(1)]).unwrap();
+    fn page_comment_places_are_put_in_number_order() {
+        let places = validate_places(vec![place(2), place(1)]).unwrap();
         let numbers: Vec<u32> = places.iter().map(|place| place.n).collect();
-        assert_eq!(numbers, vec![1, 3]);
+        assert_eq!(numbers, vec![1, 2]);
+    }
+
+    #[test]
+    fn page_comment_place_numbers_with_a_gap_are_rejected() {
+        assert_eq!(
+            validate_places(vec![place(1), place(3)]),
+            Err(PlaceError::MissingNumber(2))
+        );
+        assert_eq!(
+            validate_places(vec![place(2)]),
+            Err(PlaceError::MissingNumber(1))
+        );
     }
 
     #[test]
