@@ -296,8 +296,11 @@ the first line of its body and its reply count; pressing it opens the thread
 in the panel. The panel starts folded to a thin rail and opens from the
 comment count in the top bar; the page remembers whether it is open and how
 wide it is (drag its left edge). A new agent reply marks its chip and the
-thread as new, and the folded rail counts what is new; the panel never opens
-by itself, and its list follows new writes only while you are at its bottom.
+thread as new, and the folded rail counts what is new, as does the panel's
+header while it is open; while you read one thread, a reply arriving in
+another is announced above it, and pressing the notice opens that thread.
+The panel never opens by itself, and its list follows new writes only while
+you are at its bottom.
 The panel, the agent status in its header, replies, and resolving are there
 in every review. The status is one of not connected (`kemi wait` never
 called), ready (`kemi wait` is waiting, so you can hand), working (it

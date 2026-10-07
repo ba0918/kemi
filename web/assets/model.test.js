@@ -59,6 +59,7 @@ import {
   effectiveDisplay,
   agentStatusLabel,
   handControl,
+  otherThreadNews,
   authorLabel,
   replaceComment,
   addMessage,
@@ -1643,6 +1644,19 @@ test("解決したスレッドの札は畳み、解決済みの印を付ける�
   assert.equal(threadChip(resolved, readMarks(), new Map([["c1", false]])).folded, false);
   assert.equal(threadChip(thread("c2", 2), readMarks(), new Map([["c2", true]])).folded, true);
   assert.equal(threadChip(thread("c3", 3), readMarks(), new Map()).folded, false);
+});
+
+test("開いているスレッドのほかで、エージェントの返信が最後に届いた新着のスレッドを知らせる", () => {
+  const comments = [
+    thread("c1", 1, [{ author: "agent", seq: 9 }]),
+    thread("c2", 2, [{ author: "agent", seq: 7 }]),
+    thread("c3", 3, [{ author: "agent", seq: 8 }]),
+  ];
+
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 2 }), "c1")?.id, "c3");
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 2, opened: new Map([["c3", 8]]) }), "c1")?.id, "c2");
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 9 }), "c1"), null);
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 2 }), null), null);
 });
 
 test("スレッドを最後に開いた後に届いたエージェントの返信だけを新着にする", () => {

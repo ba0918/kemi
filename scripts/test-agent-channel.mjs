@@ -20,7 +20,8 @@
 // 畳んだ帯にも未渡しの件数つきで渡すが出る、渡した 1 回分の行が受け取り待ち → 作業中 → 返信で消える
 // と変わり、状態が未接続 → 待機中 → 作業中 → 返事済みと変わる、渡した直後は渡すが押せず返信を書くと
 // 押せる、kemi wait を一度も呼ばないレビューやエージェントがつながれないレビューでも渡すが押せないまま出て、
-// submit は今どおり終わる。
+// submit は今どおり終わる、スレッドを開いている間に別のスレッドへ返信が届くと知らせと見出しの新着の数が出て、
+// 知らせを押すとそのスレッドが開く。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -707,5 +708,38 @@ try {
 } finally {
   alone.kill('SIGTERM');
   await aloneExited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (14) 別のスレッドの新着（R-AGENT-HAND）: c1 を開いている間に kemi reply で c2 に返信を書くと、開いている
+// スレッドの上に c2 に届いた知らせと、会話パネルの見出しに新着の数が出る。知らせを押すと c2 が開く。
+const newsFixture = await makeFixture();
+const newsState = await mkdtemp(join(tmpdir(), 'kemi-agent-news-state-'));
+const newsKemi = await startKemi(newsFixture, newsState);
+try {
+  const newsFile = (await (await fetch(new URL('api/review', newsKemi.url))).json()).groups[0].files[0].id;
+  await post(newsKemi.url, 'api/comment', { op: 'add', file_id: newsFile, side: 'new', start_line: 3, end_line: 3, body: 'first thread' });
+  await post(newsKemi.url, 'api/comment', { op: 'add', file_id: newsFile, side: 'new', start_line: 60, end_line: 60, body: 'second thread' });
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', newsKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await browser('click', '#cv-rail');
+  await waitFor(`${panelOpen} && document.querySelector('#cv-items .cv-card[data-id="c1"]') !== null`);
+  await browser('click', '#cv-items .cv-card[data-id="c1"]');
+  await waitFor(threadOpen('first thread'));
+  assert.equal(await evaluate(shown('#cv-other-new')), false);
+  assert.equal(await evaluate(shown('#cv-head-unread')), false);
+  const written = await agentCommand(newsFixture, newsState, ['reply', newsKemi.id], JSON.stringify({ writes: [{ type: 'reply', comment_id: 'c2', body: 'about the second' }] }));
+  assert.equal(written.code, 0, written.stderr);
+  await waitFor(`${shown('#cv-other-new')} && document.querySelector('#cv-other-new').dataset.id === 'c2' && document.querySelector('#cv-other-new').textContent.includes('second thread')`);
+  await waitFor(`${shown('#cv-head-unread')} && document.querySelector('#cv-head-unread').textContent === '1 new'`);
+  assert.equal(await evaluate(threadOpen('first thread')), true, 'the open thread stays open');
+  console.log('PASS c1 を開いている間に c2 に返信が届くと、開いているスレッドの上に c2 の知らせと、パネルの見出しに新着の数が出る');
+  await browser('click', '#cv-other-new');
+  await waitFor(`${threadOpen('second thread')} && !${shown('#cv-other-new')} && !${shown('#cv-head-unread')}`);
+  console.log('PASS 知らせを押すと c2 のスレッドが開く');
+} finally {
+  newsKemi.child.kill('SIGTERM');
+  await newsKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

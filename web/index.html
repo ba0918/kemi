@@ -223,6 +223,7 @@
         <div class="cv-panel" id="cv-panel">
           <div class="cv-head">
             <b>Conversation</b>
+            <span class="cv-head-unread" id="cv-head-unread" hidden></span>
             <span class="agent-status" id="agent-status" data-kemi-agent-state="not-connected" role="status"></span>
             <button class="cv-close" id="cv-close" type="button">Close</button>
           </div>
@@ -241,6 +242,7 @@
             </form>
           </div>
           <div class="cv-thread" id="cv-thread" hidden>
+            <button class="cv-other-new" id="cv-other-new" type="button" hidden></button>
             <div class="cv-thread-head" id="cv-thread-head"></div>
             <div class="cv-thread-body" id="cv-thread-body"></div>
             <form class="cv-form" id="cv-reply">

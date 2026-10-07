@@ -74,6 +74,8 @@ export const dom = {
   railHandNote: must("#rail-hand-note"),
   cvClose: /** @type {HTMLButtonElement} */ (must("#cv-close")),
   agentStatus: must("#agent-status"),
+  cvHeadUnread: must("#cv-head-unread"),
+  cvOtherNew: /** @type {HTMLButtonElement} */ (must("#cv-other-new")),
   cvList: must("#cv-list"),
   cvFilter: must("#cv-filter"),
   cvItems: must("#cv-items"),

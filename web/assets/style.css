@@ -3064,3 +3064,53 @@ ul.files ul {
     opacity: 0.3;
   }
 }
+
+/* 開いているスレッドの上の、別のスレッドに返信が届いた知らせ（R-AGENT-HAND）。 */
+.cv-other-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--ai);
+  border-radius: 6px;
+  background: var(--ai-soft);
+  color: var(--ai);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cv-other-new[hidden] {
+  display: none;
+}
+
+.cv-other-new-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-other-new-go {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+/* 会話パネルの見出しの新着の数（R-AGENT-HAND）。 */
+.cv-head-unread {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ai);
+  color: var(--ai-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.cv-head-unread[hidden] {
+  display: none;
+}

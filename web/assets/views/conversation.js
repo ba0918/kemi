@@ -27,6 +27,7 @@ import {
   followsNewest,
   handLineState,
   handControl,
+  otherThreadNews,
   pageCommentElsewhere,
   threadChip,
   unreadCount,
@@ -104,6 +105,9 @@ export function renderAgentState() {
   const unread = unreadCount(state.allComments, state.messages, state.conversation.read);
   dom.cvUnread.hidden = unread === 0;
   dom.cvUnread.textContent = String(unread);
+  // 会話パネルを開いている間も、見出しに新着の数を出す（数え方は帯と同じ。R-AGENT-HAND）。
+  dom.cvHeadUnread.hidden = unread === 0;
+  dom.cvHeadUnread.textContent = `${unread} new`;
   dom.cvRail.setAttribute(
     "aria-label",
     unread > 0 ? `Open the conversation (${unread} new)` : "Open the conversation",
@@ -348,11 +352,32 @@ function threadCard(comment, context) {
 }
 
 /**
+ * 開いているスレッドの上の、別のスレッドに返信が届いた知らせ。押すとそのスレッドを開く（R-AGENT-HAND）。
+ * @param {string} open 開いているスレッドの id
+ */
+function renderOtherNews(open) {
+  const news = otherThreadNews(state.allComments, state.conversation.read, open);
+  dom.cvOtherNew.hidden = news === null;
+  if (news === null) {
+    delete dom.cvOtherNew.dataset.id;
+    return;
+  }
+  dom.cvOtherNew.dataset.id = news.id;
+  dom.cvOtherNew.textContent = "";
+  dom.cvOtherNew.append(
+    textEl("span", "cv-other-new-text", `New reply in “${firstLine(news.body)}”`),
+    textEl("span", "cv-other-new-go", "Open →"),
+  );
+  dom.cvOtherNew.onclick = () => actions.openThread(news.id);
+}
+
+/**
  * 開いたスレッド。見出し（一覧へ戻る、場所、操作）、対象の行の前後、本文・suggestion・返信。
  * @param {any} comment
  * @param {{ toEnd?: boolean }} options
  */
 function renderThread(comment, options) {
+  renderOtherNews(comment.id);
   const context = { range: state.units.length > 0, commitGroups: commitGroups() };
   const info = describeComment(comment, context);
   const chip = threadChip(comment, state.conversation.read, state.conversation.folded);

@@ -1805,6 +1805,28 @@ export function unreadCount(comments, messages, marks) {
   return threads + arrived;
 }
 
+/**
+ * スレッドを開いている間に別のスレッドへ届いた返信の知らせ（R-AGENT-HAND）。開いているスレッドのほかで新着の
+ * あるスレッドのうち、エージェントの返信が最後に届いたもの。スレッドを開いていなければ（一覧では札の新着の印が
+ * 示すので）null。
+ * @param {any[]} comments
+ * @param {ReadMarks} marks
+ * @param {string | null} open 開いているスレッドの id
+ * @returns {any | null}
+ */
+export function otherThreadNews(comments, marks, open) {
+  if (open === null) {
+    return null;
+  }
+  const lastAgentReply = (/** @type {any} */ comment) =>
+    Math.max(0, ...(comment.replies || []).filter((/** @type {any} */ reply) => reply.author === "agent").map((/** @type {any} */ reply) => Number(reply.seq) || 0));
+  return (
+    comments
+      .filter((comment) => comment.id !== open && threadUnread(comment, marks))
+      .reduce((latest, comment) => (latest === null || lastAgentReply(comment) > lastAgentReply(latest) ? comment : latest), null)
+  );
+}
+
 /** 並びの一番下とみなす余白。行の高さの半分ほどで、端数のずれを一番下として扱う。 */
 const FOLLOW_MARGIN = 12;
 
