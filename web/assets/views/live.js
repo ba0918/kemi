@@ -755,6 +755,8 @@ export function renderCompareOptions(select, options, chosen, rule) {
  * @param {boolean} locked ページと表示幅を変えられない間（コメントの保存中）。移る操作を使えないと出す
  */
 export function renderPageTree(container, items, handlers, changes, locked) {
+  // 変化の一覧の中の操作にフォーカスがあれば、描き直した一覧の同じ操作に戻す（行を押して描き直したときも）。
+  const focused = focusInChanges(container.querySelector('.lv-page[data-current="true"] > .lv-changes'), container.ownerDocument);
   container.textContent = "";
   container.append(textEl("div", "lv-tree-head", `Pages ${items.length}`));
   const list = el("ul", "lv-pages");
@@ -795,6 +797,11 @@ export function renderPageTree(container, items, handlers, changes, locked) {
     list.append(row);
   }
   container.append(list);
+  // 文書に入ってからでないとフォーカスできない。
+  const box = container.querySelector('.lv-page[data-current="true"] > .lv-changes');
+  if (box instanceof HTMLElement) {
+    refocus(box, focused);
+  }
 }
 
 /**
@@ -808,8 +815,43 @@ export function renderPageTree(container, items, handlers, changes, locked) {
  * }} ChangeHandlers
  */
 
-/** 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。 */
-const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-change-show", ".lv-change-shifted .lv-change-show"];
+/**
+ * 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。要素の行は、同じ要素（側と番号）の行に戻す。
+ */
+const FOCUSABLE_IN_CHANGES = [
+  ".lv-shifted > summary",
+  ".lv-change-main .lv-change-show",
+  ".lv-change-shifted .lv-change-show",
+  ".lv-changes-mock .lv-mock-menu-button",
+];
+
+/**
+ * 変化の一覧の中でフォーカスのある操作を、描き直した一覧で探すためのセレクタ。一覧の外にフォーカスがあれば undefined。
+ * @param {Element | null} box 描き直す前の一覧
+ * @param {Document} document
+ * @returns {string | undefined}
+ */
+function focusInChanges(box, document) {
+  const active = document.activeElement;
+  if (!box || !active || !box.contains(active)) {
+    return undefined;
+  }
+  if (active instanceof HTMLElement && active.matches(".lv-change-go")) {
+    return `.lv-change-go[data-side="${active.dataset.side}"][data-index="${active.dataset.index}"]`;
+  }
+  return FOCUSABLE_IN_CHANGES.find((selector) => active.matches(selector));
+}
+
+/**
+ * 描き直した一覧の、前にフォーカスのあった操作にフォーカスを戻す。
+ * @param {HTMLElement} box
+ * @param {string | undefined} selector focusInChanges の返り値
+ */
+function refocus(box, selector) {
+  if (selector) {
+    /** @type {HTMLElement | null} */ (box.querySelector(selector))?.focus();
+  }
+}
 
 /**
  * 表示中のページの下の変化の一覧だけを描き直す（R-PAGE-DIFF）。ページの行とその操作は作り直さない（動き続ける
@@ -826,8 +868,7 @@ export function renderChanges(container, handlers, changes) {
     return;
   }
   const old = row.querySelector(":scope > .lv-changes");
-  const active = container.ownerDocument.activeElement;
-  const focused = old && active && old.contains(active) ? FOCUSABLE_IN_CHANGES.find((selector) => active.matches(selector)) : undefined;
+  const focused = focusInChanges(old, container.ownerDocument);
   if (changes === null) {
     old?.remove();
     return;
@@ -838,9 +879,7 @@ export function renderChanges(container, handlers, changes) {
   } else {
     row.append(box);
   }
-  if (focused) {
-    /** @type {HTMLElement | null} */ (box.querySelector(focused))?.focus();
-  }
+  refocus(box, focused);
 }
 
 /**
@@ -965,6 +1004,8 @@ function changeItems(className, changes, listed, handlers, onListed) {
       item.dataset.kind = element.kind;
       item.dataset.tag = element.tag;
       const go = button("lv-change-go");
+      go.dataset.side = element.side;
+      go.dataset.index = String(element.index);
       go.title = element.side === "before" ? "Show it on the snapshot" : "Show it on the page";
       const what = el("span", "lv-change-what");
       what.append(textEl("span", "lv-change-el", element.excerpt === "" ? element.tag : `${element.tag} “${element.excerpt}”`));
