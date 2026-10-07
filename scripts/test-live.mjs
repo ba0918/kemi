@@ -1764,6 +1764,8 @@ async function removedRowsLeadToTheSnapshot(repository) {
     await chooseCompare('overlay');
     await waitFor(`${removedRow} !== null`);
     await pressRemovedRow();
+    // 消えた要素は今のページの末尾より下にあるが、光は枠の中に収まる（ページがそこまでスクロールできなくても）。
+    await waitFor(`(() => { const v = document.querySelector('${refView}').getBoundingClientRect(); const g = document.querySelector('${refView} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.top >= v.top && r.bottom <= v.bottom; })()`, 2500);
     await waitForPixels(refView, shots, 'removed-overlay', belowTheButton, isGlow);
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'overlay');
     // 重ねた比べる相手は、見る対象のスクロールの分だけ外側でずらして描く（そろったまま）。見る対象が下へスクロールしている。

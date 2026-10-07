@@ -243,7 +243,9 @@ moved within its frame; the wheel, dragging it (with a finger on a narrow
 screen), or the arrow keys still move it, and it goes back to
 scrolling by itself once what it is compared with, the way of comparing, the
 page, or the width changes. While overlaid, the page itself scrolls to the
-element, and the snapshot laid over it follows. The list and the marks follow the page as it
+element, and the snapshot laid over it follows; when the page is now too short
+to scroll that far, both are moved past its end together, until you scroll
+back up. The list and the marks follow the page as it
 changes. A page compared with a mock gets neither: in place of the list,
 its heading names the mock and has the same **…** menu.
 

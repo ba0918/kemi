@@ -111,6 +111,14 @@ const live = {
    */
   refShift: null,
   /**
+   * 重ねて透かす間に消えた要素の行を押し、その要素が今のページの末尾より下にあって、ページをそこまでスクロールできない
+   * ときの、見せたい位置 `y`（文書の座標）。ページのスクロールで届かない分だけ両方の枠を外側で上へずらし、そろえたまま
+   * （R-PAGE-REF）その要素を見せる。`key` は refShift と同じ条件で、変われば外す。ページが上へスクロールしたら外し、
+   * 上へのホイールはまず届かない分を戻す。
+   * @type {{ key: string, y: number } | null}
+   */
+  overscroll: null,
+  /**
    * 比べる相手の側で光らせている要素の箱（スナップショットの文書の座標の [左, 上, 幅, 高さ]）と、そのスナップショット。
    * @type {{ snapshot: string, box: number[] } | null}
    */
@@ -606,11 +614,16 @@ function receive(event) {
     return;
   }
   if (message.type === "scroll") {
+    const before = live.scroll.y;
     live.scroll = {
       x: Number(message.x) || 0,
       y: Number(message.y) || 0,
       height: Number(message.height) || 0,
     };
+    // 末尾より下へずらしている間にページが上へスクロールした（人が動かした）ら、ずらすのをやめる。
+    if (live.overscroll !== null && live.scroll.y < before - 1) {
+      live.overscroll = null;
+    }
     layoutFrames();
     return;
   }
@@ -933,7 +946,16 @@ function startComposing(shell) {
       const before = viewport.scrollLeft;
       viewport.scrollLeft += event.deltaX * unit;
       const x = event.deltaX * unit - (viewport.scrollLeft - before);
-      shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y: event.deltaY * unit }, live.origin);
+      let y = event.deltaY * unit;
+      // 末尾より下へずらしている間は、上へのホイールでまずその分を戻す。
+      const beyond = overscrolled();
+      if (live.overscroll !== null && y < 0 && beyond > 0) {
+        const back = Math.min(-y, beyond);
+        live.overscroll = back < beyond ? { ...live.overscroll, y: live.overscroll.y - back } : null;
+        y += back;
+        layoutFrames();
+      }
+      shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y }, live.origin);
     },
     { passive: false },
   );
@@ -1900,6 +1922,8 @@ function showRemovedElement(index) {
   const viewHeight = shell.refViewport.clientHeight / live.scale;
   const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
   if (!state.narrow && live.compare === "overlay") {
+    // 今のページが短くてそこまでスクロールできないときは、届かない分だけ両方の枠を外側でずらす（そろえたまま）。
+    live.overscroll = centered > Math.max(0, live.scroll.height - viewHeight) ? { key: refShiftKey(), y: centered } : null;
     shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: centered - live.scroll.y }, live.origin);
   } else {
     const contentHeight = Math.max(viewHeight, live.descriptions.get(id)?.height ?? 0);
@@ -2304,6 +2328,15 @@ function loadSnapshot(id) {
   return loading;
 }
 
+/**
+ * 重ねて透かす間に、ページのスクロールで届かない分（文書の座標）。ページが見せたい位置までスクロールしきれなかった分で、
+ * ページのスクロールが返るたびに変わる。
+ * @returns {number}
+ */
+function overscrolled() {
+  return live.overscroll === null ? 0 : Math.max(0, live.overscroll.y - live.scroll.y);
+}
+
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
 function layoutFrames() {
   if (!shell || live.view !== "page") {
@@ -2316,8 +2349,14 @@ function layoutFrames() {
   shell.liveFrame.style.width = `${live.width}px`;
   // 横のスクロールバーの分だけ低くなった枠の高さで描く（幅を決めてから読む）。
   const height = viewport.clientHeight / scale;
+  const overlaid = live.compare === "overlay" && !state.narrow;
+  if (live.overscroll !== null && (!overlaid || live.overscroll.key !== refShiftKey())) {
+    live.overscroll = null;
+  }
+  // 末尾より下へずらしている分（重ねて透かすときだけ）。見る対象の枠も同じだけ上へずらし、比べる相手とそろえる。
+  const beyond = overscrolled();
   shell.liveFrame.style.height = `${height}px`;
-  shell.liveFrame.style.transform = `scale(${scale})`;
+  shell.liveFrame.style.transform = beyond > 0 ? `translate(0px, ${-beyond * scale}px) scale(${scale})` : `scale(${scale})`;
   // 道具の層は、横にスクロールして出てくる所も含めてページの上を覆う。
   shell.capture.style.width = `${Math.max(viewport.clientWidth, live.width * scale)}px`;
   shell.capture.style.height = `${viewport.clientHeight}px`;
@@ -2325,7 +2364,6 @@ function layoutFrames() {
   // 重ねず 1 枚ずつ見る（R-PAGE-VIEW）。
   // 消えた要素の行を押した後は、比べる相手を中身の高さで描いて外側でずらす（比べる相手・見比べ方・ページ・表示幅の
   // どれかが変わるまで）。
-  const overlaid = live.compare === "overlay" && !state.narrow;
   if (live.refShift !== null && (overlaid || live.refShift.key !== refShiftKey())) {
     live.refShift = null;
   }
@@ -2335,14 +2373,15 @@ function layoutFrames() {
   let origin = null;
   let placement = { height, transform: `scale(${scale})` };
   if (overlaid) {
+    // 比べる相手は、今のページより長くても末尾まで描く（消えた要素が末尾の下にあることがある）。
     placement = overlayPlacement({
       scale,
       viewportHeight: viewport.clientHeight,
       scrollX: live.scroll.x,
-      scrollY: live.scroll.y,
-      contentHeight: live.scroll.height,
+      scrollY: live.scroll.y + beyond,
+      contentHeight: Math.max(live.scroll.height, live.descriptions.get(shownId)?.height ?? 0),
     });
-    origin = { x: -live.scroll.x * scale, y: -live.scroll.y * scale };
+    origin = { x: -live.scroll.x * scale, y: -(live.scroll.y + beyond) * scale };
   } else if (live.refShift !== null) {
     const contentHeight = Math.max(height, live.descriptions.get(shownId)?.height ?? 0);
     const y = Math.max(0, Math.min(live.refShift.y, contentHeight - height));
