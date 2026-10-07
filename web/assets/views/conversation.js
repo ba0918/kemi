@@ -148,15 +148,14 @@ function renderHandNote(note, control) {
   const copy = button("hand-copy");
   copy.textContent = "Copy";
   copy.title = `Copy ${command}`;
-  copy.addEventListener("click", () => {
-    navigator.clipboard.writeText(command).then(
-      () => {
-        copy.textContent = "Copied";
-      },
-      (error) => {
-        copy.textContent = `Could not copy: ${error}`;
-      },
-    );
+  // 安全でない接続（--bind で LAN のアドレスに http で開いた）では navigator.clipboard が無く、呼ぶとその場で投げる。
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      copy.textContent = "Copied";
+    } catch (error) {
+      copy.textContent = `Could not copy: ${error}`;
+    }
   });
   note.append(" ", code, copy);
 }
