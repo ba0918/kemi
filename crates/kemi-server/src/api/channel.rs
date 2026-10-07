@@ -72,20 +72,17 @@ pub(super) async fn hand_api(
 /// 行の形は画面とサーバの間だけのもの（`thread` が null なら発言だけの 1 回分の、並びの末尾の行）。
 /// `review` は画面が写す `kemi wait <id>` の id で、エージェント用の API が無いレビューでは null。
 pub(crate) fn agent_json(state: &AppState) -> Value {
-    let (called, unhanded) = {
-        let session = state.session.lock().expect("session poisoned");
-        (
-            session.channel.called,
-            session
-                .channel
-                .unhanded_count(&session.comments, &session.messages),
-        )
-    };
+    // ロックは session → agent の順。行は今あるコメントで絞るので、両方を持って読む。
+    let session = state.session.lock().expect("session poisoned");
+    let called = session.channel.called;
+    let unhanded = session
+        .channel
+        .unhanded_count(&session.comments, &session.messages);
     let agent = state.agent.lock().expect("agent poisoned");
     let status = agent.status(called, kemi_core::session::now_millis());
     let lines: Vec<Value> = agent
-        .lines()
-        .iter()
+        .lines(&session.comments)
+        .into_iter()
         .map(|line| {
             let thread = match &line.at {
                 HandLineAt::Thread(id) => Value::String(id.clone()),

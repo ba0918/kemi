@@ -3557,7 +3557,21 @@ impl AgentServer {
     }
 
     async fn start_with(source: Arc<dyn ReviewSource>, bind: Ipv4Addr) -> Self {
+        AgentServer::start_with_sink(source, bind, Arc::new(RecordingSink::default())).await
+    }
+
+    /// 保留したレビューを `--resume` で開き直したように、保存した状態から始める。
+    async fn resume(saved: SessionState) -> Self {
         let sink = Arc::new(RecordingSink::default());
+        *sink.initial.lock().unwrap() = Some(saved);
+        AgentServer::start_with_sink(Arc::new(FakeSource::new()), Ipv4Addr::LOCALHOST, sink).await
+    }
+
+    async fn start_with_sink(
+        source: Arc<dyn ReviewSource>,
+        bind: Ipv4Addr,
+        sink: Arc<RecordingSink>,
+    ) -> Self {
         let listener = TcpListener::bind((bind, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
@@ -4306,6 +4320,30 @@ async fn a_deleted_handed_comment_leaves_no_line_and_is_not_waited_for() {
         .reply(json!([{ "type": "reply", "comment_id": c1, "body": "done" }]))
         .await;
     assert_eq!(server.agent_status().await, "replied");
+}
+
+#[tokio::test]
+async fn a_comment_handed_then_deleted_before_suspending_leaves_no_line_after_resuming() {
+    let server = AgentServer::start().await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    let c2 = server.page.add_comment_with_body(12, "second").await["id"].clone();
+    server.page.hand().await;
+    server.page.comment(json!({"op": "delete", "id": c1})).await;
+    let saved = server.sink.last_state();
+    let resumed = AgentServer::resume(saved).await;
+
+    let (status, _) = resumed.wait(Some(1000)).await;
+    assert_eq!(status, 200);
+    resumed.wait_until_status("working").await;
+    assert_eq!(
+        resumed.hand_lines().await,
+        vec![(c2.clone(), "working".to_string())]
+    );
+    resumed
+        .reply(json!([{ "type": "reply", "comment_id": c2, "body": "done" }]))
+        .await;
+
+    assert_eq!(resumed.agent_status().await, "replied");
 }
 
 #[tokio::test]

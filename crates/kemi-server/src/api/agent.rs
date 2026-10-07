@@ -430,6 +430,7 @@ async fn reply_api(
             kemi_core::session::now_millis(),
             &touched,
             !messages.is_empty(),
+            &session.comments,
         );
         (ids, threads, messages)
     };

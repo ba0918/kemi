@@ -175,13 +175,6 @@ pub(super) async fn comment_api(
             // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
             session.comments.remove(index);
             session.channel.note_comment(&id);
-            // 消したコメントには返信できないので、渡した 1 回分の行も消す（R-AGENT-HAND）。
-            // ロックは session → agent の順。
-            state
-                .agent
-                .lock()
-                .expect("agent poisoned")
-                .comment_deleted(&id);
             drop(session);
             persist(&state);
             notify_agent_state(&state);
