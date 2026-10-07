@@ -88,12 +88,28 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  * }} ComposeShell
  */
 
-/** コメントの場所を置く道具と、ページを普通に触る「操作」（画面モックの案 A の上の帯）。 */
+/** コメントの場所を置く道具と、ページを普通に触る「操作」。名前とアイコン（画面モック docs/design/ui-mock-live-v2.html）。 */
 export const TOOLS = /** @type {const} */ ([
-  ["element", "Element"],
-  ["arrow", "Arrow"],
-  ["pen", "Pen"],
-  ["interact", "Interact"],
+  [
+    "element",
+    "Element",
+    '<svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.5 2"/><path d="M7 7l6 2.5-2.6.9-.9 2.6z" fill="currentColor"/></svg>',
+  ],
+  [
+    "arrow",
+    "Arrow",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13L12.5 3.5M7 3.5h5.5V9"/></svg>',
+  ],
+  [
+    "pen",
+    "Pen",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 13l1-3.5 7-7 2.5 2.5-7 7z"/></svg>',
+  ],
+  [
+    "interact",
+    "Interact",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 2l8 6.5-3.6.6 2 4-1.6.8-2-4L4 12.5z"/></svg>',
+  ],
 ]);
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -128,9 +144,11 @@ export function buildShell() {
   widthGroup.append(widthSeg, widthInput, widthError);
 
   // 手で取る操作とモックの操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT、R-PAGE-MOCK）。
+  // 広い画面の帯ではアイコンだけ、狭い画面のメニューでは名前も出す。
   const recordButton = button("lv-record lv-record-now");
-  recordButton.textContent = "Record now";
-  recordButton.title = "Take a snapshot of the page as it is now";
+  recordButton.append(svgIcon(RECORD_ICON), textEl("span", "lv-record-label", "Record now"));
+  recordButton.title = "Record now: take a snapshot of the page as it is now";
+  recordButton.setAttribute("aria-label", "Record now");
   const mockGroup = el("div", "lv-mock");
   const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
   mockInput.type = "text";
@@ -195,7 +213,9 @@ export function buildShell() {
     choice.append(svgIcon(icon));
     modeSeg.append(choice);
   }
-  stageHead.append(stageName, zoomSeg, el("span", "lv-spacer"), compareSlot, reloadButton, modeSeg);
+  const stageLine = el("div", "lv-stage-line");
+  stageLine.append(stageName, zoomSeg, el("span", "lv-spacer"), compareSlot, reloadButton, modeSeg);
+  stageHead.append(stageLine);
 
   const sideSeg = el("div", "lv-seg lv-side lv-page-only");
   sideSeg.setAttribute("role", "group");
@@ -210,9 +230,9 @@ export function buildShell() {
   const toolSeg = el("div", "lv-seg lv-tools lv-page-only");
   toolSeg.setAttribute("role", "group");
   toolSeg.setAttribute("aria-label", "Comment tools");
-  for (const [tool, label] of TOOLS) {
-    const choice = button("");
-    choice.textContent = label;
+  for (const [tool, label, icon] of TOOLS) {
+    const choice = button("lv-tool");
+    choice.append(svgIcon(icon), label);
     choice.dataset.tool = tool;
     choice.title =
       tool === "interact" ? "Use the page as it is" : `Put a place of a comment with the ${label.toLowerCase()} tool`;
@@ -364,6 +384,9 @@ export function buildShell() {
 /** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
 const RELOAD_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3.3H9.7"/></svg>';
+
+const RECORD_ICON =
+  '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.6" fill="currentColor"/></svg>';
 
 const MORE_ICON =
   '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="12.5" cy="8" r="1.5"/></svg>';
