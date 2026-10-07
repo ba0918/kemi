@@ -12,7 +12,7 @@ members = ["crates/kemi-core", "crates/kemi-server", "crates/kemi-webview"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
