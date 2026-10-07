@@ -109,7 +109,9 @@ body:not([data-live-view="page"]) #page-tree {
   display: none;
 }
 
-body[data-live-view="code"] .lv-page-only {
+/* 帯の操作はどれもページの見方のもので、コードの見方は --worktree と同じ表示にする（R-PAGE-MODE）。 */
+body[data-live-view="code"] .lv-page-only,
+body[data-live-view="code"] #main > .lv-band {
   display: none;
 }
 

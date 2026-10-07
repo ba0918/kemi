@@ -377,9 +377,10 @@ async function modeTabsSwitchTheTopbar(repository) {
 
     await browser('click', '.topbar .lv-view button[data-view="code"]');
     await waitFor(`document.body.dataset.liveView === 'code' && ${codeTopbarShown(true)} && !${visible(top)}`);
+    assert.equal(await evaluate(visible('#live-band')), false, 'the code view shows no page-view controls');
     await browser('click', '.topbar .lv-view button[data-view="page"]');
     await waitFor(`document.body.dataset.liveView === 'page' && ${codeTopbarShown(false)}`);
-    console.log('PASS コードのタブを押すとコード用の操作と数が見え、ページのタブで戻る');
+    console.log('PASS コードのタブを押すとコード用の操作と数が見えてページの見方の操作の帯は見えず、ページのタブで戻る');
 
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
