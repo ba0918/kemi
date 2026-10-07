@@ -1696,6 +1696,12 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
 /** /changing.html の末尾の余白の下に、下の方の要素（#low）を足したもの。 */
 const changingWithLow = () => changingPage().replace('<div class="tail"></div>', '<div class="tail"></div><p id="low" style="margin:0;height:60px">Low element</p>');
 
+/** /changing.html の末尾の要素（#end）の高さ。 */
+const END_HEIGHT = 40;
+
+/** /changing.html の末尾の余白の下に、#low とは別の要素（#end）を足したもの。 */
+const changingWithEnd = () => changingPage().replace('<div class="tail"></div>', `<div class="tail"></div><div id="end" style="margin:0;height:${END_HEIGHT}px">End element</div>`);
+
 /**
  * 消えた要素の行（R-PAGE-VIEW、R-PAGE-DIFF、R-PAGE-SNAPSHOT）: スナップショットにあって今のページから消した、下の方の要素が
  * 一覧に出る。見る対象だけのときにその行を押すと並べる見比べ方になり、比べる相手の枠の中でその要素が見える位置にあって
@@ -1708,6 +1714,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
   const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
   const refView = `${refPane} .lv-viewport`;
   const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
+  const endRow = `Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).find((item) => item.textContent.includes('End element'))`;
   // 枠の上の方（ページの先頭にある青いボタンが写る所）を除いた範囲。ボタンの青は光の色に近い。
   const belowTheButton = [0, 250, 100000, 100000];
   const pressRemovedRow = () => evaluate(`${removedRow}.querySelector('button').click(); true`);
@@ -1756,11 +1763,13 @@ async function removedRowsLeadToTheSnapshot(repository) {
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)}`), true);
     console.log('PASS 幅 390px で同じ行を押すと、比べる相手の 1 枚に切り替わり、その要素が見えて光る');
 
+    // 重ねて透かす間に押す、今のページの末尾の要素（増えた要素の行になる）。
+    await writeFile(join(dev.dir, 'changing.html'), changingWithEnd());
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(visible(livePane));
     await evaluate(at390);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${removedRow} !== null`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${removedRow} !== null && ${endRow} !== null`);
     await chooseCompare('overlay');
     await waitFor(`${removedRow} !== null`);
     await pressRemovedRow();
@@ -1772,6 +1781,15 @@ async function removedRowsLeadToTheSnapshot(repository) {
     const shift = await evaluate(`new DOMMatrix(getComputedStyle(document.querySelector('${refPane} .lv-frame:not([hidden])')).transform).m42`);
     assert.ok(shift < -1000, `the overlaid snapshot follows the page scrolled down to the element: ${shift}`);
     console.log('PASS 重ねて透かすときに同じ行を押すと、見比べ方は変わらず、そろったままその要素の位置までスクロールして光る');
+
+    // 末尾より先へずらした後に今のページの末尾の要素の行を押すと、ずらすのをやめ、その要素が枠の下端に見えて光る
+    // （ずらしたままだと光は要素より上に描かれる）。重ねた比べる相手は見えなくして、見る対象の光だけを見る。
+    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '0'; range.dispatchEvent(new Event('input')); return true; })()`);
+    const liveView = `${livePane} .lv-viewport`;
+    const bottom = await evaluate(`document.querySelector('${liveView}').clientHeight`);
+    await evaluate(`${endRow}.querySelector('button').click(); true`);
+    await waitForPixels(liveView, shots, 'end-after-overscroll', [0, bottom - END_HEIGHT - 20, 100000, bottom], isGlow);
+    console.log('PASS 重ねて透かして末尾より先へずらした後に、今のページの末尾の要素の行を押すと、その要素の所で光る');
   } finally {
     await stop(kemi);
     await dev.close();

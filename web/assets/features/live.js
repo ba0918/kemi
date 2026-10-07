@@ -113,8 +113,8 @@ const live = {
   /**
    * 重ねて透かす間に消えた要素の行を押し、その要素が今のページの末尾より下にあって、ページをそこまでスクロールできない
    * ときの、見せたい位置 `y`（文書の座標）。ページのスクロールで届かない分だけ両方の枠を外側で上へずらし、そろえたまま
-   * （R-PAGE-REF）その要素を見せる。`key` は refShift と同じ条件で、変われば外す。ページが上へスクロールしたら外し、
-   * 上へのホイールはまず届かない分を戻す。
+   * （R-PAGE-REF）その要素を見せる。`key` は refShift と同じ条件で、変われば外す。ページが上へスクロールしたときと、
+   * ページの上の何か（変化の行の要素や場所）を見せるときに外し、上へのホイールはまず届かない分を戻す。
    * @type {{ key: string, y: number } | null}
    */
   overscroll: null,
@@ -1227,6 +1227,7 @@ async function glowPlaces(comment, n, mode) {
     frame.postMessage({ kemi: "live", type: "glow-places", comment, n, mode, scroll: false }, live.origin);
     return;
   }
+  endOverscroll();
   const answer = await ask(frame, "glow-places", GLOW_TIMEOUT, { comment, n, mode, scroll: true });
   const rect = answer?.rect;
   if (rect && typeof rect.x === "number" && typeof rect.w === "number") {
@@ -2060,6 +2061,7 @@ async function showChangedElement(index) {
   if (!frame) {
     return;
   }
+  endOverscroll();
   const answer = await ask(frame, "glow-element", GLOW_TIMEOUT, { index, mode: "flash" });
   const rect = answer?.rect;
   if (!rect || typeof rect.x !== "number" || typeof rect.w !== "number") {
@@ -2335,6 +2337,17 @@ function loadSnapshot(id) {
  */
 function overscrolled() {
   return live.overscroll === null ? 0 : Math.max(0, live.overscroll.y - live.scroll.y);
+}
+
+/**
+ * 末尾より下へずらすのをやめる。ページの上の何かを見せる（ページにスクロールを頼む）前に呼ぶ。ずらしたままだと、ページが
+ * 末尾までしかスクロールできないときにスクロールの知らせが来ず、見せたものがずらした分だけ上に描かれる。
+ */
+function endOverscroll() {
+  if (live.overscroll !== null) {
+    live.overscroll = null;
+    layoutFrames();
+  }
 }
 
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
