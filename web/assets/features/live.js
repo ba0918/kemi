@@ -614,6 +614,12 @@ function receive(event) {
   // 読み込み直した文書には前の描き込みが無いので、描き直させる。
   sentPlaces = "";
   sendPlaces();
+  // 「ページで見る」で移ったページなら、描き込みが済んだので場所を光らせる。
+  const waiting = glowAfterLoad;
+  glowAfterLoad = null;
+  if (waiting && waiting.page === live.page && waiting.width === live.width) {
+    glowPlaces(waiting.comment, null, "flash");
+  }
 }
 
 /** 入れたパスのモックを、表示中のページに割り当てる。断られたら理由を出す（R-PAGE-MOCK）。 */
@@ -948,8 +954,14 @@ export function refreshPageComments() {
 }
 
 /**
- * ページへのコメントを、付けた URL と表示幅のページの見方で見せる（R-PAGE-COMMENT）。狭い画面では
- * 会話のシートを閉じてページを見せる。
+ * 「ページで見る」で別のページへ移ったときの、読み込みと描き込みが済んだら光らせるコメント。
+ * @type {{ comment: string, page: string, width: number } | null}
+ */
+let glowAfterLoad = null;
+
+/**
+ * ページへのコメントを、付けた URL と表示幅のページの見方で見せ、その場所までスクロールして光らせる（R-PAGE-COMMENT）。
+ * 別のページへ移るときは、読み込みと描き込みが済んでから光らせる。狭い画面では会話のシートを閉じてページを見せる。
  * @param {any} comment
  */
 export function showPageComment(comment) {
@@ -960,20 +972,41 @@ export function showPageComment(comment) {
   if (state.narrow) {
     closeSheet();
   }
-  showPage(comment.page.url, comment.page.width);
+  const moved = showPage(comment.page.url, comment.page.width);
   renderConversation();
+  if (moved) {
+    glowAfterLoad = { comment: comment.id, page: comment.page.url, width: comment.page.width };
+    return;
+  }
+  glowAfterLoad = null;
+  // 表示幅を変えたときは、枠の新しい大きさがページに届いてから（並べ直した後の文書の座標で）光らせる。
+  requestAnimationFrame(() => requestAnimationFrame(() => glowPlaces(comment.id, null, "flash")));
+}
+
+/**
+ * ページの上の場所を光らせる（R-PAGE-COMMENT）。`flash` は場所までスクロールして明滅させ、`on` は `off` まで光らせる。
+ * @param {string | null} comment 保存したコメントの id。null なら書きかけの場所
+ * @param {number | null} n 場所の番号。null ならそのコメントのすべての場所
+ * @param {"on" | "off" | "flash"} mode
+ */
+function glowPlaces(comment, n, mode) {
+  shell?.liveFrame.contentWindow?.postMessage(
+    { kemi: "live", type: "glow-places", comment, n, mode, scroll: mode === "flash" },
+    live.origin,
+  );
 }
 
 /**
  * そのページをその表示幅で、ページの見方で見せる。狭い画面では動いているページの側を見せる（比べる相手の側を
- * 見ていると、動いているページと、その上のコメントの場所が隠れたままになる）。
+ * 見ていると、動いているページと、その上のコメントの場所が隠れたままになる）。別のページへ移ったかを返す。
  * @param {string} url
  * @param {number} width
+ * @returns {boolean}
  */
 function showPage(url, width) {
   // 保存している間は表示幅もページも変えられないので、見方だけを切り替えることもしない。
   if (live.saving) {
-    return;
+    return false;
   }
   if (live.view !== "page") {
     setView("page");
@@ -986,7 +1019,9 @@ function showPage(url, width) {
   }
   if (live.page !== url) {
     openPage(url);
+    return true;
   }
+  return false;
 }
 
 function renderCompose() {
@@ -1004,7 +1039,16 @@ function renderCompose() {
   // 道具を選んだだけでは開かず、最初の場所を置いたときに開く（R-PAGE-COMMENT）。
   compose.box.hidden = live.view !== "page" || (places.length === 0 && live.draft.body === "");
   // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
-  renderPlaces(compose, places, { remove: (n) => setDraft(removePlace(live.draft, n)), insert: insertReference }, live.saving);
+  renderPlaces(
+    compose,
+    places,
+    {
+      remove: (n) => setDraft(removePlace(live.draft, n)),
+      insert: insertReference,
+      glow: (n, mode) => glowPlaces(null, n, mode),
+    },
+    live.saving,
+  );
   const stray = strayRefs(live.draft);
   renderStrayRefs(compose, stray, (ref) => {
     compose.body.focus();

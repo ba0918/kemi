@@ -519,9 +519,14 @@ const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
 
 /**
  * 書いているコメントの場所の一覧。番号（押すと本文に `#n` を入れる）・種類・指している要素と、一覧から外す ×。
+ * 行に乗せている間はページのその場所を光らせ、種類と要素を押すとその場所までスクロールして光らせる（R-PAGE-COMMENT）。
  * @param {ComposeShell} compose
  * @param {import("../live-model.js").Place[]} places
- * @param {{ remove: (n: number) => void, insert: (n: number) => void }} handlers
+ * @param {{
+ *   remove: (n: number) => void,
+ *   insert: (n: number) => void,
+ *   glow: (n: number, mode: "on" | "off" | "flash") => void,
+ * }} handlers
  * @param {boolean} locked 保存している間は外せない
  */
 export function renderPlaces(compose, places, handlers, locked) {
@@ -546,7 +551,13 @@ export function renderPlaces(compose, places, handlers, locked) {
     number.setAttribute("aria-label", `Insert #${place.n} into the text`);
     number.disabled = locked;
     number.addEventListener("click", () => handlers.insert(place.n));
-    row.append(number, textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what), remove);
+    const show = button("lv-place-show");
+    show.title = `Show place ${place.n} on the page`;
+    show.append(textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what));
+    show.addEventListener("click", () => handlers.glow(place.n, "flash"));
+    row.addEventListener("mouseenter", () => handlers.glow(place.n, "on"));
+    row.addEventListener("mouseleave", () => handlers.glow(place.n, "off"));
+    row.append(number, show, remove);
     compose.list.append(row);
   }
 }

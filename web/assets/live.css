@@ -1099,6 +1099,27 @@ body[data-live-view="page"] #menu-comments {
   cursor: default;
 }
 
+/* 種類と要素は、押すとページのその場所までスクロールして光らせる（R-PAGE-COMMENT）。 */
+.lv-place-show {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  padding: 1px 4px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-place:hover .lv-place-show {
+  background: var(--panel-2);
+}
+
 .lv-place-kind {
   color: var(--ink-2);
 }

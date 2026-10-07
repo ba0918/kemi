@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消すと番号と本文の #n が
 //   詰まり、渡した JSON も同じ。消した場所を指す #n があると保存できない。一覧の番号を押すと本文に #n が入る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。書く欄を閉じると（保存・取り消し）見る対象の枠は欄を開く前の高さに戻り、最初の保存で案内が消えると空いた高さまで伸びる。コメントだけがあるページがツリーに
+//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。書く欄を閉じると（保存・取り消し）見る対象の枠は欄を開く前の高さに戻り、最初の保存で案内が消えると空いた高さまで伸びる。書きかけの場所の行に乗せるとその場所が光り、押すとそこまでスクロールして光る。スレッドの「ページで見る」は、別の表示幅のコメントでも幅を切り替えてから、そのコメントの場所までスクロールして光らせる。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。保存したコメントの場所は、スレッドを開いている間だけ番号付きで、それ以外は番号の無い小さな印で、
 //   乗せるとレビュー画面にそのコメントの短い名前が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
@@ -2880,6 +2880,95 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
   }
 }
 
+/** 場所や要素を光らせる光（画面モックの --ai の青）。 */
+const isGlow = ([r, g, b]) => r < 95 && g < 110 && b > 140 && b - r > 60;
+
+/**
+ * 枠の画像のうち、ページの x より右（ページの CSS ピクセル）。/tall.html の帯の文字（左端の「Band n」）は、帯の色に
+ * 混ざって光や描き込みの色に近い画素を作るので、それより右だけを見る。
+ */
+async function rightOf(x) {
+  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+  return [Math.round(x * scale), 0, 100000, 100000];
+}
+
+/** 要素の真ん中へ（レビュー画面の文書の中の）ポインタを動かす。 */
+async function pointAt(selector) {
+  const { x, y } = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+  await browser('mouse', 'move', String(Math.round(x)), String(Math.round(y)));
+}
+
+/**
+ * 場所を光らせる（R-PAGE-COMMENT）: 書きかけの場所の一覧の行に乗せている間はその場所が光り、離れると消える。下の方に置いた
+ * 場所の行を押すと、見る対象がその場所までスクロールして光る。保存したコメントのスレッドの「ページで見る」を押すと、
+ * 下の方のそのコメントの場所までスクロールして光る。別の表示幅で付けたコメントでも、幅が切り替わってから同じになる。
+ */
+async function placesGlowFromTheListAndTheThread(repository) {
+  const dev = await startDevServer();
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}tall.html`]);
+  const frame = `${livePane} .lv-frame`;
+  const wheel = (y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
+  // 下の方（文書の y 2500 付近、帯 9 の中）を指す、帯の文字から離れた矢印。保存したコメントの場所に使う。
+  const arrowLow = (width, left) => ({ url: '/tall.html', width, places: [{ n: 1, kind: 'arrow', points: [{ x: left, y: 2450 }, { x: left + 130, y: 2560 }], elements: [] }] });
+  try {
+    const c1 = await post(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(1280, 700), body: 'low at 1280' });
+    const c2 = await post(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(390, 200), body: 'low at 390' });
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
+    await new Promise((done) => setTimeout(done, 500));
+    await wheel(6000);
+    await new Promise((done) => setTimeout(done, 500));
+    // 帯 8 を場所にする（帯は幅いっぱいなので、描き込みと光の上下の辺が右側に写る）。
+    await clickInPane(livePane, 600, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await new Promise((done) => setTimeout(done, 500));
+    const right = await rightOf(300);
+    await waitForPixels(frame, shots, 'draft-before', right, isGlow, false);
+    const row = '#live-compose .lv-place[data-n="1"]';
+    await pointAt(row);
+    await waitForPixels(frame, shots, 'draft-hovered', right, isGlow);
+    await pointAt('#live-compose .lv-compose-head');
+    await waitForPixels(frame, shots, 'draft-left', right, isGlow, false);
+    console.log('PASS 書きかけの場所の一覧の行に乗せるとその場所が光り、離れると光が消える');
+
+    await wheel(-6000);
+    await waitForPixels(frame, shots, 'draft-top', right, isPlaceInk, false);
+    await browser('click', `${row} .lv-place-what`);
+    await waitForPixels(frame, shots, 'draft-shown', right, isGlow);
+    await waitForPixels(frame, shots, 'draft-shown-place', right, isPlaceInk);
+    console.log('PASS 下の方に置いた場所の一覧の行を押すと、見る対象がその場所までスクロールして光る');
+
+    await browser('click', '#live-compose .lv-compose-cancel');
+    await wheel(-6000);
+    await browser('click', '#cv-rail');
+    await browser('click', `.cv-card[data-id="${c1.id}"]`);
+    await waitFor(`document.querySelector('#cv-thread .cv-go')?.textContent === 'Show on page'`);
+    const opened = await rightOf(300);
+    await waitForPixels(frame, shots, 'saved-top', opened, isPlaceInk, false);
+    await browser('click', '#cv-thread .cv-go');
+    await waitForPixels(frame, shots, 'saved-shown', opened, isGlow);
+    await waitForPixels(frame, shots, 'saved-shown-place', opened, isPlaceInk);
+    console.log('PASS ページの上端からスレッドの「ページで見る」を押すと、下の方のそのコメントの場所までスクロールして光る');
+
+    await waitForPixels(frame, shots, 'saved-faded', opened, isGlow, false);
+    await wheel(-6000);
+    await browser('click', '#cv-thread .cv-back');
+    await browser('click', `.cv-card[data-id="${c2.id}"]`);
+    await waitFor(`document.querySelector('#cv-thread .cv-page-width')?.textContent === '390px'`);
+    await browser('click', '#cv-thread .cv-page-width');
+    await waitFor(`document.querySelector('${frame}').style.width === '390px'`);
+    const narrow = await rightOf(150);
+    await waitForPixels(frame, shots, 'other-width-shown', narrow, isGlow);
+    await waitForPixels(frame, shots, 'other-width-shown-place', narrow, isPlaceInk);
+    console.log('PASS 別の表示幅で付けたコメントの「ページで見る」でも、幅が切り替わってからその場所までスクロールして光る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /**
  * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
  */
@@ -3092,6 +3181,7 @@ try {
   await movingWhileSavingMakesNoImageOfAnotherPage(repository);
   await placesMakeNoChange(repository);
   await savedPageCommentsAreListedShownAndSwitched(repository);
+  await placesGlowFromTheListAndTheThread(repository);
   await handedPageCommentsReachWaitAndSubmit(repository);
   await snapshotsAndMocksComeBackAfterResuming(repository);
 } finally {
