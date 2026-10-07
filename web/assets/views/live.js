@@ -7,15 +7,19 @@ import { button, el, svgIcon, textEl } from "../dom.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model.js";
 
 /**
- * 表示中のページの変化の一覧の中身。`unmarked` は、消えた要素をスナップショットの側に印で示せないこと。
+ * 表示中のページの変化の一覧の中身。`list` は要素ごとの変化、`reference` は比べている相手の名前、`unmarked` は、
+ * 消えた要素をスナップショットの側に印で示せないこと。
  * @typedef {{
- *   list: import("../live-diff.js").Change[],
+ *   list: import("../live-diff.js").ElementChanges[],
+ *   reference: string,
  *   shiftedOpen: boolean,
  *   listed: { main: number, shifted: number },
  *   unmarked: boolean,
  * }} ChangeListState
  * 比べられないときに一覧の代わりに出す知らせ。
  * @typedef {{ notice: string }} ChangeNotice
+ * 比べる相手がモックのとき、一覧の代わりに出す見出し（モックの名前）。
+ * @typedef {{ mock: string }} ChangeMock
  */
 
 /**
@@ -26,7 +30,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   bandAgent: HTMLElement,
  *   menu: HTMLElement,
  *   widthGroup: HTMLElement,
- *   mockGroup: HTMLElement,
  *   stageHead: HTMLElement,
  *   widthSeg: HTMLElement,
  *   widthInput: HTMLInputElement,
@@ -39,18 +42,23 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   reloadButton: HTMLButtonElement,
  *   modeSeg: HTMLElement,
  *   opacity: HTMLInputElement,
- *   mockInput: HTMLInputElement,
- *   mockAssign: HTMLButtonElement,
- *   mockRemove: HTMLButtonElement,
+ *   mockMenuButton: HTMLButtonElement,
+ *   mockMenu: HTMLElement,
  *   mockReload: HTMLButtonElement,
- *   mockError: HTMLElement,
+ *   mockRemove: HTMLButtonElement,
+ *   mockOpen: HTMLButtonElement,
+ *   mockPanel: MockPanel,
  *   sideSeg: HTMLElement,
  *   stage: HTMLElement,
  *   refPane: HTMLElement,
  *   refBar: HTMLElement,
  *   refLabel: HTMLElement,
  *   refNotice: HTMLElement,
+ *   refNoticeText: HTMLElement,
+ *   refNoticeAction: HTMLButtonElement,
  *   refViewport: HTMLElement,
+ *   refGlow: HTMLElement,
+ *   refWheel: HTMLElement,
  *   refFrame: HTMLIFrameElement,
  *   refMockFrame: HTMLIFrameElement,
  *   refEmpty: HTMLElement,
@@ -72,6 +80,20 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   stroke: SVGPolylineElement,
  *   compose: ComposeShell,
  * }} LiveShell
+ */
+
+/**
+ * モックのパネル（live-compare.md の R-PAGE-MOCK）: 一行の説明、検索の欄、ファイルの一覧（出している数と全体の数）、
+ * 一覧に無いファイルのパスを入れる欄。
+ * @typedef {{
+ *   box: HTMLElement,
+ *   search: HTMLInputElement,
+ *   count: HTMLElement,
+ *   list: HTMLElement,
+ *   path: HTMLInputElement,
+ *   assign: HTMLButtonElement,
+ *   error: HTMLElement,
+ * }} MockPanel
  */
 
 /**
@@ -146,32 +168,38 @@ export function buildShell() {
   widthError.hidden = true;
   widthGroup.append(widthSeg, widthInput, widthError);
 
-  // 手で取る操作とモックの操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT、R-PAGE-MOCK）。
+  // 手で取る操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT）。
   // 広い画面の帯ではアイコンだけ、狭い画面のメニューでは名前も出す。
   const recordButton = button("lv-record lv-record-now");
   recordButton.append(svgIcon(RECORD_ICON), textEl("span", "lv-record-label", "Record now"));
   recordButton.title = "Record now: take a snapshot of the page as it is now";
   recordButton.setAttribute("aria-label", "Record now");
-  const mockGroup = el("div", "lv-mock");
-  const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
-  mockInput.type = "text";
-  mockInput.placeholder = "Mock path, e.g. docs/mock.html";
-  mockInput.setAttribute("aria-label", "Path of the mock HTML file");
-  const mockAssign = button("lv-record lv-mock-assign");
-  mockAssign.textContent = "Assign mock";
-  const mockRemove = button("lv-record lv-mock-remove");
-  mockRemove.textContent = "Remove mock";
-  const mockReload = button("lv-record lv-mock-reload");
+  // モックの入口は、比べる相手の選択肢の最後の「Mock file…」と、狭い画面の帯のメニュー。割り当てている間の読み直す・
+  // 外す操作は、選択の横と変化の一覧の見出しの「…」から開くメニューに置く（R-PAGE-MOCK、R-PAGE-VIEW）。
+  const mockMenuButton = mockMenuToggle();
+  const mockMenu = el("div", "lv-mock-menu lv-popover");
+  mockMenu.id = "live-mock-menu";
+  mockMenu.setAttribute("popover", "");
+  mockMenu.setAttribute("aria-label", "Mock");
+  const mockReload = button("lv-popover-item lv-mock-reload");
   mockReload.textContent = "Reload mock";
   mockReload.title = "Read the mock file again";
-  const mockError = el("span", "lv-width-error lv-mock-error");
-  mockError.setAttribute("role", "alert");
-  mockError.hidden = true;
-  mockGroup.append(mockInput, mockAssign, mockRemove, mockReload, mockError);
-  // 取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
+  const mockRemove = button("lv-popover-item lv-mock-remove");
+  mockRemove.textContent = "Remove mock";
+  mockMenu.append(mockReload, mockRemove);
+  const mockOpen = button("lv-record lv-mock-open");
+  mockOpen.textContent = "Mock file…";
+  mockOpen.title = "Choose an HTML file to compare the page with";
+  const mockPanel = buildMockPanel();
+  // 取れた・取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
+  // 取れたときは、取ったものを並べて見る操作を添える（live-compare.md の R-PAGE-REF）。
   const refNotice = el("span", "lv-notice lv-band-notice");
   refNotice.setAttribute("role", "status");
   refNotice.hidden = true;
+  const refNoticeText = el("span", "lv-notice-text");
+  const refNoticeAction = button("lv-notice-action");
+  refNoticeAction.hidden = true;
+  refNotice.append(refNoticeText, refNoticeAction);
 
   // 舞台の見出し: 見比べ方の名前、倍率の切り替え、比べる相手の選択、読み込み直す操作、見比べ方の切り替え。
   const stageHead = el("div", "lv-stage-head");
@@ -200,7 +228,7 @@ export function buildShell() {
   opacity.value = "50";
   opacity.setAttribute("aria-label", "Opacity of the reference");
   opacity.title = "Opacity of the reference";
-  compareSlot.append(compareSelect, opacity);
+  compareSlot.append(compareSelect, mockMenuButton, opacity);
   const reloadButton = button("iconbtn lv-reload");
   reloadButton.title = "Reload page";
   reloadButton.setAttribute("aria-label", "Reload page");
@@ -257,10 +285,10 @@ export function buildShell() {
   menuButton.setAttribute("aria-label", "Page view options");
   menuButton.setAttribute("popovertarget", menu.id);
   menuButton.append(svgIcon(MORE_ICON));
+  menu.append(mockOpen);
   band.append(
     widthGroup,
     recordButton,
-    mockGroup,
     refNotice,
     el("span", "lv-spacer"),
     sideSeg,
@@ -269,6 +297,8 @@ export function buildShell() {
     bandAgent,
     menuButton,
     menu,
+    mockMenu,
+    mockPanel.box,
   );
 
   // 道具は見る対象の枠のすぐ上に、始め方の案内はその下に置く（R-PAGE-COMMENT）。
@@ -304,6 +334,21 @@ export function buildShell() {
   refMockFrame.referrerPolicy = "no-referrer";
   refMockFrame.hidden = true;
   ref.box.append(refFrame, refMockFrame, refEmpty);
+  // 消えた要素の行を押したとき（R-PAGE-DIFF）: 比べる相手の側のその要素の光と、比べる相手を中身の高さで描いて外側で
+  // ずらしている間にホイール・指やマウスで引く操作・キーを受ける層。スナップショットの枠はスクリプトを止めていて中を動かせないので、レビュー画面の
+  // 側に置く。光は重ねて透かすときの透かし具合を受けないよう、枠を収める箱の外に置く。光は描いた要素と一緒に横にスクロールするので枠の外側の
+  // 中に、層は横にスクロールしても見えている所をちょうど覆うよう枠の外側の外に置く。
+  const refGlow = el("div", "lv-ref-glow");
+  refGlow.hidden = true;
+  const refWheel = el("div", "lv-ref-wheel");
+  refWheel.hidden = true;
+  // ずらした形の間は、比べる相手を動かすのはこの層だけなので、キーボードでも届くようにする。名前を読み上げられるよう、
+  // 名前を持てる役割（キーボードで動かす領域によく使う region）を付ける。
+  refWheel.tabIndex = 0;
+  refWheel.setAttribute("role", "region");
+  refWheel.setAttribute("aria-label", "Snapshot moved to the removed element; scroll, drag, or use the arrow keys to move it");
+  ref.port.append(refWheel);
+  ref.viewport.append(refGlow);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -345,7 +390,6 @@ export function buildShell() {
     bandAgent,
     menu,
     widthGroup,
-    mockGroup,
     stageHead,
     widthSeg,
     widthInput,
@@ -358,18 +402,23 @@ export function buildShell() {
     reloadButton,
     modeSeg,
     opacity,
-    mockInput,
-    mockAssign,
-    mockRemove,
+    mockMenuButton,
+    mockMenu,
     mockReload,
-    mockError,
+    mockRemove,
+    mockOpen,
+    mockPanel,
     sideSeg,
     stage,
     refPane: ref.pane,
     refBar: ref.bar,
     refLabel: ref.label,
     refNotice,
+    refNoticeText,
+    refNoticeAction,
     refViewport: ref.viewport,
+    refGlow,
+    refWheel,
     refFrame,
     refMockFrame,
     refEmpty,
@@ -391,6 +440,79 @@ export function buildShell() {
     stroke,
     compose,
   };
+}
+
+/** 割り当てたモックのメニュー（読み直す・外す）を開く「…」。 */
+function mockMenuToggle() {
+  const toggle = button("iconbtn lv-mock-menu-button");
+  toggle.title = "Mock actions";
+  toggle.setAttribute("aria-label", "Mock actions");
+  toggle.append(svgIcon(MORE_ICON));
+  return toggle;
+}
+
+/** @returns {MockPanel} */
+function buildMockPanel() {
+  const box = el("div", "lv-mock-panel lv-popover");
+  box.id = "live-mock-panel";
+  box.setAttribute("popover", "");
+  box.setAttribute("aria-label", "Mock file");
+  box.append(
+    textEl("p", "lv-mock-about", "A mock is an HTML file shown in place of a snapshot, such as a design to compare the page with."),
+  );
+  const search = /** @type {HTMLInputElement} */ (el("input", "lv-mock-search"));
+  search.type = "search";
+  search.placeholder = "Search the HTML files";
+  search.setAttribute("aria-label", "Search the HTML files");
+  const count = el("div", "lv-mock-count");
+  count.setAttribute("role", "status");
+  const list = el("ul", "lv-mock-files");
+  list.setAttribute("aria-label", "HTML files");
+  const pathRow = el("div", "lv-mock-path-row");
+  const path = /** @type {HTMLInputElement} */ (el("input", "lv-mock-path"));
+  path.type = "text";
+  path.placeholder = "Or a path not listed, e.g. docs/mock.html";
+  path.setAttribute("aria-label", "Path of the mock HTML file");
+  const assign = button("lv-record lv-mock-path-assign");
+  assign.textContent = "Use";
+  pathRow.append(path, assign);
+  const error = el("p", "lv-width-error lv-mock-error");
+  error.setAttribute("role", "alert");
+  error.hidden = true;
+  box.append(search, count, list, pathRow, error);
+  return { box, search, count, list, path, assign, error };
+}
+
+/**
+ * モックのパネルの一覧。出している数が全体より少なければ、検索の欄で絞り込めることを添える（R-PAGE-MOCK）。
+ * @param {MockPanel} panel
+ * @param {{ files: string[], total: number }} found
+ * @param {string} assigned 今割り当てているモックのパス（無ければ空）
+ * @param {(path: string) => void} onPick
+ */
+export function renderMockFiles(panel, found, assigned, onPick) {
+  panel.list.textContent = "";
+  for (const path of found.files) {
+    const item = el("li");
+    const pick = button("lv-mock-file");
+    pick.dataset.path = path;
+    pick.textContent = path;
+    if (path === assigned) {
+      pick.setAttribute("aria-current", "true");
+    }
+    pick.addEventListener("click", () => onPick(path));
+    item.append(pick);
+    panel.list.append(item);
+  }
+  const shown = found.files.length;
+  panel.count.dataset.shown = String(shown);
+  panel.count.dataset.total = String(found.total);
+  panel.count.textContent =
+    shown < found.total
+      ? `Showing ${shown} of ${found.total} files. Search to narrow them down.`
+      : found.total === 0
+        ? "No HTML files found. Enter a path below."
+        : `${found.total} file${found.total === 1 ? "" : "s"}`;
 }
 
 /** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
@@ -519,9 +641,14 @@ const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
 
 /**
  * 書いているコメントの場所の一覧。番号（押すと本文に `#n` を入れる）・種類・指している要素と、一覧から外す ×。
+ * 行に乗せている間はページのその場所を光らせ、種類と要素を押すとその場所までスクロールして光らせる（R-PAGE-COMMENT）。
  * @param {ComposeShell} compose
  * @param {import("../live-model.js").Place[]} places
- * @param {{ remove: (n: number) => void, insert: (n: number) => void }} handlers
+ * @param {{
+ *   remove: (n: number) => void,
+ *   insert: (n: number) => void,
+ *   glow: (n: number, mode: "on" | "off" | "flash") => void,
+ * }} handlers
  * @param {boolean} locked 保存している間は外せない
  */
 export function renderPlaces(compose, places, handlers, locked) {
@@ -546,7 +673,13 @@ export function renderPlaces(compose, places, handlers, locked) {
     number.setAttribute("aria-label", `Insert #${place.n} into the text`);
     number.disabled = locked;
     number.addEventListener("click", () => handlers.insert(place.n));
-    row.append(number, textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what), remove);
+    const show = button("lv-place-show");
+    show.title = `Show place ${place.n} on the page`;
+    show.append(textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what));
+    show.addEventListener("click", () => handlers.glow(place.n, "flash"));
+    row.addEventListener("mouseenter", () => handlers.glow(place.n, "on"));
+    row.addEventListener("mouseleave", () => handlers.glow(place.n, "off"));
+    row.append(number, show, remove);
     compose.list.append(row);
   }
 }
@@ -574,7 +707,8 @@ export function renderStrayRefs(compose, stray, onShow) {
 }
 
 /**
- * 舞台の 1 枚。上に何を出しているかの帯、下にページを縮めて収める枠。
+ * 舞台の 1 枚。上に何を出しているかの帯、下にページを縮めて収める枠。枠の外側（`viewport`）は等倍で横にスクロールするので、
+ * 枠の見えている所にとどまる層は、それを包む `port` に置く。
  * @param {string} side
  * @param {string} title
  */
@@ -584,11 +718,13 @@ function pane(side, title) {
   const bar = el("div", "lv-bar");
   const label = el("span", "lv-bar-label");
   bar.append(textEl("b", "", title), label);
+  const port = el("div", "lv-port");
   const viewport = el("div", "lv-viewport");
   const box = el("div", "lv-box");
   viewport.append(box);
-  element.append(bar, viewport);
-  return { pane: element, bar, label, viewport, box };
+  port.append(viewport);
+  element.append(bar, port);
+  return { pane: element, bar, label, port, viewport, box };
 }
 
 /**
@@ -624,13 +760,13 @@ export function renderCompareOptions(select, options, chosen, rule) {
  * @param {{
  *   onPage: (page: string) => void,
  *   onWidth: (page: string, width: number) => void,
- *   onShifted: (open: boolean) => void,
- *   onListed: (group: "main" | "shifted", count: number) => void,
- * }} handlers
- * @param {ChangeListState | ChangeNotice | null} changes
+ * } & ChangeHandlers} handlers
+ * @param {ChangeListState | ChangeNotice | ChangeMock | null} changes
  * @param {boolean} locked ページと表示幅を変えられない間（コメントの保存中）。移る操作を使えないと出す
  */
 export function renderPageTree(container, items, handlers, changes, locked) {
+  // 変化の一覧の中の操作にフォーカスがあれば、描き直した一覧の同じ操作に戻す（行を押して描き直したときも）。
+  const focused = focusInChanges(container.querySelector('.lv-page[data-current="true"] > .lv-changes'), container.ownerDocument);
   container.textContent = "";
   container.append(textEl("div", "lv-tree-head", `Pages ${items.length}`));
   const list = el("ul", "lv-pages");
@@ -671,10 +807,61 @@ export function renderPageTree(container, items, handlers, changes, locked) {
     list.append(row);
   }
   container.append(list);
+  // 文書に入ってからでないとフォーカスできない。
+  const box = container.querySelector('.lv-page[data-current="true"] > .lv-changes');
+  if (box instanceof HTMLElement) {
+    refocus(box, focused);
+  }
 }
 
-/** 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。 */
-const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-change-show", ".lv-change-shifted .lv-change-show"];
+/**
+ * 変化の一覧の操作。開いたずれただけと並べた数を覚えさせ、行を押したらその要素を見せる。モックの見出しの「…」で
+ * モックのメニューを開く。
+ * @typedef {{
+ *   onShifted: (open: boolean) => void,
+ *   onListed: (group: "main" | "shifted", count: number) => void,
+ *   onShow: (element: import("../live-diff.js").ElementChanges) => void,
+ *   onMockMenu: (anchor: HTMLElement) => void,
+ * }} ChangeHandlers
+ */
+
+/**
+ * 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。要素の行は、同じ要素（側と番号）の行に戻す。
+ */
+const FOCUSABLE_IN_CHANGES = [
+  ".lv-shifted > summary",
+  ".lv-change-main .lv-change-show",
+  ".lv-change-shifted .lv-change-show",
+  ".lv-changes-mock .lv-mock-menu-button",
+];
+
+/**
+ * 変化の一覧の中でフォーカスのある操作を、描き直した一覧で探すためのセレクタ。一覧の外にフォーカスがあれば undefined。
+ * @param {Element | null} box 描き直す前の一覧
+ * @param {Document} document
+ * @returns {string | undefined}
+ */
+function focusInChanges(box, document) {
+  const active = document.activeElement;
+  if (!box || !active || !box.contains(active)) {
+    return undefined;
+  }
+  if (active instanceof HTMLElement && active.matches(".lv-change-go")) {
+    return `.lv-change-go[data-side="${active.dataset.side}"][data-index="${active.dataset.index}"]`;
+  }
+  return FOCUSABLE_IN_CHANGES.find((selector) => active.matches(selector));
+}
+
+/**
+ * 描き直した一覧の、前にフォーカスのあった操作にフォーカスを戻す。
+ * @param {HTMLElement} box
+ * @param {string | undefined} selector focusInChanges の返り値
+ */
+function refocus(box, selector) {
+  if (selector) {
+    /** @type {HTMLElement | null} */ (box.querySelector(selector))?.focus();
+  }
+}
 
 /**
  * 表示中のページの下の変化の一覧だけを描き直す（R-PAGE-DIFF）。ページの行とその操作は作り直さない（動き続ける
@@ -682,8 +869,8 @@ const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-chan
  * フォーカスがあれば、描き直した一覧の同じ操作に移す。表示中のページの行がまだ無ければ何もしない
  * （renderPageTree が描く）。
  * @param {HTMLElement} container renderPageTree で描いたツリー
- * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
- * @param {ChangeListState | ChangeNotice | null} changes
+ * @param {ChangeHandlers} handlers
+ * @param {ChangeListState | ChangeNotice | ChangeMock | null} changes
  */
 export function renderChanges(container, handlers, changes) {
   const row = container.querySelector('.lv-page[data-current="true"]');
@@ -691,8 +878,7 @@ export function renderChanges(container, handlers, changes) {
     return;
   }
   const old = row.querySelector(":scope > .lv-changes");
-  const active = container.ownerDocument.activeElement;
-  const focused = old && active && old.contains(active) ? FOCUSABLE_IN_CHANGES.find((selector) => active.matches(selector)) : undefined;
+  const focused = focusInChanges(old, container.ownerDocument);
   if (changes === null) {
     old?.remove();
     return;
@@ -703,9 +889,7 @@ export function renderChanges(container, handlers, changes) {
   } else {
     row.append(box);
   }
-  if (focused) {
-    /** @type {HTMLElement | null} */ (box.querySelector(focused))?.focus();
-  }
+  refocus(box, focused);
 }
 
 /**
@@ -715,15 +899,29 @@ export function renderChanges(container, handlers, changes) {
 const LISTED_CHANGES = 300;
 
 /**
- * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。比べられないときは、
- * 一覧の代わりにそのことを出す（R-PAGE-VIEW）。
- * @param {ChangeListState | ChangeNotice} state
- * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
+ * 変化の一覧（R-PAGE-DIFF）。要素ごとに 1 行で、主な変化を上に、ずれただけは畳んで下に、印の色の凡例をその下に。
+ * 見出しには比べている相手の名前を出す（R-PAGE-VIEW）。比べられないときは、一覧の代わりにそのことを出す。
+ * @param {ChangeListState | ChangeNotice | ChangeMock} state
+ * @param {ChangeHandlers} handlers
  */
 function changeList(state, handlers) {
   if ("notice" in state) {
     const box = el("div", "lv-changes lv-changes-failed");
     box.append(textEl("p", "lv-changes-notice", state.notice));
+    return box;
+  }
+  if ("mock" in state) {
+    // モックと比べるときは一覧を出さず、見出しにモックの名前と、選択の横と同じメニューを出す（R-PAGE-VIEW）。
+    const box = el("div", "lv-changes lv-changes-mock");
+    const head = el("div", "lv-changes-head");
+    const vs = textEl("span", "lv-changes-vs", state.mock);
+    vs.title = `Compared with ${state.mock}`;
+    const toggle = mockMenuToggle();
+    toggle.addEventListener("click", () => handlers.onMockMenu(toggle));
+    const end = el("span", "lv-changes-mock-end");
+    end.append(vs, toggle);
+    head.append(textEl("span", "", "Changes"), end);
+    box.append(head);
     return box;
   }
   const changes = state.list;
@@ -733,10 +931,9 @@ function changeList(state, handlers) {
   box.dataset.main = String(main.length);
   box.dataset.shifted = String(shifted.length);
   const head = el("div", "lv-changes-head");
-  head.append(
-    textEl("span", "", `Changes ${main.length}`),
-    textEl("span", "", `${main.length} main · ${shifted.length} shifted`),
-  );
+  const vs = textEl("span", "lv-changes-vs", state.reference);
+  vs.title = `Compared with ${state.reference}`;
+  head.append(textEl("span", "", `Changes ${main.length}`), vs);
   box.append(head);
   if (state.unmarked) {
     box.append(textEl("p", "lv-changes-unmarked", "Not marked: removed elements cannot be located in the snapshot"));
@@ -746,14 +943,16 @@ function changeList(state, handlers) {
     return box;
   }
   if (main.length > 0) {
-    box.append(changeItems("lv-change-main", main, state.listed.main, (count) => handlers.onListed("main", count)));
+    box.append(changeItems("lv-change-main", main, state.listed.main, handlers, (count) => handlers.onListed("main", count)));
   }
   if (shifted.length > 0) {
     const details = /** @type {HTMLDetailsElement} */ (el("details", "lv-shifted"));
     const shiftedItems = () =>
-      changeItems("lv-change-shifted", shifted, state.listed.shifted, (count) => handlers.onListed("shifted", count));
+      changeItems("lv-change-shifted", shifted, state.listed.shifted, handlers, (count) => handlers.onListed("shifted", count));
     details.open = state.shiftedOpen;
-    details.append(textEl("summary", "", `Shifted only ${shifted.length}`));
+    const summary = textEl("summary", "", `Shifted only ${shifted.length}`);
+    summary.append(textEl("span", "lv-shifted-why", "Moved or resized; nothing else changed."));
+    details.append(summary);
     if (state.shiftedOpen) {
       details.append(shiftedItems());
     }
@@ -766,18 +965,41 @@ function changeList(state, handlers) {
     });
     box.append(details);
   }
+  box.append(changeLegend());
   return box;
 }
 
+/** 印の色の意味（R-PAGE-DIFF）。点の色は一覧の行の点と、ページの上の印の色と同じ。 */
+const CHANGE_LEGEND = /** @type {const} */ ([
+  ["main", "changed"],
+  ["added", "added"],
+  ["removed", "removed (on the snapshot)"],
+  ["shifted", "moved only"],
+]);
+
+/** @returns {HTMLElement} */
+function changeLegend() {
+  const legend = el("div", "lv-changes-legend");
+  legend.setAttribute("aria-label", "What the marks mean");
+  for (const [kind, label] of CHANGE_LEGEND) {
+    const item = el("span", "lv-legend-item");
+    item.dataset.kind = kind;
+    item.append(el("i", "lv-change-dot"), label);
+    legend.append(item);
+  }
+  return legend;
+}
+
 /**
- * 変化の項目を `listed` 個まで並べ、残りがあれば続きを出す操作を置く。押すと次の LISTED_CHANGES 個を足し、
- * 並べた数を `onListed` に知らせる（描き直しても同じ数まで並べるため）。
+ * 変化のあった要素を `listed` 個まで並べ、残りがあれば続きを出す操作を置く。押すと次の LISTED_CHANGES 個を足し、
+ * 並べた数を `onListed` に知らせる（描き直しても同じ数まで並べるため）。行を押すとその要素を見せる。
  * @param {string} className
- * @param {import("../live-diff.js").Change[]} changes
+ * @param {import("../live-diff.js").ElementChanges[]} changes
  * @param {number} listed
+ * @param {ChangeHandlers} handlers
  * @param {(count: number) => void} onListed
  */
-function changeItems(className, changes, listed, onListed) {
+function changeItems(className, changes, listed, handlers, onListed) {
   const list = el("ul", `lv-change-list ${className}`);
   let shown = 0;
   const more = el("li", "lv-change-more");
@@ -787,12 +1009,20 @@ function changeItems(className, changes, listed, onListed) {
   more.append(remaining, showMore);
   /** @param {number} count */
   const showUpTo = (count) => {
-    const items = changes.slice(shown, count).map((change) => {
+    const items = changes.slice(shown, count).map((element) => {
       const item = el("li", "lv-change");
-      item.dataset.kind = change.kind;
+      item.dataset.kind = element.kind;
+      item.dataset.tag = element.tag;
+      const go = button("lv-change-go");
+      go.dataset.side = element.side;
+      go.dataset.index = String(element.index);
+      go.title = element.side === "before" ? "Show it on the snapshot" : "Show it on the page";
       const what = el("span", "lv-change-what");
-      what.append(...changeWhat(change));
-      item.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", change.label));
+      what.append(textEl("span", "lv-change-el", element.excerpt === "" ? element.tag : `${element.tag} “${element.excerpt}”`));
+      what.append(" — ", ...elementChanges(element));
+      go.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", element.label));
+      go.addEventListener("click", () => handlers.onShow(element));
+      item.append(go);
       return item;
     });
     more.before(...items);
@@ -810,23 +1040,67 @@ function changeItems(className, changes, listed, onListed) {
 }
 
 /**
- * 変化の中身の文。見た目と文字は前後の値を並べる。
+ * 1 つの要素で変わったものを並べた文。色の前後は色の見本で、ほかの見た目と文字は前後の値で出す。
+ * @param {import("../live-diff.js").ElementChanges} element
+ * @returns {(Node | string)[]}
+ */
+function elementChanges(element) {
+  /** @type {(Node | string)[]} */
+  const parts = [];
+  element.changes.forEach((change, index) => {
+    if (index > 0) {
+      parts.push(", ");
+    }
+    parts.push(...changeWhat(change));
+  });
+  return parts;
+}
+
+/**
+ * 変化 1 つの文。
  * @param {import("../live-diff.js").Change} change
  * @returns {(Node | string)[]}
  */
 function changeWhat(change) {
   switch (change.kind) {
     case "visual":
-      return [`${change.property} `, textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+      return [`${change.property} `, ...valueChange(change.was, change.is)];
     case "text":
-      return ["Text ", textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+      return ["text ", textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
     case "added":
-      return [change.is === "" ? "Added" : `Added: ${change.is}`];
+      return ["added"];
     case "removed":
-      return [change.was === "" ? "Removed" : `Removed: ${change.was}`];
+      return ["removed"];
     case "shifted":
-      return ["Moved or resized"];
+      return ["moved or resized"];
   }
+}
+
+/**
+ * 見た目の値の前後。どちらも色なら色の見本を並べ（値は見本に乗せると出る）、そうでなければ値を並べる。
+ * @param {string} was
+ * @param {string} is
+ * @returns {(Node | string)[]}
+ */
+function valueChange(was, is) {
+  const isColor = (/** @type {string} */ value) => value !== "" && CSS.supports("color", value);
+  if (isColor(was) && isColor(is)) {
+    return [swatch(was), "→", swatch(is)];
+  }
+  return [textEl("s", "", was), " → ", textEl("b", "", is)];
+}
+
+/**
+ * @param {string} color
+ * @returns {HTMLElement}
+ */
+function swatch(color) {
+  const item = el("span", "lv-swatch");
+  item.style.background = color;
+  item.title = color;
+  item.setAttribute("role", "img");
+  item.setAttribute("aria-label", color);
+  return item;
 }
 
 /** 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。 */

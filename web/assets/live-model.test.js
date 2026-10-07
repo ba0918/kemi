@@ -23,6 +23,7 @@ import {
   liveOrigin,
   pageKey,
   parseWidth,
+  revealScrollLeft,
   snapshotLabel,
   startSnapshotDue,
   snapshotOptions,
@@ -145,10 +146,12 @@ test("the points to choose from are the snapshots of the page: handed, then star
   );
 });
 
-test("the reference choices are auto first and the mock last", () => {
+test("the reference choices are auto first, then the assigned mock, and the mock file always last", () => {
   const snapshots = [snap("s1", "start"), snap("s2", "handed")];
-  const values = referenceOptions({ snapshots, page: "/", width: 1280, mock: "docs/m.html" }).map((option) => option.value);
-  assert.deepEqual(values, ["latest", "s2", "s1", "mock"]);
+  const values = (/** @type {string | null} */ mock) =>
+    referenceOptions({ snapshots, page: "/", width: 1280, mock }).map((option) => option.value);
+  assert.deepEqual(values("docs/m.html"), ["latest", "s2", "s1", "mock", "mock-file"]);
+  assert.deepEqual(values(null), ["latest", "s2", "s1", "mock-file"]);
 });
 
 test("auto is named after the snapshot it picks, the same way as that snapshot's own choice", () => {
@@ -417,4 +420,17 @@ test("the start snapshot waits until the saved snapshots are known, and is not t
   assert.equal(startSnapshotDue({ taken: false, reachable: true, snapshots: [] }), true);
   assert.equal(startSnapshotDue({ taken: false, reachable: false, snapshots: [] }), false);
   assert.equal(startSnapshotDue({ taken: true, reachable: true, snapshots: [] }), false);
+});
+
+test("a box already inside the frame keeps the horizontal scroll", () => {
+  assert.equal(revealScrollLeft({ left: 300, width: 100, scrollLeft: 200, viewportWidth: 500 }), 200);
+});
+
+test("a box outside the frame on either side is brought to the middle of the frame", () => {
+  assert.equal(revealScrollLeft({ left: 1000, width: 100, scrollLeft: 0, viewportWidth: 500 }), 800);
+  assert.equal(revealScrollLeft({ left: 100, width: 100, scrollLeft: 600, viewportWidth: 500 }), 0);
+});
+
+test("a box wider than the frame is shown from its left edge", () => {
+  assert.equal(revealScrollLeft({ left: 900, width: 800, scrollLeft: 0, viewportWidth: 500 }), 900);
 });

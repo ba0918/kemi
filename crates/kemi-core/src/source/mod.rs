@@ -2,6 +2,7 @@
 
 mod frozen;
 pub mod git;
+pub mod html_files;
 mod live;
 pub mod manifest;
 mod origin;

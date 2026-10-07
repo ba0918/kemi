@@ -11,6 +11,7 @@ import { dom } from "../dom.js";
 import { state } from "../state.js";
 import {
   AUTO_RULE,
+  MOCK_FILE_CHOICE,
   WIDTH_CHOICES,
   addPlace,
   commentShortName,
@@ -30,19 +31,21 @@ import {
   referenceName,
   referenceOptions,
   removePlace,
+  revealScrollLeft,
   strayRefs,
   snapshotLabel,
   startSnapshotDue,
   undoPlace,
   unsavedSnapshotNotice,
 } from "../live-model.js";
-import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
+import { changesByElement, diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
   buildShell,
   buildTopbar,
   markRemovedInSnapshot,
   renderChanges,
   renderCompareOptions,
+  renderMockFiles,
   renderPageTree,
   renderPlaces,
   renderStrayRefs,
@@ -100,6 +103,26 @@ const live = {
   side: "live",
   /** 枠に収めるためにかけている倍率。 */
   scale: 1,
+  /**
+   * 消えた要素の行を押して、比べる相手の枠を中身の高さで描き、外側で `y`（スナップショットの文書の座標）だけずらして
+   * いる間の形。`key` はずらし始めたときの比べる相手・見比べ方・ページ・表示幅で、どれかが変われば元の形（枠の中で
+   * 自分でスクロールする形）に戻す。比べる相手の枠はスクリプトを止めていて、中を動かせないため。
+   * @type {{ key: string, y: number } | null}
+   */
+  refShift: null,
+  /**
+   * 重ねて透かす間に消えた要素の行を押し、その要素が今のページの末尾より下にあって、ページをそこまでスクロールできない
+   * ときの、見せたい位置 `y`（文書の座標）。ページのスクロールで届かない分だけ両方の枠を外側で上へずらし、そろえたまま
+   * （R-PAGE-REF）その要素を見せる。`key` は refShift と同じ条件で、変われば外す。ページが上へスクロールしたときと、
+   * ページの上の何か（変化の行の要素や場所）を見せるときに外し、上へのホイールはまず届かない分を戻す。
+   * @type {{ key: string, y: number } | null}
+   */
+  overscroll: null,
+  /**
+   * 比べる相手の側で光らせている要素の箱（スナップショットの文書の座標の [左, 上, 幅, 高さ]）と、そのスナップショット。
+   * @type {{ snapshot: string, box: number[] } | null}
+   */
+  refGlow: null,
   /** @type {SnapshotSummary[]} 取った順 */
   snapshots: [],
   /** ページごとに選んだ時点（スナップショットの id）。無ければ既定の順で選ぶ。 */
@@ -111,6 +134,23 @@ const live = {
   snapshotsListed: false,
   /** 取れなかったときの知らせ。次に描くまで出す。 */
   refNotice: "",
+  /**
+   * 手で取って比べる相手を切り替えたスナップショット。取れたことを知らせる（live-compare.md の R-PAGE-REF）。次に撮るか、
+   * ページを移るか、比べる相手を選び直すまで知らせておく。
+   * @type {{ page: string, id: string } | null}
+   */
+  recorded: null,
+  /**
+   * 外したモック。取り消す操作つきで知らせ、取り消すと同じパスで割り当て直す（R-PAGE-MOCK）。知らせは少しの間だけ出す。
+   * @type {{ page: string, path: string } | null}
+   */
+  removedMock: null,
+  /**
+   * 外したモックを取り消しで割り当て直せなかった理由（R-PAGE-MOCK の、断ったら理由を出す）。パネルは閉じているので帯に出す。
+   * 次にモックを割り当てるか外すか、そのページを手で取るか、ページを移るまで出す。
+   * @type {{ page: string, text: string } | null}
+   */
+  undoMockFailed: null,
   /** @type {Map<string, string>} 中身の写し（id → HTML） */
   bodies: new Map(),
   /** 比べる相手の枠に今出しているスナップショット。 */
@@ -199,7 +239,7 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe" | "place" | "image" | "saved-at"} type
+ * @param {"capture" | "describe" | "place" | "image" | "saved-at" | "glow-element" | "glow-places"} type
  * @param {number} timeout
  * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
@@ -277,7 +317,14 @@ export function startLive(info) {
     if (!shell) {
       return;
     }
+    // 「モックのファイル」は選択を変えず、モックのパネルを開く（R-PAGE-MOCK）。
+    if (shell.compareSelect.value === MOCK_FILE_CHOICE) {
+      renderBand();
+      openMockPanel(shell.compareSlot);
+      return;
+    }
     live.chosen.set(live.page, shell.compareSelect.value);
+    live.recorded = null;
     render();
   });
   shell.modeSeg.addEventListener("click", (event) => {
@@ -310,22 +357,14 @@ export function startLive(info) {
     }
   });
   shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
-  shell.mockAssign.addEventListener("click", () => void assignMock());
-  shell.mockInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      void assignMock();
-    }
-  });
-  shell.mockRemove.addEventListener("click", () => void removeMock());
-  shell.mockReload.addEventListener("click", () => {
-    live.mockReloadAsked = true;
-    render();
-  });
+  startMockControls(shell);
   shell.recordButton.addEventListener("click", () => void capture("manual"));
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
+  startShiftedReferenceMoves(shell.refWheel);
+  shell.refNoticeAction.addEventListener("click", () => bandAction?.());
   window.addEventListener("message", receive);
-  new ResizeObserver(() => {
+  const resized = new ResizeObserver(() => {
     // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
     // 倍率が変わらないこともあるので、まるごと描き直す。
     if (live.renderedNarrow !== state.narrow) {
@@ -334,7 +373,11 @@ export function startLive(info) {
     }
     layoutFrames();
     syncLaidOutInert();
-  }).observe(shell.stage);
+  });
+  resized.observe(shell.stage);
+  // 書く欄や始め方の案内の出し入れは舞台の大きさを変えず、見る対象の枠の外側だけを変える。外側も見ないと、欄を
+  // 開いている間に縮めた枠の高さが、欄を閉じた後も残る（R-PAGE-COMMENT）。
+  resized.observe(shell.liveViewport);
 
   shell.liveFrame.src = live.origin + live.page;
   setView("page");
@@ -551,7 +594,7 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (["captured", "described", "placed", "imaged", "saved-found"].includes(message.type)) {
+  if (["captured", "described", "placed", "imaged", "saved-found", "glowed"].includes(message.type)) {
     pendingCaptures.get(Number(message.id))?.(message);
     return;
   }
@@ -571,11 +614,16 @@ function receive(event) {
     return;
   }
   if (message.type === "scroll") {
+    const before = live.scroll.y;
     live.scroll = {
       x: Number(message.x) || 0,
       y: Number(message.y) || 0,
       height: Number(message.height) || 0,
     };
+    // 末尾より下へずらしている間にページが上へスクロールした（人が動かした）ら、ずらすのをやめる。
+    if (live.overscroll !== null && live.scroll.y < before - 1) {
+      live.overscroll = null;
+    }
     layoutFrames();
     return;
   }
@@ -586,6 +634,8 @@ function receive(event) {
   const moved = page !== live.page;
   if (moved) {
     live.refNotice = "";
+    live.recorded = null;
+    live.undoMockFailed = null;
     live.shiftedOpen = false;
     live.listed = { main: 0, shifted: 0 };
   }
@@ -610,37 +660,216 @@ function receive(event) {
   // 読み込み直した文書には前の描き込みが無いので、描き直させる。
   sentPlaces = "";
   sendPlaces();
+  // 「ページで見る」で移ったページなら、描き込みが済んだので場所を光らせる。
+  const waiting = glowAfterLoad;
+  glowAfterLoad = null;
+  if (waiting && waiting.page === live.page && waiting.width === live.width) {
+    void glowPlaces(waiting.comment, null, "flash");
+  }
 }
 
-/** 入れたパスのモックを、表示中のページに割り当てる。断られたら理由を出す（R-PAGE-MOCK）。 */
-async function assignMock() {
-  if (!shell || shell.mockInput.value.trim() === "") {
+// ---- モック（live-compare.md の R-PAGE-MOCK）: パネル、選択の横のメニュー、外したときの取り消し ----
+
+/** 検索の欄に打ってから一覧を頼むまで待つ時間（ミリ秒）。打っている間は頼まない。 */
+const MOCK_SEARCH_WAIT = 150;
+
+/** 外したモックの取り消しを知らせておく時間（ミリ秒）。 */
+const UNDO_MOCK = 8000;
+
+/** 最後に頼んだ一覧の番号。古い返事で新しい一覧を書き換えない。 */
+let mockFilesAsked = 0;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let mockSearchTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let undoMockTimer = null;
+
+/**
+ * @param {import("../views/live.js").LiveShell} shell
+ */
+function startMockControls(shell) {
+  const panel = shell.mockPanel;
+  panel.search.addEventListener("input", () => {
+    if (mockSearchTimer !== null) {
+      clearTimeout(mockSearchTimer);
+    }
+    mockSearchTimer = setTimeout(() => {
+      mockSearchTimer = null;
+      void loadMockFiles();
+    }, MOCK_SEARCH_WAIT);
+  });
+  const assignTyped = () => {
+    if (panel.path.value.trim() !== "") {
+      void assignMock(panel.path.value.trim());
+    }
+  };
+  panel.assign.addEventListener("click", assignTyped);
+  panel.path.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      assignTyped();
+    }
+  });
+  shell.mockOpen.addEventListener("click", () => {
+    shell.menu.hidePopover();
+    openMockPanel(shell.band);
+  });
+  shell.mockMenuButton.addEventListener("click", () => openMockMenu(shell.mockMenuButton));
+  shell.mockReload.addEventListener("click", () => {
+    shell.mockMenu.hidePopover();
+    live.mockReloadAsked = true;
+    render();
+  });
+  shell.mockRemove.addEventListener("click", () => {
+    shell.mockMenu.hidePopover();
+    void removeMock();
+  });
+}
+
+/**
+ * 浮かぶもの（パネルとメニュー）を、それを開いた操作のすぐ下に開く。画面からははみ出させない。
+ * @param {HTMLElement} popover
+ * @param {HTMLElement} anchor
+ */
+function openNear(popover, anchor) {
+  const box = anchor.getBoundingClientRect();
+  popover.style.top = `${Math.round(box.bottom + 4)}px`;
+  popover.style.left = `${Math.round(Math.max(8, Math.min(box.left, innerWidth - 8 - Math.min(420, innerWidth - 16))))}px`;
+  popover.showPopover();
+}
+
+/**
+ * モックのパネルを開く。検索とパスの欄を空にして、一覧を読む。
+ * @param {HTMLElement} anchor
+ */
+function openMockPanel(anchor) {
+  if (!shell) {
     return;
   }
-  const page = live.page;
+  const panel = shell.mockPanel;
+  panel.search.value = "";
+  panel.path.value = "";
+  panel.error.hidden = true;
+  if (!panel.box.matches(":popover-open")) {
+    openNear(panel.box, anchor);
+  }
+  panel.search.focus();
+  void loadMockFiles();
+}
+
+/** パネルの検索に合うファイルの一覧を読んで出す。 */
+async function loadMockFiles() {
+  if (!shell) {
+    return;
+  }
+  const panel = shell.mockPanel;
+  const asked = ++mockFilesAsked;
   try {
-    const mock = await api.assignMock(page, shell.mockInput.value.trim());
+    const found = await api.listMockFiles(panel.search.value.trim());
+    if (asked !== mockFilesAsked) {
+      return;
+    }
+    renderMockFiles(panel, found, live.mocks.get(live.page)?.path ?? "", (path) => void assignMock(path));
+  } catch (error) {
+    if (asked === mockFilesAsked) {
+      panel.error.textContent = error instanceof Error ? error.message : String(error);
+      panel.error.hidden = false;
+    }
+  }
+}
+
+/**
+ * モックのメニュー（読み直す・外す）を、押した「…」のすぐ下に開く。
+ * @param {HTMLElement} anchor
+ */
+function openMockMenu(anchor) {
+  if (!shell) {
+    return;
+  }
+  if (shell.mockMenu.matches(":popover-open")) {
+    shell.mockMenu.hidePopover();
+    return;
+  }
+  openNear(shell.mockMenu, anchor);
+}
+
+/**
+ * そのパスのモックを、表示中のページに割り当てる。断られたらパネルに理由を出す（R-PAGE-MOCK）。断られた理由を返す
+ * （割り当てられたら空）。
+ * @param {string} path
+ * @param {string} [page] 割り当てるページ（取り消しでは外したときのページ）
+ * @returns {Promise<string>}
+ */
+async function assignMock(path, page = live.page) {
+  if (!shell) {
+    return "";
+  }
+  const panel = shell.mockPanel;
+  let refused = "";
+  try {
+    const mock = await api.assignMock(page, path);
     live.mocks.set(page, { path: mock.path, url: mock.url });
     // 割り当てたページは既定でモックと比べる。
     live.chosen.delete(page);
-    shell.mockInput.value = "";
-    shell.mockError.hidden = true;
+    // 選び直したので、前に外したモックへ戻す取り消しは消す（押すと選んだモックが替わってしまう。R-PAGE-REF）。
+    forgetRemovedMock();
+    live.undoMockFailed = null;
+    panel.error.hidden = true;
+    if (panel.box.matches(":popover-open")) {
+      panel.box.hidePopover();
+    }
   } catch (error) {
-    shell.mockError.textContent = error instanceof Error ? error.message : String(error);
-    shell.mockError.hidden = false;
+    refused = error instanceof Error ? error.message : String(error);
+    panel.error.textContent = refused;
+    panel.error.hidden = false;
+  }
+  render();
+  return refused;
+}
+
+/** 表示中のページのモックを外す。比べる相手はスナップショットに戻る。取り消す操作つきで知らせる。 */
+async function removeMock() {
+  const page = live.page;
+  const path = live.mocks.get(page)?.path;
+  await api.assignMock(page, null);
+  live.mocks.delete(page);
+  live.undoMockFailed = null;
+  if (live.chosen.get(page) === "mock") {
+    live.chosen.delete(page);
+  }
+  if (path !== undefined) {
+    live.removedMock = { page, path };
+    if (undoMockTimer !== null) {
+      clearTimeout(undoMockTimer);
+    }
+    undoMockTimer = setTimeout(() => {
+      undoMockTimer = null;
+      live.removedMock = null;
+      renderReference();
+    }, UNDO_MOCK);
   }
   render();
 }
 
-/** 表示中のページのモックを外す。比べる相手はスナップショットに戻る。 */
-async function removeMock() {
-  const page = live.page;
-  await api.assignMock(page, null);
-  live.mocks.delete(page);
-  if (live.chosen.get(page) === "mock") {
-    live.chosen.delete(page);
+/** 外したモックの取り消しを消す。 */
+function forgetRemovedMock() {
+  live.removedMock = null;
+  if (undoMockTimer !== null) {
+    clearTimeout(undoMockTimer);
+    undoMockTimer = null;
   }
-  render();
+}
+
+/** 外したモックを、同じパスで割り当て直す。断られたら（外した後にファイルが消えたなど）理由を帯に出す。 */
+async function undoRemovedMock() {
+  const removed = live.removedMock;
+  forgetRemovedMock();
+  if (!removed) {
+    return;
+  }
+  const refused = await assignMock(removed.path, removed.page);
+  if (refused !== "") {
+    live.undoMockFailed = { page: removed.page, text: `Mock not assigned again · ${removed.path}: ${refused}` };
+    renderReference();
+  }
 }
 
 /** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
@@ -717,7 +946,16 @@ function startComposing(shell) {
       const before = viewport.scrollLeft;
       viewport.scrollLeft += event.deltaX * unit;
       const x = event.deltaX * unit - (viewport.scrollLeft - before);
-      shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y: event.deltaY * unit }, live.origin);
+      let y = event.deltaY * unit;
+      // 末尾より下へずらしている間は、上へのホイールでまずその分を戻す。
+      const beyond = overscrolled();
+      if (live.overscroll !== null && y < 0 && beyond > 0) {
+        const back = Math.min(-y, beyond);
+        live.overscroll = back < beyond ? { ...live.overscroll, y: live.overscroll.y - back } : null;
+        y += back;
+        layoutFrames();
+      }
+      shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y }, live.origin);
     },
     { passive: false },
   );
@@ -944,8 +1182,14 @@ export function refreshPageComments() {
 }
 
 /**
- * ページへのコメントを、付けた URL と表示幅のページの見方で見せる（R-PAGE-COMMENT）。狭い画面では
- * 会話のシートを閉じてページを見せる。
+ * 「ページで見る」で別のページへ移ったときの、読み込みと描き込みが済んだら光らせるコメント。
+ * @type {{ comment: string, page: string, width: number } | null}
+ */
+let glowAfterLoad = null;
+
+/**
+ * ページへのコメントを、付けた URL と表示幅のページの見方で見せ、その場所までスクロールして光らせる（R-PAGE-COMMENT）。
+ * 別のページへ移るときは、読み込みと描き込みが済んでから光らせる。狭い画面では会話のシートを閉じてページを見せる。
  * @param {any} comment
  */
 export function showPageComment(comment) {
@@ -956,20 +1200,52 @@ export function showPageComment(comment) {
   if (state.narrow) {
     closeSheet();
   }
-  showPage(comment.page.url, comment.page.width);
+  const moved = showPage(comment.page.url, comment.page.width);
   renderConversation();
+  if (moved) {
+    glowAfterLoad = { comment: comment.id, page: comment.page.url, width: comment.page.width };
+    return;
+  }
+  glowAfterLoad = null;
+  // 表示幅を変えたときは、枠の新しい大きさがページに届いてから（並べ直した後の文書の座標で）光らせる。
+  requestAnimationFrame(() => requestAnimationFrame(() => void glowPlaces(comment.id, null, "flash")));
+}
+
+/**
+ * ページの上の場所を光らせる（R-PAGE-COMMENT）。`flash` は場所までスクロールして明滅させ、`on` は `off` まで光らせる。
+ * `flash` では、等倍で枠より広いページの枠の横のスクロールも、その場所が見える位置に合わせる。
+ * @param {string | null} comment 保存したコメントの id。null なら書きかけの場所
+ * @param {number | null} n 場所の番号。null ならそのコメントのすべての場所
+ * @param {"on" | "off" | "flash"} mode
+ */
+async function glowPlaces(comment, n, mode) {
+  const frame = shell?.liveFrame.contentWindow;
+  if (!shell || !frame) {
+    return;
+  }
+  if (mode !== "flash") {
+    frame.postMessage({ kemi: "live", type: "glow-places", comment, n, mode, scroll: false }, live.origin);
+    return;
+  }
+  endOverscroll();
+  const answer = await ask(frame, "glow-places", GLOW_TIMEOUT, { comment, n, mode, scroll: true });
+  const rect = answer?.rect;
+  if (rect && typeof rect.x === "number" && typeof rect.w === "number") {
+    revealSideways(shell.liveViewport, rect.x, rect.w);
+  }
 }
 
 /**
  * そのページをその表示幅で、ページの見方で見せる。狭い画面では動いているページの側を見せる（比べる相手の側を
- * 見ていると、動いているページと、その上のコメントの場所が隠れたままになる）。
+ * 見ていると、動いているページと、その上のコメントの場所が隠れたままになる）。別のページへ移ったかを返す。
  * @param {string} url
  * @param {number} width
+ * @returns {boolean}
  */
 function showPage(url, width) {
   // 保存している間は表示幅もページも変えられないので、見方だけを切り替えることもしない。
   if (live.saving) {
-    return;
+    return false;
   }
   if (live.view !== "page") {
     setView("page");
@@ -982,7 +1258,9 @@ function showPage(url, width) {
   }
   if (live.page !== url) {
     openPage(url);
+    return true;
   }
+  return false;
 }
 
 function renderCompose() {
@@ -1000,7 +1278,16 @@ function renderCompose() {
   // 道具を選んだだけでは開かず、最初の場所を置いたときに開く（R-PAGE-COMMENT）。
   compose.box.hidden = live.view !== "page" || (places.length === 0 && live.draft.body === "");
   // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
-  renderPlaces(compose, places, { remove: (n) => setDraft(removePlace(live.draft, n)), insert: insertReference }, live.saving);
+  renderPlaces(
+    compose,
+    places,
+    {
+      remove: (n) => setDraft(removePlace(live.draft, n)),
+      insert: insertReference,
+      glow: (n, mode) => void glowPlaces(null, n, mode),
+    },
+    live.saving,
+  );
   const stray = strayRefs(live.draft);
   renderStrayRefs(compose, stray, (ref) => {
     compose.body.focus();
@@ -1110,6 +1397,9 @@ async function capture(kind) {
   }
   const page = live.page;
   const width = live.width;
+  if (kind === "manual") {
+    live.recorded = null;
+  }
   const answer = await whileLaidOut(() => ask(frame, "capture", CAPTURE_TIMEOUT));
   if (typeof answer.html !== "string") {
     live.refNotice = `Not recorded: ${answer.error ?? "the page could not be copied"}`;
@@ -1123,8 +1413,9 @@ async function capture(kind) {
   }
   const description = await readUploadedDescription(answer.description);
   try {
+    const takenPage = pageKey(String(answer.path ?? page));
     const taken = await api.takeSnapshot({
-      page: pageKey(String(answer.path ?? page)),
+      page: takenPage,
       width,
       kind,
       html: answer.html,
@@ -1137,6 +1428,15 @@ async function capture(kind) {
     live.bodies.set(taken.id, answer.html);
     live.descriptions.set(taken.id, description);
     live.refNotice = "";
+    // 手で取ったら、そのページの比べる相手を取ったものに切り替え、取れたことを知らせる。見比べ方は変えない（R-PAGE-REF）。
+    if (kind === "manual") {
+      live.chosen.set(takenPage, taken.id);
+      live.recorded = { page: takenPage, id: taken.id };
+      // 取り消しを断った知らせは帯で取れたことの知らせより先に出るので、新しい知らせで置き換える。
+      if (live.undoMockFailed?.page === takenPage) {
+        live.undoMockFailed = null;
+      }
+    }
   } catch (error) {
     live.refNotice = `Not recorded: ${error instanceof Error ? error.message : String(error)}`;
   }
@@ -1449,13 +1749,13 @@ function placeControls() {
   if (!shell) {
     return;
   }
-  const { menu, compareSlot, zoomSeg, recordButton, widthGroup, mockGroup, refNotice, stageName, reloadButton } = shell;
+  const { menu, compareSlot, zoomSeg, recordButton, widthGroup, mockOpen, refNotice, stageName, reloadButton } = shell;
   const inMenu = menu.contains(compareSlot);
   if (state.narrow && !inMenu) {
-    menu.append(compareSlot, zoomSeg, recordButton, widthGroup, mockGroup);
+    menu.append(compareSlot, mockOpen, zoomSeg, recordButton, widthGroup);
   } else if (!state.narrow && inMenu) {
     menu.hidePopover();
-    refNotice.before(widthGroup, recordButton, mockGroup);
+    refNotice.before(widthGroup, recordButton);
     stageName.after(zoomSeg);
     reloadButton.before(compareSlot);
   }
@@ -1498,8 +1798,11 @@ function renderBand() {
     AUTO_RULE,
   );
   renderStageName();
-  shell.mockRemove.hidden = mock === null;
-  shell.mockReload.hidden = mock === null;
+  // 割り当てている間だけ、選択の横に読み直す・外すのメニューを開く「…」を出す（R-PAGE-MOCK）。
+  shell.mockMenuButton.hidden = mock === null;
+  if (mock === null && shell.mockMenu.matches(":popover-open")) {
+    shell.mockMenu.hidePopover();
+  }
   shell.recordButton.disabled = !live.reachable;
   for (const choice of shell.toolSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.tool === live.tool));
@@ -1553,27 +1856,245 @@ function renderStageName() {
   });
 }
 
-/** 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。 */
+/**
+ * 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。行を押したらその要素を見せる。
+ * @type {import("../views/live.js").ChangeHandlers}
+ */
 const changeHandlers = {
-  onShifted: (/** @type {boolean} */ open) => {
+  onShifted: (open) => {
     live.shiftedOpen = open;
   },
-  onListed: (/** @type {"main" | "shifted"} */ group, /** @type {number} */ count) => {
+  onListed: (group, count) => {
     live.listed[group] = count;
   },
+  onShow: (element) => {
+    if (element.side === "now") {
+      void showChangedElement(element.index);
+    } else {
+      showRemovedElement(element.index);
+    }
+  },
+  onMockMenu: (anchor) => openMockMenu(anchor),
 };
 
+/** 比べる相手の側の光を出しておく長さ（ミリ秒。ページの中の光と同じ）。 */
+const REF_GLOW = 2800;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let refGlowTimer = null;
+
+/** 比べる相手をずらした形を保つ条件: 比べる相手・見比べ方・ページ・表示幅（狭い画面では見ている側も）。 */
+function refShiftKey() {
+  const reference = currentReference();
+  const id = reference.type === "snapshot" ? reference.snapshot.id : reference.type;
+  return [id, live.compare, live.page, live.width, state.narrow ? live.side : ""].join("\n");
+}
+
 /**
- * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。
- * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | null}
+ * 消えた要素の行を押した: 比べる相手の側のその要素の位置まで動かし、光らせる（R-PAGE-DIFF）。見る対象だけのときは並べる
+ * 見比べ方に、狭い画面では比べる相手の 1 枚に切り替えてから（R-PAGE-VIEW）。比べる相手の枠はスクリプトを止めていて中を
+ * 動かせないので、中身の高さで描いて外側をずらす（R-PAGE-SNAPSHOT）。重ねて透かすときは見比べ方を変えず、見る対象を
+ * その位置までスクロールし、重ねた比べる相手もそろって動く。
+ * @param {number} index 比べる相手の側の記述の中の要素の番号
+ */
+function showRemovedElement(index) {
+  if (!shell) {
+    return;
+  }
+  const reference = currentReference();
+  const id = reference.type === "snapshot" ? reference.snapshot.id : "";
+  const element = live.changesFrom?.snapshot === id ? live.descriptions.get(id)?.elements[index] : undefined;
+  if (!element) {
+    return;
+  }
+  if (state.narrow) {
+    if (live.side !== "ref") {
+      setSide("ref");
+    }
+  } else if (live.compare === "now") {
+    live.compare = "side";
+    render();
+  }
+  const [left, top, width, height] = element.box;
+  live.refGlow = { snapshot: id, box: element.box };
+  if (refGlowTimer !== null) {
+    clearTimeout(refGlowTimer);
+  }
+  refGlowTimer = setTimeout(() => {
+    refGlowTimer = null;
+    live.refGlow = null;
+    layoutFrames();
+  }, REF_GLOW);
+  const viewHeight = shell.refViewport.clientHeight / live.scale;
+  const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
+  const overlaid = !state.narrow && live.compare === "overlay";
+  if (overlaid) {
+    // 今のページが短くてそこまでスクロールできないときは、届かない分だけ両方の枠を外側でずらす（そろえたまま）。
+    live.overscroll = centered > Math.max(0, live.scroll.height - viewHeight) ? { key: refShiftKey(), y: centered } : null;
+    shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: centered - live.scroll.y }, live.origin);
+  } else {
+    const contentHeight = Math.max(viewHeight, live.descriptions.get(id)?.height ?? 0);
+    live.refShift = { key: refShiftKey(), y: Math.min(centered, contentHeight - viewHeight) };
+  }
+  layoutFrames();
+  // 重ねた比べる相手は、ページの横のスクロールの分だけ左にずらして描いている（layoutFrames）。描いている所で合わせる。
+  revealSideways(shell.refViewport, overlaid ? left - live.scroll.x : left, width);
+}
+
+/**
+ * 等倍で枠より広いページの中の箱（文書の横の位置と幅）が見えるよう、枠の横のスクロールを合わせる（R-PAGE-DIFF、
+ * R-PAGE-COMMENT）。見る対象と比べる相手の枠は横のスクロールをそろえているので、両方に入れる（狭い画面で隠れている側の
+ * 枠は動かないので、見えている側の枠で測る）。
+ * @param {HTMLElement} viewport 箱が見えている側の枠の外側
+ * @param {number} left
+ * @param {number} width
+ */
+function revealSideways(viewport, left, width) {
+  if (!shell) {
+    return;
+  }
+  const scrollLeft = revealScrollLeft({
+    left: left * live.scale,
+    width: width * live.scale,
+    scrollLeft: viewport.scrollLeft,
+    viewportWidth: viewport.clientWidth,
+  });
+  shell.liveViewport.scrollLeft = scrollLeft;
+  shell.refViewport.scrollLeft = scrollLeft;
+}
+
+/**
+ * 比べる相手をずらした形の間、外側のずれを動かす。値は画面のピクセルで、正なら右・下の方を見せる。
+ * @param {number} x
+ * @param {number} y
+ */
+function moveShiftedReference(x, y) {
+  if (!shell || live.refShift === null) {
+    return;
+  }
+  shell.refViewport.scrollLeft += x;
+  live.refShift = { ...live.refShift, y: live.refShift.y + y / live.scale };
+  layoutFrames();
+}
+
+/** 比べる相手をずらした形の間、キーで動かす量（画面のピクセル。矢印のキー）。 */
+const SHIFT_KEY_STEP = 40;
+
+/**
+ * 比べる相手をずらした形の間、比べる相手の上で受ける操作（ホイール・指やマウスで引く・キー）で外側のずれを動かす。
+ * ずらした形の比べる相手は中身の高さで描いていて、枠の中では動かないため（狭い画面では指で引くしかない）。
+ * @param {HTMLElement} layer 比べる相手の上に重ねた層
+ */
+function startShiftedReferenceMoves(layer) {
+  layer.addEventListener(
+    "wheel",
+    (event) => {
+      if (!shell || live.refShift === null) {
+        return;
+      }
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? shell.refViewport.clientHeight : 1;
+      moveShiftedReference(event.deltaX * unit, event.deltaY * unit);
+    },
+    { passive: false },
+  );
+  /** @type {{ pointer: number, x: number, y: number } | null} */
+  let dragging = null;
+  layer.addEventListener("pointerdown", (event) => {
+    dragging = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
+    try {
+      layer.setPointerCapture(event.pointerId);
+    } catch {
+      // 捕まえられなくても、層の上で引いている間は動かせる。
+    }
+  });
+  layer.addEventListener("pointermove", (event) => {
+    if (dragging?.pointer !== event.pointerId) {
+      return;
+    }
+    // 引いた向きと逆に中身が動く（指で紙を引くのと同じ）。
+    moveShiftedReference(dragging.x - event.clientX, dragging.y - event.clientY);
+    dragging = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  const stop = () => {
+    dragging = null;
+  };
+  layer.addEventListener("pointerup", stop);
+  layer.addEventListener("pointercancel", stop);
+  layer.addEventListener("keydown", (event) => {
+    if (!shell || live.refShift === null) {
+      return;
+    }
+    const page = shell.refViewport.clientHeight * 0.9;
+    const moves = /** @type {Record<string, [number, number]>} */ ({
+      ArrowUp: [0, -SHIFT_KEY_STEP],
+      ArrowDown: [0, SHIFT_KEY_STEP],
+      ArrowLeft: [-SHIFT_KEY_STEP, 0],
+      ArrowRight: [SHIFT_KEY_STEP, 0],
+      PageUp: [0, -page],
+      PageDown: [0, page],
+      " ": [0, event.shiftKey ? -page : page],
+      Home: [0, -Infinity],
+      End: [0, Infinity],
+    });
+    const move = moves[event.key];
+    if (!move) {
+      return;
+    }
+    event.preventDefault();
+    // Home と End は端まで（layoutFrames が中身の高さに収める）。
+    const [x, y] = move;
+    moveShiftedReference(x, Number.isFinite(y) ? y : y > 0 ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER);
+  });
+}
+
+/** ページが要素を見せて光らせるまで待つ上限。 */
+const GLOW_TIMEOUT = 5000;
+
+/**
+ * 変化の一覧の行を押した: 見る対象のその要素までスクロールし、その要素の印を光らせる（R-PAGE-DIFF）。等倍で枠より
+ * 広いページでは、枠の横のスクロールもその要素が見える位置に合わせる。狭い画面で比べる相手の側を見ていたら、
+ * 動いているページの側に切り替えてから。
+ * @param {number} index 今の側の記述の中の要素の番号
+ */
+async function showChangedElement(index) {
+  if (!shell) {
+    return;
+  }
+  if (live.side !== "live") {
+    setSide("live");
+  }
+  const frame = shell.liveFrame.contentWindow;
+  if (!frame) {
+    return;
+  }
+  endOverscroll();
+  const answer = await ask(frame, "glow-element", GLOW_TIMEOUT, { index, mode: "flash" });
+  const rect = answer?.rect;
+  if (!rect || typeof rect.x !== "number" || typeof rect.w !== "number") {
+    return;
+  }
+  revealSideways(shell.liveViewport, rect.x, rect.w);
+}
+
+/**
+ * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。モックと比べるときは、一覧の代わりに
+ * モックの名前の見出し（R-PAGE-VIEW）。
+ * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | import("../views/live.js").ChangeMock | null}
  */
 function changesToList() {
+  const shown = currentReference();
+  if (shown.type === "mock") {
+    return { mock: referenceName(live.snapshots, shown) };
+  }
   if (live.changes === null) {
     return live.changesNotice === "" ? null : { notice: live.changesNotice };
   }
   const snapshot = live.changesFrom?.snapshot ?? "";
   const unmarked = live.mapped.get(snapshot) === false && live.changes.some((change) => change.kind === "removed");
-  return { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
+  // 見出しには、見比べ方によらず比べている実物の名前を出す（自動のときも、自動が選んだ実物。R-PAGE-VIEW）。
+  const compared = live.snapshots.find((item) => item.id === snapshot);
+  const reference = compared ? referenceName(live.snapshots, { type: "snapshot", snapshot: compared }) : "";
+  return { list: changesByElement(live.changes), reference, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
 }
 
 function renderTree() {
@@ -1608,11 +2129,7 @@ function renderReference() {
   }
   const mock = live.mocks.get(live.page) ?? null;
   const reference = currentReference();
-  const notice =
-    live.refNotice !== "" || reference.type !== "snapshot" ? live.refNotice : unsavedSnapshotNotice(reference.snapshot);
-  shell.refNotice.hidden = notice === "";
-  shell.refNotice.textContent = notice;
-  shell.refNotice.dataset.kind = "waiting";
+  renderBandNotice(reference);
   if (reference.type !== "mock") {
     shell.refMockFrame.hidden = true;
     live.mockShownKey = "";
@@ -1652,6 +2169,71 @@ function renderReference() {
     live.shownSnapshot = snapshot.id;
     void showSnapshot(snapshot.id);
   }
+}
+
+/**
+ * 帯の知らせ: 取れなかった理由、手で取って比べる相手を切り替えたこと、保存できなかったスナップショットの順に 1 つ。
+ * 手で取ったことの知らせには、取ったものを見ていない間（見る対象だけ、狭い画面で動いているページの側）だけ、
+ * それを見る操作を添える（live-compare.md の R-PAGE-REF）。
+ * @param {import("../live-model.js").Reference} reference
+ */
+function renderBandNotice(reference) {
+  if (!shell) {
+    return;
+  }
+  bandAction = null;
+  const removed = live.removedMock !== null && live.removedMock.page === live.page ? live.removedMock : null;
+  const undoFailed = live.undoMockFailed !== null && live.undoMockFailed.page === live.page ? live.undoMockFailed.text : "";
+  const recorded =
+    live.recorded !== null &&
+    live.recorded.page === live.page &&
+    live.chosen.get(live.page) === live.recorded.id &&
+    reference.type === "snapshot" &&
+    reference.snapshot.id === live.recorded.id
+      ? reference.snapshot
+      : null;
+  let text = live.refNotice === "" ? undoFailed : live.refNotice;
+  let kind = "waiting";
+  let label = "";
+  let title = "";
+  if (text === "" && removed !== null) {
+    text = `Mock removed · ${removed.path}`;
+    kind = "done";
+    label = "Undo";
+    title = `Assign ${removed.path} again`;
+    bandAction = undoRemovedMock;
+  } else if (text === "" && recorded !== null) {
+    text = `${snapshotLabel(live.snapshots, recorded)} · now compared with it`;
+    kind = "done";
+    // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
+    if (state.narrow ? live.side === "live" : live.compare === "now") {
+      label = "Compare →";
+      title = state.narrow ? "Show the recorded snapshot" : "Show the recorded snapshot side by side";
+      bandAction = showRecorded;
+    }
+  } else if (text === "" && reference.type === "snapshot") {
+    text = unsavedSnapshotNotice(reference.snapshot);
+  }
+  shell.refNotice.hidden = text === "";
+  shell.refNotice.dataset.kind = kind;
+  shell.refNoticeText.textContent = text;
+  shell.refNoticeAction.hidden = bandAction === null;
+  shell.refNoticeAction.textContent = label;
+  shell.refNoticeAction.title = title;
+}
+
+/** 帯の知らせの操作。知らせを描くたびに決める。 */
+/** @type {(() => void) | null} */
+let bandAction = null;
+
+/** 手で取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。 */
+function showRecorded() {
+  if (state.narrow) {
+    setSide("ref");
+    return;
+  }
+  live.compare = "side";
+  render();
 }
 
 /**
@@ -1754,6 +2336,26 @@ function loadSnapshot(id) {
   return loading;
 }
 
+/**
+ * 重ねて透かす間に、ページのスクロールで届かない分（文書の座標）。ページが見せたい位置までスクロールしきれなかった分で、
+ * ページのスクロールが返るたびに変わる。
+ * @returns {number}
+ */
+function overscrolled() {
+  return live.overscroll === null ? 0 : Math.max(0, live.overscroll.y - live.scroll.y);
+}
+
+/**
+ * 末尾より下へずらすのをやめる。ページの上の何かを見せる（ページにスクロールを頼む）前に呼ぶ。ずらしたままだと、ページが
+ * 末尾までしかスクロールできないときにスクロールの知らせが来ず、見せたものがずらした分だけ上に描かれる。
+ */
+function endOverscroll() {
+  if (live.overscroll !== null) {
+    live.overscroll = null;
+    layoutFrames();
+  }
+}
+
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
 function layoutFrames() {
   if (!shell || live.view !== "page") {
@@ -1766,27 +2368,61 @@ function layoutFrames() {
   shell.liveFrame.style.width = `${live.width}px`;
   // 横のスクロールバーの分だけ低くなった枠の高さで描く（幅を決めてから読む）。
   const height = viewport.clientHeight / scale;
+  const overlaid = live.compare === "overlay" && !state.narrow;
+  if (live.overscroll !== null && (!overlaid || live.overscroll.key !== refShiftKey())) {
+    live.overscroll = null;
+  }
+  // 末尾より下へずらしている分（重ねて透かすときだけ）。見る対象の枠も同じだけ上へずらし、比べる相手とそろえる。
+  const beyond = overscrolled();
   shell.liveFrame.style.height = `${height}px`;
-  shell.liveFrame.style.transform = `scale(${scale})`;
+  shell.liveFrame.style.transform = beyond > 0 ? `translate(0px, ${-beyond * scale}px) scale(${scale})` : `scale(${scale})`;
   // 道具の層は、横にスクロールして出てくる所も含めてページの上を覆う。
   shell.capture.style.width = `${Math.max(viewport.clientWidth, live.width * scale)}px`;
   shell.capture.style.height = `${viewport.clientHeight}px`;
   // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。狭い画面では
   // 重ねず 1 枚ずつ見る（R-PAGE-VIEW）。
-  const placement =
-    live.compare === "overlay" && !state.narrow
-      ? overlayPlacement({
-          scale,
-          viewportHeight: viewport.clientHeight,
-          scrollX: live.scroll.x,
-          scrollY: live.scroll.y,
-          contentHeight: live.scroll.height,
-        })
-      : { height, transform: `scale(${scale})` };
+  // 消えた要素の行を押した後は、比べる相手を中身の高さで描いて外側でずらす（比べる相手・見比べ方・ページ・表示幅の
+  // どれかが変わるまで）。
+  if (live.refShift !== null && (overlaid || live.refShift.key !== refShiftKey())) {
+    live.refShift = null;
+  }
+  const reference = currentReference();
+  const shownId = reference.type === "snapshot" ? reference.snapshot.id : "";
+  /** @type {{ x: number, y: number } | null} 比べる相手の文書の左上が、枠の外側のどこにあるか（画面のピクセル） */
+  let origin = null;
+  let placement = { height, transform: `scale(${scale})` };
+  if (overlaid) {
+    // 比べる相手は、今のページより長くても末尾まで描く（消えた要素が末尾の下にあることがある）。
+    placement = overlayPlacement({
+      scale,
+      viewportHeight: viewport.clientHeight,
+      scrollX: live.scroll.x,
+      scrollY: live.scroll.y + beyond,
+      contentHeight: Math.max(live.scroll.height, live.descriptions.get(shownId)?.height ?? 0),
+    });
+    origin = { x: -live.scroll.x * scale, y: -(live.scroll.y + beyond) * scale };
+  } else if (live.refShift !== null) {
+    const contentHeight = Math.max(height, live.descriptions.get(shownId)?.height ?? 0);
+    const y = Math.max(0, Math.min(live.refShift.y, contentHeight - height));
+    live.refShift = { ...live.refShift, y };
+    placement = { height: contentHeight, transform: `translate(0px, ${-y * scale}px) scale(${scale})` };
+    origin = { x: 0, y: -y * scale };
+  }
   for (const target of [shell.refFrame, shell.refMockFrame]) {
     target.style.width = `${live.width}px`;
     target.style.height = `${placement.height}px`;
     target.style.transform = placement.transform;
+  }
+  shell.refWheel.hidden = live.refShift === null;
+  const glow = live.refGlow !== null && live.refGlow.snapshot === shownId && origin !== null ? live.refGlow.box : null;
+  shell.refGlow.hidden = glow === null;
+  if (glow !== null && origin !== null) {
+    const [left, top, width, boxHeight] = glow;
+    const gap = 4;
+    shell.refGlow.style.left = `${origin.x + left * scale - gap}px`;
+    shell.refGlow.style.top = `${origin.y + top * scale - gap}px`;
+    shell.refGlow.style.width = `${width * scale + gap * 2}px`;
+    shell.refGlow.style.height = `${boxHeight * scale + gap * 2}px`;
   }
   shell.stage.style.setProperty("--lv-scale", String(scale));
   if (live.scale !== scale) {

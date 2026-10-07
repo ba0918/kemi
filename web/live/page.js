@@ -43,6 +43,24 @@
       post({ type: 'saved-found', id: message.id, comment: savedCommentAt(finite(message.x) + scrollX, finite(message.y) + scrollY) });
       return;
     }
+    if (message.type === 'glow-element') {
+      const element = typeof message.index === 'number' ? described[message.index] : undefined;
+      let shown = null;
+      if (element?.isConnected) {
+        // 中でスクロールする箱の中の要素も見えるよう、要素のほうから見える位置へ動かす。
+        element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        const rect = element.getBoundingClientRect();
+        shown = glow({ x: rect.left + scrollX, y: rect.top + scrollY, w: rect.width, h: rect.height }, String(message.mode), false);
+      }
+      post({ type: 'glowed', id: message.id, rect: shown });
+      return;
+    }
+    if (message.type === 'glow-places') {
+      const rect = placesBounds(drawnPlaces(message.comment, message.n));
+      const shown = glow(rect, String(message.mode), message.scroll === true);
+      if (typeof message.id === 'number') post({ type: 'glowed', id: message.id, rect: shown });
+      return;
+    }
     if (message.type === 'scroll-by') {
       scrollBy(finite(message.x), finite(message.y));
       return;
@@ -278,14 +296,17 @@
   /** コメントの場所の層（描き込みと番号）。文書の座標で描き、ページのスクロールの分だけ戻す。 */
   /** @type {HTMLElement | null} */
   let placesLayer = null;
+  /** 光らせる層（場所や要素を見つけやすくする光）。場所の層と同じく文書の座標で描く。 */
+  /** @type {HTMLElement | null} */
+  let glowLayer = null;
 
   /**
    * 印と場所を描く層を作り、文書に置く。ページの見た目を変えないよう、画面の左上に大きさ 0 で固定し、閉じた
    * shadow root の中に描く。
-   * @returns {{ marks: HTMLElement, places: HTMLElement }}
+   * @returns {{ marks: HTMLElement, places: HTMLElement, glow: HTMLElement }}
    */
   function layers() {
-    if (!marksHost || !marksLayer || !placesLayer) {
+    if (!marksHost || !marksLayer || !placesLayer || !glowLayer) {
       marksHost = document.createElement('div');
       setStyles(marksHost, {
         position: 'fixed', left: '0', top: '0', width: '0', height: '0', margin: '0', padding: '0', border: '0',
@@ -294,18 +315,21 @@
       const root = marksHost.attachShadow({ mode: 'closed' });
       marksLayer = document.createElement('div');
       placesLayer = document.createElement('div');
-      for (const layer of [marksLayer, placesLayer]) {
+      glowLayer = document.createElement('div');
+      for (const layer of [marksLayer, placesLayer, glowLayer]) {
         setStyles(layer, { position: 'absolute', left: '0', top: '0', width: '0', height: '0', overflow: 'visible', 'pointer-events': 'none' });
       }
-      root.append(marksLayer, placesLayer);
+      root.append(marksLayer, placesLayer, glowLayer);
     }
     if (!marksHost.isConnected) document.documentElement.append(marksHost);
-    return { marks: marksLayer, places: placesLayer };
+    return { marks: marksLayer, places: placesLayer, glow: glowLayer };
   }
 
-  /** どちらの層も空なら、層を文書から外す。 */
+  /** どの層も空なら、層を文書から外す。 */
   function releaseLayers() {
-    if (marksLayer?.childElementCount === 0 && placesLayer?.childElementCount === 0) marksHost?.remove();
+    if (marksLayer?.childElementCount === 0 && placesLayer?.childElementCount === 0 && glowLayer?.childElementCount === 0) {
+      marksHost?.remove();
+    }
   }
   /** 描いている印と、その要素と枠の線と、要素を切って見せる祖先（中身をはみ出させない箱）。 */
   /** @type {{ box: HTMLElement, element: Element, border: string, clippers: Element[] }[]} */
@@ -412,7 +436,9 @@
 
   let placeQueued = false;
   const placeMarksSoon = () => {
-    if (placeQueued || (shownMarks.length === 0 && (placesLayer?.childElementCount ?? 0) === 0)) return;
+    if (placeQueued || (shownMarks.length === 0 && (placesLayer?.childElementCount ?? 0) === 0 && (glowLayer?.childElementCount ?? 0) === 0)) {
+      return;
+    }
     placeQueued = true;
     requestAnimationFrame(() => {
       placeQueued = false;
@@ -615,6 +641,22 @@
    * @type {{ comment: string, x: number, y: number }[]}
    */
   let savedSpots = [];
+  /**
+   * 最後に描いた場所の組。保存したコメントの組はその id を、書きかけの組は null を持つ。
+   * @type {{ comment: string | null, places: ImagePlace[] }[]}
+   */
+  let drawnSets = [];
+
+  /**
+   * 描いている場所のうち、そのコメント（null なら書きかけ）の場所。`n` が数ならその番号の場所だけ。
+   * @param {unknown} comment
+   * @param {unknown} n
+   * @returns {ImagePlace[]}
+   */
+  function drawnPlaces(comment, n) {
+    const set = drawnSets.find((item) => item.comment === (typeof comment === 'string' ? comment : null));
+    return (set?.places ?? []).filter((place) => typeof n !== 'number' || place.n === n);
+  }
 
   /**
    * 文書の座標のその点にある、保存したコメントの印か番号のコメントの id。無ければ null。
@@ -657,10 +699,12 @@
   function drawPlaceSets(sets) {
     const drawn = [];
     savedSpots = [];
+    drawnSets = [];
     for (const set of sets) {
       const { places, look, comment } = /** @type {{ places: unknown, look: unknown, comment: unknown }} */ (set ?? {});
       const style = PLACE_LOOKS[String(look)] ?? PLACE_LOOKS.saved;
       const read = readPlaces(Array.isArray(places) ? places : []);
+      drawnSets.push({ comment: typeof comment === 'string' ? comment : null, places: read });
       drawn.push(...placeShapes(read, style));
       if (typeof comment === 'string') {
         for (const place of read) {
@@ -767,10 +811,70 @@
     return drawn;
   }
 
-  /** 場所の層をページのスクロールに合わせて置き直す（描き込みは文書の座標で描いてある）。 */
+  /** 場所の層と光の層をページのスクロールに合わせて置き直す（どちらも文書の座標で描いてある）。 */
   function placePlaces() {
-    if (!placesLayer || placesLayer.childElementCount === 0) return;
-    setStyles(placesLayer, { transform: `translate(${-scrollX}px, ${-scrollY}px)` });
+    for (const layer of [placesLayer, glowLayer]) {
+      if (layer && layer.childElementCount > 0) setStyles(layer, { transform: `translate(${-scrollX}px, ${-scrollY}px)` });
+    }
+  }
+
+  // ---- 光らせる（R-PAGE-COMMENT の場所の一覧と「ページで見る」、R-PAGE-DIFF の変化の一覧の行） ----
+  // 光は場所の描き込みとは別の層に、光らせるものの箱の周りの輪として描く（画面モックの光らせ方）。乗せている間は
+  // 光らせたままにし（on と off）、押したときは何度か明滅させてから消す（flash）。
+
+  /** 光の色（画面モックの --ai）。 */
+  const GLOW_COLOR = 'rgb(59, 78, 168)';
+  const GLOW_STRONG = `0 0 0 3px rgb(255, 255, 255), 0 0 0 6px ${GLOW_COLOR}, 0 0 18px 8px rgba(59, 78, 168, 0.55)`;
+  const GLOW_WEAK = `0 0 0 3px rgb(255, 255, 255), 0 0 0 6px ${GLOW_COLOR}, 0 0 4px 2px rgba(59, 78, 168, 0.2)`;
+  /** 押したときに光らせておく長さ（ミリ秒）。明滅 2 回ぶん。 */
+  const GLOW_FLASH = 2800;
+  /** 光らせるものの箱と光の輪の間の空き（CSS ピクセル）。 */
+  const GLOW_GAP = 4;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let glowTimer = null;
+
+  /**
+   * 文書の座標の箱を光らせる。前の光は消す（箱が無いか `off` なら消すだけ）。`scroll` なら、箱が画面の真ん中に来るようにページをスクロールする。
+   * 光らせた後の箱を画面の座標で返す（レビュー画面が、等倍で枠より広いページの外側を合わせるため）。
+   * @param {Rect | null} rect 文書の座標
+   * @param {string} mode `on`（消すまで）・`flash`（明滅して消える）・`off`（消す）
+   * @param {boolean} scroll
+   * @returns {Rect | null}
+   */
+  function glow(rect, mode, scroll) {
+    if (glowTimer !== null) clearTimeout(glowTimer);
+    glowTimer = null;
+    glowLayer?.replaceChildren();
+    if (rect === null || (mode !== 'on' && mode !== 'flash')) {
+      releaseLayers();
+      return null;
+    }
+    if (scroll) {
+      scrollTo({
+        left: rect.x - Math.max(0, (innerWidth - rect.w) / 2),
+        top: rect.y - Math.max(0, (innerHeight - rect.h) / 2),
+        behavior: 'instant',
+      });
+    }
+    const ring = document.createElement('div');
+    setStyles(ring, {
+      position: 'absolute', left: `${rect.x - GLOW_GAP}px`, top: `${rect.y - GLOW_GAP}px`,
+      width: `${rect.w + GLOW_GAP * 2}px`, height: `${rect.h + GLOW_GAP * 2}px`, 'box-sizing': 'border-box',
+      'border-radius': '4px', 'box-shadow': GLOW_STRONG, margin: '0', padding: '0', 'pointer-events': 'none',
+    });
+    layers().glow.replaceChildren(ring);
+    placePlaces();
+    if (mode === 'flash') {
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        ring.animate([{ boxShadow: GLOW_STRONG }, { boxShadow: GLOW_WEAK }, { boxShadow: GLOW_STRONG }], { duration: GLOW_FLASH / 2, iterations: 2 });
+      }
+      glowTimer = setTimeout(() => {
+        glowTimer = null;
+        ring.remove();
+        releaseLayers();
+      }, GLOW_FLASH);
+    }
+    return { x: rect.x - scrollX, y: rect.y - scrollY, w: rect.w, h: rect.h };
   }
 
   // ---- ページの変化の見張り ----
@@ -1284,6 +1388,30 @@
   }
 
   /**
+   * 場所の点と要素の箱をすべて囲む箱（文書の座標）。何も無ければ null。
+   * @param {ImagePlace[]} places
+   * @returns {Rect | null}
+   */
+  function placesBounds(places) {
+    const xs = [];
+    const ys = [];
+    for (const place of places) {
+      for (const point of place.points) {
+        xs.push(point.x);
+        ys.push(point.y);
+      }
+      for (const { rect } of place.elements) {
+        xs.push(rect.x, rect.x + rect.w);
+        ys.push(rect.y, rect.y + rect.h);
+      }
+    }
+    if (xs.length === 0) return null;
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return { x: left, y: top, w: Math.max(...xs) - left, h: Math.max(...ys) - top };
+  }
+
+  /**
    * 画像にする文書の範囲。頼まれた矩形か、無ければ場所の外接矩形に余白を足したもの。文書の外は切る。
    * @param {unknown} asked
    * @param {ImagePlace[]} places
@@ -1298,22 +1426,9 @@
       const rect = /** @type {Record<string, unknown>} */ (asked);
       area = { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) };
     } else {
-      const xs = [];
-      const ys = [];
-      for (const place of places) {
-        for (const point of place.points) {
-          xs.push(point.x);
-          ys.push(point.y);
-        }
-        for (const { rect } of place.elements) {
-          xs.push(rect.x, rect.x + rect.w);
-          ys.push(rect.y, rect.y + rect.h);
-        }
-      }
-      if (xs.length === 0) throw new Error('no place to draw around');
-      const left = Math.min(...xs) - IMAGE_MARGIN;
-      const top = Math.min(...ys) - IMAGE_MARGIN;
-      area = { x: left, y: top, w: Math.max(...xs) + IMAGE_MARGIN - left, h: Math.max(...ys) + IMAGE_MARGIN - top };
+      const bounds = placesBounds(places);
+      if (!bounds) throw new Error('no place to draw around');
+      area = { x: bounds.x - IMAGE_MARGIN, y: bounds.y - IMAGE_MARGIN, w: bounds.w + IMAGE_MARGIN * 2, h: bounds.h + IMAGE_MARGIN * 2 };
     }
     const left = Math.max(0, Math.floor(area.x));
     const top = Math.max(0, Math.floor(area.y));

@@ -944,6 +944,42 @@ async fn a_mock_whose_name_needs_percent_encoding_is_served_at_its_url() {
 }
 
 #[tokio::test]
+async fn the_mock_file_list_shows_200_files_with_the_total_and_a_search_finds_the_others() {
+    let root = Scratch::new("mock-files-limit");
+    root.write("page.html", "<p>page</p>");
+    for index in 0..200 {
+        root.write(&format!("mocks/m{index:03}.html"), "<p>mock</p>");
+    }
+    root.write("mocks/notes.txt", "not html");
+    let running = start_file_review(&root, "page.html").await;
+
+    let all = get_review_json(&running, "api/mock-files?q=").await;
+    let found = get_review_json(&running, "api/mock-files?q=PAGE").await;
+
+    let files = all["files"].as_array().unwrap();
+    assert_eq!(files.len(), 200);
+    assert_eq!(all["total"], 201);
+    assert_eq!(files[0], "mocks/m000.html");
+    assert!(!files.contains(&serde_json::json!("page.html")));
+    assert_eq!(found["files"], serde_json::json!(["page.html"]));
+    assert_eq!(found["total"], 1);
+}
+
+#[tokio::test]
+async fn the_mock_file_list_needs_the_page_token() {
+    let root = Scratch::new("mock-files-token");
+    root.write("page.html", "<p>page</p>");
+    let running = start_file_review(&root, "page.html").await;
+    let without = running.review.replace("/s/test-token/", "/s/wrong-token/");
+
+    let refused = reqwest::get(format!("{without}api/mock-files?q="))
+        .await
+        .unwrap();
+
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_only() {
     let root = Scratch::new("mock-serve");
     root.write("site/page.html", "<p>page</p>");

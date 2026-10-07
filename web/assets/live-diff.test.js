@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { diffDescriptions, marksOf } from "./live-diff.js";
+import { changesByElement, diffDescriptions, marksOf } from "./live-diff.js";
 
 /**
  * @typedef {{ tag: string, id?: string, cls?: string, text?: string, box: number[], style?: Record<string, string>, children?: Spec[] }} Spec
@@ -219,4 +219,71 @@ test("every changed element gets one mark: main changes on the page, removed one
     ],
   );
   assert.deepEqual(marks.before, [{ index: indexOfText(before, "gone"), kind: "removed" }]);
+});
+
+test("the color, background and border of one button changed together make one element with three changes", () => {
+  const button = (/** @type {Record<string, string>} */ style) =>
+    page([{ tag: "button", id: "buy", text: "Buy now", box: [0, 0, 120, 40], style }]);
+  const before = button({ color: "rgb(0, 0, 0)", "background-color": "rgb(49, 89, 214)", "border-color": "rgb(0, 0, 0)" });
+  const now = button({ color: "rgb(255, 255, 255)", "background-color": "rgb(214, 69, 69)", "border-color": "rgb(255, 0, 0)" });
+  const elements = changesByElement(diffDescriptions(before, now));
+  assert.deepEqual(
+    elements.map(({ kind, side, index, tag, excerpt, label }) => ({ kind, side, index, tag, excerpt, label })),
+    [{ kind: "main", side: "now", index: 2, tag: "button", excerpt: "Buy now", label: "button#buy" }],
+  );
+  assert.deepEqual(
+    elements[0].changes.map((change) => change.property).sort(),
+    ["background-color", "border-color", "color"],
+  );
+});
+
+test("a removed element and another element now at the same number stay apart", () => {
+  const before = page([list(["one", "two", "gone", "three", "four"])]);
+  const now = page([list(["one", "two", "three", "four"])]);
+  const gone = indexOfText(before, "gone");
+  assert.equal(indexOfText(now, "three"), gone, "the element after the removed one takes its number");
+  const elements = changesByElement(diffDescriptions(before, now));
+  const removed = elements.filter((element) => element.kind === "removed");
+  assert.deepEqual(
+    removed.map(({ side, index, excerpt }) => ({ side, index, excerpt })),
+    [{ side: "before", index: gone, excerpt: "gone" }],
+  );
+  const three = elements.find((element) => element.side === "now" && element.index === gone);
+  assert.equal(three?.kind, "shifted");
+  assert.equal(three?.excerpt, "three");
+});
+
+test("an added and a removed element are one element each", () => {
+  const before = page([{ tag: "p", text: "gone", box: [0, 0, 100, 20] }]);
+  const now = page([{ tag: "div", text: "new", box: [0, 0, 100, 20] }]);
+  const elements = changesByElement(diffDescriptions(before, now));
+  assert.deepEqual(
+    elements.map(({ kind, side, index, tag, excerpt }) => ({ kind, side, index, tag, excerpt })),
+    [
+      { kind: "added", side: "now", index: 2, tag: "div", excerpt: "new" },
+      { kind: "removed", side: "before", index: 2, tag: "p", excerpt: "gone" },
+    ],
+  );
+});
+
+test("html and body are not listed as shifted when the whole page moves", () => {
+  const before = page([list(["one", "two", "three", "four"])]);
+  const now = page([list(["one", "two", "inserted", "three", "four"])]);
+  const tags = ofKind(diffDescriptions(before, now), "shifted").map((change) => now.elements[/** @type {number} */ (change.now)].tag);
+  assert.ok(tags.length > 0);
+  assert.ok(!tags.includes("html") && !tags.includes("body"), JSON.stringify(tags));
+});
+
+test("a changed background of body is a main change", () => {
+  const before = describe({ tag: "html", box: [0, 0, 1280, 100], children: [{ tag: "body", box: [0, 0, 1280, 100] }] });
+  const now = describe({
+    tag: "html",
+    box: [0, 0, 1280, 100],
+    children: [{ tag: "body", box: [0, 0, 1280, 100], style: { "background-color": "rgb(255, 250, 230)" } }],
+  });
+  const elements = changesByElement(diffDescriptions(before, now));
+  assert.deepEqual(
+    elements.map(({ kind, tag }) => ({ kind, tag })),
+    [{ kind: "main", tag: "body" }],
+  );
 });

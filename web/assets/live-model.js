@@ -193,9 +193,12 @@ function optionLabel(snapshots, snapshot) {
 /** 自動の選び方の短い説明。選択肢のそばに出す（R-PAGE-REF）。 */
 export const AUTO_RULE = "Auto picks, in order: the last snapshot you handed → Start → the last one you recorded.";
 
+/** 比べる相手の選択肢の最後の「モックのファイル」の値。選ぶと選択は変えずにモックのパネルを開く（R-PAGE-MOCK）。 */
+export const MOCK_FILE_CHOICE = "mock-file";
+
 /**
- * 比べる相手の選択肢（R-PAGE-REF）。自動 → 渡した時点 → 開始時 → 手で取った時点 → モック。自動の名前には、いまの
- * ページと表示幅で自動が選んでいる時点を、その時点の選択肢と同じ名前で入れる。
+ * 比べる相手の選択肢（R-PAGE-REF）。自動 → 渡した時点 → 開始時 → 手で取った時点 → 割り当てたモック → モックのファイル。
+ * 自動の名前には、いまのページと表示幅で自動が選んでいる時点を、その時点の選択肢と同じ名前で入れる。
  * @param {{ snapshots: SnapshotSummary[], page: string, width: number, mock: string | null }} input
  * @returns {{ value: string, label: string }[]}
  */
@@ -206,6 +209,7 @@ export function referenceOptions({ snapshots, page, width, mock }) {
     { value: "latest", label: auto },
     ...snapshotOptions(snapshots, page).map((option) => ({ value: option.id, label: option.label })),
     ...(mock === null ? [] : [{ value: "mock", label: mockLabel(mock) }]),
+    { value: MOCK_FILE_CHOICE, label: "Mock file…" },
   ];
 }
 
@@ -318,6 +322,23 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
   const x = -scrollX * scale;
   const y = -scrollY * scale;
   return { height, transform: `translate(${x === 0 ? 0 : x}px, ${y === 0 ? 0 : y}px) scale(${scale})` };
+}
+
+/**
+ * 等倍で枠より広いページの中の箱を見せるための、枠の横のスクロールの位置（R-PAGE-DIFF の行を押したとき）。
+ * 箱が枠の中にあれば今のまま、はみ出していれば箱を枠の真ん中に、枠より広い箱はその左端を枠の左端に置く。
+ * 値はどれも枠の中の画面のピクセル。
+ * @param {{ left: number, width: number, scrollLeft: number, viewportWidth: number }} input
+ * @returns {number}
+ */
+export function revealScrollLeft({ left, width, scrollLeft, viewportWidth }) {
+  if (left >= scrollLeft && left + width <= scrollLeft + viewportWidth) {
+    return scrollLeft;
+  }
+  if (width >= viewportWidth) {
+    return Math.max(0, left);
+  }
+  return Math.max(0, left - (viewportWidth - width) / 2);
 }
 
 /**

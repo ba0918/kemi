@@ -64,16 +64,34 @@ export function unpackDescription(value) {
 /**
  * 変化 1 つ。`before` と `now` はそれぞれの記述の中の要素の番号で、無い側は null。
  * 見た目の変化は `property` の値の前後を、文字の変化は文字の前後を `was` と `is` に持つ。
- * 増えた・消えたは、その要素の中の文字の始まりを持つ。
+ * 増えた・消えたは、その要素の中の文字の始まりを持つ。`tag` と `excerpt`（要素の中の文字の始まり）と `label`
+ * （手がかり）は、消えた要素は比べる相手の側の、ほかは今の側の要素のもの。
  * @typedef {{
  *   kind: "visual" | "text" | "added" | "removed" | "shifted",
  *   before: number | null,
  *   now: number | null,
+ *   tag: string,
+ *   excerpt: string,
  *   label: string,
  *   property: string,
  *   was: string,
  *   is: string,
  * }} Change
+ */
+
+/**
+ * 1 つの要素の変化をまとめたもの（R-PAGE-DIFF の一覧の 1 行）。消えた要素は比べる相手の側（`before`）の、ほかは今の
+ * 側（`now`）の要素で、`index` はその側の記述の中の番号。`kind` は、増えた・消えた・主な変化（見た目か文字）・
+ * ずれただけのどれか。
+ * @typedef {{
+ *   kind: "main" | "added" | "removed" | "shifted",
+ *   side: "now" | "before",
+ *   index: number,
+ *   tag: string,
+ *   excerpt: string,
+ *   label: string,
+ *   changes: Change[],
+ * }} ElementChanges
  */
 
 /**
@@ -85,8 +103,19 @@ export function unpackDescription(value) {
 /** 位置と大きさの差のうち、これ以下は同じとみなす（小数の丸めの差を拾わない）。 */
 const BOX_TOLERANCE = 0.5;
 
-/** 増えた・消えたに添える文字の長さ。 */
+/** 要素に添える文字の長さ。 */
 const EXCERPT_LENGTH = 60;
+
+/**
+ * 要素に添える文字を探すときにたどる要素の数の上限。どの変化にも文字を添えるので、文字の無い大きな部分木を持つ
+ * 要素がたくさんずれたときに、そのたびに部分木を全部たどらないように。
+ */
+const EXCERPT_VISITS = 200;
+
+/**
+ * ずれただけには出さない要素（R-PAGE-DIFF）。ページ全体が動くたびに並ぶため。見た目や文字の変化は主な変化に出す。
+ */
+const NEVER_SHIFTED = new Set(["html", "body"]);
 
 /** 兄弟の並びを最長共通部分列で比べる上限（両側の数の積）。超えたら前から順に組む。 */
 const LCS_LIMIT = 4_000_000;
@@ -133,7 +162,7 @@ export function diffDescriptions(before, now) {
     if (textChanged) {
       changes.push(change("text", partner, index, right, { was: left.texts[partner], is: right.texts[index] }));
     }
-    if (visual.length === 0 && !textChanged && moved(was.box, element.box)) {
+    if (visual.length === 0 && !textChanged && !NEVER_SHIFTED.has(element.tag) && moved(was.box, element.box)) {
       changes.push(change("shifted", partner, index, right, {}));
     }
   });
@@ -454,6 +483,8 @@ function change(kind, before, now, side, values) {
     kind,
     before,
     now,
+    tag: side.elements[index].tag,
+    excerpt: excerpt(side, index),
     label: label(side, index),
     property: values.property ?? "",
     was: values.was ?? "",
@@ -510,7 +541,9 @@ function excerpt(side, index) {
   let text = "";
   /** @type {number[]} */
   const stack = [index];
-  while (stack.length > 0 && text.length < EXCERPT_LENGTH) {
+  let visits = 0;
+  while (stack.length > 0 && text.length < EXCERPT_LENGTH && visits < EXCERPT_VISITS) {
+    visits += 1;
     const current = /** @type {number} */ (stack.pop());
     if (side.texts[current] !== "") {
       text += (text === "" ? "" : " ") + side.texts[current];
@@ -518,6 +551,34 @@ function excerpt(side, index) {
     stack.push(...[...side.children[current]].reverse());
   }
   return text.length > EXCERPT_LENGTH ? `${text.slice(0, EXCERPT_LENGTH - 1)}…` : text;
+}
+
+/**
+ * 性質ごとの変化を、要素ごとに 1 つにまとめる。並びは、その要素の最初の変化の並び（主な変化 → 消えた → ずれただけ）。
+ * まとめる鍵は側ごとに分ける: 消えた要素は比べる相手の側の番号、ほかは今の側の番号。番号だけを鍵にすると、消えた
+ * 要素と、今のページで同じ番号にある別の要素が 1 つにまとまるため。
+ * @param {Change[]} changes
+ * @returns {ElementChanges[]}
+ */
+export function changesByElement(changes) {
+  /** @type {Map<string, ElementChanges>} */
+  const elements = new Map();
+  for (const item of changes) {
+    const side = item.kind === "removed" ? "before" : "now";
+    const index = side === "before" ? item.before : item.now;
+    if (index === null) {
+      continue;
+    }
+    const key = `${side} ${index}`;
+    const kind = item.kind === "visual" || item.kind === "text" ? "main" : item.kind;
+    const held = elements.get(key);
+    if (held) {
+      held.changes.push(item);
+      continue;
+    }
+    elements.set(key, { kind, side, index, tag: item.tag, excerpt: item.excerpt, label: item.label, changes: [item] });
+  }
+  return [...elements.values()];
 }
 
 /** 1 つの要素に変化が重なるときに残す印の順（前が強い）。 */
@@ -567,6 +628,8 @@ export function sameChanges(left, right) {
         change.kind === other.kind &&
         change.before === other.before &&
         change.now === other.now &&
+        change.tag === other.tag &&
+        change.excerpt === other.excerpt &&
         change.label === other.label &&
         change.property === other.property &&
         change.was === other.was &&

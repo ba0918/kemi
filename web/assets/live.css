@@ -414,6 +414,37 @@ body[data-live-view="code"] #main > .lv-band {
   color: var(--note-ink);
 }
 
+/* 手で取れて、比べる相手を取ったものに切り替えた知らせ（live-compare.md の R-PAGE-REF）。 */
+.lv-notice[data-kind="done"] {
+  border-color: var(--add-mark);
+  background: var(--add-bg);
+  color: var(--add-ink);
+}
+
+.lv-notice-action {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lv-notice-action[hidden] {
+  display: none;
+}
+
+/* 枠の外側を包み、その見えている所に重ねる層の基準になる。 */
+.lv-port {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .lv-viewport {
   position: relative;
   flex: 1;
@@ -425,6 +456,43 @@ body[data-live-view="code"] #main > .lv-band {
 .lv-box {
   position: absolute;
   inset: 0;
+}
+
+.lv-ref-glow {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 4px;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 6px rgb(59 78 168), 0 0 18px 8px rgb(59 78 168 / 55%);
+  pointer-events: none;
+  animation: lv-glow 1.4s ease-in-out 2;
+}
+
+.lv-ref-glow[hidden],
+.lv-ref-wheel[hidden] {
+  display: none;
+}
+
+/* 光の明滅（ページの中の光と同じ。web/live/page.js の GLOW_STRONG・GLOW_WEAK）。 */
+@keyframes lv-glow {
+  50% {
+    box-shadow: 0 0 0 3px #fff, 0 0 0 6px rgb(59 78 168), 0 0 4px 2px rgb(59 78 168 / 20%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-ref-glow {
+    animation: none;
+  }
+}
+
+.lv-ref-wheel {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /* 指で引いた分を、ブラウザのスクロールやズームにせず、比べる相手を動かすのに使う。 */
+  touch-action: none;
+  cursor: grab;
 }
 
 .lv-frame {
@@ -578,8 +646,7 @@ body[data-live-view="code"] #main > .lv-band {
 }
 
 .lv-menu .lv-widths,
-.lv-menu .lv-compare,
-.lv-menu .lv-mock {
+.lv-menu .lv-compare {
   flex-wrap: wrap;
 }
 
@@ -821,28 +888,131 @@ body[data-live-view="page"] #menu-comments {
   display: none;
 }
 
-/* ---- モック ---- */
-.lv-mock {
-  display: inline-flex;
-  align-items: center;
+/* ---- モック（live-compare.md の R-PAGE-MOCK）: パネルと、読み直す・外すのメニュー ----
+   開いた操作のすぐ下に開く（位置は features/live.js が開くときに入れる）。 */
+.lv-popover:popover-open {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+}
+
+.lv-mock-menu:popover-open {
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+}
+
+.lv-popover-item {
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-popover-item:hover {
+  background: var(--panel-2);
+}
+
+.lv-mock-remove {
+  color: var(--del-ink);
+}
+
+.lv-mock-menu-button {
+  height: 26px;
+  padding: 0 4px;
+}
+
+.lv-mock-menu-button[hidden] {
+  display: none;
+}
+
+.lv-mock-panel:popover-open {
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(480px, calc(100vh - 80px));
+  box-sizing: border-box;
+}
+
+.lv-mock-about {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.lv-mock-search,
+.lv-mock-path {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.lv-mock-count {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+.lv-mock-files {
+  min-height: 0;
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lv-mock-file {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.lv-mock-file:hover,
+.lv-mock-file[aria-current="true"] {
+  background: var(--panel-2);
+}
+
+.lv-mock-path-row {
+  display: flex;
   gap: 6px;
 }
 
-.lv-mock-input {
-  width: 200px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 2px 8px;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 12px;
+.lv-mock-path {
+  flex: 1;
 }
 
-.lv-mock-remove[hidden],
-.lv-mock-reload[hidden],
-.lv-mock-input[hidden],
-.lv-mock-assign[hidden] {
-  display: none;
+.lv-mock-error {
+  margin: 0;
+}
+
+.lv-changes-mock-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
 }
 
 /* ---- 変化の一覧（R-PAGE-DIFF）: ページのツリーの表示中のページの下 ---- */
@@ -885,12 +1055,24 @@ body[data-live-view="page"] #menu-comments {
   padding: 0;
 }
 
-.lv-change {
+/* 行は要素 1 つ。押すとページ（消えた要素はスナップショット）のその要素までスクロールして光らせる。 */
+.lv-change-go {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
   column-gap: 6px;
+  width: 100%;
   padding: 3px 4px;
+  border: 0;
   border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-change-go:hover {
+  background: var(--panel-2);
 }
 
 .lv-change-dot {
@@ -902,14 +1084,70 @@ body[data-live-view="page"] #menu-comments {
   background: #b9a6d9;
 }
 
-.lv-change[data-kind="visual"] .lv-change-dot,
-.lv-change[data-kind="text"] .lv-change-dot,
-.lv-change[data-kind="removed"] .lv-change-dot {
+/* 点の色は、ページの上の印の色（主な変化と消えた要素は赤、増えた要素は緑、ずれただけは薄い紫）。 */
+.lv-change[data-kind="main"] .lv-change-dot,
+.lv-change[data-kind="removed"] .lv-change-dot,
+.lv-legend-item[data-kind="main"] .lv-change-dot,
+.lv-legend-item[data-kind="removed"] .lv-change-dot {
   background: #d64545;
 }
 
-.lv-change[data-kind="added"] .lv-change-dot {
+.lv-change[data-kind="added"] .lv-change-dot,
+.lv-legend-item[data-kind="added"] .lv-change-dot {
   background: #1a9a4a;
+}
+
+.lv-change-el {
+  font-weight: 600;
+}
+
+.lv-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin: 0 2px;
+  border: 1px solid rgb(0 0 0 / 28%);
+  border-radius: 3px;
+  vertical-align: -1px;
+}
+
+.lv-changes-vs {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.lv-changes-vs::before {
+  content: "vs ";
+}
+
+.lv-shifted-why {
+  display: block;
+  padding-left: 12px;
+  font-weight: 400;
+}
+
+.lv-changes-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 6px 2px 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.lv-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lv-legend-item .lv-change-dot {
+  margin-top: 0;
 }
 
 .lv-change-what {
@@ -1097,6 +1335,27 @@ body[data-live-view="page"] #menu-comments {
 
 .lv-place-n:disabled {
   cursor: default;
+}
+
+/* 種類と要素は、押すとページのその場所までスクロールして光らせる（R-PAGE-COMMENT）。 */
+.lv-place-show {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  padding: 1px 4px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-place:hover .lv-place-show {
+  background: var(--panel-2);
 }
 
 .lv-place-kind {

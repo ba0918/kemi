@@ -170,7 +170,7 @@ first row of the top bar, whose **…** menu then holds only the theme. The
 controls of the page view fit in one row: Now / Before (the running page or
 what it is compared with, one at a time), the page, its width, the agent's
 state, and a **…** menu with what the page is compared with, **Record now**,
-Fit / 100%, the width, and the mock. Overlay is not offered there. The tools
+Fit / 100%, the width, and **Mock file…**. Overlay is not offered there. The tools
 (Element, Arrow, Pen, Interact) and **Hand to agent** float together in one
 toolbar at the bottom of the screen instead of sitting above the page. The page
 list is a drawer and the conversation is a sheet.
@@ -187,11 +187,29 @@ What the page is compared with is chosen per page (path and query):
   recorded by hand. You can pick another point; it stays picked when the
   width changes, and a width it lacks says it has not been recorded. The
   choices are listed as Auto, then the hand-overs, the start, the recorded
-  ones, and the mock; Auto names the snapshot it picks for the page and
-  width shown, and a note under it says how it picks.
+  ones, the assigned mock, and last **Mock file…**; Auto names the snapshot it picks for the page and
+  width shown, and a note under it says how it picks. A snapshot taken with
+  **Record now** becomes what the page is compared with, as if you had
+  picked it, and the band says so; while the page is shown alone, the notice
+  offers **Compare →** to put it side by side (on a narrow screen, to show
+  it). Handing to the agent does not move the comparison away from it;
+  reloading the review page goes back to Auto.
 - A **mock** is an HTML file in the served directory that you assign to the
-  page by its path. A page with a mock is compared with it by default;
-  removing the mock goes back to the snapshots. The mock runs its scripts in
+  page. **Mock file…** opens a small panel that says what a mock is and
+  lists the `.html` and `.htm` files in the served directory (in a git
+  working tree, the tracked ones and the untracked ones git does not ignore;
+  never anything inside `.git/` or a symlink pointing outside), with a search
+  box. It shows up to 200 files, with how many it shows out of how many
+  match; search to find the rest. A file not listed, such as one git
+  ignores, can be assigned by typing its path into the panel. A path outside
+  the directory or a file that is not HTML is refused with the reason.
+  While a mock is assigned, the choice shows its path, and the **…** next to
+  it holds **Reload mock** and **Remove mock**; removing it says so in the
+  band with **Undo**, which assigns the same file again (assigning another
+  file in the meantime drops the **Undo**; if the file can no longer be
+  assigned, the band says why). A page with a mock
+  is compared with it by default; removing the mock goes back to the
+  snapshots. The mock runs its scripts in
   a sandboxed frame on an opaque origin, and kemi serves it and the files it
   references under a path holding a per-review secret instead of the review
   token, so the mock reaches neither the review page nor kemi's API. kemi
@@ -201,16 +219,35 @@ What the page is compared with is chosen per page (path and query):
   says so instead of showing it.
 
 When the page is compared with a snapshot, kemi matches the two element by
-element and lists the changes under the shown page in the page list, with
-their count. Main changes come first: a change of look (color, font size,
-corner radius, and the like, with the value before and after), of text, or
-an element added or removed. Elements that only moved or resized are folded
-below. An element inserted between siblings does not turn the siblings after
-it into changes, and elements with an `id` are matched by it. Each change is
-marked on the page: red for a main change, green for an added element, and a
-light dashed outline for one that only moved; a removed element is marked on
-the snapshot. The list and the marks follow the page as it changes. A page
-compared with a mock gets neither.
+element and lists the changes under the shown page in the page list, one row
+per element, with the number of elements and the name of what the page is
+compared with (the snapshot Auto picked, when Auto is chosen), whatever the
+way of comparing. A row names the element by its tag and text, gives a
+selector-like hint of where it is, and lists what changed in it: its look
+(color, font size, corner radius, and the like; colors before and after as
+swatches, other values as text), its text, or that it was added or removed.
+Main changes come first. Elements that only moved or resized, with nothing
+else changed, are folded below with a line saying so; `html` and `body` are
+never listed there, though a change of their look or text is a main change.
+An element inserted between siblings does not turn the siblings after it into
+changes, and elements with an `id` are matched by it. Each change is marked on
+the page: red for a main change, green for an added element, and a light
+dashed outline for one that only moved; a removed element is marked on the
+snapshot. A legend under the list says what the colors mean. Clicking a row
+scrolls the page to that element and makes its mark flash (at 100%, the frame
+also scrolls sideways to it). A removed element is always listed; clicking its
+row shows the snapshot side by side (on a narrow screen, switches to it), moves
+the snapshot to the element (sideways too, at 100%) and makes it flash. As the snapshot runs no script
+and cannot be scrolled from outside, it is then drawn at its full height and
+moved within its frame; the wheel, dragging it (with a finger on a narrow
+screen), or the arrow keys still move it, and it goes back to
+scrolling by itself once what it is compared with, the way of comparing, the
+page, or the width changes. While overlaid, the page itself scrolls to the
+element, and the snapshot laid over it follows; when the page is now too short
+to scroll that far, both are moved past its end together, until you scroll
+back up or show something else on the page. The list and the marks follow the page as it
+changes. A page compared with a mock gets neither: in place of the list,
+its heading names the mock and has the same **…** menu.
 
 You can comment on the page itself. The tools **Element**, **Arrow**, and
 **Pen** in the toolbar right above the page put places on the running page
@@ -231,7 +268,9 @@ area only, shown as such in the comment box, and reaches the agent with
 `elements` `[]`, its points, and the comment's image. Places are numbered from 1 in the order they
 were put, on the page and in the comment box below it; the text refers to a
 place as `#n`, and clicking a place number in the box inserts `#n` where you
-are typing (a number without `#` is not a reference). Removing a place —
+are typing (a number without `#` is not a reference). Pointing at a place in
+the box lights it up on the page, and clicking it scrolls the page to it and
+makes it flash (at 100%, the frame also scrolls sideways to it). Removing a place —
 from the list, by undoing the last, or by choosing the same element again —
 renumbers the rest from 1 and rewrites the `#n` in the text to match. A `#n`
 that pointed at the removed place, or a number beyond the places, is shown
@@ -246,7 +285,9 @@ and number of places, the page shows its places at that URL and width as
 small marks without numbers — pointing at one, with any tool, shows which
 comment it belongs to — and numbered only while its thread is open, so they
 are not mistaken for the numbered places of the comment being written; a comment left
-at another width shows that width and switches to it when pressed. Only its
+at another width shows that width and switches to it when pressed. **Show on
+page** in the thread scrolls the page to the comment's places (sideways too,
+at 100%) and makes them flash, once the page at its URL and width has loaded. Only its
 text can be edited. On a narrow screen, places are drawn with a finger and
 elements chosen by tapping. The agent gets the places and the image path
 through `kemi wait`; see `page` in the [submit contract](#submit-contract).
@@ -258,8 +299,8 @@ with an opacity slider; it follows the page's scroll and lets clicks through
 to the page underneath, and the heading names both and the opacity, or which
 one is visible at either end. The choice of what to compare with is shown
 only while comparing, but the changes and the marks on the page show while
-the page is alone too. **Record now** and the mock stay in the band whatever
-the way of comparing. The way of comparing, Fit / 100%, and what is compared
+the page is alone too. **Record now** stays in the band whatever the way of
+comparing. The way of comparing, Fit / 100%, and what is compared
 with are kept while the review page is open and reset when it is reloaded. `--live` takes only `--port`, `--bind`, `--no-open`,
 `--live-port`, `--focus`, and `--serve`. The review title is
 `Live review of <url>`; for a file the URL is its path from the served
