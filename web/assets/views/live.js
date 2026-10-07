@@ -3,7 +3,7 @@
 // ページを並べる舞台、左のページのツリー。状態は持たず、押されたときの処理は呼ぶ側が渡す。
 // `--live` のレビューでだけ読み込む。
 
-import { button, el, textEl } from "../dom.js";
+import { button, el, svgIcon, textEl } from "../dom.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 
 /**
@@ -21,9 +21,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 /**
  * @typedef {{
  *   band: HTMLElement,
- *   viewSeg: HTMLElement,
- *   pageButton: HTMLButtonElement,
- *   codeButton: HTMLButtonElement,
  *   widthSeg: HTMLElement,
  *   widthInput: HTMLInputElement,
  *   widthError: HTMLElement,
@@ -97,17 +94,6 @@ const SVG = "http://www.w3.org/2000/svg";
 export function buildShell() {
   const band = el("div", "lv-band");
   band.id = "live-band";
-
-  const viewSeg = el("div", "lv-seg lv-view");
-  viewSeg.setAttribute("role", "group");
-  viewSeg.setAttribute("aria-label", "View");
-  const pageButton = button("");
-  pageButton.textContent = "Page";
-  pageButton.dataset.view = "page";
-  const codeButton = button("");
-  codeButton.textContent = "Code";
-  codeButton.dataset.view = "code";
-  viewSeg.append(pageButton, codeButton);
 
   const widthGroup = el("div", "lv-widths lv-page-only");
   widthGroup.append(textEl("span", "lv-label", "Width"));
@@ -195,7 +181,7 @@ export function buildShell() {
     toolSeg.append(choice);
   }
 
-  band.append(viewSeg, widthGroup, compareSlot, el("span", "lv-spacer"), toolSeg, sideSeg);
+  band.append(widthGroup, compareSlot, el("span", "lv-spacer"), toolSeg, sideSeg);
 
   const stage = el("div", "lv-stage");
   stage.id = "live-stage";
@@ -256,9 +242,6 @@ export function buildShell() {
 
   return {
     band,
-    viewSeg,
-    pageButton,
-    codeButton,
     widthSeg,
     widthInput,
     widthError,
@@ -297,6 +280,47 @@ export function buildShell() {
     stroke,
     compose,
   };
+}
+
+/** 上部バーに出すアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
+const PAGE_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1.5" y="2" width="13" height="9.5" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg>';
+const CODE_TAB_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4L1.8 8l3.7 4M10.5 4l3.7 4-3.7 4M9.2 2.5L6.8 13.5"/></svg>';
+
+/**
+ * ページの見方とコードの見方を切り替えるタブと、ページの見方の間に上部バーに出すもの（live.md の R-PAGE-MODE）。
+ * @typedef {{
+ *   tabs: HTMLElement,
+ *   codeCount: HTMLElement,
+ *   meta: HTMLElement,
+ *   metaPage: HTMLElement,
+ *   metaWidth: HTMLElement,
+ *   agent: HTMLElement,
+ * }} LiveTopbar
+ * @returns {LiveTopbar}
+ */
+export function buildTopbar() {
+  const tabs = el("div", "lv-modetabs lv-view");
+  tabs.setAttribute("role", "group");
+  tabs.setAttribute("aria-label", "View");
+  const pageTab = button("lv-modetab");
+  pageTab.dataset.view = "page";
+  pageTab.title = "The running page";
+  pageTab.append(svgIcon(PAGE_ICON), textEl("span", "lv-modetab-long", "Live page"), textEl("span", "lv-modetab-short", "Page"));
+  const codeTab = button("lv-modetab");
+  codeTab.dataset.view = "code";
+  codeTab.title = "The changes in the working tree";
+  const codeCount = textEl("span", "lv-modetab-count", "");
+  codeTab.append(svgIcon(CODE_TAB_ICON), textEl("span", "lv-modetab-long", "Code changes"), textEl("span", "lv-modetab-short", "Code"), codeCount);
+  tabs.append(pageTab, codeTab);
+  const meta = el("span", "lv-topmeta");
+  const metaPage = el("span", "lv-topmeta-page");
+  const metaWidth = el("span", "lv-topmeta-width");
+  meta.append(textEl("b", "", "Live review"), " · ", metaPage, " · ", metaWidth);
+  const agent = el("span", "agent-status lv-top-agent");
+  agent.setAttribute("role", "status");
+  return { tabs, codeCount, meta, metaPage, metaWidth, agent };
 }
 
 /** @returns {ComposeShell} */

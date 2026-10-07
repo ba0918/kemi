@@ -336,6 +336,61 @@ async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
   }
 }
 
+/** 上部バーのコード用の操作と数（R-PAGE-MODE）。ページの見方の間は見えない。 */
+const CODE_TOPBAR = ['.tools .seg[aria-label="Display mode"]', '#btn-wrap', '#chip-focus', '#chip-sort', '#review-meta', '#progress'];
+const codeTopbarShown = (shown) => CODE_TOPBAR.map((selector) => `${shown ? '' : '!'}${visible(selector)}`).join(' && ');
+
+/**
+ * モードのタブとページの見方の上部バー（R-PAGE-MODE、R-VIEW の `--live` のタブ）: ページの見方の間は上部バーにコード用の
+ * 操作と数が見えず、ページの URL と表示幅とエージェントの状態が見える。コードのタブには変更ファイルの数が出て、押すと
+ * コード用の操作と数が見え、ページのタブで戻る。ページへのコメントを保存した後も見たの進捗は戻らない。ページの見方の間に
+ * 作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わって差分が新しくなる。
+ */
+async function modeTabsSwitchTheTopbar(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${visible('#live-stage')} && document.body.dataset.liveView === 'page'`);
+    await waitFor(codeTopbarShown(false));
+    const top = '.topbar .lv-topmeta';
+    await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
+    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.status === document.querySelector('#agent-status').dataset.status && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
+    const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
+    assert.ok(files > 0);
+    await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
+    await browser('click', '.lv-widths button[data-width="768"]');
+    await waitFor(`document.querySelector('${top}').textContent.includes('768')`);
+    console.log('PASS ページの見方の上部バーに、コード用の操作と数が見えず、ページの URL・表示幅・エージェントの状態が見え、コードのタブに変更ファイルの数が出る');
+
+    await browser('click', '.topbar .lv-view button[data-view="code"]');
+    await waitFor(`document.body.dataset.liveView === 'code' && ${codeTopbarShown(true)} && !${visible(top)}`);
+    await browser('click', '.topbar .lv-view button[data-view="page"]');
+    await waitFor(`document.body.dataset.liveView === 'page' && ${codeTopbarShown(false)}`);
+    console.log('PASS コードのタブを押すとコード用の操作と数が見え、ページのタブで戻る');
+
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await savePageCommentInThePage('the button');
+    await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+    assert.equal(await evaluate(visible('#progress')), false, 'the seen progress stays hidden after saving a page comment');
+    console.log('PASS ページへのコメントを保存した後も、ページの見方では見たの進捗が見えない');
+
+    await writeFile(join(repository, 'a.txt'), 'one\nTWO\nthree from the agent\n');
+    await waitFor(visible('#update-badge'));
+    await browser('click', '#update-badge');
+    await waitFor(`document.body.dataset.liveView === 'code' && Array.from(document.querySelectorAll('[data-kemi-row]')).some((row) => row.textContent.includes('three from the agent'))`);
+    console.log('PASS ページの見方の間に作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わり差分が新しくなる');
+  } finally {
+    await writeFile(join(repository, 'a.txt'), 'one\nTWO\n');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** git の外（R-PAGE-MODE）: コードの見方の代わりに理由が出る。範囲の別の HTML へのリンクで見る対象が移り、ツリーに出る。 */
 async function outsideGitFilePages() {
   const dir = await mkdtemp(join(tmpdir(), 'kemi-live-nogit-'));
@@ -2389,6 +2444,7 @@ try {
   await waitsForTheDevServer(repository);
   await fileReloadsWhenItsCssIsSaved(repository);
   await pageViewShowsFramedPagesWidthsAndNarrowScreens(repository);
+  await modeTabsSwitchTheTopbar(repository);
   await outsideGitFilePages();
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);

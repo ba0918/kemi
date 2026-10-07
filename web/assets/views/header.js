@@ -90,10 +90,13 @@ export function renderUnitSwitch() {
   restoreFocusKey(dom.unitSwitch, focusKey);
 }
 
-/** 上部の、表示中のグループ単位の見たの進捗（R-SEEN）。 */
+/**
+ * 上部の、表示中のグループ単位の見たの進捗（R-SEEN）。`--live` のページの見方の間は出さない（live.md の R-PAGE-MODE）。
+ * どこから描き直されても戻らないよう、ここで決める。
+ */
 export function renderProgress() {
   const progress = seenProgress(state.entries.map((entry) => entry.file));
-  dom.progress.hidden = !state.review || progress.total === 0;
+  dom.progress.hidden = !state.review || progress.total === 0 || state.live !== null;
   dom.progressBar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
   dom.progressText.textContent = `Seen ${progress.seen} / ${progress.total}`;
   fitProgress();

@@ -31,6 +31,7 @@ import {
 import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
   buildShell,
+  buildTopbar,
   markRemovedInSnapshot,
   renderChanges,
   renderCompareOptions,
@@ -38,6 +39,7 @@ import {
   renderPlaces,
 } from "../views/live.js";
 import { closeSheet } from "./conversation.js";
+import { refresh } from "./files.js";
 import { renderConversation } from "../views/conversation.js";
 import { renderHeader } from "../views/header.js";
 import { refreshCommentBadges } from "../views/tree.js";
@@ -168,6 +170,9 @@ let drawing = null;
 /** @type {import("../views/live.js").LiveShell | null} */
 let shell = null;
 
+/** @type {import("../views/live.js").LiveTopbar | null} */
+let topbar = null;
+
 /** 写しか記述を頼んで返事を待っているもの。 */
 /** @type {Map<number, (message: any) => void>} */
 const pendingCaptures = new Map();
@@ -215,7 +220,10 @@ export function startLive(info) {
   dom.tree.before(shell.pageTree);
   mirrorDrawer(shell.pageTree);
 
-  shell.viewSeg.addEventListener("click", (event) => {
+  topbar = buildTopbar();
+  dom.titleBlock.before(topbar.tabs, topbar.meta, topbar.agent);
+  mirrorAgentState(topbar.agent);
+  topbar.tabs.addEventListener("click", (event) => {
     const view = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.view;
     if (view === "page" || view === "code") {
       setView(view);
@@ -331,6 +339,25 @@ function mirrorDrawer(pageTree) {
 }
 
 /**
+ * 上部バーのエージェントの状態は、会話パネルの見出しの状態（views/conversation.js が描く）を写す。
+ * @param {HTMLElement} target
+ */
+function mirrorAgentState(target) {
+  const copy = () => {
+    target.dataset.status = dom.agentStatus.dataset.status ?? "";
+    target.textContent = dom.agentStatus.textContent;
+  };
+  new MutationObserver(copy).observe(dom.agentStatus, {
+    attributes: true,
+    attributeFilter: ["data-status"],
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  copy();
+}
+
+/**
  * @param {"page" | "code"} view
  */
 function setView(view) {
@@ -342,6 +369,34 @@ function setView(view) {
     window.dispatchEvent(new Event("resize"));
   }
   render();
+  // 見たの進捗はページの見方の間は出さない（views/header.js が state.live を見る）。
+  renderHeader();
+}
+
+/** 更新バッジを押した。ページの見方の間なら、コードの見方に切り替えてから読み直す（R-PAGE-MODE）。 */
+export async function refreshFromBadge() {
+  if (live.view !== "code") {
+    setView("code");
+  }
+  await refresh();
+  renderTopbar();
+}
+
+/** 上部バーのタブの変更ファイルの数と、ページの見方の間に出すページと表示幅。 */
+function renderTopbar() {
+  if (!topbar) {
+    return;
+  }
+  for (const tab of topbar.tabs.querySelectorAll("button")) {
+    tab.setAttribute("aria-pressed", String(tab.dataset.view === live.view));
+  }
+  /** @type {{ files: unknown[] }[]} */
+  const groups = state.review?.groups ?? [];
+  const files = groups.reduce((count, group) => count + group.files.length, 0);
+  topbar.codeCount.textContent = live.info?.code ? `· ${files}` : "";
+  topbar.codeCount.title = `${files} changed file${files === 1 ? "" : "s"}`;
+  topbar.metaPage.textContent = live.page;
+  topbar.metaWidth.textContent = `${live.width}px`;
 }
 
 /**
@@ -1191,9 +1246,7 @@ function renderBand() {
   if (!shell) {
     return;
   }
-  for (const choice of shell.viewSeg.querySelectorAll("button")) {
-    choice.setAttribute("aria-pressed", String(choice.dataset.view === live.view));
-  }
+  renderTopbar();
   for (const choice of shell.widthSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(Number(choice.dataset.width) === live.width));
     choice.disabled = live.saving;
