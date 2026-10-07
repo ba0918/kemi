@@ -1271,6 +1271,12 @@ async function mockMenuRemovesAndUndoes(repository) {
     await waitFor(`${visible(bandNotice)} && document.querySelector('${bandNotice}').dataset.kind !== 'done' && !${visible(bandNoticeAction)}`);
     assert.equal(await evaluate(showsSnapshot('Start')), true, 'the mock that could not be assigned again is not the reference');
     console.log('PASS 外したモックのファイルが消えてから取り消すと、割り当てられず、その理由が帯に出る');
+
+    // 断られた知らせが出ていても、見る対象だけのときに手で取れば、比べる相手がそれに切り替わったことと、それを並べて見る操作が出る（R-PAGE-REF）。
+    await chooseCompare('now');
+    await browser('click', '.lv-band .lv-record-now');
+    await waitFor(`${showsSnapshot('Recorded 1')} && document.querySelector('${bandNotice}').dataset.kind === 'done' && ${visible(bandNoticeAction)}`);
+    console.log('PASS 取り消しが断られた知らせが出ていても、見る対象だけのときに手で取ると、取れたことの知らせとそれを見る操作が出る');
   } finally {
     await stop(kemi);
     await dev.close();

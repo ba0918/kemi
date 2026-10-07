@@ -147,7 +147,7 @@ const live = {
   removedMock: null,
   /**
    * 外したモックを取り消しで割り当て直せなかった理由（R-PAGE-MOCK の、断ったら理由を出す）。パネルは閉じているので帯に出す。
-   * 次にモックを割り当てるか外すか、ページを移るまで出す。
+   * 次にモックを割り当てるか外すか、そのページを手で取るか、ページを移るまで出す。
    * @type {{ page: string, text: string } | null}
    */
   undoMockFailed: null,
@@ -1432,6 +1432,10 @@ async function capture(kind) {
     if (kind === "manual") {
       live.chosen.set(takenPage, taken.id);
       live.recorded = { page: takenPage, id: taken.id };
+      // 取り消しを断った知らせは帯で取れたことの知らせより先に出るので、新しい知らせで置き換える。
+      if (live.undoMockFailed?.page === takenPage) {
+        live.undoMockFailed = null;
+      }
     }
   } catch (error) {
     live.refNotice = `Not recorded: ${error instanceof Error ? error.message : String(error)}`;
