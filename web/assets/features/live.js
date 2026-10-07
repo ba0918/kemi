@@ -11,6 +11,7 @@ import { dom } from "../dom.js";
 import { state } from "../state.js";
 import {
   AUTO_RULE,
+  WIDTH_CHOICES,
   addPlace,
   buildPageTree,
   chooseReference,
@@ -452,7 +453,8 @@ function setWidth(width) {
   forgetFailures();
   sendPlaces();
   if (shell) {
-    shell.widthInput.value = "";
+    // 選んでいる幅が分かるよう、プリセットの幅はそのボタンで、それ以外は欄に残して示す（R-PAGE-VIEW）。
+    shell.widthInput.value = WIDTH_CHOICES.includes(width) ? "" : String(width);
     shell.widthError.hidden = true;
   }
   render();

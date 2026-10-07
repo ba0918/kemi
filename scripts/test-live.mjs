@@ -315,6 +315,16 @@ async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
     await waitFor(`!${visible('.lv-width-error')} && document.querySelector('#live-stage .lv-pane[data-side="live"] .lv-frame').style.width === '1024px'`);
     console.log('PASS 表示幅に 319 と 3841 を入れると受け付けられず範囲が出て、範囲の中の数字は受け付ける');
 
+    // Enter を押さずに欄から離れても効き、効いた後も欄に今の幅が残る。プリセットの幅ならそのボタンが選ばれる。
+    await browser('fill', '.lv-width-input', '1000');
+    await browser('click', '.lv-widths .lv-label');
+    await waitFor(`document.querySelector('#live-stage .lv-pane[data-side="live"] .lv-frame').style.width === '1000px' && document.querySelector('.lv-width-input').value === '1000' && document.querySelector('.lv-widths button[aria-pressed="true"]') === null`);
+    await browser('fill', '.lv-width-input', '390');
+    await browser('click', '.lv-widths .lv-label');
+    await waitFor(`document.querySelector('#live-stage .lv-pane[data-side="live"] .lv-frame').style.width === '390px' && document.querySelector('.lv-widths button[aria-pressed="true"]')?.dataset.width === '390'`);
+    await browser('click', '.lv-widths button[data-width="1280"]');
+    console.log('PASS 表示幅の欄に 1000 を入れて離れると 1000 で描かれ欄に 1000 が残り、390 を入れると 390 のボタンが選ばれる');
+
     await browser('set', 'viewport', '390', '800');
     await waitFor(`${visible('.lv-side')} && ${visible('#live-stage .lv-pane[data-side="live"]')} && !${visible('#live-stage .lv-pane[data-side="ref"]')}`);
     // 幅をまたいだ直後は帯の並びが動くので、落ち着いてから押す。
