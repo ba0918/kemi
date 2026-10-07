@@ -338,7 +338,7 @@ async fn review(
         state.review.write().expect("review lock poisoned").startup = startup;
         units::refresh_other(&state).await;
     }
-    let mut body = {
+    let (mut body, page_comment_saved) = {
         let review = state.review.read().expect("review lock poisoned");
         let (shown, meta) = review.meta(unit).map_err(|reason| match reason {
             Unavailable::NoSuchUnit => ApiError::not_found("no such unit"),
@@ -348,10 +348,14 @@ async fn review(
         let mut body = review_json(meta.as_ref(), &session);
         body["unit"] = json!(shown.map(GroupBy::as_str));
         body["units"] = review.units_json();
-        body
+        (body, session.page_comment_saved)
     };
     body["agent"] = agent_json(&state);
     body["live"] = state.live.as_ref().map_or(Value::Null, |live| live.json());
+    // ページへのコメントの始め方の案内を出すかは、画面がこれで決める（live.md の R-PAGE-COMMENT）。
+    if let Some(live) = body["live"].as_object_mut() {
+        live.insert("page_comment_saved".to_string(), json!(page_comment_saved));
+    }
     // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
     units::start_if_waiting(&state);
     // 応答を返した後に、写しの凍結を裏で始める（R-SESSION）。

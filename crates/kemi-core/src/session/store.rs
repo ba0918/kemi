@@ -2541,6 +2541,7 @@ mod tests {
         assert!(state.messages.is_empty());
         assert_eq!(state.last_message, 0);
         assert_eq!(state.channel, Channel::default());
+        assert!(!state.page_comment_saved);
     }
 
     #[test]
@@ -2808,6 +2809,58 @@ mod tests {
         let opened = store.open(&id).unwrap();
 
         assert_eq!(opened.state(), &state);
+    }
+
+    #[test]
+    fn live_session_roundtrips_that_a_page_comment_was_once_saved() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        let state = SessionState {
+            page_comment_saved: true,
+            ..state_with_comment()
+        };
+        open.save_state_at(state.clone(), 200).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+
+        let opened = store.open(&id).unwrap();
+
+        assert_eq!(opened.state(), &state);
+    }
+
+    #[test]
+    fn version_3_session_written_before_the_page_comment_mark_reads_as_never_saved() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let mut open = store
+            .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+            .unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        let id = open.id().to_string();
+        drop(open);
+        // 印を足す前の版 3 の kemi は、この項目を書かなかった。
+        let path = scratch.dir().join(format!("{id}.session"));
+        let bytes = std::fs::read(&path).unwrap();
+        let (version, meta) = encoding::decode_session(&bytes).unwrap();
+        let mut meta: serde_json::Value = serde_json::from_slice(meta).unwrap();
+        meta["state"]
+            .as_object_mut()
+            .unwrap()
+            .remove("page_comment_saved");
+        assert_eq!(version, 3);
+        std::fs::write(
+            &path,
+            encoding::encode_session(version, &serde_json::to_vec(&meta).unwrap()),
+        )
+        .unwrap();
+
+        let state = store.read(&id).unwrap().state;
+
+        assert!(!state.page_comment_saved);
+        assert_eq!(state.comments, state_with_comment().comments);
     }
 
     #[test]

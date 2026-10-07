@@ -134,6 +134,9 @@ pub struct SessionState {
     /// `--live` のモックの割り当て。ページ（パスとクエリ）→ 配れる範囲の根からの相対パス
     /// （live-compare.md の R-PAGE-MOCK）。
     pub mocks: BTreeMap<String, String>,
+    /// このレビューでページへのコメントを一度でも保存したか。コメントを全部消しても
+    /// 戻さない（始め方の案内を出し直さないため。live.md の R-PAGE-COMMENT）。
+    pub page_comment_saved: bool,
 }
 
 impl SessionState {
@@ -265,6 +268,9 @@ struct StateDto {
     /// 割り当てが無ければ書かない（`--live` の前からある形のまま）。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     mocks: BTreeMap<String, String>,
+    /// 立っていなければ書かない（印を足す前の形のまま）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    page_comment_saved: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -588,6 +594,7 @@ impl From<&SessionState> for StateDto {
             last_seq: state.last_seq,
             channel: ChannelDto::from(&state.channel),
             mocks: state.mocks.clone(),
+            page_comment_saved: state.page_comment_saved,
         }
     }
 }
@@ -616,6 +623,7 @@ impl StateDto {
             last_seq: self.last_seq,
             channel: self.channel.into_channel()?,
             mocks: self.mocks,
+            page_comment_saved: self.page_comment_saved,
         };
         if unnumbered {
             number_in_creation_order(&mut state);

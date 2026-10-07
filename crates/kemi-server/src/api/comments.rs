@@ -348,6 +348,7 @@ fn add_page_comment(
     };
     let mut session = state.session.lock().expect("session poisoned");
     session.channel.note_comment(&comment.id);
+    session.page_comment_saved = true;
     // 画像を書く間に足されたコメントがあっても、作成順（通し番号の順）に並べる。
     let at = session
         .comments
