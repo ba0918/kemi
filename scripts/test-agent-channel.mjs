@@ -749,7 +749,7 @@ try {
   const floatFile = (await (await fetch(new URL('api/review', floatKemi.url))).json()).groups[0].files[0].id;
   await post(floatKemi.url, 'api/comment', { op: 'add', file_id: floatFile, side: 'new', start_line: 3, end_line: 3, body: 'from the phone' });
   // 開く前に決めた幅は効かず、既定の幅（1280px 前後）で開くことがある。広い画面で開くと会話パネルが開いた
-  // ままになり、`shown` はボタン自身しか見ないので、隠れたボタンを見えていると取り違える。そこで一度開いて
+  // ままになり、`shown` は CSS で隠れた祖先（浮かぶ帯）を見ないので、隠れたボタンを見えていると取り違える。そこで一度開いて
   // 幅を決めてから開き直し、狭い画面で読み込んだ状態から始める。
   await browser('open', floatKemi.url);
   await browser('set', 'viewport', '390', '844');
