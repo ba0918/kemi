@@ -321,6 +321,23 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
 }
 
 /**
+ * 等倍で枠より広いページの中の箱を見せるための、枠の横のスクロールの位置（R-PAGE-DIFF の行を押したとき）。
+ * 箱が枠の中にあれば今のまま、はみ出していれば箱を枠の真ん中に、枠より広い箱はその左端を枠の左端に置く。
+ * 値はどれも枠の中の画面のピクセル。
+ * @param {{ left: number, width: number, scrollLeft: number, viewportWidth: number }} input
+ * @returns {number}
+ */
+export function revealScrollLeft({ left, width, scrollLeft, viewportWidth }) {
+  if (left >= scrollLeft && left + width <= scrollLeft + viewportWidth) {
+    return scrollLeft;
+  }
+  if (width >= viewportWidth) {
+    return Math.max(0, left);
+  }
+  return Math.max(0, left - (viewportWidth - width) / 2);
+}
+
+/**
  * 書いている途中のページへのコメント（live.md の R-PAGE-COMMENT）。場所は最初の場所の URL と表示幅のものなので、
  * それも覚える。場所の番号は置いた順に 1 からの連番で、場所を消すと詰め直し、本文の `#n` も同じ対応で書き換える。
  * `dangling` は、消した場所を指していた `#n` の本文の中の範囲。詰め直した後の番号と同じ字面になりうるので、

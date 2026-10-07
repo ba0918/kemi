@@ -43,6 +43,18 @@
       post({ type: 'saved-found', id: message.id, comment: savedCommentAt(finite(message.x) + scrollX, finite(message.y) + scrollY) });
       return;
     }
+    if (message.type === 'glow-element') {
+      const element = typeof message.index === 'number' ? described[message.index] : undefined;
+      let shown = null;
+      if (element?.isConnected) {
+        // 中でスクロールする箱の中の要素も見えるよう、要素のほうから見える位置へ動かす。
+        element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        const rect = element.getBoundingClientRect();
+        shown = glow({ x: rect.left + scrollX, y: rect.top + scrollY, w: rect.width, h: rect.height }, String(message.mode), false);
+      }
+      post({ type: 'glowed', id: message.id, rect: shown });
+      return;
+    }
     if (message.type === 'glow-places') {
       const rect = placesBounds(drawnPlaces(message.comment, message.n));
       const shown = glow(rect, String(message.mode), message.scroll === true);
@@ -806,7 +818,7 @@
     }
   }
 
-  // ---- 光らせる（R-PAGE-COMMENT の場所の一覧と「ページで見る」） ----
+  // ---- 光らせる（R-PAGE-COMMENT の場所の一覧と「ページで見る」、R-PAGE-DIFF の変化の一覧の行） ----
   // 光は場所の描き込みとは別の層に、光らせるものの箱の周りの輪として描く（画面モックの光らせ方）。乗せている間は
   // 光らせたままにし（on と off）、押したときは何度か明滅させてから消す（flash）。
 

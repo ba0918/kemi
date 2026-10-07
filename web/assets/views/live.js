@@ -7,9 +7,11 @@ import { button, el, svgIcon, textEl } from "../dom.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model.js";
 
 /**
- * 表示中のページの変化の一覧の中身。`unmarked` は、消えた要素をスナップショットの側に印で示せないこと。
+ * 表示中のページの変化の一覧の中身。`list` は要素ごとの変化、`reference` は比べている相手の名前、`unmarked` は、
+ * 消えた要素をスナップショットの側に印で示せないこと。
  * @typedef {{
- *   list: import("../live-diff.js").Change[],
+ *   list: import("../live-diff.js").ElementChanges[],
+ *   reference: string,
  *   shiftedOpen: boolean,
  *   listed: { main: number, shifted: number },
  *   unmarked: boolean,
@@ -644,9 +646,7 @@ export function renderCompareOptions(select, options, chosen, rule) {
  * @param {{
  *   onPage: (page: string) => void,
  *   onWidth: (page: string, width: number) => void,
- *   onShifted: (open: boolean) => void,
- *   onListed: (group: "main" | "shifted", count: number) => void,
- * }} handlers
+ * } & ChangeHandlers} handlers
  * @param {ChangeListState | ChangeNotice | null} changes
  * @param {boolean} locked ページと表示幅を変えられない間（コメントの保存中）。移る操作を使えないと出す
  */
@@ -693,6 +693,15 @@ export function renderPageTree(container, items, handlers, changes, locked) {
   container.append(list);
 }
 
+/**
+ * 変化の一覧の操作。開いたずれただけと並べた数を覚えさせ、行を押したらその要素を見せる。
+ * @typedef {{
+ *   onShifted: (open: boolean) => void,
+ *   onListed: (group: "main" | "shifted", count: number) => void,
+ *   onShow: (element: import("../live-diff.js").ElementChanges) => void,
+ * }} ChangeHandlers
+ */
+
 /** 変化の一覧の中の操作。描き直したときに同じ操作へフォーカスを移すために見分ける。 */
 const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-change-show", ".lv-change-shifted .lv-change-show"];
 
@@ -702,7 +711,7 @@ const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-chan
  * フォーカスがあれば、描き直した一覧の同じ操作に移す。表示中のページの行がまだ無ければ何もしない
  * （renderPageTree が描く）。
  * @param {HTMLElement} container renderPageTree で描いたツリー
- * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
+ * @param {ChangeHandlers} handlers
  * @param {ChangeListState | ChangeNotice | null} changes
  */
 export function renderChanges(container, handlers, changes) {
@@ -735,10 +744,10 @@ export function renderChanges(container, handlers, changes) {
 const LISTED_CHANGES = 300;
 
 /**
- * 変化の一覧（R-PAGE-DIFF）。主な変化を上に前後の値つきで、ずれただけは畳んで下に。比べられないときは、
- * 一覧の代わりにそのことを出す（R-PAGE-VIEW）。
+ * 変化の一覧（R-PAGE-DIFF）。要素ごとに 1 行で、主な変化を上に、ずれただけは畳んで下に、印の色の凡例をその下に。
+ * 見出しには比べている相手の名前を出す（R-PAGE-VIEW）。比べられないときは、一覧の代わりにそのことを出す。
  * @param {ChangeListState | ChangeNotice} state
- * @param {{ onShifted: (open: boolean) => void, onListed: (group: "main" | "shifted", count: number) => void }} handlers
+ * @param {ChangeHandlers} handlers
  */
 function changeList(state, handlers) {
   if ("notice" in state) {
@@ -753,10 +762,9 @@ function changeList(state, handlers) {
   box.dataset.main = String(main.length);
   box.dataset.shifted = String(shifted.length);
   const head = el("div", "lv-changes-head");
-  head.append(
-    textEl("span", "", `Changes ${main.length}`),
-    textEl("span", "", `${main.length} main · ${shifted.length} shifted`),
-  );
+  const vs = textEl("span", "lv-changes-vs", state.reference);
+  vs.title = `Compared with ${state.reference}`;
+  head.append(textEl("span", "", `Changes ${main.length}`), vs);
   box.append(head);
   if (state.unmarked) {
     box.append(textEl("p", "lv-changes-unmarked", "Not marked: removed elements cannot be located in the snapshot"));
@@ -766,14 +774,16 @@ function changeList(state, handlers) {
     return box;
   }
   if (main.length > 0) {
-    box.append(changeItems("lv-change-main", main, state.listed.main, (count) => handlers.onListed("main", count)));
+    box.append(changeItems("lv-change-main", main, state.listed.main, handlers, (count) => handlers.onListed("main", count)));
   }
   if (shifted.length > 0) {
     const details = /** @type {HTMLDetailsElement} */ (el("details", "lv-shifted"));
     const shiftedItems = () =>
-      changeItems("lv-change-shifted", shifted, state.listed.shifted, (count) => handlers.onListed("shifted", count));
+      changeItems("lv-change-shifted", shifted, state.listed.shifted, handlers, (count) => handlers.onListed("shifted", count));
     details.open = state.shiftedOpen;
-    details.append(textEl("summary", "", `Shifted only ${shifted.length}`));
+    const summary = textEl("summary", "", `Shifted only ${shifted.length}`);
+    summary.append(textEl("span", "lv-shifted-why", "Moved or resized; nothing else changed."));
+    details.append(summary);
     if (state.shiftedOpen) {
       details.append(shiftedItems());
     }
@@ -786,18 +796,41 @@ function changeList(state, handlers) {
     });
     box.append(details);
   }
+  box.append(changeLegend());
   return box;
 }
 
+/** 印の色の意味（R-PAGE-DIFF）。点の色は一覧の行の点と、ページの上の印の色と同じ。 */
+const CHANGE_LEGEND = /** @type {const} */ ([
+  ["main", "changed"],
+  ["added", "added"],
+  ["removed", "removed (on the snapshot)"],
+  ["shifted", "moved only"],
+]);
+
+/** @returns {HTMLElement} */
+function changeLegend() {
+  const legend = el("div", "lv-changes-legend");
+  legend.setAttribute("aria-label", "What the marks mean");
+  for (const [kind, label] of CHANGE_LEGEND) {
+    const item = el("span", "lv-legend-item");
+    item.dataset.kind = kind;
+    item.append(el("i", "lv-change-dot"), label);
+    legend.append(item);
+  }
+  return legend;
+}
+
 /**
- * 変化の項目を `listed` 個まで並べ、残りがあれば続きを出す操作を置く。押すと次の LISTED_CHANGES 個を足し、
- * 並べた数を `onListed` に知らせる（描き直しても同じ数まで並べるため）。
+ * 変化のあった要素を `listed` 個まで並べ、残りがあれば続きを出す操作を置く。押すと次の LISTED_CHANGES 個を足し、
+ * 並べた数を `onListed` に知らせる（描き直しても同じ数まで並べるため）。行を押すとその要素を見せる。
  * @param {string} className
- * @param {import("../live-diff.js").Change[]} changes
+ * @param {import("../live-diff.js").ElementChanges[]} changes
  * @param {number} listed
+ * @param {ChangeHandlers} handlers
  * @param {(count: number) => void} onListed
  */
-function changeItems(className, changes, listed, onListed) {
+function changeItems(className, changes, listed, handlers, onListed) {
   const list = el("ul", `lv-change-list ${className}`);
   let shown = 0;
   const more = el("li", "lv-change-more");
@@ -807,12 +840,18 @@ function changeItems(className, changes, listed, onListed) {
   more.append(remaining, showMore);
   /** @param {number} count */
   const showUpTo = (count) => {
-    const items = changes.slice(shown, count).map((change) => {
+    const items = changes.slice(shown, count).map((element) => {
       const item = el("li", "lv-change");
-      item.dataset.kind = change.kind;
+      item.dataset.kind = element.kind;
+      item.dataset.tag = element.tag;
+      const go = button("lv-change-go");
+      go.title = element.side === "before" ? "Show it on the snapshot" : "Show it on the page";
       const what = el("span", "lv-change-what");
-      what.append(...changeWhat(change));
-      item.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", change.label));
+      what.append(textEl("span", "lv-change-el", element.excerpt === "" ? element.tag : `${element.tag} “${element.excerpt}”`));
+      what.append(" — ", ...elementChanges(element));
+      go.append(el("i", "lv-change-dot"), what, textEl("span", "lv-change-where", element.label));
+      go.addEventListener("click", () => handlers.onShow(element));
+      item.append(go);
       return item;
     });
     more.before(...items);
@@ -830,23 +869,67 @@ function changeItems(className, changes, listed, onListed) {
 }
 
 /**
- * 変化の中身の文。見た目と文字は前後の値を並べる。
+ * 1 つの要素で変わったものを並べた文。色の前後は色の見本で、ほかの見た目と文字は前後の値で出す。
+ * @param {import("../live-diff.js").ElementChanges} element
+ * @returns {(Node | string)[]}
+ */
+function elementChanges(element) {
+  /** @type {(Node | string)[]} */
+  const parts = [];
+  element.changes.forEach((change, index) => {
+    if (index > 0) {
+      parts.push(", ");
+    }
+    parts.push(...changeWhat(change));
+  });
+  return parts;
+}
+
+/**
+ * 変化 1 つの文。
  * @param {import("../live-diff.js").Change} change
  * @returns {(Node | string)[]}
  */
 function changeWhat(change) {
   switch (change.kind) {
     case "visual":
-      return [`${change.property} `, textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+      return [`${change.property} `, ...valueChange(change.was, change.is)];
     case "text":
-      return ["Text ", textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
+      return ["text ", textEl("s", "", change.was), " → ", textEl("b", "", change.is)];
     case "added":
-      return [change.is === "" ? "Added" : `Added: ${change.is}`];
+      return ["added"];
     case "removed":
-      return [change.was === "" ? "Removed" : `Removed: ${change.was}`];
+      return ["removed"];
     case "shifted":
-      return ["Moved or resized"];
+      return ["moved or resized"];
   }
+}
+
+/**
+ * 見た目の値の前後。どちらも色なら色の見本を並べ（値は見本に乗せると出る）、そうでなければ値を並べる。
+ * @param {string} was
+ * @param {string} is
+ * @returns {(Node | string)[]}
+ */
+function valueChange(was, is) {
+  const isColor = (/** @type {string} */ value) => value !== "" && CSS.supports("color", value);
+  if (isColor(was) && isColor(is)) {
+    return [swatch(was), "→", swatch(is)];
+  }
+  return [textEl("s", "", was), " → ", textEl("b", "", is)];
+}
+
+/**
+ * @param {string} color
+ * @returns {HTMLElement}
+ */
+function swatch(color) {
+  const item = el("span", "lv-swatch");
+  item.style.background = color;
+  item.title = color;
+  item.setAttribute("role", "img");
+  item.setAttribute("aria-label", color);
+  return item;
 }
 
 /** 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。 */

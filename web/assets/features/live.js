@@ -30,13 +30,14 @@ import {
   referenceName,
   referenceOptions,
   removePlace,
+  revealScrollLeft,
   strayRefs,
   snapshotLabel,
   startSnapshotDue,
   undoPlace,
   unsavedSnapshotNotice,
 } from "../live-model.js";
-import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
+import { changesByElement, diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
   buildShell,
   buildTopbar,
@@ -205,7 +206,7 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe" | "place" | "image" | "saved-at"} type
+ * @param {"capture" | "describe" | "place" | "image" | "saved-at" | "glow-element"} type
  * @param {number} timeout
  * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
@@ -571,7 +572,7 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (["captured", "described", "placed", "imaged", "saved-found"].includes(message.type)) {
+  if (["captured", "described", "placed", "imaged", "saved-found", "glowed"].includes(message.type)) {
     pendingCaptures.get(Number(message.id))?.(message);
     return;
   }
@@ -1627,15 +1628,57 @@ function renderStageName() {
   });
 }
 
-/** 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。 */
+/**
+ * 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。行を押したらその要素を見せる。
+ * @type {import("../views/live.js").ChangeHandlers}
+ */
 const changeHandlers = {
-  onShifted: (/** @type {boolean} */ open) => {
+  onShifted: (open) => {
     live.shiftedOpen = open;
   },
-  onListed: (/** @type {"main" | "shifted"} */ group, /** @type {number} */ count) => {
+  onListed: (group, count) => {
     live.listed[group] = count;
   },
+  onShow: (element) => {
+    if (element.side === "now") {
+      void showChangedElement(element.index);
+    }
+  },
 };
+
+/** ページが要素を見せて光らせるまで待つ上限。 */
+const GLOW_TIMEOUT = 5000;
+
+/**
+ * 変化の一覧の行を押した: 見る対象のその要素までスクロールし、その要素の印を光らせる（R-PAGE-DIFF）。等倍で枠より
+ * 広いページでは、枠の横のスクロールもその要素が見える位置に合わせる。狭い画面で比べる相手の側を見ていたら、
+ * 動いているページの側に切り替えてから。
+ * @param {number} index 今の側の記述の中の要素の番号
+ */
+async function showChangedElement(index) {
+  if (!shell) {
+    return;
+  }
+  if (live.side !== "live") {
+    setSide("live");
+  }
+  const frame = shell.liveFrame.contentWindow;
+  if (!frame) {
+    return;
+  }
+  const answer = await ask(frame, "glow-element", GLOW_TIMEOUT, { index, mode: "flash" });
+  const rect = answer?.rect;
+  if (!rect || typeof rect.x !== "number" || typeof rect.w !== "number") {
+    return;
+  }
+  const viewport = shell.liveViewport;
+  viewport.scrollLeft = revealScrollLeft({
+    left: rect.x * live.scale,
+    width: rect.w * live.scale,
+    scrollLeft: viewport.scrollLeft,
+    viewportWidth: viewport.clientWidth,
+  });
+}
 
 /**
  * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。
@@ -1647,7 +1690,10 @@ function changesToList() {
   }
   const snapshot = live.changesFrom?.snapshot ?? "";
   const unmarked = live.mapped.get(snapshot) === false && live.changes.some((change) => change.kind === "removed");
-  return { list: live.changes, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
+  // 見出しには、見比べ方によらず比べている実物の名前を出す（自動のときも、自動が選んだ実物。R-PAGE-VIEW）。
+  const compared = live.snapshots.find((item) => item.id === snapshot);
+  const reference = compared ? referenceName(live.snapshots, { type: "snapshot", snapshot: compared }) : "";
+  return { list: changesByElement(live.changes), reference, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
 }
 
 function renderTree() {

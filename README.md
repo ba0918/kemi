@@ -206,16 +206,24 @@ What the page is compared with is chosen per page (path and query):
   says so instead of showing it.
 
 When the page is compared with a snapshot, kemi matches the two element by
-element and lists the changes under the shown page in the page list, with
-their count. Main changes come first: a change of look (color, font size,
-corner radius, and the like, with the value before and after), of text, or
-an element added or removed. Elements that only moved or resized are folded
-below. An element inserted between siblings does not turn the siblings after
-it into changes, and elements with an `id` are matched by it. Each change is
-marked on the page: red for a main change, green for an added element, and a
-light dashed outline for one that only moved; a removed element is marked on
-the snapshot. The list and the marks follow the page as it changes. A page
-compared with a mock gets neither.
+element and lists the changes under the shown page in the page list, one row
+per element, with the number of elements and the name of what the page is
+compared with (the snapshot Auto picked, when Auto is chosen), whatever the
+way of comparing. A row names the element by its tag and text, gives a
+selector-like hint of where it is, and lists what changed in it: its look
+(color, font size, corner radius, and the like; colors before and after as
+swatches, other values as text), its text, or that it was added or removed.
+Main changes come first. Elements that only moved or resized, with nothing
+else changed, are folded below with a line saying so; `html` and `body` are
+never listed there, though a change of their look or text is a main change.
+An element inserted between siblings does not turn the siblings after it into
+changes, and elements with an `id` are matched by it. Each change is marked on
+the page: red for a main change, green for an added element, and a light
+dashed outline for one that only moved; a removed element is marked on the
+snapshot. A legend under the list says what the colors mean. Clicking a row
+scrolls the page to that element and makes its mark flash (at 100%, the frame
+also scrolls sideways to it). The list and the marks follow the page as it
+changes. A page compared with a mock gets neither.
 
 You can comment on the page itself. The tools **Element**, **Arrow**, and
 **Pen** in the toolbar right above the page put places on the running page

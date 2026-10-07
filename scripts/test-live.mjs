@@ -38,7 +38,10 @@
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
 // - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
 // - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
-//   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色つきで主な変化に入る。
+//   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色の見本つきで主な変化に入る。
+//   ボタンの文字色・背景色・枠を同時に変えると一覧ではそのボタンが 1 行になり、押すとそのボタンまでスクロールして印が光る。
+//   見る対象だけのときも、一覧の見出しの名前が並べたときの比べる相手の選択の文字に含まれる。html と body はずれただけに
+//   出ず、body の背景色の変化は主な変化に出る。
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
 //   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
 //   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。枠が隠れている間（比べる相手の
@@ -1444,6 +1447,85 @@ async function mainChanges() {
   return JSON.parse(await evaluate(`JSON.stringify(Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).map((item) => ({ kind: item.dataset.kind, text: item.textContent })))`));
 }
 
+/** 変化の一覧の行（主な変化）。 */
+const mainRows = `Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? [])`;
+
+/** 行の中の要素の背景色（色の見本を見分ける）。 */
+const backgroundsIn = (row) => `Array.from(${row}.querySelectorAll('*')).map((element) => getComputedStyle(element).backgroundColor)`;
+
+/**
+ * 変化の一覧の行（R-PAGE-DIFF、R-PAGE-VIEW の一覧の見出し）: ボタンの文字色・背景色・枠を同時に変えると、一覧ではその
+ * ボタンが 1 行になり、色の前後が色の見本で出る。その行を押すと、見る対象がそのボタンまでスクロールし、ボタンの印が光る。
+ * 見る対象だけの見比べ方で、一覧の見出しの名前が、並べる見比べ方に切り替えたときの比べる相手の選択の文字に含まれる。
+ * 兄弟の途中に要素を足しても `html` と `body` はずれただけに出ず、`body` の背景色を変えると `body` が主な変化に出る。
+ */
+async function changeRowsAreElementsThatLeadToThePage(repository) {
+  const dev = await startDevServer();
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
+  const frame = `${livePane} .lv-frame`;
+  const wheel = (y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${frame}').style.width === '390px' && document.querySelector('${livePane} .lv-notice').hidden && document.querySelector('${refPane}').dataset.reference === 'none'`);
+    await browser('click', '.lv-band .lv-record-now');
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.css'), `${changingCss('rgb(214, 69, 69)')}.buy { color: rgb(20, 20, 20); border: 4px solid rgb(0, 150, 0); }\n`);
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(await evaluate(`${mainRows}.length`), 1, await evaluate(`JSON.stringify(${mainRows}.map((row) => row.textContent))`));
+    const row = `${mainRows}[0]`;
+    assert.match(await evaluate(`${row}.textContent`), /button[\s\S]*Buy/);
+    const backgrounds = JSON.parse(await evaluate(`JSON.stringify(${backgroundsIn(row)})`));
+    const from = backgrounds.indexOf('rgb(49, 89, 214)');
+    assert.ok(from !== -1 && backgrounds.indexOf('rgb(214, 69, 69)', from + 1) > from, `the background colors before and after are shown as colors: ${JSON.stringify(backgrounds)}`);
+    console.log('PASS ボタンの文字色・背景色・枠を同時に変えると、一覧ではそのボタンが 1 行で、色の前後が色の見本で出る');
+
+    await wheel(1500);
+    const around = [0, 100, 220, 200];
+    await waitForPixels(frame, shots, 'scrolled-away', around, isRed, false);
+    await browser('click', '#page-tree .lv-page[data-current="true"] .lv-changes .lv-change-main .lv-change');
+    await waitForPixels(frame, shots, 'button-shown', around, isGlow);
+    await waitForPixels(frame, shots, 'button-shown-mark', around, isRed);
+    console.log('PASS その行を押すと、見る対象がそのボタンまでスクロールし、ボタンの印が光る');
+
+    const name = await evaluate(`${changeList}.querySelector('.lv-changes-vs').textContent`);
+    assert.ok(name.includes('Recorded 1'), name);
+    await chooseCompare('side');
+    const chosen = await evaluate(`document.querySelector('.lv-compare-select').selectedOptions[0].textContent`);
+    assert.ok(chosen.includes(name), `the heading name ${JSON.stringify(name)} is in the choice ${JSON.stringify(chosen)}`);
+    await chooseAuto();
+    await browser('click', '.lv-widths button[data-width="1280"]');
+    await waitFor(showsSnapshot('Start'));
+    await chooseCompare('now');
+    await waitFor(`${changeList}?.querySelector('.lv-changes-vs')?.textContent.includes('Start')`);
+    const auto = await evaluate(`${changeList}.querySelector('.lv-changes-vs').textContent`);
+    await chooseCompare('side');
+    assert.ok((await evaluate(`document.querySelector('.lv-compare-select').selectedOptions[0].textContent`)).includes(auto), auto);
+    await chooseCompare('now');
+    console.log('PASS 見る対象だけの見比べ方で、一覧の見出しの名前が、並べたときの比べる相手の選択の文字に含まれる（自動のときも）');
+
+    await writeFile(join(dev.dir, 'changing.css'), changingCss());
+    await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
+    await waitFor(`${changeList}?.dataset.main === '1' && Number(${changeList}.dataset.shifted) > 0`);
+    await evaluate(`(() => { const details = ${changeList}.querySelector('details'); details.open = true; return true; })()`);
+    await waitFor(`${changeList}.querySelectorAll('.lv-change-shifted .lv-change').length > 0`);
+    const shiftedTags = JSON.parse(await evaluate(`JSON.stringify(Array.from(${changeList}.querySelectorAll('.lv-change-shifted .lv-change')).map((item) => item.dataset.tag))`));
+    assert.ok(!shiftedTags.includes('html') && !shiftedTags.includes('body'), JSON.stringify(shiftedTags));
+    assert.equal(Number(await evaluate(`${changeList}.dataset.shifted`)), shiftedTags.length);
+    await writeFile(join(dev.dir, 'changing.html'), changingPage());
+    await writeFile(join(dev.dir, 'changing.css'), `${changingCss()}body { background: rgb(255, 250, 230); }\n`);
+    await waitFor(`${mainRows}.some((item) => item.dataset.tag === 'body')`);
+    console.log('PASS 兄弟の途中に要素を足しても html と body はずれただけに出ず、body の背景色を変えると body が主な変化に出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 差分（R-PAGE-DIFF、R-PAGE-VIEW の変化の一覧、R-PAGE-REF の一覧はスナップショットのときだけ）。 */
 async function changeListFollowsThePage(repository) {
   const { mkdir } = await import('node:fs/promises');
@@ -1475,9 +1557,12 @@ async function changeListFollowsThePage(repository) {
     await waitFor(`${changeList}?.dataset.main === '1'`);
     const recolored = await mainChanges();
     assert.equal(recolored.length, 1, JSON.stringify(recolored));
-    assert.equal(recolored[0].kind, 'visual', JSON.stringify(recolored));
-    assert.match(recolored[0].text, /rgb\(49, 89, 214\)[\s\S]*rgb\(214, 69, 69\)/);
-    console.log('PASS ボタンの背景色を HMR の CSS の差し替えで変えると、そのボタンが主な変化に入り、色の前後の値が出る');
+    assert.equal(recolored[0].kind, 'main', JSON.stringify(recolored));
+    // 色の前後は色の見本で出る（行の中の要素の背景色に、前の色、続いて今の色がある）。
+    const swatches = JSON.parse(await evaluate(`JSON.stringify(${backgroundsIn(`${mainRows}[0]`)})`));
+    const was = swatches.indexOf('rgb(49, 89, 214)');
+    assert.ok(was !== -1 && swatches.indexOf('rgb(214, 69, 69)', was + 1) > was, JSON.stringify(swatches));
+    console.log('PASS ボタンの背景色を HMR の CSS の差し替えで変えると、そのボタンが主な変化に入り、色の前後が出る');
 
     await post(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
@@ -1947,8 +2032,10 @@ async function cssomChangesAreFollowed(repository) {
     await writeFile(join(dev.dir, 'adopted.css'), adoptedCss('rgb(214, 69, 69)'));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     const recolored = await mainChanges();
-    assert.equal(recolored[0].kind, 'visual', JSON.stringify(recolored));
-    assert.match(recolored[0].text, /rgb\(49, 89, 214\)[\s\S]*rgb\(214, 69, 69\)/);
+    assert.equal(recolored[0].kind, 'main', JSON.stringify(recolored));
+    const swatches = JSON.parse(await evaluate(`JSON.stringify(${backgroundsIn(`${mainRows}[0]`)})`));
+    const was = swatches.indexOf('rgb(49, 89, 214)');
+    assert.ok(was !== -1 && swatches.indexOf('rgb(214, 69, 69)', was + 1) > was, JSON.stringify(swatches));
     console.log('PASS 構築したスタイルシートを replaceSync で差し替えてボタンの背景色を変えると、DOM が変わらなくても主な変化に入る');
   } finally {
     await stop(kemi);
@@ -3223,6 +3310,7 @@ try {
   await narrowToolsFloatWithHand(repository);
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
   await changeListFollowsThePage(repository);
+  await changeRowsAreElementsThatLeadToThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
   await snapshotsAreTakenUnderTrustedTypes(repository);

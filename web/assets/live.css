@@ -907,12 +907,24 @@ body[data-live-view="page"] #menu-comments {
   padding: 0;
 }
 
-.lv-change {
+/* 行は要素 1 つ。押すとページ（消えた要素はスナップショット）のその要素までスクロールして光らせる。 */
+.lv-change-go {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
   column-gap: 6px;
+  width: 100%;
   padding: 3px 4px;
+  border: 0;
   border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lv-change-go:hover {
+  background: var(--panel-2);
 }
 
 .lv-change-dot {
@@ -924,14 +936,70 @@ body[data-live-view="page"] #menu-comments {
   background: #b9a6d9;
 }
 
-.lv-change[data-kind="visual"] .lv-change-dot,
-.lv-change[data-kind="text"] .lv-change-dot,
-.lv-change[data-kind="removed"] .lv-change-dot {
+/* 点の色は、ページの上の印の色（主な変化と消えた要素は赤、増えた要素は緑、ずれただけは薄い紫）。 */
+.lv-change[data-kind="main"] .lv-change-dot,
+.lv-change[data-kind="removed"] .lv-change-dot,
+.lv-legend-item[data-kind="main"] .lv-change-dot,
+.lv-legend-item[data-kind="removed"] .lv-change-dot {
   background: #d64545;
 }
 
-.lv-change[data-kind="added"] .lv-change-dot {
+.lv-change[data-kind="added"] .lv-change-dot,
+.lv-legend-item[data-kind="added"] .lv-change-dot {
   background: #1a9a4a;
+}
+
+.lv-change-el {
+  font-weight: 600;
+}
+
+.lv-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin: 0 2px;
+  border: 1px solid rgb(0 0 0 / 28%);
+  border-radius: 3px;
+  vertical-align: -1px;
+}
+
+.lv-changes-vs {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.lv-changes-vs::before {
+  content: "vs ";
+}
+
+.lv-shifted-why {
+  display: block;
+  padding-left: 12px;
+  font-weight: 400;
+}
+
+.lv-changes-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 6px 2px 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.lv-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lv-legend-item .lv-change-dot {
+  margin-top: 0;
 }
 
 .lv-change-what {
