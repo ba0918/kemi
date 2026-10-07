@@ -114,8 +114,9 @@ open a comment or resolve one; only the person does that.
 The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
 is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your
 answer), replied (you have answered every thread the last returned `kemi wait` carried — a
-message answers a hand-over of messages only; if the person deletes a thread you were still to
-answer, the rest counts once you have written anything since that return), and not responding (working for 10 minutes with
+message answers a hand-over of messages only; a thread the person deletes no longer needs an
+answer, so once the remaining threads are answered and you have written at least once since that
+return, the state is replied), and not responding (working for 10 minutes with
 neither `kemi wait` nor `kemi reply`; replied never turns into it). Reply to each thread you were
 handed, so the person can see which ones you have answered: each thread you were handed shows a
 "working" line until you reply in it (a hand-over of messages only waits for a message). **Hand to agent** is always shown but cannot be pressed until `kemi wait` has been called in that
