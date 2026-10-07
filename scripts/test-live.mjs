@@ -1221,7 +1221,7 @@ async function narrowPageViewFitsOneRow(repository) {
 /**
  * 開いたまま狭い画面との境をまたぐ（R-PAGE-VIEW の狭い画面、R-PAGE-REF）: 等倍で見る対象だけのまま狭くすると、帯のメニューに
  * 比べる相手の選択が出る。比べる相手の 1 枚を見ている間は、見出しが比べる相手の名前（選択に出ている名前に含まれる）になり、
- * その 1 枚の見出しに倍率が出る。
+ * その 1 枚の見出しに倍率が出て、表示幅より狭い枠を横にスクロールできる。
  * 動いているページに戻すと見出しは見る対象だけのときと同じになり、広くすると比べる相手の選択がまた隠れる。並べたまま
  * 狭くしても、見出しは見る対象だけのときと同じになる。
  */
@@ -1230,6 +1230,7 @@ async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
   const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   const heading = `document.querySelector('.lv-stage-name').textContent`;
+  const refViewport = `document.querySelector('${refPane} .lv-viewport')`;
   const refScale = `Number(document.querySelector('${refPane} .lv-bar-label').textContent.match(/×([0-9.]+)/)?.[1] ?? NaN)`;
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -1252,7 +1253,9 @@ async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
     await waitFor(`${visible(refPane)} && !${visible(livePane)}`);
     await waitFor(`${heading} !== '' && ${heading} !== ${JSON.stringify(nowHeading)} && document.querySelector('.lv-compare-select').selectedOptions[0].textContent.includes(${heading})`);
     await waitFor(`${refScale} === 1`);
-    console.log('PASS 幅 390px で比べる相手の 1 枚を見ると、見出しがその名前になり、その 1 枚の見出しに倍率が出る');
+    // 横のスクロールはホイールが (0, 0) に落ちて試せないので、表示幅より狭い枠がはみ出た分をスクロールで見せるかを見る。
+    await waitFor(`${refViewport}.scrollWidth > ${refViewport}.clientWidth && getComputedStyle(${refViewport}).overflowX !== 'hidden'`);
+    console.log('PASS 幅 390px で比べる相手の 1 枚を見ると、見出しがその名前になり、その 1 枚の見出しに倍率が出て、等倍で横にスクロールできる');
 
     await browser('click', '.lv-side button[data-side="live"]');
     await waitFor(`${visible(livePane)} && ${heading} === ${JSON.stringify(nowHeading)}`);

@@ -688,6 +688,11 @@ body[data-live-view="page"] #menu-comments {
     display: flex;
   }
 
+  /* 等倍は見ている 1 枚に効く。比べる相手の 1 枚も、枠より広い分は枠を横にスクロールして見る（R-PAGE-VIEW）。 */
+  .lv-stage[data-zoom="full"][data-side="ref"] .lv-pane[data-side="ref"] .lv-viewport {
+    overflow: auto;
+  }
+
   .lv-stage[data-side="live"] .lv-pane[data-side="ref"],
   .lv-stage[data-side="ref"] .lv-pane[data-side="live"] {
     display: none;
