@@ -413,6 +413,7 @@ impl TreeWatch {
         // ディレクトリがあるように見える。
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut gone: HashSet<PathBuf> = HashSet::new();
+        let mut arrived: HashSet<PathBuf> = HashSet::new();
         for event in events {
             if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
                 continue;
@@ -426,6 +427,8 @@ impl TreeWatch {
                 };
                 if moves_away(&event.kind, position) {
                     gone.insert(path.clone());
+                } else if arrives(&event.kind, position) {
+                    arrived.insert(path.clone());
                 }
                 if path.file_name() == Some(".gitignore".as_ref()) {
                     self.rules_changed = true;
@@ -439,6 +442,17 @@ impl TreeWatch {
         if self.verdicts.len() > VERDICT_LIMIT {
             self.verdicts.clear();
         }
+        // 消えたパスは見えていたときの判定で決め、その判定は忘れる。現れたパスは判定を
+        // 忘れて聞き直す。同じ名前でディレクトリとファイルが入れ替わると、判定も変わる。
+        let mut settled: HashMap<PathBuf, bool> = HashMap::new();
+        for path in &gone {
+            if let Some(verdict) = self.verdicts.remove(path) {
+                settled.insert(path.clone(), verdict);
+            }
+        }
+        for path in &arrived {
+            self.verdicts.remove(path);
+        }
         let known: HashSet<PathBuf> = paths
             .iter()
             .filter(|path| files.contains(&self.canonical_of(path)))
@@ -449,7 +463,7 @@ impl TreeWatch {
         let mut unknown: Vec<PathBuf> = Vec::new();
         let mut asking: HashSet<PathBuf> = HashSet::new();
         for path in &paths {
-            if known.contains(path) || self.under_ignored(path) {
+            if known.contains(path) || settled.contains_key(path) || self.under_ignored(path) {
                 continue;
             }
             for asked in self.unjudged_ancestors(path).chain([path.clone()]) {
@@ -474,7 +488,11 @@ impl TreeWatch {
                 changed = true;
                 continue;
             }
-            if self.verdicts.get(&path) == Some(&true) || self.under_ignored(&path) {
+            let ignored = settled
+                .get(&path)
+                .or_else(|| self.verdicts.get(&path))
+                .is_some_and(|verdict| *verdict);
+            if ignored || self.under_ignored(&path) {
                 continue;
             }
             changed = true;
@@ -574,6 +592,17 @@ fn moves_away(kind: &EventKind, position: usize) -> bool {
         kind,
         EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From))
     ) || (matches!(kind, EventKind::Modify(ModifyKind::Name(RenameMode::Both))) && position == 0)
+}
+
+/// イベントの `position` 番目のパスが、その場所に現れたか（作成と改名の先）。macOS の
+/// 改名はどちら向きか分からないので、現れたものとして判定を聞き直す。
+fn arrives(kind: &EventKind, position: usize) -> bool {
+    use notify::event::{ModifyKind, RenameMode};
+    matches!(
+        kind,
+        EventKind::Create(_)
+            | EventKind::Modify(ModifyKind::Name(RenameMode::To | RenameMode::Any))
+    ) || (matches!(kind, EventKind::Modify(ModifyKind::Name(RenameMode::Both))) && position == 1)
 }
 
 /// 配れる範囲を見張る（R-PAGE-MODE の `--live <ファイル>`）。範囲の中のファイルが保存・作成
@@ -947,6 +976,84 @@ mod tests {
             EventKind::Remove(RemoveKind::Folder),
             repo.0.join("build"),
         ));
+    }
+
+    #[test]
+    fn a_file_that_replaces_an_ignored_directory_of_the_same_name_is_watched() {
+        use notify::event::{CreateKind, ModifyKind, RemoveKind};
+        let repo = IgnoringRepo::new("directory-to-file");
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::PerDirectory,
+            HashSet::new(),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(repo.0.join("build")).unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::Folder),
+            repo.0.join("build"),
+        );
+        std::fs::write(repo.0.join("build"), "now a file\n").unwrap();
+
+        assert!(changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Create(CreateKind::File),
+            repo.0.join("build"),
+        ));
+        assert!(changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Modify(ModifyKind::Any),
+            repo.0.join("build"),
+        ));
+    }
+
+    #[test]
+    fn an_ignored_directory_that_replaces_a_file_of_the_same_name_is_not_watched() {
+        use notify::event::{CreateKind, ModifyKind, RemoveKind};
+        let repo = IgnoringRepo::new("file-to-directory");
+        std::fs::remove_dir_all(repo.0.join("build")).unwrap();
+        std::fs::write(repo.0.join("build"), "a file\n").unwrap();
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::PerDirectory,
+            HashSet::new(),
+        )
+        .unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Modify(ModifyKind::Any),
+            repo.0.join("build"),
+        );
+        std::fs::remove_file(repo.0.join("build")).unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::File),
+            repo.0.join("build"),
+        );
+        std::fs::create_dir(repo.0.join("build")).unwrap();
+
+        assert!(!changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Create(CreateKind::Folder),
+            repo.0.join("build"),
+        ));
+        assert!(
+            !watcher
+                .watched
+                .iter()
+                .any(|(path, _)| path == &repo.0.join("build"))
+        );
     }
 
     #[test]
