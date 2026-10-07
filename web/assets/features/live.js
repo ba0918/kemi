@@ -325,7 +325,7 @@ export function startLive(info) {
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
-  new ResizeObserver(() => {
+  const resized = new ResizeObserver(() => {
     // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
     // 倍率が変わらないこともあるので、まるごと描き直す。
     if (live.renderedNarrow !== state.narrow) {
@@ -334,7 +334,11 @@ export function startLive(info) {
     }
     layoutFrames();
     syncLaidOutInert();
-  }).observe(shell.stage);
+  });
+  resized.observe(shell.stage);
+  // 書く欄や始め方の案内の出し入れは舞台の大きさを変えず、見る対象の枠の外側だけを変える。外側も見ないと、欄を
+  // 開いている間に縮めた枠の高さが、欄を閉じた後も残る（R-PAGE-COMMENT）。
+  resized.observe(shell.liveViewport);
 
   shell.liveFrame.src = live.origin + live.page;
   setView("page");

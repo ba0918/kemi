@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消すと番号と本文の #n が
 //   詰まり、渡した JSON も同じ。消した場所を指す #n があると保存できない。一覧の番号を押すと本文に #n が入る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。書く欄を閉じると（保存・取り消し）見る対象の枠は欄を開く前の高さに戻り、最初の保存で案内が消えると空いた高さまで伸びる。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。保存したコメントの場所は、スレッドを開いている間だけ番号付きで、それ以外は番号の無い小さな印で、
 //   乗せるとレビュー画面にそのコメントの短い名前が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
@@ -1170,6 +1170,61 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
   } finally {
     await stop(tall);
     await tallDev.close();
+  }
+}
+
+/** 見る対象の枠の、縮める前の高さ（ページの CSS ピクセル）。 */
+const liveFrameHeight = `document.querySelector('${livePane} .lv-frame').offsetHeight`;
+
+/** 見る対象の枠の外側の高さを、縮めた倍率で割ったもの（枠がそこまで伸びているべき高さ）。 */
+const liveRoomHeight = `(document.querySelector('${livePane} .lv-viewport').clientHeight / Number(getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'))`;
+
+/**
+ * 書く欄を閉じた後の枠の高さ（R-PAGE-COMMENT）: 場所を置いて書く欄を開き、保存しても取り消しても、見る対象の枠の高さは
+ * 欄を開く前と同じ。最初の保存で始め方の案内が消えたときも、枠は空いた高さまで伸びる。欄を開いている間に枠を並べ直す
+ * きっかけ（道具を選び直す）があっても同じ。
+ */
+async function closingTheComposeBoxRestoresTheFrame(repository) {
+  const dev = await startDevServer();
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}rich.html`]);
+  const compose = '#live-compose';
+  const sameHeight = (expected) => `Math.abs(${liveFrameHeight} - ${expected}) <= 1`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')} && ${visible('.lv-hint')}`);
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]' && ${visible(compose)}`);
+    await chooseTool('arrow');
+    await savePageCommentInThePage('the first comment');
+    await waitFor(`!${visible('.lv-hint')} && !${visible(compose)}`);
+    await new Promise((done) => setTimeout(done, 300));
+    assert.ok(
+      await evaluate(sameHeight(liveRoomHeight)),
+      `the frame grows into the room the hint left: ${await evaluate(liveFrameHeight)} for ${await evaluate(liveRoomHeight)}`,
+    );
+    console.log('PASS 最初の保存で始め方の案内が消えると、見る対象の枠が空いた高さまで伸びる');
+
+    await chooseTool('element');
+    const before = await evaluate(liveFrameHeight);
+    for (const close of ['save', 'cancel']) {
+      await clickInPane(livePane, 150, 250);
+      await waitFor(`${draftNumbers} === '[1]' && ${visible(compose)}`);
+      await chooseTool('arrow');
+      await chooseTool('element');
+      if (close === 'save') {
+        await savePageCommentInThePage('another comment');
+      } else {
+        await browser('click', `${compose} .lv-compose-cancel`);
+      }
+      await waitFor(`!${visible(compose)}`);
+      await new Promise((done) => setTimeout(done, 300));
+      assert.ok(await evaluate(sameHeight(before)), `after ${close}, the frame is as high as before the box opened: ${await evaluate(liveFrameHeight)} for ${before}`);
+    }
+    console.log('PASS 書く欄を開いて保存しても取り消しても、見る対象の枠の高さは欄を開く前と同じ');
+  } finally {
+    await stop(kemi);
+    await dev.close();
   }
 }
 
@@ -3011,6 +3066,7 @@ try {
   await sideBySidePagesShareTheirTop(repository);
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
+  await closingTheComposeBoxRestoresTheFrame(repository);
   await narrowPageViewFitsOneRow(repository);
   await narrowToolsFloatWithHand(repository);
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
