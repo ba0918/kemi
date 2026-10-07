@@ -1176,8 +1176,8 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
 /**
  * 狭い画面の道具と「エージェントに渡す」（R-PAGE-VIEW の狭い画面、R-AGENT-STATE、R-NARROW）: 幅 390px のページの見方では、
  * 道具と「Hand to agent」が画面の下の 1 つの浮かぶツールバーにあり、全モード共通の浮かぶ「Hand to agent」は出ない。
- * 道具を切り替えて場所を置ける。コードの見方では全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらの浮かぶ
- * ものも見えない。
+ * `kemi wait` の前は、そのそばに `kemi wait <id>` を写す操作が出る。道具を切り替えて場所を置ける。コードの見方では
+ * 全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらの浮かぶものも見えない。
  */
 async function narrowToolsFloatWithHand(repository) {
   const dev = await startDevServer();
@@ -1197,6 +1197,10 @@ async function narrowToolsFloatWithHand(repository) {
     assert.ok(bar.bottom > 844 - 80 && bar.bottom <= 844, `the tools float at the bottom: ${JSON.stringify(bar)}`);
     assert.ok(hand.top >= bar.top && hand.bottom <= bar.bottom, `Hand to agent is in the floating toolbar: ${JSON.stringify(hand)}`);
     assert.equal(await evaluate(visible('#hand-float')), false, 'the floating button of every mode is not shown twice');
+    // kemi wait の前は、浮かぶ「Hand to agent」のそばに kemi wait <id> を写す操作が出る（R-AGENT-STATE）。
+    const commands = `Array.from(document.querySelectorAll('.hand-command')).filter((item) => item.getClientRects().length > 0).map((item) => item.textContent)`;
+    assert.deepEqual(JSON.parse(await evaluate(`JSON.stringify(${commands})`)), [`kemi wait ${kemi.id}`], 'the command to copy is shown beside the floating Hand to agent');
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('.hand-copy')).filter((item) => item.getClientRects().length > 0).length`), 1, 'the command can be copied');
     await chooseTool('pen');
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);

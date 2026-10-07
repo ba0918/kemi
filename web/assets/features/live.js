@@ -386,10 +386,14 @@ function mirrorDrawer(pageTree) {
 
 /**
  * 狭い画面の道具のツールバーの「Hand to agent」は、全モード共通の浮かぶもの（views/conversation.js が描く）の押せる・
- * 押せないと文言を写し、押すと同じく渡す。
+ * 押せないと文言を写し、押すと同じく渡す。そばの案内は全モード共通のものをそのままツールバーの上に出すので、
+ * その高さを `--lv-hand-note-height` に入れ、見る対象の下をその分も空ける（書く欄の操作を覆わせない）。
  * @param {HTMLButtonElement} target
  */
 function mirrorHand(target) {
+  new ResizeObserver(() => {
+    document.body.style.setProperty("--lv-hand-note-height", `${dom.handFloatNote.getBoundingClientRect().height}px`);
+  }).observe(dom.handFloatNote);
   const source = dom.handFloat;
   const copy = () => {
     target.disabled = source.disabled;

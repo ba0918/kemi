@@ -598,7 +598,8 @@ body[data-live-view="page"] #menu-comments {
 /* ---- 狭い画面（R-NARROW と同じしきい値）: 1 枚ずつ切り替えて見る ---- */
 @media (max-width: 719.98px) {
   /* 道具（要素・矢印・ペン・操作）と「Hand to agent」は、画面の下に浮かぶ 1 つのツールバーにまとめる（R-PAGE-VIEW）。
-     ページの見方では、全モード共通の浮かぶ「Hand to agent」は出さない（同じものを 2 つ出さない）。 */
+     ページの見方では、全モード共通の浮かぶ「Hand to agent」のボタンは出さない（同じものを 2 つ出さない）。そのそばの
+     案内（kemi wait を写す操作、渡すものが無いこと。R-AGENT-STATE）は残し、ツールバーの上に出す。 */
   .lv-toolbar {
     position: fixed;
     left: 8px;
@@ -618,7 +619,7 @@ body[data-live-view="page"] #menu-comments {
     flex-shrink: 0;
   }
 
-  body[data-live-view="page"] .hand-float {
+  body[data-live-view="page"] #hand-float {
     display: none;
   }
 
@@ -708,11 +709,12 @@ body[data-live-view="page"] #menu-comments {
   }
 
   /* 見比べ方によらず、動いているページと比べる相手を 1 枚ずつ切り替えて見る（重ねて透かさない）。 */
-  /* 下は、画面の下に浮かぶ道具のツールバーの分を空け、書く欄の操作を覆わせない。 */
+  /* 下は、画面の下に浮かぶ道具のツールバーと、その上に出る「Hand to agent」の案内の分を空け、書く欄の操作を
+     覆わせない。 */
   .lv-stage,
   .lv-stage[data-compare] {
     grid-template-columns: minmax(0, 1fr);
-    padding: 6px 6px 62px;
+    padding: 6px 6px calc(62px + var(--lv-hand-note-height, 0px));
   }
 
   .lv-stage[data-side="ref"] .lv-pane[data-side="ref"] {
