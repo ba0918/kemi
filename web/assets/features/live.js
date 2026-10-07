@@ -171,6 +171,8 @@ const live = {
   saving: false,
   /** 書く欄に出す知らせ（場所を置けなかった、保存できなかった）。 */
   composeError: "",
+  /** 最後に描いたときの画面が狭い画面だったか。境をまたいだら描き直す。 */
+  renderedNarrow: false,
 };
 
 /** 描いている途中の線。点は枠の中の画面の座標（ページの CSS ピクセル）と、重ねた層の中の座標。 */
@@ -317,9 +319,13 @@ export function startLive(info) {
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
   new ResizeObserver(() => {
-    placeControls();
+    // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
+    // 倍率が変わらないこともあるので、まるごと描き直す。
+    if (live.renderedNarrow !== state.narrow) {
+      render();
+      return;
+    }
     layoutFrames();
-    // 狭い画面との境をまたぐと、並べたまま隠れている側も変わる。
     syncLaidOutInert();
   }).observe(shell.stage);
 
@@ -991,6 +997,7 @@ async function capture(kind) {
 }
 
 function render() {
+  live.renderedNarrow = state.narrow;
   const shown = live.view === "page" ? { page: live.page, width: live.width } : null;
   const moved = JSON.stringify(shown) !== JSON.stringify(state.live);
   state.live = shown;

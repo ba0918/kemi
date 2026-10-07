@@ -1218,6 +1218,40 @@ async function narrowPageViewFitsOneRow(repository) {
   }
 }
 
+/**
+ * 開いたまま狭い画面との境をまたぐ（R-PAGE-VIEW の狭い画面、R-PAGE-REF）: 等倍で見る対象だけのまま狭くすると、帯のメニューに
+ * 比べる相手の選択が出る。広くすると比べる相手の選択がまた隠れる。
+ */
+async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('${refPane}').dataset.reference === 'snapshot'`);
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await waitFor(`${liveScale} === 1`);
+    await browser('set', 'viewport', '390', '844');
+    await waitFor(`${visible('.lv-side')} && ${visible('#live-band .lv-menu-button')}`);
+    // 幅をまたいだ直後は帯の並びが動くので、落ち着いてから押す。
+    await new Promise((done) => setTimeout(done, 500));
+    await browser('click', '#live-band .lv-menu-button');
+    await waitFor(visible('.lv-menu .lv-compare-select'));
+    await browser('press', 'Escape');
+    await waitFor(`!${visible('.lv-menu')}`);
+    console.log('PASS 等倍で見る対象だけのまま幅 390px にすると、帯のメニューに比べる相手の選択がある');
+
+    await browser('set', 'viewport', '1280', '900');
+    await waitFor(`!${visible('.lv-side')} && !${visible('.lv-compare-select')} && !${visible(refPane)}`);
+    console.log('PASS 広い画面に戻すと、見る対象だけのまま比べる相手の選択が隠れる');
+  } finally {
+    await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 表示中のページの変化の一覧。無ければ null。 */
 const changeList = `document.querySelector('#page-tree .lv-page[data-current="true"] .lv-changes')`;
 
@@ -2814,6 +2848,7 @@ try {
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
   await narrowPageViewFitsOneRow(repository);
+  await crossingTheNarrowWidthFollowsTheShownPage(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
