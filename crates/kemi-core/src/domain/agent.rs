@@ -389,7 +389,7 @@ impl AgentLink {
     }
 
     /// `kemi reply` の書き込みが届いた。返信のスレッドの行と、発言があれば並びの末尾の行を消し、
-    /// 状態を表のとおりに移す。
+    /// 状態を表のとおりに移す。1 件も書いていなければ、何も届いていないので何も変えない。
     /// `comments` は書いた後に今あるコメント。
     pub fn agent_wrote(
         &mut self,
@@ -399,6 +399,9 @@ impl AgentLink {
         message: bool,
         comments: &[Comment],
     ) {
+        if threads.is_empty() && !message {
+            return;
+        }
         let before = self.status(called, now);
         self.lines.retain(|line| match &line.at {
             HandLineAt::Thread(id) => !threads.contains(id),
@@ -1124,6 +1127,17 @@ mod tests {
         link.agent_wrote(true, T0, &["c2".to_string()], false, &existing);
 
         assert_eq!(link.status(true, T0), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn a_write_with_nothing_in_it_does_not_change_the_status() {
+        let mut link = AgentLink::new(T0, &[]);
+        link.wait_started();
+        link.wait_ended_empty(T0);
+
+        link.agent_wrote(true, T0, &[], false, &[]);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
     }
 
     fn agent_replies(count: usize) -> Vec<Reply> {
