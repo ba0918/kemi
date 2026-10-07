@@ -137,6 +137,12 @@ const live = {
    * @type {{ page: string, path: string } | null}
    */
   removedMock: null,
+  /**
+   * 外したモックを取り消しで割り当て直せなかった理由（R-PAGE-MOCK の、断ったら理由を出す）。パネルは閉じているので帯に出す。
+   * 次にモックを割り当てるか外すか、ページを移るまで出す。
+   * @type {{ page: string, text: string } | null}
+   */
+  undoMockFailed: null,
   /** @type {Map<string, string>} 中身の写し（id → HTML） */
   bodies: new Map(),
   /** 比べる相手の枠に今出しているスナップショット。 */
@@ -616,6 +622,7 @@ function receive(event) {
   if (moved) {
     live.refNotice = "";
     live.recorded = null;
+    live.undoMockFailed = null;
     live.shiftedOpen = false;
     live.listed = { main: 0, shifted: 0 };
   }
@@ -772,15 +779,18 @@ function openMockMenu(anchor) {
 }
 
 /**
- * そのパスのモックを、表示中のページに割り当てる。断られたらパネルに理由を出す（R-PAGE-MOCK）。
+ * そのパスのモックを、表示中のページに割り当てる。断られたらパネルに理由を出す（R-PAGE-MOCK）。断られた理由を返す
+ * （割り当てられたら空）。
  * @param {string} path
  * @param {string} [page] 割り当てるページ（取り消しでは外したときのページ）
+ * @returns {Promise<string>}
  */
 async function assignMock(path, page = live.page) {
   if (!shell) {
-    return;
+    return "";
   }
   const panel = shell.mockPanel;
+  let refused = "";
   try {
     const mock = await api.assignMock(page, path);
     live.mocks.set(page, { path: mock.path, url: mock.url });
@@ -788,15 +798,18 @@ async function assignMock(path, page = live.page) {
     live.chosen.delete(page);
     // 選び直したので、前に外したモックへ戻す取り消しは消す（押すと選んだモックが替わってしまう。R-PAGE-REF）。
     forgetRemovedMock();
+    live.undoMockFailed = null;
     panel.error.hidden = true;
     if (panel.box.matches(":popover-open")) {
       panel.box.hidePopover();
     }
   } catch (error) {
-    panel.error.textContent = error instanceof Error ? error.message : String(error);
+    refused = error instanceof Error ? error.message : String(error);
+    panel.error.textContent = refused;
     panel.error.hidden = false;
   }
   render();
+  return refused;
 }
 
 /** 表示中のページのモックを外す。比べる相手はスナップショットに戻る。取り消す操作つきで知らせる。 */
@@ -805,6 +818,7 @@ async function removeMock() {
   const path = live.mocks.get(page)?.path;
   await api.assignMock(page, null);
   live.mocks.delete(page);
+  live.undoMockFailed = null;
   if (live.chosen.get(page) === "mock") {
     live.chosen.delete(page);
   }
@@ -831,12 +845,17 @@ function forgetRemovedMock() {
   }
 }
 
-/** 外したモックを、同じパスで割り当て直す。 */
-function undoRemovedMock() {
+/** 外したモックを、同じパスで割り当て直す。断られたら（外した後にファイルが消えたなど）理由を帯に出す。 */
+async function undoRemovedMock() {
   const removed = live.removedMock;
   forgetRemovedMock();
-  if (removed) {
-    void assignMock(removed.path, removed.page);
+  if (!removed) {
+    return;
+  }
+  const refused = await assignMock(removed.path, removed.page);
+  if (refused !== "") {
+    live.undoMockFailed = { page: removed.page, text: `Mock not assigned again · ${removed.path}: ${refused}` };
+    renderReference();
   }
 }
 
@@ -2036,6 +2055,7 @@ function renderBandNotice(reference) {
   }
   bandAction = null;
   const removed = live.removedMock !== null && live.removedMock.page === live.page ? live.removedMock : null;
+  const undoFailed = live.undoMockFailed !== null && live.undoMockFailed.page === live.page ? live.undoMockFailed.text : "";
   const recorded =
     live.recorded !== null &&
     live.recorded.page === live.page &&
@@ -2044,7 +2064,7 @@ function renderBandNotice(reference) {
     reference.snapshot.id === live.recorded.id
       ? reference.snapshot
       : null;
-  let text = live.refNotice;
+  let text = live.refNotice === "" ? undoFailed : live.refNotice;
   let kind = "waiting";
   let label = "";
   let title = "";

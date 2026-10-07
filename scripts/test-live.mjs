@@ -1262,6 +1262,15 @@ async function mockMenuRemovesAndUndoes(repository) {
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('${refPane} .lv-bar-label').textContent.includes('mocks/menu-mock-b.html')`);
     assert.equal(await evaluate(visible(bandNoticeAction)), false, 'no undo is left that would replace the newly chosen mock');
     console.log('PASS モックを外した後に別のモックを割り当てると、前のモックへ戻す取り消しの操作は残らない');
+
+    // 取り消しが断られたら（外した後にファイルが消えた）、理由を画面に出す（R-PAGE-MOCK）。
+    await chooseFromMockMenu('lv-mock-remove');
+    await waitFor(`${showsSnapshot('Start')} && ${visible(bandNoticeAction)}`);
+    await rm(join(repository, 'mocks', 'menu-mock-b.html'));
+    await browser('click', bandNoticeAction);
+    await waitFor(`${visible(bandNotice)} && document.querySelector('${bandNotice}').dataset.kind !== 'done' && !${visible(bandNoticeAction)}`);
+    assert.equal(await evaluate(showsSnapshot('Start')), true, 'the mock that could not be assigned again is not the reference');
+    console.log('PASS 外したモックのファイルが消えてから取り消すと、割り当てられず、その理由が帯に出る');
   } finally {
     await stop(kemi);
     await dev.close();
