@@ -319,8 +319,8 @@ message); the line carries `data-kemi-hand-line="pending"` or `"working"`.
 **Hand to agent** is always shown, also on the folded rail, but cannot be
 pressed until `kemi wait` has been called once in that review: next to it the
 page says that comments can be handed once the agent runs `kemi wait <id>`,
-with that command (this review's id) to copy (on the folded rail, while the
-pointer is on it). It also cannot be pressed, and
+with that command (this review's id) to copy, also on the folded rail. It
+also cannot be pressed, and
 says so, while there is nothing new to hand. In a review the agent cannot
 connect to (no session, so no `kemi: review` line), it stays unpressable
 and says that no agent can connect. The agent API listens on

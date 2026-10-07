@@ -216,14 +216,12 @@ try {
   await evaluate(`window.__kemiCopied = []; navigator.clipboard.writeText = async (text) => { window.__kemiCopied.push(text); }; true`);
   assert.equal(await evaluate(panelClosed), true);
   assert.equal(await evaluate(`${shown('#rail-hand')} && document.querySelector('#rail-hand').disabled`), true, 'the folded rail shows Hand to agent, not pressable');
-  // 畳んだ帯の案内は、帯にポインタを乗せている間だけ出る（出したままだと差分を覆う）。
-  assert.equal(await evaluate(shown('#rail-hand-note')), false, 'the note does not cover the diff by itself');
-  await browser('hover', '#rail-hand');
+  // 畳んだ帯でも、案内と写す操作はボタンのそばに出たまま（ポインタを乗せなくても）。
   await waitFor(`${shown('#rail-hand-note')} && document.querySelector('#rail-hand-note .hand-command')?.textContent === ${JSON.stringify(`kemi wait ${kemi.id}`)}`);
   await browser('click', '#rail-hand-note .hand-copy');
   await waitFor(`window.__kemiCopied.length === 1`);
   assert.deepEqual(JSON.parse(await evaluate(`JSON.stringify(window.__kemiCopied)`)), [`kemi wait ${kemi.id}`]);
-  console.log('PASS kemi wait の前は、畳んだ帯に「Hand to agent」が押せないまま出て、乗せると出る kemi wait <id> を写す操作で写したものがこのレビューの id のコマンド');
+  console.log('PASS kemi wait の前は、畳んだ帯に「Hand to agent」が押せないまま出て、そばの kemi wait <id> を写す操作で写したものがこのレビューの id のコマンド');
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);
@@ -700,7 +698,6 @@ try {
   await browser('open', aloneUrl);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
   await waitFor(`${shown('#rail-hand')} && document.querySelector('#rail-hand').disabled`);
-  await browser('hover', '#rail-hand');
   await waitFor(shown('#rail-hand-note'));
   assert.equal(await evaluate(`document.querySelector('#rail-hand-note .hand-command') === null`), true, 'no command to copy');
   console.log('PASS エージェントがつながれないレビューでも「Hand to agent」は押せないまま出て、写すコマンドは無く、つながれないことを言う');
