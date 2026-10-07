@@ -45,7 +45,7 @@ const waitFor = async (code) => {
     await browser('wait', '--fn', code);
   } catch (error) {
     const snapshot = await evaluate(`JSON.stringify({
-      status: document.querySelector('#agent-status')?.dataset.status,
+      status: document.querySelector('#agent-status')?.dataset.kemiAgentState,
       conversation: document.querySelector('#conversation')?.dataset.open,
       thread: !document.querySelector('#cv-thread')?.hidden,
       replies: document.querySelectorAll('#cv-thread-body .cv-post').length,
@@ -162,7 +162,7 @@ async function post(url, path, body) {
 }
 
 const shown = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e !== null && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none'; })()`;
-const statusIs = (status) => `document.querySelector('#agent-status').dataset.status === ${JSON.stringify(status)}`;
+const statusIs = (status) => `document.querySelector('#agent-status').dataset.kemiAgentState === ${JSON.stringify(status)}`;
 const panelOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
 const panelClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
 const chipC1 = `document.querySelector('#diff-content .cchip[data-id="c1"]')`;
@@ -214,7 +214,7 @@ try {
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   assert.equal(await evaluate(shown('#agent-status')), true);
-  assert.equal(await evaluate(statusIs('unconnected')), true);
+  assert.equal(await evaluate(statusIs('not-connected')), true);
   assert.equal(await evaluate(shown('#btn-hand')), false);
   assert.equal(await evaluate(shown('#cv-reply-text')), true);
   assert.equal(await evaluate(shown('#cv-thread-head .cv-resolve')), true);

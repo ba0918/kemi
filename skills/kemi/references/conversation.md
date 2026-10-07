@@ -111,6 +111,10 @@ open a comment or resolve one; only the person does that.
    you were working, or the main `kemi` process exited). Then handle the result as usual: take
    it from the main process's stdout, or from `kemi --result`.
 
-The page shows whether you are waiting, working, or not responding (working for 10 minutes with
-neither `kemi wait` nor `kemi reply`). **Hand to agent** appears only once `kemi wait` has been
+The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
+is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your
+answer), replied (you have answered every thread the last returned `kemi wait` carried — a
+message answers a hand-over of messages only), and not responding (working for 10 minutes with
+neither `kemi wait` nor `kemi reply`; replied never turns into it). Reply to each thread you were
+handed, so the person can see which ones you have answered. **Hand to agent** appears only once `kemi wait` has been
 called in that review, so a review where you never call it stays submit-only.

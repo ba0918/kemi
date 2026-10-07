@@ -83,9 +83,9 @@ function openThreadComment() {
 export function renderAgentState() {
   const agent = state.agent;
   const label = agentStatusLabel(agent.status);
-  dom.agentStatus.dataset.status = agent.status;
+  dom.agentStatus.dataset.kemiAgentState = agent.status;
   dom.agentStatus.textContent = label;
-  dom.railStatus.dataset.status = agent.status;
+  dom.railStatus.dataset.kemiAgentState = agent.status;
   dom.railStatus.title = label;
   const count = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
   for (const hand of [dom.btnHand, dom.railHand]) {

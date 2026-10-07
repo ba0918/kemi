@@ -1560,14 +1560,22 @@ export function effectiveDisplay(settings) {
   return { mode: settings.mode, wrap: settings.wrap };
 }
 
-/** @typedef {{ called: boolean, status: string, unhanded: number }} AgentState */
+/**
+ * 渡した 1 回分の行（R-AGENT-HAND）。`thread` が null なら発言だけの 1 回分の、並びの末尾の行。
+ * @typedef {{ thread: string | null, state: "pending" | "working" }} HandLine
+ * @typedef {{ called: boolean, status: string, unhanded: number, lines?: HandLine[] }} AgentState
+ */
 
-/** @type {Record<string, string>} */
+/**
+ * 状態の呼び名。人が次に何をすればよいかが分かる言い方にする（R-AGENT-STATE）。
+ * @type {Record<string, string>}
+ */
 const AGENT_STATUS_LABELS = {
-  unconnected: "Not connected",
-  waiting: "Waiting",
-  working: "Working",
-  unresponsive: "Not responding",
+  "not-connected": "Not connected",
+  waiting: "Ready — you can hand",
+  working: "Working…",
+  replied: "Replied",
+  "no-response": "Not responding",
 };
 
 /**

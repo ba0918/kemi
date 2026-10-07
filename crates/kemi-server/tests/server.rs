@@ -3518,13 +3518,13 @@ async fn the_first_load_carries_replies_messages_and_the_agent_state() {
 }
 
 #[tokio::test]
-async fn a_review_where_kemi_wait_was_never_called_is_unconnected() {
+async fn a_review_where_kemi_wait_was_never_called_is_not_connected() {
     let (server, _sink) = TestServer::with_recording_session().await;
 
     let review: Value = server.get("api/review").await.json().await.unwrap();
 
     assert_eq!(review["agent"]["called"], false);
-    assert_eq!(review["agent"]["status"], "unconnected");
+    assert_eq!(review["agent"]["status"], "not-connected");
     assert_eq!(review["messages"], json!([]));
 }
 
@@ -4183,10 +4183,10 @@ async fn the_agent_listener_stays_on_loopback_when_the_page_listens_on_all_inter
 }
 
 #[tokio::test]
-async fn the_status_goes_from_unconnected_to_waiting_to_working() {
+async fn the_status_goes_from_not_connected_to_waiting_to_working() {
     let server = AgentServer::start().await;
     let mut events = server.page.get("api/events").await;
-    assert_eq!(server.agent_status().await, "unconnected");
+    assert_eq!(server.agent_status().await, "not-connected");
 
     let waiting = {
         let url = server.agent_url(&server.agent_token, "wait");
@@ -4213,6 +4213,85 @@ async fn the_status_goes_from_unconnected_to_waiting_to_working() {
     assert_eq!(notified["status"], "working");
     assert_eq!(server.agent_status().await, "working");
     assert!(server.sink.last_state().channel.called);
+}
+
+impl AgentServer {
+    /// 渡した 1 回分の行（スレッドか、発言だけなら null, 状態）。
+    async fn hand_lines(&self) -> Vec<(Value, String)> {
+        let review: Value = self.page.get("api/review").await.json().await.unwrap();
+        review["agent"]["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| {
+                (
+                    line["thread"].clone(),
+                    line["state"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn replying_to_one_of_two_handed_threads_keeps_it_working_and_to_both_makes_it_replied() {
+    let server = AgentServer::start().await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    let c2 = server.page.add_comment_with_body(12, "second").await["id"].clone();
+    server.page.hand().await;
+    assert_eq!(
+        server.hand_lines().await,
+        vec![
+            (c1.clone(), "pending".to_string()),
+            (c2.clone(), "pending".to_string())
+        ]
+    );
+    let (status, _) = server.wait(Some(1000)).await;
+    assert_eq!(status, 200);
+    server.wait_until_status("working").await;
+    assert_eq!(
+        server.hand_lines().await,
+        vec![
+            (c1.clone(), "working".to_string()),
+            (c2.clone(), "working".to_string())
+        ]
+    );
+
+    server
+        .reply(json!([{ "type": "reply", "comment_id": c1, "body": "done" }]))
+        .await;
+
+    assert_eq!(server.agent_status().await, "working");
+    assert_eq!(
+        server.hand_lines().await,
+        vec![(c2.clone(), "working".to_string())]
+    );
+
+    server
+        .reply(json!([{ "type": "reply", "comment_id": c2, "body": "done too" }]))
+        .await;
+
+    assert_eq!(server.agent_status().await, "replied");
+    assert_eq!(server.hand_lines().await, vec![]);
+}
+
+#[tokio::test]
+async fn handing_while_replied_keeps_it_replied_with_a_pending_line() {
+    let server = AgentServer::start().await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    server.page.hand().await;
+    server.wait(Some(1000)).await;
+    server.wait_until_status("working").await;
+    server
+        .reply(json!([{ "type": "reply", "comment_id": c1, "body": "done" }]))
+        .await;
+    assert_eq!(server.agent_status().await, "replied");
+    let c2 = server.page.add_comment_with_body(12, "second").await["id"].clone();
+
+    server.page.hand().await;
+
+    assert_eq!(server.agent_status().await, "replied");
+    assert_eq!(server.hand_lines().await, vec![(c2, "pending".to_string())]);
 }
 
 #[tokio::test]

@@ -25,7 +25,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use futures_util::StreamExt;
-use kemi_core::domain::agent::{AgentWrite, validate_writes};
+use kemi_core::domain::agent::{AgentEvent, AgentWrite, validate_writes};
 use kemi_core::domain::review::{Author, Message, Reply};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -110,8 +110,9 @@ struct WaitRequest {
 
 /// 今返せるもの。
 enum Ready {
-    /// 返す起きたことと、そのうち保存されたもの（「渡した」）が何件目までか。
-    Events(Vec<Value>, u64),
+    /// 返す起きたことと、そのうち保存されたもの（「渡した」）が何件目までか、と返す渡した 1 回分
+    /// （行を作業中にする。R-AGENT-HAND）。
+    Events(Vec<Value>, u64, Vec<AgentEvent>),
     /// レビューが submit 以外で終わった。理由つき。
     Stopped(String),
     Nothing,
@@ -126,14 +127,15 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     };
     {
         let mut agent = state.agent.lock().expect("agent poisoned");
-        if agent.waiting {
+        if agent.is_waiting() {
             return ApiError::conflict("another kemi wait is already waiting for this review")
                 .into_response();
         }
-        agent.waiting = true;
+        agent.wait_started();
     }
     let guard = WaitGuard {
         state: state.clone(),
+        returned: None,
     };
     mark_called(&state);
     notify_agent_state(&state);
@@ -148,7 +150,9 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         // 確かめる前に通知を受ける用意をして、確かめた直後の通知を取りこぼさない。
         notified.as_mut().enable();
         match ready(&state) {
-            Ready::Events(events, through) => return deliver(events, through, guard),
+            Ready::Events(events, through, handed) => {
+                return deliver(events, through, guard.returning(handed));
+            }
             Ready::Stopped(reason) => return stopped(&reason),
             Ready::Nothing => {}
         }
@@ -168,7 +172,9 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
             () = timed_out => {
                 // 時間切れと同時に届いたものは、空で返さずに返す。
                 return match ready(&state) {
-                    Ready::Events(events, through) => deliver(events, through, guard),
+                    Ready::Events(events, through, handed) => {
+                        deliver(events, through, guard.returning(handed))
+                    }
                     Ready::Stopped(reason) => stopped(&reason),
                     Ready::Nothing => Json(json!({ "timeout": true })).into_response(),
                 };
@@ -180,14 +186,26 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
 /// 待ちが終わったら（返し終えても、接続が切れても）作業中に戻す（R-AGENT-STATE）。
 struct WaitGuard {
     state: Arc<AppState>,
+    /// 返した渡した 1 回分。時間切れ・接続が切れた・止まったときは None。
+    returned: Option<Vec<AgentEvent>>,
+}
+
+impl WaitGuard {
+    fn returning(mut self, handed: Vec<AgentEvent>) -> Self {
+        self.returned = Some(handed);
+        self
+    }
 }
 
 impl Drop for WaitGuard {
     fn drop(&mut self) {
         {
             let mut agent = self.state.agent.lock().expect("agent poisoned");
-            agent.waiting = false;
-            agent.last_activity = kemi_core::session::now_millis();
+            let now = kemi_core::session::now_millis();
+            match &self.returned {
+                Some(handed) => agent.wait_returned(now, handed),
+                None => agent.wait_ended_empty(now),
+            }
         }
         notify_agent_state(&self.state);
     }
@@ -206,7 +224,7 @@ fn mark_called(state: &AppState) {
 }
 
 fn ready(state: &AppState) -> Ready {
-    let (mut events, through): (Vec<Value>, u64) = {
+    let (mut events, through, handed): (Vec<Value>, u64, Vec<AgentEvent>) = {
         let session = state.session.lock().expect("session poisoned");
         let events: Vec<Value> = session
             .channel
@@ -215,12 +233,12 @@ fn ready(state: &AppState) -> Ready {
             .map(agent_event_json)
             .collect();
         let through = session.received + events.len() as u64;
-        (events, through)
+        (events, through, session.channel.events.clone())
     };
     match &*state.stop.lock().expect("stop poisoned") {
         Some(Stop::Submitted(document)) => {
             events.push(json!({ "type": "submitted", "result": document }));
-            return Ready::Events(events, through);
+            return Ready::Events(events, through, handed);
         }
         Some(Stop::Failed(message)) => {
             return Ready::Stopped(format!("the review stopped with an error: {message}"));
@@ -235,7 +253,7 @@ fn ready(state: &AppState) -> Ready {
     if events.is_empty() {
         Ready::Nothing
     } else {
-        Ready::Events(events, through)
+        Ready::Events(events, through, handed)
     }
 }
 
@@ -346,7 +364,7 @@ async fn reply_api(
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
 
-    let (ids, threads, messages) = {
+    let (ids, threads, messages, called, touched) = {
         let mut session = state.session.lock().expect("session poisoned");
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
@@ -404,9 +422,17 @@ async fn reply_api(
             .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
             .map(page_comment_json)
             .collect();
-        (ids, threads, messages)
+        (ids, threads, messages, session.channel.called, touched)
     };
-    state.agent.lock().expect("agent poisoned").last_activity = kemi_core::session::now_millis();
+    {
+        // 返信のスレッドと発言の行を消し、状態を表のとおりに移す（R-AGENT-STATE, R-AGENT-HAND）。
+        state.agent.lock().expect("agent poisoned").agent_wrote(
+            called,
+            kemi_core::session::now_millis(),
+            &touched,
+            !messages.is_empty(),
+        );
+    }
     persist(&state);
     for thread in threads {
         let _ = state.events.send(Event::Thread(thread));

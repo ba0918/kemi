@@ -165,23 +165,27 @@ impl Handed {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentStatus {
     /// このレビューで `kemi wait` が一度も呼ばれていない。
-    Unconnected,
+    NotConnected,
     /// `kemi wait` が待っている。
     Waiting,
-    /// `kemi wait` が返った後か、待っていた接続が切れた後で、次がまだ来ていない。
+    /// `kemi wait` が返った後で、エージェントの返事を待っている。
     Working,
+    /// 最後に返った `kemi wait` が返した 1 回分に、エージェントが返事を書き終えた。
+    Replied,
     /// 作業中のまま 10 分、`kemi wait` も `kemi reply` も来ていない。表示だけで、
     /// レビューは止めない。
-    Unresponsive,
+    NoResponse,
 }
 
 impl AgentStatus {
+    /// 画面の `data-kemi-agent-state` の値（R-AGENT-STATE の契約）。
     pub fn as_str(self) -> &'static str {
         match self {
-            AgentStatus::Unconnected => "unconnected",
+            AgentStatus::NotConnected => "not-connected",
             AgentStatus::Waiting => "waiting",
             AgentStatus::Working => "working",
-            AgentStatus::Unresponsive => "unresponsive",
+            AgentStatus::Replied => "replied",
+            AgentStatus::NoResponse => "no-response",
         }
     }
 }
@@ -189,17 +193,210 @@ impl AgentStatus {
 /// 作業中から応答なしになるまで。
 pub const UNRESPONSIVE_AFTER_MILLIS: u128 = 10 * 60 * 1000;
 
-/// `last_activity` は最後に `kemi wait` が返った（または切れた）か `kemi reply` が来た
-/// 時刻、`now` は今。どちらも UNIX エポックからのミリ秒。
-pub fn agent_status(called: bool, waiting: bool, last_activity: u128, now: u128) -> AgentStatus {
+/// 今の状態。`replied` は返事済みになってから次の `kemi wait` まで立つ。`last_activity` は最後に
+/// `kemi wait` が返った（または切れた）か `kemi reply` が来た時刻、`now` は今。どちらも UNIX
+/// エポックからのミリ秒。返事済みは何分たっても応答なしにしない。
+pub fn agent_status(
+    called: bool,
+    waiting: bool,
+    replied: bool,
+    last_activity: u128,
+    now: u128,
+) -> AgentStatus {
     if !called {
-        AgentStatus::Unconnected
+        AgentStatus::NotConnected
     } else if waiting {
         AgentStatus::Waiting
+    } else if replied {
+        AgentStatus::Replied
     } else if now.saturating_sub(last_activity) >= UNRESPONSIVE_AFTER_MILLIS {
-        AgentStatus::Unresponsive
+        AgentStatus::NoResponse
     } else {
         AgentStatus::Working
+    }
+}
+
+/// エージェントの書き込みが届いた後に返事済みか（R-AGENT-STATE の表）。作業中と応答なしは、最後に
+/// 返った応答の行が残っていなければ返事済みになる。ほかの状態は変えない。
+pub fn replied_after_write(before: AgentStatus, lines_left: bool) -> bool {
+    match before {
+        AgentStatus::Working | AgentStatus::NoResponse => !lines_left,
+        AgentStatus::Replied => true,
+        AgentStatus::NotConnected | AgentStatus::Waiting => false,
+    }
+}
+
+/// 渡した 1 回分の行のある場所（R-AGENT-HAND）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HandLineAt {
+    /// そのスレッドの末尾。
+    Thread(String),
+    /// 発言だけの 1 回分の、会話パネルの並びの末尾。
+    Messages,
+}
+
+/// 行の状態。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandLineState {
+    /// エージェントの受け取りを待っている。
+    Pending,
+    /// `kemi wait` が返し、エージェントが作業している。
+    Working,
+}
+
+impl HandLineState {
+    /// 画面の `data-kemi-hand-line` の値（R-AGENT-HAND の契約）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HandLineState::Pending => "pending",
+            HandLineState::Working => "working",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandLine {
+    pub at: HandLineAt,
+    pub state: HandLineState,
+}
+
+impl Handed {
+    /// この 1 回分が行を付ける場所。足した・編集したコメントと返信のスレッドで、スレッドを 1 つも
+    /// 含まず発言を含むなら並びの末尾。消したコメントは行を持たない。
+    pub fn line_places(&self) -> Vec<HandLineAt> {
+        let mut threads: Vec<HandLineAt> = Vec::new();
+        let comments = self.comments.iter().filter_map(|change| match change {
+            HandedComment::Added(comment) | HandedComment::Edited(comment) => Some(&comment.id),
+            HandedComment::Deleted(_) => None,
+        });
+        for id in comments.chain(self.replies.iter().map(|reply| &reply.comment_id)) {
+            let at = HandLineAt::Thread(id.clone());
+            if !threads.contains(&at) {
+                threads.push(at);
+            }
+        }
+        if threads.is_empty() && !self.messages.is_empty() {
+            threads.push(HandLineAt::Messages);
+        }
+        threads
+    }
+}
+
+/// 返した起きたことが行を付けた場所。
+fn returned_places(events: &[AgentEvent]) -> Vec<HandLineAt> {
+    let mut places: Vec<HandLineAt> = Vec::new();
+    for AgentEvent::Handed(handed) in events {
+        for at in handed.line_places() {
+            if !places.contains(&at) {
+                places.push(at);
+            }
+        }
+    }
+    places
+}
+
+/// エージェントとのつながりのうち、セッションに保存しない部分（R-AGENT-STATE, R-AGENT-HAND）。
+/// `kemi wait` が呼ばれたかどうかはセッション状態（[`Channel::called`]）にあるので、状態を読む
+/// ときに渡す。
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentLink {
+    waiting: bool,
+    replied: bool,
+    last_activity: u128,
+    lines: Vec<HandLine>,
+    /// 最後に 1 回分を返した `kemi wait` の応答の行の場所。返さずに終わったら空。
+    last_returned: Vec<HandLineAt>,
+}
+
+impl AgentLink {
+    /// 起動したとき。復元したレビューでは、まだ受け取られていない起きたことから受け取り待ちの
+    /// 行を作り直す（作業中の行と返事済みは、返したかどうかを覚えていないので戻さない）。
+    pub fn new(now: u128, unreceived: &[AgentEvent]) -> Self {
+        let mut link = AgentLink {
+            waiting: false,
+            replied: false,
+            last_activity: now,
+            lines: Vec::new(),
+            last_returned: Vec::new(),
+        };
+        for AgentEvent::Handed(handed) in unreceived {
+            link.handed(handed);
+        }
+        link
+    }
+
+    pub fn is_waiting(&self) -> bool {
+        self.waiting
+    }
+
+    pub fn lines(&self) -> &[HandLine] {
+        &self.lines
+    }
+
+    pub fn status(&self, called: bool, now: u128) -> AgentStatus {
+        agent_status(called, self.waiting, self.replied, self.last_activity, now)
+    }
+
+    /// `kemi wait` が始まった。
+    pub fn wait_started(&mut self) {
+        self.waiting = true;
+        self.replied = false;
+    }
+
+    /// `kemi wait` が起きたことを返した。その応答の行のうち、受け取り待ちのものを作業中にする
+    /// （行を新しく作ったり、消えた行を戻したりはしない）。
+    pub fn wait_returned(&mut self, now: u128, returned: &[AgentEvent]) {
+        self.wait_ended(now);
+        self.last_returned = returned_places(returned);
+        for line in &mut self.lines {
+            if line.state == HandLineState::Pending && self.last_returned.contains(&line.at) {
+                line.state = HandLineState::Working;
+            }
+        }
+    }
+
+    /// `kemi wait` が 1 回分を返さずに終わった（時間切れ、接続が切れた）。
+    pub fn wait_ended_empty(&mut self, now: u128) {
+        self.wait_ended(now);
+        self.last_returned.clear();
+    }
+
+    fn wait_ended(&mut self, now: u128) {
+        self.waiting = false;
+        self.replied = false;
+        self.last_activity = now;
+    }
+
+    /// 人間が渡した。その 1 回分の行を受け取り待ちにする（行のあるスレッドは戻す）。
+    pub fn handed(&mut self, handed: &Handed) {
+        for at in handed.line_places() {
+            match self.lines.iter_mut().find(|line| line.at == at) {
+                Some(line) => line.state = HandLineState::Pending,
+                None => self.lines.push(HandLine {
+                    at,
+                    state: HandLineState::Pending,
+                }),
+            }
+        }
+    }
+
+    /// `kemi reply` の書き込みが届いた。返信のスレッドの行と、発言があれば並びの末尾の行を消し、
+    /// 状態を表のとおりに移す。
+    pub fn agent_wrote(&mut self, called: bool, now: u128, threads: &[String], message: bool) {
+        let before = self.status(called, now);
+        self.lines.retain(|line| match &line.at {
+            HandLineAt::Thread(id) => !threads.contains(id),
+            HandLineAt::Messages => !message,
+        });
+        self.replied = replied_after_write(before, self.lines_left());
+        self.last_activity = now;
+    }
+
+    /// 最後に返った応答の行のうち、まだ作業中で残っているものがあるか。
+    fn lines_left(&self) -> bool {
+        self.lines.iter().any(|line| {
+            line.state == HandLineState::Working && self.last_returned.contains(&line.at)
+        })
     }
 }
 
@@ -498,47 +695,341 @@ mod tests {
         assert_eq!(channel.unhanded_count(&comments, &messages), 3);
     }
 
-    #[test]
-    fn status_is_unconnected_until_kemi_wait_is_called() {
-        assert_eq!(agent_status(false, false, 0, 0), AgentStatus::Unconnected);
+    const T0: u128 = 1_700_000_000_000;
+
+    fn handed_event(comments: &[&str], replies: &[&str], messages: usize) -> AgentEvent {
+        AgentEvent::Handed(Handed {
+            comments: comments
+                .iter()
+                .map(|id| HandedComment::Added(comment(id, "body")))
+                .collect(),
+            replies: replies
+                .iter()
+                .map(|id| HandedReply {
+                    comment_id: id.to_string(),
+                    reply: Reply {
+                        id: format!("r-{id}"),
+                        seq: 0,
+                        author: Author::Reviewer,
+                        body: "more".to_string(),
+                    },
+                })
+                .collect(),
+            messages: (0..messages)
+                .map(|n| message(&format!("m{n}"), "note"))
+                .collect(),
+        })
+    }
+
+    fn hand(link: &mut AgentLink, event: &AgentEvent) {
+        let AgentEvent::Handed(handed) = event;
+        link.handed(handed);
+    }
+
+    fn lines(link: &AgentLink) -> Vec<(Option<&str>, HandLineState)> {
+        link.lines()
+            .iter()
+            .map(|line| {
+                let at = match &line.at {
+                    HandLineAt::Thread(id) => Some(id.as_str()),
+                    HandLineAt::Messages => None,
+                };
+                (at, line.state)
+            })
+            .collect()
+    }
+
+    /// `kemi wait` が呼ばれ、渡したものを返して作業中になったところ。
+    fn working_on(events: &[AgentEvent]) -> AgentLink {
+        let mut link = AgentLink::new(T0, &[]);
+        for event in events {
+            hand(&mut link, event);
+        }
+        link.wait_started();
+        link.wait_returned(T0, events);
+        link
     }
 
     #[test]
-    fn status_is_waiting_while_kemi_wait_waits() {
+    fn status_is_not_connected_until_kemi_wait_is_called() {
         assert_eq!(
-            agent_status(true, true, 0, UNRESPONSIVE_AFTER_MILLIS * 3),
+            AgentLink::new(T0, &[]).status(false, T0),
+            AgentStatus::NotConnected
+        );
+    }
+
+    #[test]
+    fn status_is_waiting_while_kemi_wait_waits_whatever_it_was() {
+        let mut replied = working_on(&[]);
+        replied.agent_wrote(true, T0, &[], true);
+        assert_eq!(replied.status(true, T0), AgentStatus::Replied);
+
+        replied.wait_started();
+
+        assert_eq!(
+            replied.status(true, T0 + UNRESPONSIVE_AFTER_MILLIS * 3),
             AgentStatus::Waiting
         );
     }
 
     #[test]
     fn status_is_working_after_kemi_wait_returned() {
-        let returned = 1_700_000_000_000;
+        let link = working_on(&[handed_event(&["c1"], &[], 0)]);
 
+        assert_eq!(link.status(true, T0 + 1_000), AgentStatus::Working);
         assert_eq!(
-            agent_status(true, false, returned, returned + 1_000),
-            AgentStatus::Working
-        );
-        assert_eq!(
-            agent_status(
-                true,
-                false,
-                returned,
-                returned + UNRESPONSIVE_AFTER_MILLIS - 1
-            ),
+            link.status(true, T0 + UNRESPONSIVE_AFTER_MILLIS - 1),
             AgentStatus::Working
         );
     }
 
     #[test]
-    fn status_is_unresponsive_after_ten_minutes_of_working() {
-        let returned = 1_700_000_000_000;
+    fn status_is_working_after_kemi_wait_timed_out() {
+        let mut link = AgentLink::new(T0, &[]);
+        link.wait_started();
+
+        link.wait_ended_empty(T0);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn status_is_no_response_after_ten_minutes_of_working() {
+        let link = working_on(&[handed_event(&["c1"], &[], 0)]);
 
         assert_eq!(UNRESPONSIVE_AFTER_MILLIS, 10 * 60 * 1000);
         assert_eq!(
-            agent_status(true, false, returned, returned + UNRESPONSIVE_AFTER_MILLIS),
-            AgentStatus::Unresponsive
+            link.status(true, T0 + UNRESPONSIVE_AFTER_MILLIS),
+            AgentStatus::NoResponse
         );
+    }
+
+    #[test]
+    fn a_reply_that_leaves_no_line_of_the_last_return_makes_it_replied() {
+        let mut link = working_on(&[handed_event(&["c1"], &[], 0)]);
+
+        link.agent_wrote(true, T0 + 1_000, &["c1".to_string()], false);
+
+        assert_eq!(link.status(true, T0 + 1_000), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn a_write_after_a_return_without_lines_makes_it_replied() {
+        let mut link = working_on(&[]);
+
+        link.agent_wrote(true, T0 + 1_000, &[], true);
+
+        assert_eq!(link.status(true, T0 + 1_000), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn a_reply_that_leaves_lines_keeps_it_working_and_counts_ten_minutes_again() {
+        let mut link = working_on(&[handed_event(&["c1", "c2"], &[], 0)]);
+        let wrote = T0 + UNRESPONSIVE_AFTER_MILLIS - 1;
+
+        link.agent_wrote(true, wrote, &["c1".to_string()], false);
+
+        assert_eq!(
+            link.status(true, wrote + UNRESPONSIVE_AFTER_MILLIS - 1),
+            AgentStatus::Working
+        );
+    }
+
+    #[test]
+    fn a_write_while_not_responding_makes_it_replied_or_working_by_the_lines_left() {
+        let late = T0 + UNRESPONSIVE_AFTER_MILLIS;
+        let mut all = working_on(&[handed_event(&["c1"], &[], 0)]);
+        assert_eq!(all.status(true, late), AgentStatus::NoResponse);
+        all.agent_wrote(true, late, &["c1".to_string()], false);
+        assert_eq!(all.status(true, late), AgentStatus::Replied);
+
+        let mut part = working_on(&[handed_event(&["c1", "c2"], &[], 0)]);
+        part.agent_wrote(true, late, &["c1".to_string()], false);
+        assert_eq!(part.status(true, late), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_write_while_not_connected_or_waiting_does_not_change_the_status() {
+        let mut never = AgentLink::new(T0, &[]);
+        never.agent_wrote(false, T0, &[], true);
+        assert_eq!(never.status(false, T0), AgentStatus::NotConnected);
+
+        let mut waiting = AgentLink::new(T0, &[]);
+        waiting.wait_started();
+        waiting.agent_wrote(true, T0, &[], true);
+        assert_eq!(waiting.status(true, T0), AgentStatus::Waiting);
+        waiting.wait_ended_empty(T0);
+        assert_eq!(waiting.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_write_while_replied_keeps_it_replied() {
+        let mut link = working_on(&[handed_event(&["c1"], &[], 0)]);
+        link.agent_wrote(true, T0, &["c1".to_string()], false);
+        hand(&mut link, &handed_event(&["c2"], &[], 0));
+
+        link.agent_wrote(true, T0, &[], true);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn replied_stays_replied_after_ten_minutes() {
+        let mut link = working_on(&[handed_event(&["c1"], &[], 0)]);
+        link.agent_wrote(true, T0, &["c1".to_string()], false);
+
+        assert_eq!(
+            link.status(true, T0 + UNRESPONSIVE_AFTER_MILLIS * 6),
+            AgentStatus::Replied
+        );
+    }
+
+    #[test]
+    fn handing_does_not_change_the_status_and_puts_a_pending_line() {
+        let mut replied = working_on(&[handed_event(&["c1"], &[], 0)]);
+        replied.agent_wrote(true, T0, &["c1".to_string()], false);
+        hand(&mut replied, &handed_event(&["c2"], &[], 0));
+        assert_eq!(replied.status(true, T0), AgentStatus::Replied);
+        assert_eq!(lines(&replied), vec![(Some("c2"), HandLineState::Pending)]);
+
+        let mut working = working_on(&[handed_event(&["c1"], &[], 0)]);
+        hand(&mut working, &handed_event(&["c2"], &[], 0));
+        assert_eq!(working.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn working_lines_of_an_earlier_return_do_not_keep_it_working() {
+        let first = handed_event(&["c1"], &[], 0);
+        let second = handed_event(&["c2"], &[], 0);
+        let mut link = working_on(&[first]);
+        hand(&mut link, &second);
+        link.wait_started();
+        link.wait_returned(T0, std::slice::from_ref(&second));
+
+        link.agent_wrote(true, T0, &["c2".to_string()], false);
+
+        assert_eq!(lines(&link), vec![(Some("c1"), HandLineState::Working)]);
+        assert_eq!(link.status(true, T0), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn a_reply_after_a_timed_out_wait_makes_it_replied() {
+        let mut link = working_on(&[handed_event(&["c1", "c2"], &[], 0)]);
+        link.agent_wrote(true, T0, &["c1".to_string()], false);
+        link.wait_started();
+        link.wait_ended_empty(T0);
+
+        link.agent_wrote(true, T0, &["c2".to_string()], false);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn handing_puts_a_pending_line_on_each_thread_it_carries() {
+        let mut link = AgentLink::new(T0, &[]);
+        let mut event = handed_event(&["c1"], &["c2"], 1);
+        let AgentEvent::Handed(handed) = &mut event;
+        handed
+            .comments
+            .push(HandedComment::Deleted("c3".to_string()));
+
+        hand(&mut link, &event);
+
+        assert_eq!(
+            lines(&link),
+            vec![
+                (Some("c1"), HandLineState::Pending),
+                (Some("c2"), HandLineState::Pending),
+            ]
+        );
+    }
+
+    #[test]
+    fn handing_only_messages_puts_one_line_at_the_end() {
+        let mut link = AgentLink::new(T0, &[]);
+
+        hand(&mut link, &handed_event(&[], &[], 2));
+
+        assert_eq!(lines(&link), vec![(None, HandLineState::Pending)]);
+    }
+
+    #[test]
+    fn a_return_turns_the_lines_it_carries_to_working() {
+        let event = handed_event(&["c1"], &[], 0);
+        let mut link = AgentLink::new(T0, &[]);
+        hand(&mut link, &event);
+        hand(&mut link, &handed_event(&["c2"], &[], 0));
+        link.wait_started();
+
+        link.wait_returned(T0, std::slice::from_ref(&event));
+
+        assert_eq!(
+            lines(&link),
+            vec![
+                (Some("c1"), HandLineState::Working),
+                (Some("c2"), HandLineState::Pending),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_return_of_several_hand_overs_turns_all_their_lines_to_working() {
+        let link = working_on(&[handed_event(&["c1"], &[], 0), handed_event(&["c2"], &[], 0)]);
+
+        assert_eq!(
+            lines(&link),
+            vec![
+                (Some("c1"), HandLineState::Working),
+                (Some("c2"), HandLineState::Working),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_agent_reply_takes_away_only_the_line_of_its_thread() {
+        let mut link = working_on(&[handed_event(&["c1", "c2"], &[], 0)]);
+
+        link.agent_wrote(true, T0, &["c1".to_string()], false);
+
+        assert_eq!(lines(&link), vec![(Some("c2"), HandLineState::Working)]);
+    }
+
+    #[test]
+    fn an_agent_message_takes_away_the_line_at_the_end() {
+        let mut link = working_on(&[handed_event(&[], &[], 1)]);
+
+        link.agent_wrote(true, T0, &[], true);
+
+        assert!(lines(&link).is_empty());
+    }
+
+    #[test]
+    fn handing_a_thread_again_puts_its_line_back_to_pending() {
+        let mut link = working_on(&[handed_event(&["c1"], &[], 0)]);
+
+        hand(&mut link, &handed_event(&[], &["c1"], 0));
+
+        assert_eq!(lines(&link), vec![(Some("c1"), HandLineState::Pending)]);
+    }
+
+    #[test]
+    fn the_same_hand_over_returned_twice_does_not_bring_back_a_replied_line() {
+        let event = handed_event(&["c1", "c2"], &[], 0);
+        let mut link = working_on(std::slice::from_ref(&event));
+        link.agent_wrote(true, T0, &["c1".to_string()], false);
+        link.wait_started();
+
+        link.wait_returned(T0, std::slice::from_ref(&event));
+
+        assert_eq!(lines(&link), vec![(Some("c2"), HandLineState::Working)]);
+    }
+
+    #[test]
+    fn a_resumed_review_has_pending_lines_for_what_kemi_wait_has_not_received() {
+        let link = AgentLink::new(T0, &[handed_event(&["c1"], &[], 0)]);
+
+        assert_eq!(lines(&link), vec![(Some("c1"), HandLineState::Pending)]);
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
     }
 
     fn agent_replies(count: usize) -> Vec<Reply> {

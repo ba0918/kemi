@@ -1428,17 +1428,22 @@ test("広い画面では覚えている表示モードと折返しをそのま�
 
 // エージェントとの往復（agent-channel.md）。状態の呼び名、操作を出すか、届いた書き込みの
 // 取り込み、submit の確認の未渡しの件数。
-test("エージェントの 4 つの状態を見分けられる呼び名で出す", () => {
-  const labels = ["unconnected", "waiting", "working", "unresponsive"].map(agentStatusLabel);
+test("エージェントの 5 つの状態を見分けられる呼び名で出す", () => {
+  const labels = ["not-connected", "waiting", "working", "replied", "no-response"].map(agentStatusLabel);
 
   for (const label of labels) {
     assert.ok(label.trim() !== "");
   }
-  assert.equal(new Set(labels).size, 4);
+  assert.equal(new Set(labels).size, 5);
+});
+
+test("待機中は渡せること、返事済みは返事が届いたことが読み取れる呼び名で出す", () => {
+  assert.match(agentStatusLabel("waiting"), /hand/i);
+  assert.match(agentStatusLabel("replied"), /replied/i);
 });
 
 test("kemi wait が一度でも呼ばれたレビューでだけ「Hand to agent」を出す", () => {
-  assert.equal(handShown({ called: false, status: "unconnected", unhanded: 2 }), false);
+  assert.equal(handShown({ called: false, status: "not-connected", unhanded: 2 }), false);
   assert.equal(handShown({ called: true, status: "working", unhanded: 0 }), true);
   assert.equal(handShown(null), false);
 });
@@ -1481,7 +1486,7 @@ test("発言は id が同じものを二度足さない", () => {
 });
 
 test("submit の確認には、往復しているレビューでだけ未渡しの件数を出す", () => {
-  assert.equal(unhandedNotice({ called: false, status: "unconnected", unhanded: 3 }), null);
+  assert.equal(unhandedNotice({ called: false, status: "not-connected", unhanded: 3 }), null);
   assert.equal(unhandedNotice({ called: true, status: "working", unhanded: 0 }), null);
   assert.match(unhandedNotice({ called: true, status: "working", unhanded: 1 }) ?? "", /\b1\b/);
   assert.match(unhandedNotice({ called: true, status: "waiting", unhanded: 3 }) ?? "", /\b3\b/);

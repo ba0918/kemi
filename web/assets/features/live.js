@@ -387,12 +387,12 @@ function mirrorDrawer(pageTree) {
  */
 function mirrorAgentState(target) {
   const copy = () => {
-    target.dataset.status = dom.agentStatus.dataset.status ?? "";
+    target.dataset.kemiAgentState = dom.agentStatus.dataset.kemiAgentState ?? "";
     target.textContent = dom.agentStatus.textContent;
   };
   new MutationObserver(copy).observe(dom.agentStatus, {
     attributes: true,
-    attributeFilter: ["data-status"],
+    attributeFilter: ["data-kemi-agent-state"],
     childList: true,
     characterData: true,
     subtree: true,

@@ -368,7 +368,7 @@ async function modeTabsSwitchTheTopbar(repository) {
     await waitFor(codeTopbarShown(false));
     const top = '.topbar .lv-topmeta';
     await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
-    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.status === document.querySelector('#agent-status').dataset.status && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
+    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
     const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
     assert.ok(files > 0);
     await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
@@ -1188,7 +1188,7 @@ async function narrowPageViewFitsOneRow(repository) {
     await waitFor(`${visible(livePane)} && ${visible('.lv-side')} && ${visible(`${band} .lv-menu-button`)}`);
     const tops = await evaluate(`JSON.stringify(Array.from(document.querySelector('${band}').children).filter((child) => child.getClientRects().length > 0 && getComputedStyle(child).visibility !== 'hidden').map((child) => Math.round(child.getBoundingClientRect().top)))`);
     assert.ok(JSON.parse(tops).length >= 4 && new Set(JSON.parse(tops)).size === 1, `the band is one row: ${tops}`);
-    await waitFor(`${visible(`${band} .lv-band-agent`)} && document.querySelector('${band} .lv-band-agent').dataset.status === document.querySelector('#agent-status').dataset.status`);
+    await waitFor(`${visible(`${band} .lv-band-agent`)} && document.querySelector('${band} .lv-band-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState`);
     assert.equal(await evaluate(visible('#progress')), false, 'the seen progress is not shown');
     assert.equal(await evaluate(`${visible('.lv-mode button[data-compare="overlay"]')} || ${visible('.lv-opacity')}`), false, 'no overlay on a narrow screen');
     await browser('click', `${band} .lv-menu-button`);

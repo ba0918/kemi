@@ -298,8 +298,14 @@ comment count in the top bar; the page remembers whether it is open and how
 wide it is (drag its left edge). A new agent reply marks its chip and the
 thread as new, and the folded rail counts what is new; the panel never opens
 by itself, and its list follows new writes only while you are at its bottom.
-The panel, the agent status in its header (not connected, waiting, working,
-not responding), replies, and resolving are there in every review; only the
+The panel, the agent status in its header, replies, and resolving are there
+in every review. The status is one of not connected (`kemi wait` never
+called), ready (`kemi wait` is waiting, so you can hand), working (it
+returned and you wait for the agent), replied (the agent has answered every
+thread the last returned `kemi wait` carried; it stays so however long it
+takes you), and not responding (working for 10 minutes with neither `kemi
+wait` nor `kemi reply`); the page puts it in `data-kemi-agent-state` as
+`not-connected`, `waiting`, `working`, `replied`, or `no-response`. Only the
 **Hand to agent** button waits until `kemi wait` has been called once in that
 review. The agent API listens on
 `127.0.0.1` whatever `--bind` says, accepts only

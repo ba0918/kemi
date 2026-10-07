@@ -2119,19 +2119,31 @@ ul.files ul {
   background: var(--ink-3);
 }
 
-.agent-status[data-status="waiting"]::before {
-  background: var(--accent);
+.agent-status[data-kemi-agent-state="waiting"]::before {
+  background: var(--add-ink);
 }
 
-.agent-status[data-status="working"]::before {
+.agent-status[data-kemi-agent-state="waiting"] {
+  color: var(--add-ink);
+}
+
+.agent-status[data-kemi-agent-state="working"]::before {
   background: var(--note-line);
 }
 
-.agent-status[data-status="unresponsive"]::before {
+.agent-status[data-kemi-agent-state="replied"]::before {
+  background: var(--star);
+}
+
+.agent-status[data-kemi-agent-state="replied"] {
+  color: var(--star);
+}
+
+.agent-status[data-kemi-agent-state="no-response"]::before {
   background: var(--del-ink);
 }
 
-.agent-status[data-status="unresponsive"] {
+.agent-status[data-kemi-agent-state="no-response"] {
   color: var(--del-ink);
 }
 

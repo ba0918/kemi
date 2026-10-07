@@ -154,7 +154,7 @@ export const state = {
   // エージェントとの往復（agent-channel.md）。発言、状態と未渡しの件数（サーバが数える）、
   // 書きかけの返信（描き直しで消さないため。ページの間だけ）。
   messages: [],
-  agent: { called: false, status: "unconnected", unhanded: 0 },
+  agent: { called: false, status: "not-connected", unhanded: 0, lines: [] },
   // 会話パネル（R-VIEW）。広い画面の開閉と幅は表示の好みとして覚え（R-SERVE）、狭い画面の
   // シートは覚えずに閉じた状態で始める（R-NARROW）。どちらの開閉も、もう片方を書き換えない。
   // 開いているスレッド、絞り込み、どこまで読んだか、畳んだスレッドは
