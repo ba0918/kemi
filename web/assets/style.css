@@ -2993,6 +2993,12 @@ ul.files ul {
     padding: 12px 12px 48px 32px;
   }
 
+  /* 差分と描画表示の下は、画面の下に浮かぶ「Hand to agent」とその案内（.hand-float）の分を空け、終わりの行を
+     その上まで送れるようにする。高さは案内の行数で変わるので、features/narrow.js が測って入れる。 */
+  #diff-viewport {
+    padding-bottom: calc(58px + var(--hand-float-height, 0px));
+  }
+
   /* 移動の操作は 1 行に収める。キーの表示は 320px で入りきらないので出さない。 */
   .navpill {
     right: 14px;

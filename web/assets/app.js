@@ -16,7 +16,7 @@ import {
   showCollapsed,
   toggleOriginReason,
 } from "./features/display.js";
-import { applyNarrow, closeDrawer, toggleComments, toggleDrawer } from "./features/narrow.js";
+import { applyNarrow, closeDrawer, reserveHandFloatSpace, toggleComments, toggleDrawer } from "./features/narrow.js";
 import { navigate } from "./features/navigation.js";
 import {
   applyReview,
@@ -252,6 +252,7 @@ async function boot() {
 const narrowQuery = window.matchMedia("(max-width: 719.98px)");
 state.narrow = narrowQuery.matches;
 narrowQuery.addEventListener("change", (event) => applyNarrow(event.matches));
+reserveHandFloatSpace();
 document.addEventListener("keydown", handleKey);
 document.addEventListener("compositionstart", startComposition);
 document.addEventListener("compositionend", endComposition);
