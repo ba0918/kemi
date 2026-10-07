@@ -2242,10 +2242,11 @@ ul.files ul {
 }
 
 /* 畳んだ帯の案内は、ボタンの左にいつも出す（R-AGENT-STATE）。差分やページを覆う面を小さくするため、
-   中身の幅に詰めた小さな札にし、差分の右下に浮かぶ変更の移動（.navpill）に重ならない高さに置く。 */
+   中身の幅に詰めた小さな札にし、差分の右端の変更の目印（#ruler、幅 11px）の左に、右下に浮かぶ変更の移動
+   （.navpill）に重ならない高さで置く。 */
 .rail-hand-note {
   position: absolute;
-  right: calc(100% + 6px);
+  right: calc(100% + 18px);
   bottom: 64px;
   z-index: 7;
   width: max-content;
