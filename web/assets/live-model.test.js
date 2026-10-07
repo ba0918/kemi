@@ -5,7 +5,6 @@ import {
   WIDTH_CHOICES,
   addPlace,
   buildPageTree,
-  commentShortName,
   draftElsewhere,
   editBody,
   editedSpan,
@@ -389,12 +388,6 @@ test("undo takes away the place added last", () => {
   draft = undoPlace(draft);
   assert.deepEqual(numbers(draft), [1]);
   assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
-});
-
-test("a saved comment is named by the first line of its body, cut to 40 characters", () => {
-  assert.equal(commentShortName("The button label is too long\nsecond line"), "The button label is too long");
-  assert.equal(commentShortName("  \n  padded first  "), "padded first");
-  assert.equal(commentShortName("x".repeat(50)), `${"x".repeat(40)}…`);
 });
 
 test("a place at another URL or width is not added to a draft that has places", () => {

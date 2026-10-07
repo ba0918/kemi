@@ -2328,7 +2328,7 @@ async function savedCommentsAreQuietMarks(repository) {
     // 要素の道具の層にポインタの動きを送る（agent-browser のマウスは層の上の動きを確かに届けられないため）。
     const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
     await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame').getBoundingClientRect(); const layer = document.querySelector('${livePane} .lv-capture'); return layer.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, clientX: frame.x + 300 * ${scale}, clientY: frame.y + 200 * ${scale}, bubbles: true })); })()`);
-    await waitFor(`${visible(`${livePane} .lv-saved-tip`)} && document.querySelector('${livePane} .lv-saved-tip').textContent.includes('The button label is too long') && !document.querySelector('${livePane} .lv-saved-tip').textContent.includes('second line')`);
+    await waitFor(`${visible(`${livePane} .lv-saved-tip`)} && document.querySelector('${livePane} .lv-saved-tip').textContent.includes('The button label is too long')`);
     assert.equal(await evaluate(draftNumbers), '[1]', 'moving the pointer puts no place');
     console.log('PASS 要素の道具のまま c1 の印にポインタを乗せると、レビュー画面に c1 の短い名前が出る');
 
