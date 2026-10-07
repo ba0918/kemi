@@ -1460,6 +1460,14 @@ test("エージェントがつながれないレビューでは「Hand to agent�
   });
 });
 
+test("レビューの id をサーバから受け取る前は、つながれないとは言わず押せないだけにする", () => {
+  assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 0 }, false), {
+    disabled: true,
+    note: null,
+    command: null,
+  });
+});
+
 test("kemi wait が呼ばれたら、渡すものがあるときだけ「Hand to agent」を押せる", () => {
   assert.deepEqual(handControl({ called: true, status: "waiting", unhanded: 2, review: "r" }, false), {
     disabled: false,

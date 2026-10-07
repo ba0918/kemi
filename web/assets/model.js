@@ -1601,15 +1601,19 @@ export function handLineState(lines, thread) {
 /**
  * 「Hand to agent」の押せる・押せないと、そばに出す案内（R-AGENT-STATE）。ボタンは状態によらず出す。
  * `kemi wait` の前は押せず、渡せるようになる `kemi wait <id>` を写せるようにする。エージェント用の API が無い
- * レビュー（`review` が null）は写すものが無いので、つながれないことを言う。呼ばれた後は、渡すもの（前に渡した
- * 後の変化）があるときだけ押せる。
+ * レビュー（`review` が null）は写すものが無いので、つながれないことを言う。`review` が無い（サーバの答えをまだ
+ * 受け取っていない）間は、つながれるか分からないので案内を出さない。呼ばれた後は、渡すもの（前に渡した後の変化）が
+ * あるときだけ押せる。
  * @param {AgentState} agent
  * @param {boolean} submitted
  * @returns {{ disabled: boolean, note: "connect" | "unavailable" | "nothing" | null, command: string | null }}
  */
 export function handControl(agent, submitted) {
   if (!agent.called) {
-    const review = agent.review ?? null;
+    if (agent.review === undefined) {
+      return { disabled: true, note: null, command: null };
+    }
+    const review = agent.review;
     return review === null
       ? { disabled: true, note: "unavailable", command: null }
       : { disabled: true, note: "connect", command: `kemi wait ${review}` };
