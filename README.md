@@ -240,8 +240,10 @@ and offers to go back there, where the comment is saved. Saving also makes a PNG
 of the area with the places drawn on it, inside the page and without driving
 the browser, so fonts and some CSS details may differ from the real page. A
 saved comment keeps its places: the conversation panel shows its URL, width,
-and number of places, the page shows its places as quiet numbered marks at
-that URL and width (stronger while its thread is open), and a comment left
+and number of places, the page shows its places at that URL and width as
+small marks without numbers — pointing at one, with any tool, shows which
+comment it belongs to — and numbered only while its thread is open, so they
+are not mistaken for the numbered places of the comment being written; a comment left
 at another width shows that width and switches to it when pressed. Only its
 text can be edited. On a narrow screen, places are drawn with a finger and
 elements chosen by tapping. The agent gets the places and the image path

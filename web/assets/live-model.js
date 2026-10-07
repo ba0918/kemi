@@ -359,6 +359,21 @@ export function draftElsewhere(draft, url, width) {
   return { url: draft.url, width: draft.width };
 }
 
+/** 保存したコメントの短い名前の長さの上限（文字数）。 */
+const SHORT_NAME_LIMIT = 40;
+
+/**
+ * 保存したコメントの短い名前。ページの上の印に触れたとき、どのコメントかを示す（R-PAGE-COMMENT）。本文の最初の
+ * 空でない行を、上限で切る。
+ * @param {string} body
+ * @returns {string}
+ */
+export function commentShortName(body) {
+  const line = body.split("\n").map((text) => text.trim()).find((text) => text !== "") ?? "";
+  const chars = [...line];
+  return chars.length > SHORT_NAME_LIMIT ? `${chars.slice(0, SHORT_NAME_LIMIT).join("")}…` : line;
+}
+
 /**
  * 場所の一覧の行に出す、場所が指すもの。要素の無い場所は範囲だけ（R-PAGE-COMMENT）。
  * @param {Place} place

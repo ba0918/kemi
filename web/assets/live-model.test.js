@@ -5,6 +5,7 @@ import {
   WIDTH_CHOICES,
   addPlace,
   buildPageTree,
+  commentShortName,
   draftElsewhere,
   editBody,
   emptyDraft,
@@ -368,6 +369,12 @@ test("a place without elements is shown as an area only, and one with elements n
   assert.equal(placeSummary({ ...area, kind: "arrow" }), "Area only (no element)");
   assert.equal(placeSummary({ ...place("pen"), n: 1 }), "1 element inside");
   assert.equal(placeSummary({ ...place("arrow", "#buy"), n: 2 }), "→ #buy");
+});
+
+test("a saved comment is named by the first line of its body, cut to 40 characters", () => {
+  assert.equal(commentShortName("The button label is too long\nsecond line"), "The button label is too long");
+  assert.equal(commentShortName("  \n  padded first  "), "padded first");
+  assert.equal(commentShortName("x".repeat(50)), `${"x".repeat(40)}…`);
 });
 
 test("a place at another URL or width is not added to a draft that has places", () => {

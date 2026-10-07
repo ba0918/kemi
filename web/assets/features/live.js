@@ -13,6 +13,7 @@ import {
   AUTO_RULE,
   WIDTH_CHOICES,
   addPlace,
+  commentShortName,
   buildPageTree,
   chooseReference,
   compareHeading,
@@ -196,7 +197,7 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe" | "place" | "image"} type
+ * @param {"capture" | "describe" | "place" | "image" | "saved-at"} type
  * @param {number} timeout
  * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
@@ -521,8 +522,17 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (["captured", "described", "placed", "imaged"].includes(message.type)) {
+  if (["captured", "described", "placed", "imaged", "saved-found"].includes(message.type)) {
     pendingCaptures.get(Number(message.id))?.(message);
+    return;
+  }
+  if (message.type === "saved-hover") {
+    // 操作の道具の間は、ページがポインタの動きを見て、乗った印のコメントを知らせる。
+    const frame = shell.liveFrame.getBoundingClientRect();
+    showSavedTip(typeof message.comment === "string" ? message.comment : null, {
+      x: frame.left + (Number(message.x) || 0) * live.scale,
+      y: frame.top + (Number(message.y) || 0) * live.scale,
+    });
     return;
   }
   if (message.type === "changed") {
@@ -656,7 +666,11 @@ function startComposing(shell) {
     if (drawing?.pointer === event.pointerId && live.tool !== "element") {
       extendStroke(event);
     }
+    if (!drawing) {
+      void findSavedAt({ x: event.clientX, y: event.clientY });
+    }
   });
+  layer.addEventListener("pointerleave", () => showSavedTip(null, { x: 0, y: 0 }));
   layer.addEventListener("pointerup", (event) => {
     if (drawing?.pointer === event.pointerId) {
       void finishStroke();
@@ -792,6 +806,60 @@ function insertReference(n) {
   setDraft(editBody(live.draft, body.value));
 }
 
+/** ポインタの下の保存したコメントをページに尋ねている間の、次に尋ねる点（尋ねている間に動いた分はまとめる）。 */
+let savedAsk = /** @type {{ x: number, y: number } | null} */ (null);
+let savedAsking = false;
+
+/**
+ * 場所を置く道具の層の上のポインタの下に、保存したコメントの印があるかをページに尋ね、あればその名前を出す
+ * （R-PAGE-COMMENT）。層が枠を覆ってポインタがページに届かないので、レビュー画面から尋ねる。
+ * @param {{ x: number, y: number }} point 画面の座標
+ */
+async function findSavedAt(point) {
+  savedAsk = point;
+  const frame = shell?.liveFrame.contentWindow;
+  if (savedAsking || !shell || !frame || pageComments().length === 0) {
+    return;
+  }
+  savedAsking = true;
+  try {
+    while (savedAsk) {
+      const asked = savedAsk;
+      savedAsk = null;
+      const box = shell.liveFrame.getBoundingClientRect();
+      const answer = await ask(frame, "saved-at", PLACE_TIMEOUT, {
+        x: (asked.x - box.left) / live.scale,
+        y: (asked.y - box.top) / live.scale,
+      });
+      showSavedTip(typeof answer.comment === "string" ? answer.comment : null, asked);
+    }
+  } finally {
+    savedAsking = false;
+  }
+}
+
+/**
+ * 保存したコメントの短い名前を、ポインタのそばに出す。コメントが無ければ隠す。
+ * @param {string | null} id
+ * @param {{ x: number, y: number }} point 画面の座標
+ */
+function showSavedTip(id, point) {
+  if (!shell) {
+    return;
+  }
+  const tip = shell.savedTip;
+  const comment = id === null ? undefined : pageComments().find((item) => item.id === id);
+  tip.hidden = comment === undefined;
+  if (comment === undefined) {
+    return;
+  }
+  tip.textContent = commentShortName(String(comment.body ?? ""));
+  tip.dataset.comment = comment.id;
+  const box = /** @type {HTMLElement} */ (tip.parentElement).getBoundingClientRect();
+  tip.style.left = `${point.x - box.left + 12}px`;
+  tip.style.top = `${point.y - box.top + 12}px`;
+}
+
 /** 保存したページへのコメント（`page` を持つもの）。 */
 function pageComments() {
   return state.allComments.filter((comment) => comment.page);
@@ -810,9 +878,14 @@ function sendPlaces() {
     return;
   }
   const here = (/** @type {string} */ url, /** @type {number} */ width) => url === live.page && width === live.width;
+  /** @type {{ places: unknown[], look: string, comment?: string }[]} */
   const sets = pageComments()
     .filter((comment) => here(comment.page.url, comment.page.width))
-    .map((comment) => ({ places: comment.page.places, look: state.conversation.thread === comment.id ? "focus" : "saved" }));
+    .map((comment) => ({
+      places: comment.page.places,
+      look: state.conversation.thread === comment.id ? "focus" : "saved",
+      comment: comment.id,
+    }));
   const draft = live.draft;
   if (here(draft.url, draft.width) && draft.places.length > 0) {
     sets.push({ places: draft.places, look: "draft" });

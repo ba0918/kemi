@@ -26,7 +26,8 @@
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
 //   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
-//   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
+//   場所の印が出る。保存したコメントの場所は、スレッドを開いている間だけ番号付きで、それ以外は番号の無い小さな印で、
+//   乗せるとレビュー画面にそのコメントの短い名前が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
 // - 保留と復元: コメントと手で取ったスナップショットのあるレビューを保留して復元すると、比べる相手の選択に開始時と
 //   手で取ったものが出て、開始時が既定になる。開始時のものは保留の前と同じ id と HTML で 1 つだけ（取り直さない）。
@@ -2244,6 +2245,60 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
 }
 
 /**
+ * ページの上の印（R-PAGE-COMMENT）: c1 を保存してから新しいコメントを書き始めると、c1 の場所には番号が出ず、書きかけの
+ * 場所にだけ番号が出る。要素の道具のまま c1 の印にポインタを乗せると、レビュー画面に c1 の短い名前が出る。c1 のスレッドを
+ * 開くと c1 の場所に番号が出る。番号の札と描き込みはページの中の紫で見る（印の層は閉じた shadow root の中で、別の
+ * オリジンの枠なので要素は読めない）。
+ */
+async function savedCommentsAreQuietMarks(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  // ボタン（左上 (0, 200) の 300×100）の左上の番号の札の辺りと、2 段目の入力欄（左上 (12, 96) 付近）の辺り。
+  const buttonCorner = [0, 185, 40, 230];
+  const fieldCorner = [0, 80, 60, 125];
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await new Promise((done) => setTimeout(done, 500));
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await savePageCommentInThePage('The button label is too long\nsecond line');
+    const [c1] = (await reviewJson(kemi)).comments;
+    await clickInPane(livePane, 40, 105);
+    await waitFor(`${draftNumbers} === '[1]' && document.querySelector('#live-compose .lv-place[data-n="1"]').dataset.selector === '#field'`);
+    await new Promise((done) => setTimeout(done, 500));
+    const drafting = await shot(`${livePane} .lv-frame`, shots, 'saved-and-draft');
+    assert.equal(countPixels(drafting, buttonCorner, isPlaceInk), 0, `the saved comment shows no number: ${join(shots, 'saved-and-draft.png')}`);
+    assert.ok(countPixels(drafting, fieldCorner, isPlaceInk) > 0, `the draft place shows its number: ${join(shots, 'saved-and-draft.png')}`);
+    console.log('PASS c1 を保存してから新しいコメントを書き始めると、c1 の場所に番号が出ず、書きかけの場所にだけ番号が出る');
+
+    // 要素の道具の層にポインタの動きを送る（agent-browser のマウスは層の上の動きを確かに届けられないため）。
+    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame').getBoundingClientRect(); const layer = document.querySelector('${livePane} .lv-capture'); return layer.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, clientX: frame.x + 300 * ${scale}, clientY: frame.y + 200 * ${scale}, bubbles: true })); })()`);
+    await waitFor(`${visible(`${livePane} .lv-saved-tip`)} && document.querySelector('${livePane} .lv-saved-tip').textContent.includes('The button label is too long') && !document.querySelector('${livePane} .lv-saved-tip').textContent.includes('second line')`);
+    assert.equal(await evaluate(draftNumbers), '[1]', 'moving the pointer puts no place');
+    console.log('PASS 要素の道具のまま c1 の印にポインタを乗せると、レビュー画面に c1 の短い名前が出る');
+
+    await browser('click', '#cv-rail');
+    await browser('click', `.cv-card[data-id="${c1.id}"]`);
+    await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
+    const opened = await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`);
+    const corner = buttonCorner.map((value) => Math.round(value * Number(opened)));
+    await waitForPixels(`${livePane} .lv-frame`, shots, 'saved-focused', corner, isPlaceInk);
+    console.log('PASS c1 のスレッドを開くと、c1 の場所に番号が出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 書きかけのコメントの場所の URL と表示幅（R-PAGE-COMMENT）: 別の表示幅では場所が足されず、書きかけの URL と表示幅に
  * 戻る操作で戻ると場所を足せ、保存したコメントはその表示幅を持つ。
  */
@@ -2923,6 +2978,7 @@ try {
   await pageCommentPlacesArePutAndSaved(repository);
   await penPlacesLeaveOutWhatContainsTheLine(repository);
   await placesOnTheBackgroundAreAreasOnly(repository);
+  await savedCommentsAreQuietMarks(repository);
   await draftPlacesStayAtTheirWidth(repository);
   await latePlacesKeepTheirWidth(repository);
   await draftsStayWhileSaving(repository);

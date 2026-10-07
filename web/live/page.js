@@ -39,6 +39,10 @@
       drawPlaceSets(Array.isArray(message.sets) ? message.sets : []);
       return;
     }
+    if (message.type === 'saved-at') {
+      post({ type: 'saved-found', id: message.id, comment: savedCommentAt(finite(message.x) + scrollX, finite(message.y) + scrollY) });
+      return;
+    }
     if (message.type === 'scroll-by') {
       scrollBy(finite(message.x), finite(message.y));
       return;
@@ -591,13 +595,59 @@
     return { kind: 'element', points: [], elements };
   }
 
-  /** 場所の描き込みの見た目。書いている途中と、目立たせる保存したものは濃く、ほかの保存したものは控えめに。 */
-  /** @type {Record<string, { width: number, opacity: string, numbers: boolean }>} */
+  /**
+   * 場所の描き込みの見た目。書いている途中と、開いているスレッドの保存したものは番号付きで、ほかの保存したものは
+   * 番号の無い小さな印だけ（R-PAGE-COMMENT）。
+   * @typedef {{ width: number, opacity: string, numbers: boolean, quiet: boolean }} PlaceLook
+   */
+  /** @type {Record<string, PlaceLook>} */
   const PLACE_LOOKS = {
-    draft: { width: 2, opacity: '1', numbers: true },
-    focus: { width: 2, opacity: '1', numbers: true },
-    saved: { width: 1, opacity: '0.55', numbers: true },
+    draft: { width: 2, opacity: '1', numbers: true, quiet: false },
+    focus: { width: 2, opacity: '1', numbers: true, quiet: false },
+    saved: { width: 1, opacity: '1', numbers: false, quiet: true },
   };
+  /** 保存したコメントの小さな印の大きさ（CSS ピクセル）。 */
+  const QUIET_MARK = 10;
+  /** 印や番号に触れたとみなす、その中心からの距離（CSS ピクセル）。 */
+  const MARK_REACH = 12;
+  /**
+   * 保存したコメントの印と番号の中心（文書の座標）と、そのコメントの id。触れたらどのコメントかを返すのに使う。
+   * @type {{ comment: string, x: number, y: number }[]}
+   */
+  let savedSpots = [];
+
+  /**
+   * 文書の座標のその点にある、保存したコメントの印か番号のコメントの id。無ければ null。
+   * @param {number} x
+   * @param {number} y
+   * @returns {string | null}
+   */
+  function savedCommentAt(x, y) {
+    let found = null;
+    let nearest = MARK_REACH;
+    for (const spot of savedSpots) {
+      const distance = Math.hypot(spot.x - x, spot.y - y);
+      if (distance <= nearest) {
+        nearest = distance;
+        found = spot.comment;
+      }
+    }
+    return found;
+  }
+
+  // 操作の道具の間はポインタがページに届くので、ページが印に乗ったかを見て知らせる（場所を置く道具の間は
+  // レビュー画面が重ねた層で受け、saved-at で尋ねる）。
+  let hovered = /** @type {string | null} */ (null);
+  window.addEventListener(
+    'pointermove',
+    (event) => {
+      const comment = savedSpots.length === 0 ? null : savedCommentAt(event.clientX + scrollX, event.clientY + scrollY);
+      if (comment === hovered) return;
+      hovered = comment;
+      post({ type: 'saved-hover', comment, x: event.clientX, y: event.clientY });
+    },
+    { passive: true },
+  );
   const SVG = 'http://www.w3.org/2000/svg';
 
   /**
@@ -606,10 +656,18 @@
    */
   function drawPlaceSets(sets) {
     const drawn = [];
+    savedSpots = [];
     for (const set of sets) {
-      const { places, look } = /** @type {{ places: unknown, look: unknown }} */ (set ?? {});
+      const { places, look, comment } = /** @type {{ places: unknown, look: unknown, comment: unknown }} */ (set ?? {});
       const style = PLACE_LOOKS[String(look)] ?? PLACE_LOOKS.saved;
-      drawn.push(...placeShapes(readPlaces(Array.isArray(places) ? places : []), style));
+      const read = readPlaces(Array.isArray(places) ? places : []);
+      drawn.push(...placeShapes(read, style));
+      if (typeof comment === 'string') {
+        for (const place of read) {
+          const spot = style.quiet ? quietSpot(place) : placeAnchor(place);
+          if (spot) savedSpots.push({ comment, x: spot.x, y: spot.y });
+        }
+      }
     }
     if (drawn.length === 0) {
       placesLayer?.replaceChildren();
@@ -621,14 +679,39 @@
   }
 
   /**
+   * 保存したコメントの小さな印を置く点（文書の座標）。要素の場所は要素の右上の角、矢印とペンは最初の点。
+   * @param {ImagePlace} place
+   * @returns {Point | undefined}
+   */
+  function quietSpot(place) {
+    if (place.kind !== 'element') return place.points[0];
+    const rect = place.elements[0]?.rect;
+    return rect ? { x: rect.x + rect.w, y: rect.y } : undefined;
+  }
+
+  /**
    * 1 組の場所の描き込みの要素。
    * @param {ImagePlace[]} places
-   * @param {{ width: number, opacity: string, numbers: boolean }} style
+   * @param {PlaceLook} style
    * @returns {Element[]}
    */
   function placeShapes(places, style) {
     /** @type {Element[]} */
     const drawn = [];
+    if (style.quiet) {
+      for (const place of places) {
+        const spot = quietSpot(place);
+        if (!spot) continue;
+        const mark = document.createElement('div');
+        setStyles(mark, {
+          position: 'absolute', left: `${Math.max(0, spot.x - QUIET_MARK / 2)}px`, top: `${Math.max(0, spot.y - QUIET_MARK / 2)}px`,
+          width: `${QUIET_MARK}px`, height: `${QUIET_MARK}px`, 'border-radius': '50%', background: 'rgb(154, 161, 171)',
+          'box-shadow': '0 0 0 2px rgb(255, 255, 255)', 'box-sizing': 'border-box', margin: '0', padding: '0',
+        });
+        drawn.push(mark);
+      }
+      return drawn;
+    }
     const svg = document.createElementNS(SVG, 'svg');
     svg.setAttribute('width', '1');
     svg.setAttribute('height', '1');

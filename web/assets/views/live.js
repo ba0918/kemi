@@ -67,6 +67,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   toolSeg: HTMLElement,
  *   hint: HTMLElement,
  *   capture: HTMLElement,
+ *   savedTip: HTMLElement,
  *   stroke: SVGPolylineElement,
  *   compose: ComposeShell,
  * }} LiveShell
@@ -314,7 +315,11 @@ export function buildShell() {
   const stroke = /** @type {SVGPolylineElement} */ (document.createElementNS(SVG, "polyline"));
   strokeSvg.append(stroke);
   capture.append(strokeSvg);
-  live.box.append(liveFrame, capture);
+  // 保存したコメントの印に触れたとき、どのコメントかを出す（R-PAGE-COMMENT）。
+  const savedTip = el("div", "lv-saved-tip");
+  savedTip.setAttribute("role", "tooltip");
+  savedTip.hidden = true;
+  live.box.append(liveFrame, capture, savedTip);
   const compose = buildCompose();
   stage.append(stageHead, ref.pane, live.pane, compose.box);
 
@@ -377,6 +382,7 @@ export function buildShell() {
     toolSeg,
     hint,
     capture,
+    savedTip,
     stroke,
     compose,
   };
