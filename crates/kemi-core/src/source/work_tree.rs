@@ -141,6 +141,10 @@ impl WorkTree {
     /// `paths`（作業ツリーの中の絶対パス）のうち、git が無視するもの。追跡している
     /// ファイルは無視されない。作業ツリーの外と `.git` の中のパスは聞かずに外す。
     ///
+    /// もう無いパスは、ディレクトリとしても聞く。消えた後では、git は `build/` のような
+    /// ディレクトリだけに効く規則をそのパスに当てはめない（消えたのがファイルだったか
+    /// までは分からないので、その規則に合う名前のファイルを消しても無視したものと見る）。
+    ///
     /// 索引を読む `check-ignore` は使わない。1 パスごとに索引を舐めるので、追跡ファイル 1 万個・
     /// ディレクトリ 5 万個で 5 秒かかった（読まなければ 0.3 秒）。また submodule の中のパスを
     /// 「submodule の中」と断る。索引を読まないと追跡しているものも無視と答えるので、それは
@@ -176,10 +180,14 @@ impl WorkTree {
         if asked.is_empty() {
             return Ok(HashSet::new());
         }
-        let relatives: Vec<&[u8]> = asked
-            .iter()
-            .map(|(_, relative)| relative.as_slice())
-            .collect();
+        let mut relatives: Vec<Vec<u8>> = Vec::new();
+        for (path, relative) in &asked {
+            relatives.push(relative.clone());
+            if std::fs::symlink_metadata(path).is_err() {
+                relatives.push(as_directory(relative));
+            }
+        }
+        let relatives: Vec<&[u8]> = relatives.iter().map(Vec::as_slice).collect();
         let matched = match check_ignore(&self.root, &relatives)? {
             Answer::Matched(matched) => matched,
             Answer::Refused(reason) => {
@@ -194,7 +202,9 @@ impl WorkTree {
         };
         Ok(asked
             .into_iter()
-            .filter(|(_, relative)| matched.contains(relative.as_slice()))
+            .filter(|(_, relative)| {
+                matched.contains(relative.as_slice()) || matched.contains(&as_directory(relative))
+            })
             .map(|(path, _)| path.clone())
             .collect())
     }
@@ -287,6 +297,13 @@ impl WorkTree {
         found.over_limit = found.directories.len() > limit;
         Ok(found)
     }
+}
+
+/// ディレクトリとして git に聞くときの表記（末尾に `/`）。
+fn as_directory(relative: &[u8]) -> Vec<u8> {
+    let mut directory = relative.to_vec();
+    directory.push(b'/');
+    directory
 }
 
 /// git に渡す作業ツリーの中の相対パス。Windows でも区切りは `/` にし、git が返す表記と揃える。

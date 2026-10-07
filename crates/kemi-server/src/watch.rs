@@ -878,6 +878,77 @@ mod tests {
         assert!(changes(EventKind::Modify(ModifyKind::Any), "a.txt"));
     }
 
+    /// `tree` に `relative` への `kind` のイベントを 1 つ渡し、変化として数えたか。
+    fn changes_by(
+        tree: &mut TreeWatch,
+        watcher: &mut Recorder,
+        kind: EventKind,
+        path: PathBuf,
+    ) -> bool {
+        tree.changes(
+            watcher,
+            &[notify::Event::new(kind).add_path(path)],
+            &HashSet::new(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn removing_an_ignored_directory_is_not_a_change_even_before_anything_under_it_was_seen() {
+        use notify::event::RemoveKind;
+        let repo = IgnoringRepo::new("remove-ignored");
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::RecursiveRoot,
+            HashSet::new(),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(repo.0.join("build")).unwrap();
+
+        assert!(!changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::Folder),
+            repo.0.join("build/deep"),
+        ));
+        assert!(!changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::Folder),
+            repo.0.join("build"),
+        ));
+    }
+
+    #[test]
+    fn removing_an_ignored_directory_right_after_the_ignore_rules_change_is_not_a_change() {
+        use notify::event::{ModifyKind, RemoveKind};
+        let repo = IgnoringRepo::new("remove-after-rules");
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::PerDirectory,
+            HashSet::new(),
+        )
+        .unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Modify(ModifyKind::Any),
+            repo.0.join(".gitignore"),
+        );
+        std::fs::remove_dir_all(repo.0.join("build")).unwrap();
+
+        assert!(!changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::Folder),
+            repo.0.join("build"),
+        ));
+    }
+
     #[test]
     fn a_file_created_or_saved_anywhere_in_the_range_outside_dot_git_reloads() {
         use notify::event::{AccessKind, CreateKind, ModifyKind};
