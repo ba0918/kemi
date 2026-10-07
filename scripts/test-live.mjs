@@ -1859,6 +1859,48 @@ async function wideTargetsAreRevealedSideways(repository) {
   }
 }
 
+/** 幅 3000 の文書の左の方に要素（#near）を置いたページ（/tall.html を置き換えて使う）。`near` が false なら置かない。 */
+const scrollingWidePage = (near) => `<!doctype html><html><head><meta charset="utf-8"><script type="module" src="/__hmr.js"></script></head>
+<body style="margin:0;width:3000px;height:1600px;position:relative">
+<p style="margin:0;padding:20px">Wide page</p>
+${near ? '<div id="near" style="position:absolute;left:600px;top:300px;width:120px;height:60px;background:rgb(0, 120, 0)">Near the edge</div>' : ''}
+</body></html>
+`;
+
+/**
+ * 重ねて透かす等倍で、動いているページの中を横にスクロールしているとき（R-PAGE-DIFF）: 消えた要素の行を押すと、重ねた比べる
+ * 相手の中でその要素が描かれている所が見えるよう枠を合わせ、光が枠の中に見える（重ねた比べる相手はページの横のスクロールの分だけ
+ * 左にずれている）。
+ */
+async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
+  const dev = await startDevServer();
+  await writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(true));
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}tall.html`]);
+  const refView = `document.querySelector('${refPane} .lv-viewport')`;
+  const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
+  const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
+  const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
+  try {
+    await browser('set', 'viewport', '900', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
+    await chooseCompare('overlay');
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(false));
+    await waitFor(`${removedRow} !== null && ${removedRow}.textContent.includes('Near the edge')`);
+    // 動いているページの中を横にスクロールする。重ねた比べる相手はその分だけ左にずれる。
+    await evaluate(`document.querySelector('${livePane} .lv-frame').contentWindow.postMessage({ kemi: 'live', type: 'scroll-by', x: 400, y: 0 }, '*'); true`);
+    await waitFor(`new DOMMatrix(getComputedStyle(${refFrameNow}).transform).m41 === -400`);
+    await evaluate(`${removedRow}.querySelector('button').click(); true`);
+    await waitFor(glowInside);
+    console.log('PASS 重ねて透かす等倍で動いているページを横にスクロールしているとき、消えた要素の行を押すと、その要素が描かれている所の光が枠の中に見える');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 差分（R-PAGE-DIFF、R-PAGE-VIEW の変化の一覧、R-PAGE-REF の一覧はスナップショットのときだけ）。 */
 async function changeListFollowsThePage(repository) {
   const { mkdir } = await import('node:fs/promises');
@@ -3647,6 +3689,7 @@ try {
   await changeRowsAreElementsThatLeadToThePage(repository);
   await removedRowsLeadToTheSnapshot(repository);
   await wideTargetsAreRevealedSideways(repository);
+  await overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
   await snapshotsAreTakenUnderTrustedTypes(repository);

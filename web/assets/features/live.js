@@ -1922,7 +1922,8 @@ function showRemovedElement(index) {
   }, REF_GLOW);
   const viewHeight = shell.refViewport.clientHeight / live.scale;
   const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
-  if (!state.narrow && live.compare === "overlay") {
+  const overlaid = !state.narrow && live.compare === "overlay";
+  if (overlaid) {
     // 今のページが短くてそこまでスクロールできないときは、届かない分だけ両方の枠を外側でずらす（そろえたまま）。
     live.overscroll = centered > Math.max(0, live.scroll.height - viewHeight) ? { key: refShiftKey(), y: centered } : null;
     shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: centered - live.scroll.y }, live.origin);
@@ -1931,7 +1932,8 @@ function showRemovedElement(index) {
     live.refShift = { key: refShiftKey(), y: Math.min(centered, contentHeight - viewHeight) };
   }
   layoutFrames();
-  revealSideways(shell.refViewport, left, width);
+  // 重ねた比べる相手は、ページの横のスクロールの分だけ左にずらして描いている（layoutFrames）。描いている所で合わせる。
+  revealSideways(shell.refViewport, overlaid ? left - live.scroll.x : left, width);
 }
 
 /**
