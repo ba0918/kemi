@@ -364,7 +364,7 @@ async fn reply_api(
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
 
-    let (ids, threads, messages, called, touched) = {
+    let (ids, threads, messages) = {
         let mut session = state.session.lock().expect("session poisoned");
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
@@ -422,17 +422,17 @@ async fn reply_api(
             .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
             .map(page_comment_json)
             .collect();
-        (ids, threads, messages, session.channel.called, touched)
-    };
-    {
         // 返信のスレッドと発言の行を消し、状態を表のとおりに移す（R-AGENT-STATE, R-AGENT-HAND）。
+        // セッションのロックの中で行う（ロックは session → agent の順）。外で行うと、その間に人間が
+        // 同じスレッドを渡し直して受け取り待ちにした行を、この古い返信が消してしまう。
         state.agent.lock().expect("agent poisoned").agent_wrote(
-            called,
+            session.channel.called,
             kemi_core::session::now_millis(),
             &touched,
             !messages.is_empty(),
         );
-    }
+        (ids, threads, messages)
+    };
     persist(&state);
     for thread in threads {
         let _ = state.events.send(Event::Thread(thread));
