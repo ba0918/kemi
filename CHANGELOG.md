@@ -5,6 +5,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
 ### 破壊的変更
 
 - submit の結果 JSON の契約の版を 2 に上げた（`"kemi": 2`）。`replies` が本文の文字列の並び
@@ -340,7 +342,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ba0918/kemi/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/ba0918/kemi/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ba0918/kemi/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/ba0918/kemi/compare/v0.1.6...v0.1.7
