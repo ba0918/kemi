@@ -146,10 +146,12 @@ test("the points to choose from are the snapshots of the page: handed, then star
   );
 });
 
-test("the reference choices are auto first and the mock last", () => {
+test("the reference choices are auto first, then the assigned mock, and the mock file always last", () => {
   const snapshots = [snap("s1", "start"), snap("s2", "handed")];
-  const values = referenceOptions({ snapshots, page: "/", width: 1280, mock: "docs/m.html" }).map((option) => option.value);
-  assert.deepEqual(values, ["latest", "s2", "s1", "mock"]);
+  const values = (/** @type {string | null} */ mock) =>
+    referenceOptions({ snapshots, page: "/", width: 1280, mock }).map((option) => option.value);
+  assert.deepEqual(values("docs/m.html"), ["latest", "s2", "s1", "mock", "mock-file"]);
+  assert.deepEqual(values(null), ["latest", "s2", "s1", "mock-file"]);
 });
 
 test("auto is named after the snapshot it picks, the same way as that snapshot's own choice", () => {

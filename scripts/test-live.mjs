@@ -33,7 +33,10 @@
 // - 保留と復元: コメントと手で取ったスナップショットのあるレビューを保留して復元すると、比べる相手の選択に開始時と
 //   手で取ったものが出て、開始時が既定になる。開始時のものは保留の前と同じ id と HTML で 1 つだけ（取り直さない）。
 //   モックを割り当てて保留し、モックのファイルを消してから復元すると、読めない旨が出る。
-// - モック: 範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
+// - モック: 比べる相手の選択肢の最後の「モックのファイル」でパネルが開き、追跡中と無視されない未追跡の HTML だけが一覧に出て
+//   検索で絞れる。git が無視する HTML はパスの欄で割り当てられる。git の外では起動したディレクトリの下の HTML が出る。201 個
+//   置くと 200 件と全体の数 201 が出て、検索で残りが出る。外すと取り消す操作つきの知らせが出て、押すと同じモックに戻る。見る
+//   対象だけのときは一覧の見出しにモックの名前とメニューが出る。範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
 // - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
@@ -65,7 +68,7 @@
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
@@ -704,6 +707,32 @@ function pixelAt(image, x, y) {
   return [image.pixels[at], image.pixels[at + 1], image.pixels[at + 2]];
 }
 
+/** モックのパネル（R-PAGE-MOCK）。 */
+const mockPanel = '.lv-mock-panel';
+
+/** 比べる相手の選択肢の最後の「モックのファイル」を選んで、モックのパネルを開く。 */
+async function openMockPanel() {
+  await evaluate(`(() => { const select = document.querySelector('.lv-compare-select'); select.value = 'mock-file'; select.dispatchEvent(new Event('change')); return true; })()`);
+  await waitFor(visible(mockPanel));
+}
+
+/** モックのパネルのパスの欄にパスを入れて割り当てる。 */
+async function assignMockByPath(path) {
+  await openMockPanel();
+  await browser('fill', `${mockPanel} .lv-mock-path`, path);
+  await browser('click', `${mockPanel} .lv-mock-path-assign`);
+}
+
+/** 見えているモックのメニューの操作（読み直す・外す）を押す。 */
+async function chooseFromMockMenu(item) {
+  await evaluate(`(() => { const button = Array.from(document.querySelectorAll('.lv-mock-menu-button')).find((element) => element.getClientRects().length > 0); button.click(); return true; })()`);
+  await waitFor(visible(`.lv-mock-menu .${item}`));
+  await browser('click', `.lv-mock-menu .${item}`);
+}
+
+/** パネルの一覧に出ているファイル。 */
+const listedMockFiles = `JSON.stringify(Array.from(document.querySelectorAll('${mockPanel} .lv-mock-file')).map((item) => item.dataset.path))`;
+
 /** モック（R-PAGE-MOCK、R-PAGE-REF、R-PAGE-VIEW）。 */
 async function mocksAreAssignedShownAndKeptApart(repository) {
   const { mkdir } = await import('node:fs/promises');
@@ -744,16 +773,16 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await waitFor(showsSnapshot('Handed 1'));
 
     for (const path of [`../${basename(outside)}`, 'mocks/notes.txt']) {
-      await browser('fill', '.lv-mock-input', path);
-      await browser('click', '.lv-mock-assign');
-      await waitFor(`${visible('.lv-mock-error')} && document.querySelector('.lv-mock-error').textContent.trim() !== ''`);
+      await assignMockByPath(path);
+      await waitFor(`${visible(`${mockPanel} .lv-mock-error`)} && document.querySelector('${mockPanel} .lv-mock-error').textContent.trim() !== ''`);
       assert.notEqual(await evaluate(`document.querySelector('${refPane}').dataset.reference`), 'mock', path);
+      await browser('press', 'Escape');
+      await waitFor(`!${visible(mockPanel)}`);
     }
     console.log('PASS 配れる範囲の外のパスと .txt のファイルは、理由が出て割り当てられない');
 
-    await browser('fill', '.lv-mock-input', 'mocks/mock.html');
-    await browser('click', '.lv-mock-assign');
-    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && !${visible('.lv-mock-error')}`);
+    await assignMockByPath('mocks/mock.html');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && !${visible(mockPanel)}`);
     await new Promise((done) => setTimeout(done, 800));
     const mock = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'mock');
     assert.deepEqual(pixelAt(mock, 200, 200), [0, 200, 0], 'the mock CSS is applied');
@@ -762,14 +791,13 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     assert.equal(await evaluate(`document.querySelector('#page-tree .lv-page[data-page="/"] .lv-mock-tag') !== null`), true);
     console.log('PASS CSS と画像を参照するモックを割り当てると、比べる相手がモックになり、同じ表示幅でスタイルと画像ごと出る');
 
-    await browser('click', '.lv-mock-remove');
+    await chooseFromMockMenu('lv-mock-remove');
     await waitFor(showsSnapshot('Handed 1'));
     console.log('PASS モックを外すと、最後に渡した時点のスナップショットに戻る');
 
     await evaluate(`window.__mockReports = []; window.addEventListener('message', (event) => { if (event.data && event.data.mockReport) window.__mockReports.push(event.data); }); true`);
     const messagesBefore = (await (await fetch(new URL('api/review', kemi.url))).json()).messages.length;
-    await browser('fill', '.lv-mock-input', 'mocks/script.html');
-    await browser('click', '.lv-mock-assign');
+    await assignMockByPath('mocks/script.html');
     await waitFor(`window.__mockReports.length > 0`);
     const report = JSON.parse(await evaluate(`JSON.stringify(window.__mockReports[0])`));
     assert.equal(report.sawToken, false, JSON.stringify(report));
@@ -783,8 +811,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
 
     await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${dev.url}other.html`.replace(dev.url, `${new URL(kemi.live).origin}/`))}; true`);
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html'`);
-    await browser('fill', '.lv-mock-input', 'mocks/mock.html');
-    await browser('click', '.lv-mock-assign');
+    await assignMockByPath('mocks/mock.html');
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
     await browser('click', '#page-tree .lv-page[data-page="/"] .lv-page-open');
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/'`);
@@ -1109,6 +1136,129 @@ async function recordingNowSwitchesTheReference(repository) {
   }
 }
 
+/** 空のディレクトリ（git の外）に HTML を書く。 */
+async function plainDirectory(files) {
+  const dir = await mkdtemp(join(tmpdir(), 'kemi-live-plain-'));
+  for (const file of files) {
+    await mkdir(join(dir, file, '..'), { recursive: true });
+    await writeFile(join(dir, file), '<!doctype html><p>plain</p>\n');
+  }
+  return dir;
+}
+
+/**
+ * モックのパネルの一覧（R-PAGE-MOCK）: 作業ツリーに追跡中の HTML、無視されない未追跡の HTML、git が無視する HTML、`.git/` の中の
+ * HTML、範囲の外を指すシンボリックリンクの HTML、`.txt` を置いて開くと、前の 2 つだけが出て、検索の欄で絞り込める。git が無視する
+ * HTML はパスの欄に入れると割り当てられる。git の外の起動したディレクトリの下の HTML が出る。HTML を 201 個置くと 200 件だけが
+ * 出て、出している数 200 と全体の数 201 が示され、検索で絞ると出ていなかったファイルが出る。
+ */
+async function mockPanelListsTheFilesToChoose() {
+  const repository = await makeRepository();
+  const git = gitIn(repository);
+  const outside = await plainDirectory(['secret.html']);
+  await mkdir(join(repository, 'pages'), { recursive: true });
+  await writeFile(join(repository, 'pages', 'tracked.html'), '<!doctype html><p>tracked</p>\n');
+  await writeFile(join(repository, '.gitignore'), 'pages/ignored.html\n');
+  await git('add', 'pages/tracked.html', '.gitignore');
+  await git('commit', '-q', '-m', 'tracked page');
+  await writeFile(join(repository, 'pages', 'untracked.html'), '<!doctype html><p>untracked</p>\n');
+  await writeFile(join(repository, 'pages', 'ignored.html'), '<!doctype html><p>ignored</p>\n');
+  await writeFile(join(repository, 'pages', 'notes.txt'), 'not html\n');
+  await writeFile(join(repository, '.git', 'inside.html'), '<!doctype html><p>inside</p>\n');
+  await symlink(join(outside, 'secret.html'), join(repository, 'pages', 'link.html'));
+  const dev = await startDevServer();
+  let kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}other.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await waitFor(showsSnapshot('Start'));
+    const options = `JSON.stringify(Array.from(document.querySelector('.lv-compare-select').options).filter((option) => !option.disabled).map((option) => option.value))`;
+    assert.equal(JSON.parse(await evaluate(options)).at(-1), 'mock-file', 'the mock file comes last among the choices');
+    await openMockPanel();
+    assert.ok((await evaluate(`document.querySelector('.lv-compare-select').value`)) !== 'mock-file', 'choosing the mock file opens the panel without changing the choice');
+    await waitFor(`${listedMockFiles} === JSON.stringify(['pages/tracked.html', 'pages/untracked.html'])`);
+    await browser('fill', `${mockPanel} .lv-mock-search`, 'UNTR');
+    await waitFor(`${listedMockFiles} === JSON.stringify(['pages/untracked.html'])`);
+    console.log('PASS モックのパネルには追跡中と無視されない未追跡の HTML だけが出て、検索の欄で絞り込める');
+
+    await browser('fill', `${mockPanel} .lv-mock-path`, 'pages/ignored.html');
+    await browser('click', `${mockPanel} .lv-mock-path-assign`);
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('${refPane} .lv-bar-label').textContent.includes('pages/ignored.html') && !${visible(mockPanel)}`);
+    assert.ok((await evaluate(`document.querySelector('.lv-compare-select').selectedOptions[0].textContent`)).includes('ignored.html'));
+    console.log('PASS git が無視する HTML は、パネルのパスの欄に入れると割り当てられ、選択にファイルの名前が出る');
+  } finally {
+    await stop(kemi);
+  }
+
+  const plain = await plainDirectory(['index.html', 'sub/Other.HTML', 'notes.txt']);
+  kemi = await startKemi(plain, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}other.html`]);
+  try {
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await openMockPanel();
+    await waitFor(`${listedMockFiles} === JSON.stringify(['index.html', 'sub/Other.HTML'])`);
+    console.log('PASS git の外で起動すると、起動したディレクトリの下の HTML が一覧に出る');
+  } finally {
+    await stop(kemi);
+  }
+
+  const many = await plainDirectory(Array.from({ length: 201 }, (_, index) => `m${String(index).padStart(3, '0')}.html`));
+  kemi = await startKemi(many, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}other.html`]);
+  try {
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await openMockPanel();
+    const count = `document.querySelector('${mockPanel} .lv-mock-count')`;
+    await waitFor(`JSON.parse(${listedMockFiles}).length === 200 && ${count}.dataset.shown === '200' && ${count}.dataset.total === '201'`);
+    assert.equal(JSON.parse(await evaluate(listedMockFiles)).includes('m200.html'), false);
+    await browser('fill', `${mockPanel} .lv-mock-search`, 'm200');
+    await waitFor(`${listedMockFiles} === JSON.stringify(['m200.html'])`);
+    console.log('PASS HTML を 201 個置くと 200 件だけが出て、出している数と全体の数が示され、検索で絞ると出ていなかったファイルが出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
+ * モックのメニュー（R-PAGE-MOCK、R-PAGE-VIEW）: 割り当てたモックを選択の横のメニューで外すと、取り消す操作つきの知らせが出て、
+ * 押すと同じモックが比べる相手に戻る。見る対象だけのときは、変化の一覧の代わりに割り当てたファイルの名前の見出しが出て、
+ * そこから開いたメニューでモックを外せる。
+ */
+async function mockMenuRemovesAndUndoes(repository) {
+  await mkdir(join(repository, 'mocks'), { recursive: true });
+  await writeFile(join(repository, 'mocks', 'menu-mock.html'), '<!doctype html><p>menu mock</p>\n');
+  const dev = await startDevServer();
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}rich.html`]);
+  const mockShown = `document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('${refPane} .lv-bar-label').textContent.includes('mocks/menu-mock.html')`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await waitFor(showsSnapshot('Start'));
+    await assignMockByPath('mocks/menu-mock.html');
+    await waitFor(mockShown);
+    await chooseFromMockMenu('lv-mock-remove');
+    await waitFor(`${showsSnapshot('Start')} && ${visible(bandNoticeAction)}`);
+    await browser('click', bandNoticeAction);
+    await waitFor(mockShown);
+    console.log('PASS 割り当てたモックを選択の横のメニューで外すと、取り消す操作つきの知らせが出て、押すと同じモックに戻る');
+
+    await chooseCompare('now');
+    const heading = `${changeList}?.querySelector('.lv-changes-vs')?.textContent ?? ''`;
+    await waitFor(`(${heading}).includes('menu-mock.html') && document.querySelector('#page-tree .lv-change') === null`);
+    await evaluate(`${changeList}.querySelector('.lv-mock-menu-button').click(); true`);
+    await waitFor(visible('.lv-mock-menu .lv-mock-remove'));
+    await browser('click', '.lv-mock-menu .lv-mock-remove');
+    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main !== undefined`);
+    console.log('PASS 見る対象だけのとき、変化の一覧の見出しに割り当てたファイルの名前が出て、そこから開いたメニューでモックを外せる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /**
  * 並べたときの上端（R-PAGE-REF）: パスが 200 文字のモックを割り当てて並べ、見出しが長くなる幅にしても、両方のページの
  * 上端の差が 1px 以内。
@@ -1126,11 +1276,9 @@ async function sideBySidePagesShareTheirTop(repository) {
   try {
     await browser('set', 'viewport', '900', '800');
     await browser('open', kemi.url);
-    await waitFor(visible('.lv-mock-input'));
-    await browser('fill', '.lv-mock-input', path);
-    await browser('click', '.lv-mock-assign');
-    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
     await chooseCompare('side');
+    await assignMockByPath(path);
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
     await waitFor(`${visible(`${refPane} .lv-viewport`)} && ${visible(`${livePane} .lv-viewport`)}`);
     const gap = await evaluate(`Math.abs(document.querySelector('${refPane} .lv-viewport').getBoundingClientRect().top - document.querySelector('${livePane} .lv-viewport').getBoundingClientRect().top)`);
     assert.ok(gap <= 1, `the tops differ by ${gap}px`);
@@ -1358,7 +1506,7 @@ async function narrowPageViewFitsOneRow(repository) {
     assert.equal(await evaluate(visible('#progress')), false, 'the seen progress is not shown');
     assert.equal(await evaluate(`${visible('.lv-mode button[data-compare="overlay"]')} || ${visible('.lv-opacity')}`), false, 'no overlay on a narrow screen');
     await browser('click', `${band} .lv-menu-button`);
-    await waitFor(`${visible('.lv-menu .lv-compare-select')} && ${visible('.lv-menu .lv-record-now')} && ${visible('.lv-menu .lv-zoom')} && ${visible('.lv-menu .lv-mock-input')}`);
+    await waitFor(`${visible('.lv-menu .lv-compare-select')} && ${visible('.lv-menu .lv-record-now')} && ${visible('.lv-menu .lv-zoom')} && ${visible('.lv-menu .lv-mock-open')}`);
     await browser('click', '.lv-menu .lv-zoom button[data-zoom="full"]');
     await waitFor(`${liveScale} === 1 && ${visible('.lv-menu')}`);
     await browser('press', 'Escape');
@@ -1652,10 +1800,10 @@ async function changeListFollowsThePage(repository) {
     await post(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
     await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
-    await browser('fill', '.lv-mock-input', 'mocks/diff-mock.html');
-    await browser('click', '.lv-mock-assign');
-    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('#page-tree .lv-changes') === null`);
-    await browser('click', '.lv-mock-remove');
+    await assignMockByPath('mocks/diff-mock.html');
+    // モックと比べている間は、一覧の代わりにモックの見出しだけが出る（変化の行も数も無い）。
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('#page-tree .lv-change') === null && ${changeList}?.dataset.main === undefined`);
+    await chooseFromMockMenu('lv-mock-remove');
     await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
     console.log('PASS モックを割り当てたページでは変化の一覧が出ず、外すと最後に渡した時点のスナップショットと比べた一覧（変化 0）が出る');
 
@@ -1875,12 +2023,11 @@ async function marksFollowTheChanges(repository) {
     assert.ok(countPixels(image, regions.item(3), isPurple) > 0, 'a sibling that only shifted has the quiet mark');
     console.log('PASS 兄弟の途中に要素を足すと、足した要素に増えたの印が付き、後ろの兄弟には主な変化の印が付かない');
 
-    await browser('fill', '.lv-mock-input', 'mocks/diff-mock.html');
-    await browser('click', '.lv-mock-assign');
+    await assignMockByPath('mocks/diff-mock.html');
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
     image = await liveShot('marks-mock');
     assert.equal(countPixels(image, regions.item(2), isGreen), 0, 'no mark while comparing with a mock');
-    await browser('click', '.lv-mock-remove');
+    await chooseFromMockMenu('lv-mock-remove');
     await chooseReference('Recorded 1');
     await waitFor(`${changeList}?.dataset.main === '1'`);
     console.log('PASS モックと比べている間は印が付かない');
@@ -3382,6 +3529,8 @@ try {
   await commentImagesLookLikeThePage(repository);
   await commentImagesKeepTheLayoutOfTheViewport(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
+  await mockPanelListsTheFilesToChoose();
+  await mockMenuRemovesAndUndoes(repository);
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
   await compareModesScaleAndReload(repository);

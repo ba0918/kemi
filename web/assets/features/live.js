@@ -11,6 +11,7 @@ import { dom } from "../dom.js";
 import { state } from "../state.js";
 import {
   AUTO_RULE,
+  MOCK_FILE_CHOICE,
   WIDTH_CHOICES,
   addPlace,
   commentShortName,
@@ -44,6 +45,7 @@ import {
   markRemovedInSnapshot,
   renderChanges,
   renderCompareOptions,
+  renderMockFiles,
   renderPageTree,
   renderPlaces,
   renderStrayRefs,
@@ -130,6 +132,11 @@ const live = {
    * @type {{ page: string, id: string } | null}
    */
   recorded: null,
+  /**
+   * 外したモック。取り消す操作つきで知らせ、取り消すと同じパスで割り当て直す（R-PAGE-MOCK）。知らせは少しの間だけ出す。
+   * @type {{ page: string, path: string } | null}
+   */
+  removedMock: null,
   /** @type {Map<string, string>} 中身の写し（id → HTML） */
   bodies: new Map(),
   /** 比べる相手の枠に今出しているスナップショット。 */
@@ -296,6 +303,12 @@ export function startLive(info) {
     if (!shell) {
       return;
     }
+    // 「モックのファイル」は選択を変えず、モックのパネルを開く（R-PAGE-MOCK）。
+    if (shell.compareSelect.value === MOCK_FILE_CHOICE) {
+      renderBand();
+      openMockPanel(shell.compareSlot);
+      return;
+    }
     live.chosen.set(live.page, shell.compareSelect.value);
     live.recorded = null;
     render();
@@ -330,30 +343,12 @@ export function startLive(info) {
     }
   });
   shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
-  shell.mockAssign.addEventListener("click", () => void assignMock());
-  shell.mockInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      void assignMock();
-    }
-  });
-  shell.mockRemove.addEventListener("click", () => void removeMock());
-  shell.mockReload.addEventListener("click", () => {
-    live.mockReloadAsked = true;
-    render();
-  });
+  startMockControls(shell);
   shell.recordButton.addEventListener("click", () => void capture("manual"));
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   shell.refWheel.addEventListener("wheel", wheelShiftedReference, { passive: false });
-  // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
-  shell.refNoticeAction.addEventListener("click", () => {
-    if (state.narrow) {
-      setSide("ref");
-      return;
-    }
-    live.compare = "side";
-    render();
-  });
+  shell.refNoticeAction.addEventListener("click", () => bandAction?.());
   window.addEventListener("message", receive);
   const resized = new ResizeObserver(() => {
     // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
@@ -653,35 +648,189 @@ function receive(event) {
   }
 }
 
-/** 入れたパスのモックを、表示中のページに割り当てる。断られたら理由を出す（R-PAGE-MOCK）。 */
-async function assignMock() {
-  if (!shell || shell.mockInput.value.trim() === "") {
+// ---- モック（live-compare.md の R-PAGE-MOCK）: パネル、選択の横のメニュー、外したときの取り消し ----
+
+/** 検索の欄に打ってから一覧を頼むまで待つ時間（ミリ秒）。打っている間は頼まない。 */
+const MOCK_SEARCH_WAIT = 150;
+
+/** 外したモックの取り消しを知らせておく時間（ミリ秒）。 */
+const UNDO_MOCK = 8000;
+
+/** 最後に頼んだ一覧の番号。古い返事で新しい一覧を書き換えない。 */
+let mockFilesAsked = 0;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let mockSearchTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let undoMockTimer = null;
+
+/**
+ * @param {import("../views/live.js").LiveShell} shell
+ */
+function startMockControls(shell) {
+  const panel = shell.mockPanel;
+  panel.search.addEventListener("input", () => {
+    if (mockSearchTimer !== null) {
+      clearTimeout(mockSearchTimer);
+    }
+    mockSearchTimer = setTimeout(() => {
+      mockSearchTimer = null;
+      void loadMockFiles();
+    }, MOCK_SEARCH_WAIT);
+  });
+  const assignTyped = () => {
+    if (panel.path.value.trim() !== "") {
+      void assignMock(panel.path.value.trim());
+    }
+  };
+  panel.assign.addEventListener("click", assignTyped);
+  panel.path.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      assignTyped();
+    }
+  });
+  shell.mockOpen.addEventListener("click", () => {
+    shell.menu.hidePopover();
+    openMockPanel(shell.band);
+  });
+  shell.mockMenuButton.addEventListener("click", () => openMockMenu(shell.mockMenuButton));
+  shell.mockReload.addEventListener("click", () => {
+    shell.mockMenu.hidePopover();
+    live.mockReloadAsked = true;
+    render();
+  });
+  shell.mockRemove.addEventListener("click", () => {
+    shell.mockMenu.hidePopover();
+    void removeMock();
+  });
+}
+
+/**
+ * 浮かぶもの（パネルとメニュー）を、それを開いた操作のすぐ下に開く。画面からははみ出させない。
+ * @param {HTMLElement} popover
+ * @param {HTMLElement} anchor
+ */
+function openNear(popover, anchor) {
+  const box = anchor.getBoundingClientRect();
+  popover.style.top = `${Math.round(box.bottom + 4)}px`;
+  popover.style.left = `${Math.round(Math.max(8, Math.min(box.left, innerWidth - 8 - Math.min(420, innerWidth - 16))))}px`;
+  popover.showPopover();
+}
+
+/**
+ * モックのパネルを開く。検索とパスの欄を空にして、一覧を読む。
+ * @param {HTMLElement} anchor
+ */
+function openMockPanel(anchor) {
+  if (!shell) {
     return;
   }
-  const page = live.page;
+  const panel = shell.mockPanel;
+  panel.search.value = "";
+  panel.path.value = "";
+  panel.error.hidden = true;
+  if (!panel.box.matches(":popover-open")) {
+    openNear(panel.box, anchor);
+  }
+  panel.search.focus();
+  void loadMockFiles();
+}
+
+/** パネルの検索に合うファイルの一覧を読んで出す。 */
+async function loadMockFiles() {
+  if (!shell) {
+    return;
+  }
+  const panel = shell.mockPanel;
+  const asked = ++mockFilesAsked;
   try {
-    const mock = await api.assignMock(page, shell.mockInput.value.trim());
+    const found = await api.listMockFiles(panel.search.value.trim());
+    if (asked !== mockFilesAsked) {
+      return;
+    }
+    renderMockFiles(panel, found, live.mocks.get(live.page)?.path ?? "", (path) => void assignMock(path));
+  } catch (error) {
+    if (asked === mockFilesAsked) {
+      panel.error.textContent = error instanceof Error ? error.message : String(error);
+      panel.error.hidden = false;
+    }
+  }
+}
+
+/**
+ * モックのメニュー（読み直す・外す）を、押した「…」のすぐ下に開く。
+ * @param {HTMLElement} anchor
+ */
+function openMockMenu(anchor) {
+  if (!shell) {
+    return;
+  }
+  if (shell.mockMenu.matches(":popover-open")) {
+    shell.mockMenu.hidePopover();
+    return;
+  }
+  openNear(shell.mockMenu, anchor);
+}
+
+/**
+ * そのパスのモックを、表示中のページに割り当てる。断られたらパネルに理由を出す（R-PAGE-MOCK）。
+ * @param {string} path
+ * @param {string} [page] 割り当てるページ（取り消しでは外したときのページ）
+ */
+async function assignMock(path, page = live.page) {
+  if (!shell) {
+    return;
+  }
+  const panel = shell.mockPanel;
+  try {
+    const mock = await api.assignMock(page, path);
     live.mocks.set(page, { path: mock.path, url: mock.url });
     // 割り当てたページは既定でモックと比べる。
     live.chosen.delete(page);
-    shell.mockInput.value = "";
-    shell.mockError.hidden = true;
+    panel.error.hidden = true;
+    if (panel.box.matches(":popover-open")) {
+      panel.box.hidePopover();
+    }
   } catch (error) {
-    shell.mockError.textContent = error instanceof Error ? error.message : String(error);
-    shell.mockError.hidden = false;
+    panel.error.textContent = error instanceof Error ? error.message : String(error);
+    panel.error.hidden = false;
   }
   render();
 }
 
-/** 表示中のページのモックを外す。比べる相手はスナップショットに戻る。 */
+/** 表示中のページのモックを外す。比べる相手はスナップショットに戻る。取り消す操作つきで知らせる。 */
 async function removeMock() {
   const page = live.page;
+  const path = live.mocks.get(page)?.path;
   await api.assignMock(page, null);
   live.mocks.delete(page);
   if (live.chosen.get(page) === "mock") {
     live.chosen.delete(page);
   }
+  if (path !== undefined) {
+    live.removedMock = { page, path };
+    if (undoMockTimer !== null) {
+      clearTimeout(undoMockTimer);
+    }
+    undoMockTimer = setTimeout(() => {
+      undoMockTimer = null;
+      live.removedMock = null;
+      renderReference();
+    }, UNDO_MOCK);
+  }
   render();
+}
+
+/** 外したモックを、同じパスで割り当て直す。 */
+function undoRemovedMock() {
+  const removed = live.removedMock;
+  live.removedMock = null;
+  if (undoMockTimer !== null) {
+    clearTimeout(undoMockTimer);
+    undoMockTimer = null;
+  }
+  if (removed) {
+    void assignMock(removed.path, removed.page);
+  }
 }
 
 /** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
@@ -1537,13 +1686,13 @@ function placeControls() {
   if (!shell) {
     return;
   }
-  const { menu, compareSlot, zoomSeg, recordButton, widthGroup, mockGroup, refNotice, stageName, reloadButton } = shell;
+  const { menu, compareSlot, zoomSeg, recordButton, widthGroup, mockOpen, refNotice, stageName, reloadButton } = shell;
   const inMenu = menu.contains(compareSlot);
   if (state.narrow && !inMenu) {
-    menu.append(compareSlot, zoomSeg, recordButton, widthGroup, mockGroup);
+    menu.append(compareSlot, mockOpen, zoomSeg, recordButton, widthGroup);
   } else if (!state.narrow && inMenu) {
     menu.hidePopover();
-    refNotice.before(widthGroup, recordButton, mockGroup);
+    refNotice.before(widthGroup, recordButton);
     stageName.after(zoomSeg);
     reloadButton.before(compareSlot);
   }
@@ -1586,8 +1735,11 @@ function renderBand() {
     AUTO_RULE,
   );
   renderStageName();
-  shell.mockRemove.hidden = mock === null;
-  shell.mockReload.hidden = mock === null;
+  // 割り当てている間だけ、選択の横に読み直す・外すのメニューを開く「…」を出す（R-PAGE-MOCK）。
+  shell.mockMenuButton.hidden = mock === null;
+  if (mock === null && shell.mockMenu.matches(":popover-open")) {
+    shell.mockMenu.hidePopover();
+  }
   shell.recordButton.disabled = !live.reachable;
   for (const choice of shell.toolSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.tool === live.tool));
@@ -1659,6 +1811,7 @@ const changeHandlers = {
       showRemovedElement(element.index);
     }
   },
+  onMockMenu: (anchor) => openMockMenu(anchor),
 };
 
 /** 比べる相手の側の光を出しておく長さ（ミリ秒。ページの中の光と同じ）。 */
@@ -1770,10 +1923,15 @@ async function showChangedElement(index) {
 }
 
 /**
- * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。
- * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | null}
+ * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。モックと比べるときは、一覧の代わりに
+ * モックの名前の見出し（R-PAGE-VIEW）。
+ * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | import("../views/live.js").ChangeMock | null}
  */
 function changesToList() {
+  const shown = currentReference();
+  if (shown.type === "mock") {
+    return { mock: referenceName(live.snapshots, shown) };
+  }
   if (live.changes === null) {
     return live.changesNotice === "" ? null : { notice: live.changesNotice };
   }
@@ -1869,6 +2027,8 @@ function renderBandNotice(reference) {
   if (!shell) {
     return;
   }
+  bandAction = null;
+  const removed = live.removedMock !== null && live.removedMock.page === live.page ? live.removedMock : null;
   const recorded =
     live.recorded !== null &&
     live.recorded.page === live.page &&
@@ -1879,20 +2039,46 @@ function renderBandNotice(reference) {
       : null;
   let text = live.refNotice;
   let kind = "waiting";
-  let action = false;
-  if (text === "" && recorded !== null) {
+  let label = "";
+  let title = "";
+  if (text === "" && removed !== null) {
+    text = `Mock removed · ${removed.path}`;
+    kind = "done";
+    label = "Undo";
+    title = `Assign ${removed.path} again`;
+    bandAction = undoRemovedMock;
+  } else if (text === "" && recorded !== null) {
     text = `${snapshotLabel(live.snapshots, recorded)} · now compared with it`;
     kind = "done";
-    action = state.narrow ? live.side === "live" : live.compare === "now";
+    // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
+    if (state.narrow ? live.side === "live" : live.compare === "now") {
+      label = "Compare →";
+      title = state.narrow ? "Show the recorded snapshot" : "Show the recorded snapshot side by side";
+      bandAction = showRecorded;
+    }
   } else if (text === "" && reference.type === "snapshot") {
     text = unsavedSnapshotNotice(reference.snapshot);
   }
   shell.refNotice.hidden = text === "";
   shell.refNotice.dataset.kind = kind;
   shell.refNoticeText.textContent = text;
-  shell.refNoticeAction.hidden = !action;
-  shell.refNoticeAction.textContent = "Compare →";
-  shell.refNoticeAction.title = state.narrow ? "Show the recorded snapshot" : "Show the recorded snapshot side by side";
+  shell.refNoticeAction.hidden = bandAction === null;
+  shell.refNoticeAction.textContent = label;
+  shell.refNoticeAction.title = title;
+}
+
+/** 帯の知らせの操作。知らせを描くたびに決める。 */
+/** @type {(() => void) | null} */
+let bandAction = null;
+
+/** 手で取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。 */
+function showRecorded() {
+  if (state.narrow) {
+    setSide("ref");
+    return;
+  }
+  live.compare = "side";
+  render();
 }
 
 /**

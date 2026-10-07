@@ -170,7 +170,7 @@ first row of the top bar, whose **…** menu then holds only the theme. The
 controls of the page view fit in one row: Now / Before (the running page or
 what it is compared with, one at a time), the page, its width, the agent's
 state, and a **…** menu with what the page is compared with, **Record now**,
-Fit / 100%, the width, and the mock. Overlay is not offered there. The tools
+Fit / 100%, the width, and **Mock file…**. Overlay is not offered there. The tools
 (Element, Arrow, Pen, Interact) and **Hand to agent** float together in one
 toolbar at the bottom of the screen instead of sitting above the page. The page
 list is a drawer and the conversation is a sheet.
@@ -187,7 +187,7 @@ What the page is compared with is chosen per page (path and query):
   recorded by hand. You can pick another point; it stays picked when the
   width changes, and a width it lacks says it has not been recorded. The
   choices are listed as Auto, then the hand-overs, the start, the recorded
-  ones, and the mock; Auto names the snapshot it picks for the page and
+  ones, the assigned mock, and last **Mock file…**; Auto names the snapshot it picks for the page and
   width shown, and a note under it says how it picks. A snapshot taken with
   **Record now** becomes what the page is compared with, as if you had
   picked it, and the band says so; while the page is shown alone, the notice
@@ -195,8 +195,19 @@ What the page is compared with is chosen per page (path and query):
   it). Handing to the agent does not move the comparison away from it;
   reloading the review page goes back to Auto.
 - A **mock** is an HTML file in the served directory that you assign to the
-  page by its path. A page with a mock is compared with it by default;
-  removing the mock goes back to the snapshots. The mock runs its scripts in
+  page. **Mock file…** opens a small panel that says what a mock is and
+  lists the `.html` and `.htm` files in the served directory (in a git
+  working tree, the tracked ones and the untracked ones git does not ignore;
+  never anything inside `.git/` or a symlink pointing outside), with a search
+  box. It shows up to 200 files, with how many it shows out of how many
+  match; search to find the rest. A file not listed, such as one git
+  ignores, can be assigned by typing its path into the panel. A path outside
+  the directory or a file that is not HTML is refused with the reason.
+  While a mock is assigned, the choice shows its path, and the **…** next to
+  it holds **Reload mock** and **Remove mock**; removing it says so in the
+  band with **Undo**, which assigns the same file again. A page with a mock
+  is compared with it by default; removing the mock goes back to the
+  snapshots. The mock runs its scripts in
   a sandboxed frame on an opaque origin, and kemi serves it and the files it
   references under a path holding a per-review secret instead of the review
   token, so the mock reaches neither the review page nor kemi's API. kemi
@@ -230,7 +241,8 @@ moved within its frame; the wheel over it still moves it, and it goes back to
 scrolling by itself once what it is compared with, the way of comparing, the
 page, or the width changes. While overlaid, the page itself scrolls to the
 element, and the snapshot laid over it follows. The list and the marks follow the page as it
-changes. A page compared with a mock gets neither.
+changes. A page compared with a mock gets neither: in place of the list,
+its heading names the mock and has the same **…** menu.
 
 You can comment on the page itself. The tools **Element**, **Arrow**, and
 **Pen** in the toolbar right above the page put places on the running page
@@ -282,8 +294,8 @@ with an opacity slider; it follows the page's scroll and lets clicks through
 to the page underneath, and the heading names both and the opacity, or which
 one is visible at either end. The choice of what to compare with is shown
 only while comparing, but the changes and the marks on the page show while
-the page is alone too. **Record now** and the mock stay in the band whatever
-the way of comparing. The way of comparing, Fit / 100%, and what is compared
+the page is alone too. **Record now** stays in the band whatever the way of
+comparing. The way of comparing, Fit / 100%, and what is compared
 with are kept while the review page is open and reset when it is reloaded. `--live` takes only `--port`, `--bind`, `--no-open`,
 `--live-port`, `--focus`, and `--serve`. The review title is
 `Live review of <url>`; for a file the URL is its path from the served

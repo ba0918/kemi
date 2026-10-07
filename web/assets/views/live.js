@@ -18,6 +18,8 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  * }} ChangeListState
  * 比べられないときに一覧の代わりに出す知らせ。
  * @typedef {{ notice: string }} ChangeNotice
+ * 比べる相手がモックのとき、一覧の代わりに出す見出し（モックの名前）。
+ * @typedef {{ mock: string }} ChangeMock
  */
 
 /**
@@ -28,7 +30,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   bandAgent: HTMLElement,
  *   menu: HTMLElement,
  *   widthGroup: HTMLElement,
- *   mockGroup: HTMLElement,
  *   stageHead: HTMLElement,
  *   widthSeg: HTMLElement,
  *   widthInput: HTMLInputElement,
@@ -41,11 +42,12 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   reloadButton: HTMLButtonElement,
  *   modeSeg: HTMLElement,
  *   opacity: HTMLInputElement,
- *   mockInput: HTMLInputElement,
- *   mockAssign: HTMLButtonElement,
- *   mockRemove: HTMLButtonElement,
+ *   mockMenuButton: HTMLButtonElement,
+ *   mockMenu: HTMLElement,
  *   mockReload: HTMLButtonElement,
- *   mockError: HTMLElement,
+ *   mockRemove: HTMLButtonElement,
+ *   mockOpen: HTMLButtonElement,
+ *   mockPanel: MockPanel,
  *   sideSeg: HTMLElement,
  *   stage: HTMLElement,
  *   refPane: HTMLElement,
@@ -78,6 +80,20 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   stroke: SVGPolylineElement,
  *   compose: ComposeShell,
  * }} LiveShell
+ */
+
+/**
+ * モックのパネル（live-compare.md の R-PAGE-MOCK）: 一行の説明、検索の欄、ファイルの一覧（出している数と全体の数）、
+ * 一覧に無いファイルのパスを入れる欄。
+ * @typedef {{
+ *   box: HTMLElement,
+ *   search: HTMLInputElement,
+ *   count: HTMLElement,
+ *   list: HTMLElement,
+ *   path: HTMLInputElement,
+ *   assign: HTMLButtonElement,
+ *   error: HTMLElement,
+ * }} MockPanel
  */
 
 /**
@@ -152,28 +168,29 @@ export function buildShell() {
   widthError.hidden = true;
   widthGroup.append(widthSeg, widthInput, widthError);
 
-  // 手で取る操作とモックの操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT、R-PAGE-MOCK）。
+  // 手で取る操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT）。
   // 広い画面の帯ではアイコンだけ、狭い画面のメニューでは名前も出す。
   const recordButton = button("lv-record lv-record-now");
   recordButton.append(svgIcon(RECORD_ICON), textEl("span", "lv-record-label", "Record now"));
   recordButton.title = "Record now: take a snapshot of the page as it is now";
   recordButton.setAttribute("aria-label", "Record now");
-  const mockGroup = el("div", "lv-mock");
-  const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
-  mockInput.type = "text";
-  mockInput.placeholder = "Mock path, e.g. docs/mock.html";
-  mockInput.setAttribute("aria-label", "Path of the mock HTML file");
-  const mockAssign = button("lv-record lv-mock-assign");
-  mockAssign.textContent = "Assign mock";
-  const mockRemove = button("lv-record lv-mock-remove");
-  mockRemove.textContent = "Remove mock";
-  const mockReload = button("lv-record lv-mock-reload");
+  // モックの入口は、比べる相手の選択肢の最後の「Mock file…」と、狭い画面の帯のメニュー。割り当てている間の読み直す・
+  // 外す操作は、選択の横と変化の一覧の見出しの「…」から開くメニューに置く（R-PAGE-MOCK、R-PAGE-VIEW）。
+  const mockMenuButton = mockMenuToggle();
+  const mockMenu = el("div", "lv-mock-menu lv-popover");
+  mockMenu.id = "live-mock-menu";
+  mockMenu.setAttribute("popover", "");
+  mockMenu.setAttribute("aria-label", "Mock");
+  const mockReload = button("lv-popover-item lv-mock-reload");
   mockReload.textContent = "Reload mock";
   mockReload.title = "Read the mock file again";
-  const mockError = el("span", "lv-width-error lv-mock-error");
-  mockError.setAttribute("role", "alert");
-  mockError.hidden = true;
-  mockGroup.append(mockInput, mockAssign, mockRemove, mockReload, mockError);
+  const mockRemove = button("lv-popover-item lv-mock-remove");
+  mockRemove.textContent = "Remove mock";
+  mockMenu.append(mockReload, mockRemove);
+  const mockOpen = button("lv-record lv-mock-open");
+  mockOpen.textContent = "Mock file…";
+  mockOpen.title = "Choose an HTML file to compare the page with";
+  const mockPanel = buildMockPanel();
   // 取れた・取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
   // 取れたときは、取ったものを並べて見る操作を添える（live-compare.md の R-PAGE-REF）。
   const refNotice = el("span", "lv-notice lv-band-notice");
@@ -211,7 +228,7 @@ export function buildShell() {
   opacity.value = "50";
   opacity.setAttribute("aria-label", "Opacity of the reference");
   opacity.title = "Opacity of the reference";
-  compareSlot.append(compareSelect, opacity);
+  compareSlot.append(compareSelect, mockMenuButton, opacity);
   const reloadButton = button("iconbtn lv-reload");
   reloadButton.title = "Reload page";
   reloadButton.setAttribute("aria-label", "Reload page");
@@ -268,10 +285,10 @@ export function buildShell() {
   menuButton.setAttribute("aria-label", "Page view options");
   menuButton.setAttribute("popovertarget", menu.id);
   menuButton.append(svgIcon(MORE_ICON));
+  menu.append(mockOpen);
   band.append(
     widthGroup,
     recordButton,
-    mockGroup,
     refNotice,
     el("span", "lv-spacer"),
     sideSeg,
@@ -280,6 +297,8 @@ export function buildShell() {
     bandAgent,
     menuButton,
     menu,
+    mockMenu,
+    mockPanel.box,
   );
 
   // 道具は見る対象の枠のすぐ上に、始め方の案内はその下に置く（R-PAGE-COMMENT）。
@@ -364,7 +383,6 @@ export function buildShell() {
     bandAgent,
     menu,
     widthGroup,
-    mockGroup,
     stageHead,
     widthSeg,
     widthInput,
@@ -377,11 +395,12 @@ export function buildShell() {
     reloadButton,
     modeSeg,
     opacity,
-    mockInput,
-    mockAssign,
-    mockRemove,
+    mockMenuButton,
+    mockMenu,
     mockReload,
-    mockError,
+    mockRemove,
+    mockOpen,
+    mockPanel,
     sideSeg,
     stage,
     refPane: ref.pane,
@@ -414,6 +433,79 @@ export function buildShell() {
     stroke,
     compose,
   };
+}
+
+/** 割り当てたモックのメニュー（読み直す・外す）を開く「…」。 */
+function mockMenuToggle() {
+  const toggle = button("iconbtn lv-mock-menu-button");
+  toggle.title = "Mock actions";
+  toggle.setAttribute("aria-label", "Mock actions");
+  toggle.append(svgIcon(MORE_ICON));
+  return toggle;
+}
+
+/** @returns {MockPanel} */
+function buildMockPanel() {
+  const box = el("div", "lv-mock-panel lv-popover");
+  box.id = "live-mock-panel";
+  box.setAttribute("popover", "");
+  box.setAttribute("aria-label", "Mock file");
+  box.append(
+    textEl("p", "lv-mock-about", "A mock is an HTML file shown in place of a snapshot, such as a design to compare the page with."),
+  );
+  const search = /** @type {HTMLInputElement} */ (el("input", "lv-mock-search"));
+  search.type = "search";
+  search.placeholder = "Search the HTML files";
+  search.setAttribute("aria-label", "Search the HTML files");
+  const count = el("div", "lv-mock-count");
+  count.setAttribute("role", "status");
+  const list = el("ul", "lv-mock-files");
+  list.setAttribute("aria-label", "HTML files");
+  const pathRow = el("div", "lv-mock-path-row");
+  const path = /** @type {HTMLInputElement} */ (el("input", "lv-mock-path"));
+  path.type = "text";
+  path.placeholder = "Or a path not listed, e.g. docs/mock.html";
+  path.setAttribute("aria-label", "Path of the mock HTML file");
+  const assign = button("lv-record lv-mock-path-assign");
+  assign.textContent = "Use";
+  pathRow.append(path, assign);
+  const error = el("p", "lv-width-error lv-mock-error");
+  error.setAttribute("role", "alert");
+  error.hidden = true;
+  box.append(search, count, list, pathRow, error);
+  return { box, search, count, list, path, assign, error };
+}
+
+/**
+ * モックのパネルの一覧。出している数が全体より少なければ、検索の欄で絞り込めることを添える（R-PAGE-MOCK）。
+ * @param {MockPanel} panel
+ * @param {{ files: string[], total: number }} found
+ * @param {string} assigned 今割り当てているモックのパス（無ければ空）
+ * @param {(path: string) => void} onPick
+ */
+export function renderMockFiles(panel, found, assigned, onPick) {
+  panel.list.textContent = "";
+  for (const path of found.files) {
+    const item = el("li");
+    const pick = button("lv-mock-file");
+    pick.dataset.path = path;
+    pick.textContent = path;
+    if (path === assigned) {
+      pick.setAttribute("aria-current", "true");
+    }
+    pick.addEventListener("click", () => onPick(path));
+    item.append(pick);
+    panel.list.append(item);
+  }
+  const shown = found.files.length;
+  panel.count.dataset.shown = String(shown);
+  panel.count.dataset.total = String(found.total);
+  panel.count.textContent =
+    shown < found.total
+      ? `Showing ${shown} of ${found.total} files. Search to narrow them down.`
+      : found.total === 0
+        ? "No HTML files found. Enter a path below."
+        : `${found.total} file${found.total === 1 ? "" : "s"}`;
 }
 
 /** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
@@ -659,7 +751,7 @@ export function renderCompareOptions(select, options, chosen, rule) {
  *   onPage: (page: string) => void,
  *   onWidth: (page: string, width: number) => void,
  * } & ChangeHandlers} handlers
- * @param {ChangeListState | ChangeNotice | null} changes
+ * @param {ChangeListState | ChangeNotice | ChangeMock | null} changes
  * @param {boolean} locked ページと表示幅を変えられない間（コメントの保存中）。移る操作を使えないと出す
  */
 export function renderPageTree(container, items, handlers, changes, locked) {
@@ -706,11 +798,13 @@ export function renderPageTree(container, items, handlers, changes, locked) {
 }
 
 /**
- * 変化の一覧の操作。開いたずれただけと並べた数を覚えさせ、行を押したらその要素を見せる。
+ * 変化の一覧の操作。開いたずれただけと並べた数を覚えさせ、行を押したらその要素を見せる。モックの見出しの「…」で
+ * モックのメニューを開く。
  * @typedef {{
  *   onShifted: (open: boolean) => void,
  *   onListed: (group: "main" | "shifted", count: number) => void,
  *   onShow: (element: import("../live-diff.js").ElementChanges) => void,
+ *   onMockMenu: (anchor: HTMLElement) => void,
  * }} ChangeHandlers
  */
 
@@ -724,7 +818,7 @@ const FOCUSABLE_IN_CHANGES = [".lv-shifted > summary", ".lv-change-main .lv-chan
  * （renderPageTree が描く）。
  * @param {HTMLElement} container renderPageTree で描いたツリー
  * @param {ChangeHandlers} handlers
- * @param {ChangeListState | ChangeNotice | null} changes
+ * @param {ChangeListState | ChangeNotice | ChangeMock | null} changes
  */
 export function renderChanges(container, handlers, changes) {
   const row = container.querySelector('.lv-page[data-current="true"]');
@@ -758,13 +852,27 @@ const LISTED_CHANGES = 300;
 /**
  * 変化の一覧（R-PAGE-DIFF）。要素ごとに 1 行で、主な変化を上に、ずれただけは畳んで下に、印の色の凡例をその下に。
  * 見出しには比べている相手の名前を出す（R-PAGE-VIEW）。比べられないときは、一覧の代わりにそのことを出す。
- * @param {ChangeListState | ChangeNotice} state
+ * @param {ChangeListState | ChangeNotice | ChangeMock} state
  * @param {ChangeHandlers} handlers
  */
 function changeList(state, handlers) {
   if ("notice" in state) {
     const box = el("div", "lv-changes lv-changes-failed");
     box.append(textEl("p", "lv-changes-notice", state.notice));
+    return box;
+  }
+  if ("mock" in state) {
+    // モックと比べるときは一覧を出さず、見出しにモックの名前と、選択の横と同じメニューを出す（R-PAGE-VIEW）。
+    const box = el("div", "lv-changes lv-changes-mock");
+    const head = el("div", "lv-changes-head");
+    const vs = textEl("span", "lv-changes-vs", state.mock);
+    vs.title = `Compared with ${state.mock}`;
+    const toggle = mockMenuToggle();
+    toggle.addEventListener("click", () => handlers.onMockMenu(toggle));
+    const end = el("span", "lv-changes-mock-end");
+    end.append(vs, toggle);
+    head.append(textEl("span", "", "Changes"), end);
+    box.append(head);
     return box;
   }
   const changes = state.list;

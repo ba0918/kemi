@@ -205,6 +205,15 @@ export function mockReadable(url) {
   return fetch(url, { cache: "no-store" }).then((response) => response.ok, () => false);
 }
 
+/**
+ * モックに選べるファイル（live-compare.md の R-PAGE-MOCK）。検索に合うものを 200 件までと、検索に合う全体の数。
+ * @param {string} query パスに含む文字（空ならすべて）
+ * @returns {Promise<{ files: string[], total: number }>}
+ */
+export function listMockFiles(query) {
+  return getJson(`api/mock-files?q=${encodeURIComponent(query)}`);
+}
+
 /** 割り当てたモック。 */
 export function listMocks() {
   return getJson("api/mocks");
