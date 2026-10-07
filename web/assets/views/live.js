@@ -55,6 +55,8 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   refNoticeText: HTMLElement,
  *   refNoticeAction: HTMLButtonElement,
  *   refViewport: HTMLElement,
+ *   refGlow: HTMLElement,
+ *   refWheel: HTMLElement,
  *   refFrame: HTMLIFrameElement,
  *   refMockFrame: HTMLIFrameElement,
  *   refEmpty: HTMLElement,
@@ -313,6 +315,14 @@ export function buildShell() {
   refMockFrame.referrerPolicy = "no-referrer";
   refMockFrame.hidden = true;
   ref.box.append(refFrame, refMockFrame, refEmpty);
+  // 消えた要素の行を押したとき（R-PAGE-DIFF）: 比べる相手の側のその要素の光と、比べる相手を中身の高さで描いて外側で
+  // ずらしている間にホイールを受ける層。スナップショットの枠はスクリプトを止めていて中を動かせないので、レビュー画面の
+  // 側に置く。光は重ねて透かすときの透かし具合を受けないよう、枠を収める箱の外に置く。
+  const refGlow = el("div", "lv-ref-glow");
+  refGlow.hidden = true;
+  const refWheel = el("div", "lv-ref-wheel");
+  refWheel.hidden = true;
+  ref.viewport.append(refWheel, refGlow);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -381,6 +391,8 @@ export function buildShell() {
     refNoticeText,
     refNoticeAction,
     refViewport: ref.viewport,
+    refGlow,
+    refWheel,
     refFrame,
     refMockFrame,
     refEmpty,

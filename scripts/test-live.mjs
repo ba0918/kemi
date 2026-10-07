@@ -41,7 +41,9 @@
 //   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色の見本つきで主な変化に入る。
 //   ボタンの文字色・背景色・枠を同時に変えると一覧ではそのボタンが 1 行になり、押すとそのボタンまでスクロールして印が光る。
 //   見る対象だけのときも、一覧の見出しの名前が並べたときの比べる相手の選択の文字に含まれる。html と body はずれただけに
-//   出ず、body の背景色の変化は主な変化に出る。
+//   出ず、body の背景色の変化は主な変化に出る。下の方の消えた要素の行を押すと、見る対象だけなら並べる見比べ方に、幅 390px
+//   では比べる相手の 1 枚にしてスナップショットのその要素が見えて光る（その間もホイールで動かせ、見比べ方を変えると元の形に
+//   戻る）。重ねて透かすときは見比べ方を変えず、そろったままその位置へ動いて光る。
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
 //   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
 //   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。枠が隠れている間（比べる相手の
@@ -1520,6 +1522,89 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     await writeFile(join(dev.dir, 'changing.css'), `${changingCss()}body { background: rgb(255, 250, 230); }\n`);
     await waitFor(`${mainRows}.some((item) => item.dataset.tag === 'body')`);
     console.log('PASS 兄弟の途中に要素を足しても html と body はずれただけに出ず、body の背景色を変えると body が主な変化に出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/** /changing.html の末尾の余白の下に、下の方の要素（#low）を足したもの。 */
+const changingWithLow = () => changingPage().replace('<div class="tail"></div>', '<div class="tail"></div><p id="low" style="margin:0;height:60px">Low element</p>');
+
+/**
+ * 消えた要素の行（R-PAGE-VIEW、R-PAGE-DIFF、R-PAGE-SNAPSHOT）: スナップショットにあって今のページから消した、下の方の要素が
+ * 一覧に出る。見る対象だけのときにその行を押すと並べる見比べ方になり、比べる相手の枠の中でその要素が見える位置にあって
+ * 光っている。幅 390px では比べる相手の 1 枚に切り替わって同じになる。重ねて透かすときは見比べ方を変えず、その要素が
+ * 見える位置で光り、見る対象と比べる相手の位置がそろったまま。
+ */
+async function removedRowsLeadToTheSnapshot(repository) {
+  const dev = await startDevServer();
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
+  const refView = `${refPane} .lv-viewport`;
+  const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
+  // 枠の上の方（ページの先頭にある青いボタンが写る所）を除いた範囲。ボタンの青は光の色に近い。
+  const belowTheButton = [0, 250, 100000, 100000];
+  const pressRemovedRow = () => evaluate(`${removedRow}.querySelector('button').click(); true`);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await writeFile(join(dev.dir, 'changing.html'), changingWithLow());
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && document.querySelector('${livePane} .lv-notice').hidden`);
+    await new Promise((done) => setTimeout(done, 1000));
+    await browser('click', '.lv-band .lv-record-now');
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.html'), changingPage());
+    await waitFor(`${removedRow} !== null && ${removedRow}.textContent.includes('Low element')`);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now');
+    // 光は数秒で消えるので、押したらすぐに撮り始める。
+    await pressRemovedRow();
+    await waitForPixels(refView, shots, 'removed-side', belowTheButton, isGlow);
+    await waitForPixels(refView, shots, 'removed-side-mark', belowTheButton, isRed);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare === 'side' && ${visible(refPane)}`), true);
+    console.log('PASS 下の方の消えた要素が一覧に出て、見る対象だけのときにその行を押すと並べる見比べ方になり、比べる相手の側でその要素が見えて光る');
+
+    // ずらした形の間も、比べる相手の上のホイールで動かせる。見比べ方を変えると、元の形（枠の中で自分でスクロールする形）に戻る。
+    const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
+    const shifted = `new DOMMatrix(getComputedStyle(${refFrameNow}).transform).m42`;
+    const down = await evaluate(shifted);
+    assert.ok(down < 0, `the snapshot is moved up to the element: ${down}`);
+    await evaluate(`(() => { const layer = document.querySelector('${refView} .lv-ref-wheel'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: r.x + 50, clientY: r.y + 50, bubbles: true, cancelable: true })); })()`);
+    await waitFor(`${shifted} > ${down}`);
+    await chooseCompare('now');
+    await chooseCompare('side');
+    await waitFor(`${shifted} === 0 && Math.abs(${refFrameNow}.getBoundingClientRect().height - document.querySelector('${refView}').clientHeight) <= 1`);
+    console.log('PASS ずらした形の間も比べる相手をホイールで動かせ、見比べ方を変えると元の形に戻る');
+
+    // 読み込み直すと表示幅は既定に戻る。取った幅に合わせると、自動はその幅で取ったものを選ぶ。
+    const at390 = `document.querySelector('.lv-widths button[data-width="390"]').click(); true`;
+    await browser('set', 'viewport', '390', '844');
+    await browser('open', kemi.url);
+    await waitFor(visible(livePane));
+    await evaluate(at390);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${removedRow} !== null`);
+    await pressRemovedRow();
+    await waitForPixels(refView, shots, 'removed-narrow', belowTheButton, isGlow);
+    await waitForPixels(refView, shots, 'removed-narrow-mark', belowTheButton, isRed);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)}`), true);
+    console.log('PASS 幅 390px で同じ行を押すと、比べる相手の 1 枚に切り替わり、その要素が見えて光る');
+
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(visible(livePane));
+    await evaluate(at390);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${removedRow} !== null`);
+    await chooseCompare('overlay');
+    await waitFor(`${removedRow} !== null`);
+    await pressRemovedRow();
+    await waitForPixels(refView, shots, 'removed-overlay', belowTheButton, isGlow);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'overlay');
+    // 重ねた比べる相手は、見る対象のスクロールの分だけ外側でずらして描く（そろったまま）。見る対象が下へスクロールしている。
+    const shift = await evaluate(`new DOMMatrix(getComputedStyle(document.querySelector('${refPane} .lv-frame:not([hidden])')).transform).m42`);
+    assert.ok(shift < -1000, `the overlaid snapshot follows the page scrolled down to the element: ${shift}`);
+    console.log('PASS 重ねて透かすときに同じ行を押すと、見比べ方は変わらず、そろったままその要素の位置までスクロールして光る');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -3311,6 +3396,7 @@ try {
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
   await changeListFollowsThePage(repository);
   await changeRowsAreElementsThatLeadToThePage(repository);
+  await removedRowsLeadToTheSnapshot(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
   await snapshotsAreTakenUnderTrustedTypes(repository);

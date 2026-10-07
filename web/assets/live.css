@@ -449,6 +449,40 @@ body[data-live-view="code"] #main > .lv-band {
   inset: 0;
 }
 
+.lv-ref-glow {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 4px;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 6px rgb(59 78 168), 0 0 18px 8px rgb(59 78 168 / 55%);
+  pointer-events: none;
+  animation: lv-glow 1.4s ease-in-out 2;
+}
+
+.lv-ref-glow[hidden],
+.lv-ref-wheel[hidden] {
+  display: none;
+}
+
+/* 光の明滅（ページの中の光と同じ。web/live/page.js の GLOW_STRONG・GLOW_WEAK）。 */
+@keyframes lv-glow {
+  50% {
+    box-shadow: 0 0 0 3px #fff, 0 0 0 6px rgb(59 78 168), 0 0 4px 2px rgb(59 78 168 / 20%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-ref-glow {
+    animation: none;
+  }
+}
+
+.lv-ref-wheel {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 .lv-frame {
   border: 0;
   background: #fff;

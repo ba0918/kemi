@@ -222,7 +222,14 @@ the page: red for a main change, green for an added element, and a light
 dashed outline for one that only moved; a removed element is marked on the
 snapshot. A legend under the list says what the colors mean. Clicking a row
 scrolls the page to that element and makes its mark flash (at 100%, the frame
-also scrolls sideways to it). The list and the marks follow the page as it
+also scrolls sideways to it). A removed element is always listed; clicking its
+row shows the snapshot side by side (on a narrow screen, switches to it), moves
+the snapshot to the element and makes it flash. As the snapshot runs no script
+and cannot be scrolled from outside, it is then drawn at its full height and
+moved within its frame; the wheel over it still moves it, and it goes back to
+scrolling by itself once what it is compared with, the way of comparing, the
+page, or the width changes. While overlaid, the page itself scrolls to the
+element, and the snapshot laid over it follows. The list and the marks follow the page as it
 changes. A page compared with a mock gets neither.
 
 You can comment on the page itself. The tools **Element**, **Arrow**, and

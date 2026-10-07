@@ -101,6 +101,18 @@ const live = {
   side: "live",
   /** 枠に収めるためにかけている倍率。 */
   scale: 1,
+  /**
+   * 消えた要素の行を押して、比べる相手の枠を中身の高さで描き、外側で `y`（スナップショットの文書の座標）だけずらして
+   * いる間の形。`key` はずらし始めたときの比べる相手・見比べ方・ページ・表示幅で、どれかが変われば元の形（枠の中で
+   * 自分でスクロールする形）に戻す。比べる相手の枠はスクリプトを止めていて、中を動かせないため。
+   * @type {{ key: string, y: number } | null}
+   */
+  refShift: null,
+  /**
+   * 比べる相手の側で光らせている要素の箱（スナップショットの文書の座標の [左, 上, 幅, 高さ]）と、そのスナップショット。
+   * @type {{ snapshot: string, box: number[] } | null}
+   */
+  refGlow: null,
   /** @type {SnapshotSummary[]} 取った順 */
   snapshots: [],
   /** ページごとに選んだ時点（スナップショットの id）。無ければ既定の順で選ぶ。 */
@@ -332,6 +344,7 @@ export function startLive(info) {
   shell.recordButton.addEventListener("click", () => void capture("manual"));
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
+  shell.refWheel.addEventListener("wheel", wheelShiftedReference, { passive: false });
   // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
   shell.refNoticeAction.addEventListener("click", () => {
     if (state.narrow) {
@@ -1642,9 +1655,85 @@ const changeHandlers = {
   onShow: (element) => {
     if (element.side === "now") {
       void showChangedElement(element.index);
+    } else {
+      showRemovedElement(element.index);
     }
   },
 };
+
+/** 比べる相手の側の光を出しておく長さ（ミリ秒。ページの中の光と同じ）。 */
+const REF_GLOW = 2800;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let refGlowTimer = null;
+
+/** 比べる相手をずらした形を保つ条件: 比べる相手・見比べ方・ページ・表示幅（狭い画面では見ている側も）。 */
+function refShiftKey() {
+  const reference = currentReference();
+  const id = reference.type === "snapshot" ? reference.snapshot.id : reference.type;
+  return [id, live.compare, live.page, live.width, state.narrow ? live.side : ""].join("\n");
+}
+
+/**
+ * 消えた要素の行を押した: 比べる相手の側のその要素の位置まで動かし、光らせる（R-PAGE-DIFF）。見る対象だけのときは並べる
+ * 見比べ方に、狭い画面では比べる相手の 1 枚に切り替えてから（R-PAGE-VIEW）。比べる相手の枠はスクリプトを止めていて中を
+ * 動かせないので、中身の高さで描いて外側をずらす（R-PAGE-SNAPSHOT）。重ねて透かすときは見比べ方を変えず、見る対象を
+ * その位置までスクロールし、重ねた比べる相手もそろって動く。
+ * @param {number} index 比べる相手の側の記述の中の要素の番号
+ */
+function showRemovedElement(index) {
+  if (!shell) {
+    return;
+  }
+  const reference = currentReference();
+  const id = reference.type === "snapshot" ? reference.snapshot.id : "";
+  const element = live.changesFrom?.snapshot === id ? live.descriptions.get(id)?.elements[index] : undefined;
+  if (!element) {
+    return;
+  }
+  if (state.narrow) {
+    if (live.side !== "ref") {
+      setSide("ref");
+    }
+  } else if (live.compare === "now") {
+    live.compare = "side";
+    render();
+  }
+  const [, top, , height] = element.box;
+  live.refGlow = { snapshot: id, box: element.box };
+  if (refGlowTimer !== null) {
+    clearTimeout(refGlowTimer);
+  }
+  refGlowTimer = setTimeout(() => {
+    refGlowTimer = null;
+    live.refGlow = null;
+    layoutFrames();
+  }, REF_GLOW);
+  const viewHeight = shell.refViewport.clientHeight / live.scale;
+  const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
+  if (!state.narrow && live.compare === "overlay") {
+    shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: centered - live.scroll.y }, live.origin);
+    layoutFrames();
+    return;
+  }
+  const contentHeight = Math.max(viewHeight, live.descriptions.get(id)?.height ?? 0);
+  live.refShift = { key: refShiftKey(), y: Math.min(centered, contentHeight - viewHeight) };
+  layoutFrames();
+}
+
+/**
+ * 比べる相手をずらした形の間、比べる相手の上のホイールで外側のずれを動かす。
+ * @param {WheelEvent} event
+ */
+function wheelShiftedReference(event) {
+  if (!shell || live.refShift === null) {
+    return;
+  }
+  event.preventDefault();
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? shell.refViewport.clientHeight : 1;
+  shell.refViewport.scrollLeft += event.deltaX * unit;
+  live.refShift = { ...live.refShift, y: live.refShift.y + (event.deltaY * unit) / live.scale };
+  layoutFrames();
+}
 
 /** ページが要素を見せて光らせるまで待つ上限。 */
 const GLOW_TIMEOUT = 5000;
@@ -1925,20 +2014,48 @@ function layoutFrames() {
   shell.capture.style.height = `${viewport.clientHeight}px`;
   // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。狭い画面では
   // 重ねず 1 枚ずつ見る（R-PAGE-VIEW）。
-  const placement =
-    live.compare === "overlay" && !state.narrow
-      ? overlayPlacement({
-          scale,
-          viewportHeight: viewport.clientHeight,
-          scrollX: live.scroll.x,
-          scrollY: live.scroll.y,
-          contentHeight: live.scroll.height,
-        })
-      : { height, transform: `scale(${scale})` };
+  // 消えた要素の行を押した後は、比べる相手を中身の高さで描いて外側でずらす（比べる相手・見比べ方・ページ・表示幅の
+  // どれかが変わるまで）。
+  const overlaid = live.compare === "overlay" && !state.narrow;
+  if (live.refShift !== null && (overlaid || live.refShift.key !== refShiftKey())) {
+    live.refShift = null;
+  }
+  const reference = currentReference();
+  const shownId = reference.type === "snapshot" ? reference.snapshot.id : "";
+  /** @type {{ x: number, y: number } | null} 比べる相手の文書の左上が、枠の外側のどこにあるか（画面のピクセル） */
+  let origin = null;
+  let placement = { height, transform: `scale(${scale})` };
+  if (overlaid) {
+    placement = overlayPlacement({
+      scale,
+      viewportHeight: viewport.clientHeight,
+      scrollX: live.scroll.x,
+      scrollY: live.scroll.y,
+      contentHeight: live.scroll.height,
+    });
+    origin = { x: -live.scroll.x * scale, y: -live.scroll.y * scale };
+  } else if (live.refShift !== null) {
+    const contentHeight = Math.max(height, live.descriptions.get(shownId)?.height ?? 0);
+    const y = Math.max(0, Math.min(live.refShift.y, contentHeight - height));
+    live.refShift = { ...live.refShift, y };
+    placement = { height: contentHeight, transform: `translate(0px, ${-y * scale}px) scale(${scale})` };
+    origin = { x: 0, y: -y * scale };
+  }
   for (const target of [shell.refFrame, shell.refMockFrame]) {
     target.style.width = `${live.width}px`;
     target.style.height = `${placement.height}px`;
     target.style.transform = placement.transform;
+  }
+  shell.refWheel.hidden = live.refShift === null;
+  const glow = live.refGlow !== null && live.refGlow.snapshot === shownId && origin !== null ? live.refGlow.box : null;
+  shell.refGlow.hidden = glow === null;
+  if (glow !== null && origin !== null) {
+    const [left, top, width, boxHeight] = glow;
+    const gap = 4;
+    shell.refGlow.style.left = `${origin.x + left * scale - gap}px`;
+    shell.refGlow.style.top = `${origin.y + top * scale - gap}px`;
+    shell.refGlow.style.width = `${width * scale + gap * 2}px`;
+    shell.refGlow.style.height = `${boxHeight * scale + gap * 2}px`;
   }
   shell.stage.style.setProperty("--lv-scale", String(scale));
   if (live.scale !== scale) {
