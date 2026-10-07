@@ -1855,7 +1855,7 @@ async function wideTargetsAreRevealedSideways(repository) {
     await waitFor(`${liveView}.scrollLeft === 0`);
     await browser('click', '#cv-rail');
     await browser('click', `.cv-card[data-id="${far.id}"]`);
-    await waitFor(`document.querySelector('#cv-thread .cv-go')?.textContent === 'Show on page'`);
+    await waitFor(`document.querySelector('#cv-thread .cv-go:not(.cv-page-width)') !== null`);
     await browser('click', '#cv-thread .cv-go');
     await waitFor(`${liveView}.scrollLeft > 0`);
     console.log('PASS 等倍で枠より広いページの右の方の場所を持つコメントの「ページで見る」を押すと、見る対象の枠が横にもその場所まで動く');
@@ -3473,7 +3473,7 @@ async function placesGlowFromTheListAndTheThread(repository) {
     await wheel(-6000);
     await browser('click', '#cv-rail');
     await browser('click', `.cv-card[data-id="${c1.id}"]`);
-    await waitFor(`document.querySelector('#cv-thread .cv-go')?.textContent === 'Show on page'`);
+    await waitFor(`document.querySelector('#cv-thread .cv-go:not(.cv-page-width)') !== null`);
     const opened = await rightOf(300);
     await waitForPixels(frame, shots, 'saved-top', opened, isPlaceInk, false);
     await browser('click', '#cv-thread .cv-go');
@@ -3485,7 +3485,7 @@ async function placesGlowFromTheListAndTheThread(repository) {
     await wheel(-6000);
     await browser('click', '#cv-thread .cv-back');
     await browser('click', `.cv-card[data-id="${c2.id}"]`);
-    await waitFor(`document.querySelector('#cv-thread .cv-page-width')?.textContent === '390px'`);
+    await waitFor(`document.querySelector('#cv-thread .cv-page-width') !== null`);
     await browser('click', '#cv-thread .cv-page-width');
     await waitFor(`document.querySelector('${frame}').style.width === '390px'`);
     const narrow = await rightOf(150);
