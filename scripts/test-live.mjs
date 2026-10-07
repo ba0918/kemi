@@ -2114,7 +2114,7 @@ async function chooseReference(label) {
   await waitFor(showsSnapshot(label));
 }
 
-/** 印（R-PAGE-VIEW の変わったところに必ず印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）。 */
+/** 印（R-PAGE-VIEW の変わったところに印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）。 */
 async function marksFollowTheChanges(repository) {
   const { mkdir } = await import('node:fs/promises');
   await mkdir(join(repository, 'mocks'), { recursive: true });
@@ -2239,8 +2239,58 @@ async function marksFollowTheChanges(repository) {
   }
 }
 
+/** 変化の印を隠すアイコン（R-PAGE-VIEW）。隠すのは印だけで、一覧と行を押したときの光は残る。 */
+async function marksCanBeHidden(repository) {
+  const dev = await startDevServer();
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
+  const liveFrame = `${livePane} .lv-frame`;
+  const refFrame = `${refPane} .lv-frame:not([hidden])`;
+  const marksButton = `document.querySelector('.lv-marks')`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
+    await waitFor(notRecorded);
+    await new Promise((done) => setTimeout(done, 1000));
+    await browser('click', `${refPane} .lv-empty .lv-record`);
+    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.html'), changingPage());
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '2'`);
+    const button = changingRegions(false).button;
+    const removedAt = changingRegions(true).item(2);
+    await waitForPixels(liveFrame, shots, 'shown-live', button, isRed);
+    await waitForPixels(refFrame, shots, 'shown-ref', removedAt, isRed);
+    assert.equal(await evaluate(`${marksButton}.getAttribute('aria-pressed')`), 'true', 'marks are shown at first');
+
+    await browser('click', '.lv-marks');
+    await waitFor(`${marksButton}.getAttribute('aria-pressed') === 'false'`);
+    await waitForPixels(liveFrame, shots, 'hidden-live', button, isRed, false);
+    await waitForPixels(refFrame, shots, 'hidden-ref', removedAt, isRed, false);
+    assert.equal(await evaluate(`${changeList}.dataset.main`), '2', 'the change list stays while the marks are hidden');
+    console.log('PASS 印を隠すアイコンを押すと、見る対象の側とスナップショットの側の印が消え、変化の一覧と数は残る');
+
+    await evaluate(`${changeList}.querySelector('.lv-change-main .lv-change[data-kind="removed"] button').click(); true`);
+    await waitFor(`${visible(`${refPane} .lv-ref-glow`)}`, 2500);
+    console.log('PASS 印を隠したまま消えた要素の行を押すと、スナップショットの側でその要素が光る');
+
+    await browser('click', '.lv-marks');
+    await waitFor(`${marksButton}.getAttribute('aria-pressed') === 'true'`);
+    await waitForPixels(liveFrame, shots, 'again-live', button, isRed);
+    await waitForPixels(refFrame, shots, 'again-ref', removedAt, isRed);
+    console.log('PASS 印を隠すアイコンをもう一度押すと、両方の側の印が戻る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /**
- * インラインのスタイルを止める CSP のページでも印が付く（R-PAGE-VIEW の変わったところに必ず印。
+ * インラインのスタイルを止める CSP のページでも印が付く（R-PAGE-VIEW の変わったところに印。
  * R-PAGE-PROXY は script-src のほかの CSP を変えない）。
  */
 async function marksAreDrawnUnderAStrictStylePolicy(repository) {
@@ -2304,7 +2354,7 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
 
 /**
  * HTML として読み直すと要素の並びが変わるページでも、消えた要素の印がスナップショットのその要素に付く
- * （R-PAGE-VIEW の変わったところに必ず印）。スクリプトが tbody を挟まずに組んだ表の後ろの兄弟を消す。
+ * （R-PAGE-VIEW の変わったところに印）。スクリプトが tbody を挟まずに組んだ表の後ろの兄弟を消す。
  */
 async function removedMarksSurviveReparsing(repository) {
   const dev = await startDevServer();
@@ -2333,7 +2383,7 @@ async function removedMarksSurviveReparsing(repository) {
 
 /**
  * スクロールしただけでは変化にならず、印はスクロールしても要素に付いたまま（R-PAGE-DIFF の位置と大きさの
- * 変化、R-PAGE-VIEW の変わったところに必ず印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。
+ * 変化、R-PAGE-VIEW の変わったところに印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。
  */
 async function scrollingMakesNoChangeAndMarksStay(repository) {
   const dev = await startDevServer();
@@ -3697,6 +3747,7 @@ try {
   await wideTargetsAreRevealedSideways(repository);
   await overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository);
   await marksFollowTheChanges(repository);
+  await marksCanBeHidden(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
   await snapshotsAreTakenUnderTrustedTypes(repository);
   await removedMarksSurviveReparsing(repository);
