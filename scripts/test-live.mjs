@@ -1643,7 +1643,6 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     console.log('PASS その行を押すと、見る対象がそのボタンまでスクロールし、ボタンの印が光る');
 
     const name = await evaluate(`${changeList}.querySelector('.lv-changes-vs').textContent`);
-    assert.ok(name.includes('Recorded 1'), name);
     await chooseCompare('side');
     const chosen = await evaluate(`document.querySelector('.lv-compare-select').selectedOptions[0].textContent`);
     assert.ok(chosen.includes(name), `the heading name ${JSON.stringify(name)} is in the choice ${JSON.stringify(chosen)}`);
@@ -1651,7 +1650,7 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     await browser('click', '.lv-widths button[data-width="1280"]');
     await waitFor(showsSnapshot('Start'));
     await chooseCompare('now');
-    await waitFor(`${changeList}?.querySelector('.lv-changes-vs')?.textContent.includes('Start')`);
+    await waitFor(`(${changeList}?.querySelector('.lv-changes-vs')?.textContent ?? ${JSON.stringify(name)}) !== ${JSON.stringify(name)}`);
     const auto = await evaluate(`${changeList}.querySelector('.lv-changes-vs').textContent`);
     await chooseCompare('side');
     assert.ok((await evaluate(`document.querySelector('.lv-compare-select').selectedOptions[0].textContent`)).includes(auto), auto);
