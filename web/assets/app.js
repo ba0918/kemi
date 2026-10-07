@@ -77,10 +77,10 @@ import {
 } from "./features/conversation.js";
 import { openConfirm } from "./features/submit.js";
 import {
-  applyAgent,
   applyMessage,
   endComposition,
   handToAgent,
+  receiveAgent,
   receiveMissed,
   receiveThread,
   replyTo,
@@ -210,7 +210,7 @@ async function boot() {
     {
       onThread: afterBoot(receiveThread),
       onMessage: afterBoot(applyMessage),
-      onAgent: afterBoot(applyAgent),
+      onAgent: afterBoot(receiveAgent),
       onMissed: afterBoot(receiveMissed),
     },
   );

@@ -16,7 +16,7 @@ import { showOverlay, showToast } from "../views/overlay.js";
  * エージェントの状態と未渡しの件数（通知と、書いた後の応答から）。
  * @param {import("../model.js").AgentState} agent
  */
-export function applyAgent(agent) {
+function applyAgent(agent) {
   state.agent = agent;
   renderConversation();
 }
@@ -78,6 +78,15 @@ export function endComposition() {
  */
 export function receiveThread(comment) {
   whenNotComposing(() => applyThread(comment));
+}
+
+/**
+ * 通知で届いたエージェントの状態。状態は渡す・返る・返信のたびに届き、そのたびに会話パネルを
+ * 描き直すので、返信と同じく変換が終わるまで待つ。
+ * @param {import("../model.js").AgentState} agent
+ */
+export function receiveAgent(agent) {
+  whenNotComposing(() => applyAgent(agent));
 }
 
 /** 通知が届かなかったときの読み直し。 */
