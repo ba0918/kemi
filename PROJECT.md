@@ -74,7 +74,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | スキルの frontmatter（ASCII だけ・項目は 3 つ） | `scripts/check-skill-frontmatter.sh` |
 | ドメインの純粋さ | `scripts/check-domain-purity.sh` |
 | Run locally | `cargo run -- --worktree` |
-| Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]` |
+| Fixture | `scripts/gen-fixture.sh <dir> --files N --lines M [--commits K] [--ignored-dirs D] [--changed C]`（`--ignored-dirs` は git が無視するディレクトリの数、`--changed` は未コミットの変更を付けるファイルの数で既定は全部） |
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
 | Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>` / `node scripts/test-agent-channel.mjs <target/release/kemi>`（agent-browser をローカルに入れて実行） |
 | Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（agent-browser が要る。`web/` は自前の HTTP サーバから配るので引数は無い） |
