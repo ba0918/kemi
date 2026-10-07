@@ -13,6 +13,7 @@ import {
   chooseReference,
   chooseSnapshot,
   compareHeading,
+  referenceName,
   referenceOptions,
   fitScale,
   overlayPlacement,
@@ -163,6 +164,19 @@ test("auto with nothing recorded at this width says so instead of naming a snaps
   const options = referenceOptions({ snapshots: [snap("s1", "start", "/", 390)], page: "/", width: 1280, mock: null });
   const auto = options.find((option) => option.value === "latest");
   assert.ok(auto && !auto.label.includes(options[1].label));
+});
+
+test("the reference in use is named the same way as its choice", () => {
+  const snapshots = [snap("s1", "start"), { ...snap("s2", "manual"), unsaved: true }];
+  const options = referenceOptions({ snapshots, page: "/", width: 1280, mock: "docs/m.html" });
+  for (const reference of [
+    chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "s1" }),
+    chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "s2" }),
+    chooseReference({ snapshots, mock: "docs/m.html", page: "/", width: 1280, chosen: "mock" }),
+  ]) {
+    const value = reference.type === "snapshot" ? reference.snapshot.id : "mock";
+    assert.equal(referenceName(snapshots, reference), options.find((option) => option.value === value)?.label);
+  }
 });
 
 test("the heading while overlaid differs in the middle, at either end, and from the page alone", () => {

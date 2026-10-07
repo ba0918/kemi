@@ -27,6 +27,9 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   compareSlot: HTMLElement,
  *   compareSelect: HTMLSelectElement,
  *   recordButton: HTMLButtonElement,
+ *   stageName: HTMLElement,
+ *   zoomSeg: HTMLElement,
+ *   reloadButton: HTMLButtonElement,
  *   modeSeg: HTMLElement,
  *   opacity: HTMLInputElement,
  *   mockInput: HTMLInputElement,
@@ -116,31 +119,10 @@ export function buildShell() {
   widthError.hidden = true;
   widthGroup.append(widthSeg, widthInput, widthError);
 
-  const compareSlot = el("div", "lv-compare lv-page-only");
-  compareSlot.append(textEl("span", "lv-label", "Compare with"));
-  const compareSelect = /** @type {HTMLSelectElement} */ (el("select", "lv-compare-select"));
-  compareSelect.setAttribute("aria-label", "Compare with");
-  const recordButton = button("lv-record");
+  // 手で取る操作とモックの操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT、R-PAGE-MOCK）。
+  const recordButton = button("lv-record lv-record-now");
   recordButton.textContent = "Record now";
   recordButton.title = "Take a snapshot of the page as it is now";
-  compareSlot.append(compareSelect, recordButton);
-  const modeSeg = el("div", "lv-seg lv-mode");
-  modeSeg.setAttribute("role", "group");
-  modeSeg.setAttribute("aria-label", "How to compare");
-  for (const [mode, label] of [["side", "Side by side"], ["overlay", "Overlay"]]) {
-    const choice = button("");
-    choice.textContent = label;
-    choice.dataset.compare = mode;
-    modeSeg.append(choice);
-  }
-  const opacity = /** @type {HTMLInputElement} */ (el("input", "lv-opacity"));
-  opacity.type = "range";
-  opacity.min = "0";
-  opacity.max = "100";
-  opacity.value = "50";
-  opacity.setAttribute("aria-label", "Opacity of the reference");
-  opacity.title = "Opacity of the reference";
-  compareSlot.append(modeSeg, opacity);
   const mockGroup = el("div", "lv-mock");
   const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
   mockInput.type = "text";
@@ -157,7 +139,55 @@ export function buildShell() {
   mockError.setAttribute("role", "alert");
   mockError.hidden = true;
   mockGroup.append(mockInput, mockAssign, mockRemove, mockReload, mockError);
-  compareSlot.append(mockGroup);
+  // 取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
+  const refNotice = el("span", "lv-notice lv-band-notice");
+  refNotice.setAttribute("role", "status");
+  refNotice.hidden = true;
+
+  // 舞台の見出し: 見比べ方の名前、倍率の切り替え、比べる相手の選択、読み込み直す操作、見比べ方の切り替え。
+  const stageHead = el("div", "lv-stage-head");
+  const stageName = el("span", "lv-stage-name");
+  const zoomSeg = el("div", "lv-seg lv-zoom");
+  zoomSeg.setAttribute("role", "group");
+  zoomSeg.setAttribute("aria-label", "Scale");
+  for (const [zoom, label, title] of [
+    ["fit", "Fit", "Shrink the page to fit the frame"],
+    ["full", "100%", "Show the page at its actual size and scroll in the frame"],
+  ]) {
+    const choice = button("");
+    choice.textContent = label;
+    choice.title = title;
+    choice.dataset.zoom = zoom;
+    zoomSeg.append(choice);
+  }
+  const compareSlot = el("div", "lv-compare");
+  compareSlot.append(textEl("span", "lv-label", "Compare with"));
+  const compareSelect = /** @type {HTMLSelectElement} */ (el("select", "lv-compare-select"));
+  compareSelect.setAttribute("aria-label", "Compare with");
+  const opacity = /** @type {HTMLInputElement} */ (el("input", "lv-opacity"));
+  opacity.type = "range";
+  opacity.min = "0";
+  opacity.max = "100";
+  opacity.value = "50";
+  opacity.setAttribute("aria-label", "Opacity of the reference");
+  opacity.title = "Opacity of the reference";
+  compareSlot.append(compareSelect, opacity);
+  const reloadButton = button("iconbtn lv-reload");
+  reloadButton.title = "Reload page";
+  reloadButton.setAttribute("aria-label", "Reload page");
+  reloadButton.append(svgIcon(RELOAD_ICON));
+  const modeSeg = el("div", "lv-seg lv-mode");
+  modeSeg.setAttribute("role", "group");
+  modeSeg.setAttribute("aria-label", "How to compare");
+  for (const [mode, label, icon] of COMPARE_MODES) {
+    const choice = button("");
+    choice.title = label;
+    choice.setAttribute("aria-label", label);
+    choice.dataset.compare = mode;
+    choice.append(svgIcon(icon));
+    modeSeg.append(choice);
+  }
+  stageHead.append(stageName, zoomSeg, el("span", "lv-spacer"), compareSlot, reloadButton, modeSeg);
 
   const sideSeg = el("div", "lv-seg lv-side lv-page-only");
   sideSeg.setAttribute("role", "group");
@@ -181,14 +211,11 @@ export function buildShell() {
     toolSeg.append(choice);
   }
 
-  band.append(widthGroup, compareSlot, el("span", "lv-spacer"), toolSeg, sideSeg);
+  band.append(widthGroup, recordButton, mockGroup, refNotice, el("span", "lv-spacer"), toolSeg, sideSeg);
 
   const stage = el("div", "lv-stage");
   stage.id = "live-stage";
   const ref = pane("ref", "Before");
-  const refNotice = el("span", "lv-notice");
-  refNotice.hidden = true;
-  ref.bar.append(refNotice);
   // スクリプトを止める（allow-scripts を付けない）。allow-same-origin も付けないので、
   // 中身はレビュー画面と別の不透明なオリジンになる（R-PAGE-SNAPSHOT）。
   const refFrame = /** @type {HTMLIFrameElement} */ (el("iframe", "lv-frame"));
@@ -227,7 +254,7 @@ export function buildShell() {
   capture.append(strokeSvg);
   live.box.append(liveFrame, capture);
   const compose = buildCompose();
-  stage.append(ref.pane, live.pane, compose.box);
+  stage.append(stageHead, ref.pane, live.pane, compose.box);
 
   const noCode = textEl(
     "div",
@@ -248,6 +275,9 @@ export function buildShell() {
     compareSlot,
     compareSelect,
     recordButton,
+    stageName,
+    zoomSeg,
+    reloadButton,
     modeSeg,
     opacity,
     mockInput,
@@ -282,7 +312,25 @@ export function buildShell() {
   };
 }
 
-/** 上部バーに出すアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
+/** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
+const RELOAD_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3.3H9.7"/></svg>';
+
+/** 見比べ方（live-compare.md の R-PAGE-REF）。値、名前、アイコン。 */
+const COMPARE_MODES = /** @type {const} */ ([
+  ["now", "Now only", '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/></svg>'],
+  [
+    "side",
+    "Side by side",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3" width="5.6" height="10" rx="1.2"/><rect x="8.9" y="3" width="5.6" height="10" rx="1.2"/></svg>',
+  ],
+  [
+    "overlay",
+    "Overlay",
+    '<svg viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2" width="9" height="8" rx="1.2" fill="none"/><rect x="5.5" y="6" width="9" height="8" rx="1.2" fill="currentColor" fill-opacity=".3"/></svg>',
+  ],
+]);
+
 const PAGE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1.5" y="2" width="13" height="9.5" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg>';
 const CODE_TAB_ICON =
@@ -410,18 +458,26 @@ function pane(side, title) {
 }
 
 /**
- * 比べる相手の選択の中身。先頭は既定（決まった順で選ぶ）。
+ * 比べる相手の選択の中身。先頭は自動で、そのすぐ下に自動の選び方の説明（選べない項目）を置く。
  * @param {HTMLSelectElement} select
  * @param {{ value: string, label: string }[]} options
  * @param {string} chosen
+ * @param {string} rule 自動の選び方の説明
  */
-export function renderCompareOptions(select, options, chosen) {
+export function renderCompareOptions(select, options, chosen, rule) {
   select.textContent = "";
-  for (const option of options) {
+  for (const [index, option] of options.entries()) {
     const element = /** @type {HTMLOptionElement} */ (el("option"));
     element.value = option.value;
     element.textContent = option.label;
     select.append(element);
+    if (index === 0) {
+      const note = /** @type {HTMLOptionElement} */ (el("option", "lv-compare-rule"));
+      note.disabled = true;
+      note.value = "";
+      note.textContent = rule;
+      select.append(note);
+    }
   }
   select.value = chosen;
 }

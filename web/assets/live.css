@@ -190,10 +190,71 @@ body[data-live-view="code"] .lv-page-only {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px 10px;
   padding: 10px;
   background: var(--panel-2);
+}
+
+/* 見比べ方の名前と、倍率・比べる相手・読み込み直す・見比べ方の操作。 */
+.lv-stage-head {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.lv-stage-name {
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lv-stage-head .lv-seg svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+.lv-stage-head .lv-seg button {
+  padding: 3px 8px;
+}
+
+.lv-reload {
+  height: 26px;
+  padding: 0 6px;
+}
+
+.lv-reload svg {
+  width: 15px;
+  height: 15px;
+}
+
+.lv-compare[hidden] {
+  display: none;
+}
+
+.lv-pane {
+  grid-row: 2;
+}
+
+/* 見る対象だけ: 比べる相手は出さない（選択は続いていて、変化の一覧と見る対象の側の印は出る）。 */
+.lv-stage[data-compare="now"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lv-stage[data-compare="now"] .lv-pane[data-side="ref"] {
+  display: none;
+}
+
+/* 等倍: 縮めずに描き、枠より広い分は枠を横にスクロールする。比べる相手の枠は見る対象の枠に合わせてずらす。 */
+.lv-stage[data-zoom="full"] .lv-pane[data-side="live"] .lv-viewport {
+  overflow: auto;
 }
 
 .lv-pane {
@@ -207,15 +268,25 @@ body[data-live-view="code"] .lv-page-only {
   overflow: hidden;
 }
 
+/* 並べた 2 枚のページの上端をそろえるため、見出しは 1 行の同じ高さにし、長い名前は … で切る（R-PAGE-REF）。 */
 .lv-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 10px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--line-soft);
   font-size: 11.5px;
   color: var(--ink-3);
-  min-height: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.lv-bar-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lv-bar b {
@@ -225,12 +296,21 @@ body[data-live-view="code"] .lv-page-only {
 
 .lv-notice {
   margin-left: auto;
+  flex-shrink: 0;
   font-size: 11px;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 8px;
   color: var(--ink-2);
   background: var(--panel);
+}
+
+.lv-band-notice {
+  margin-left: 0;
+}
+
+.lv-notice[hidden] {
+  display: none;
 }
 
 .lv-notice[data-kind="waiting"] {
@@ -347,7 +427,7 @@ body[data-live-view="code"] .lv-page-only {
 }
 
 .lv-stage[data-compare="overlay"] .lv-pane {
-  grid-area: 1 / 1;
+  grid-area: 2 / 1;
 }
 
 .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] {
@@ -401,17 +481,23 @@ body[data-live-view="code"] .lv-page-only {
     display: none;
   }
 
-  .lv-stage {
+  /* 見比べ方によらず、動いているページと比べる相手を 1 枚ずつ切り替えて見る（重ねて透かさない）。 */
+  .lv-stage,
+  .lv-stage[data-compare] {
     grid-template-columns: minmax(0, 1fr);
     padding: 6px;
   }
 
-  .lv-stage[data-compare="side"][data-side="live"] .lv-pane[data-side="ref"],
-  .lv-stage[data-compare="side"][data-side="ref"] .lv-pane[data-side="live"] {
+  .lv-stage[data-side="ref"] .lv-pane[data-side="ref"] {
+    display: flex;
+  }
+
+  .lv-stage[data-side="live"] .lv-pane[data-side="ref"],
+  .lv-stage[data-side="ref"] .lv-pane[data-side="live"] {
     display: none;
   }
 
-  .lv-stage[data-compare="side"][data-side="ref"][data-measuring] .lv-pane[data-side="live"] {
+  .lv-stage[data-side="ref"][data-measuring] .lv-pane[data-side="live"] {
     display: flex;
     position: fixed;
     inset: 0;
@@ -419,9 +505,27 @@ body[data-live-view="code"] .lv-page-only {
     pointer-events: none;
   }
 
-  /* 重ねて透かすときは 2 枚を重ねるので、どちらを見るかの切り替えは要らない。 */
-  body:has(.lv-stage[data-compare="overlay"]) .lv-side {
-    display: none;
+  .lv-stage[data-compare="overlay"] .lv-pane {
+    grid-area: auto;
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] {
+    z-index: auto;
+    pointer-events: auto;
+    background: var(--bg);
+    border-color: var(--line);
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-bar {
+    visibility: visible;
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-viewport {
+    background: #fff;
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-box {
+    opacity: 1;
   }
 }
 
@@ -641,7 +745,7 @@ body[data-live-view="code"] .lv-page-only {
 /* 書く欄は 2 枚の下に横いっぱいに置く（重ねて透かすときも比べる相手が上に重ならない）。 */
 .lv-compose {
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   flex-direction: column;
   gap: 6px;

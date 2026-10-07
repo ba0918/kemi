@@ -205,8 +205,33 @@ export function referenceOptions({ snapshots, page, width, mock }) {
   return [
     { value: "latest", label: auto },
     ...snapshotOptions(snapshots, page).map((option) => ({ value: option.id, label: option.label })),
-    ...(mock === null ? [] : [{ value: "mock", label: `Mock: ${mock}` }]),
+    ...(mock === null ? [] : [{ value: "mock", label: mockLabel(mock) }]),
   ];
+}
+
+/**
+ * いま比べている相手の名前。選択肢の項目と同じ作り（R-PAGE-REF）。
+ * @param {SnapshotSummary[]} snapshots 取った順
+ * @param {Reference} reference
+ * @returns {string}
+ */
+export function referenceName(snapshots, reference) {
+  switch (reference.type) {
+    case "snapshot":
+      return optionLabel(snapshots, reference.snapshot);
+    case "mock":
+      return mockLabel(reference.path);
+    case "none":
+      return "Not recorded";
+  }
+}
+
+/**
+ * @param {string} path
+ * @returns {string}
+ */
+function mockLabel(path) {
+  return `Mock: ${path}`;
 }
 
 /**

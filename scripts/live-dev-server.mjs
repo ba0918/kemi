@@ -40,7 +40,10 @@
 //                 DOM を変えずにそのシートの中身を replaceSync で差し替える
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
 //                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
+//   /big.html     HTML が 2.5 MB のページ（スナップショットの 2 MB の上限を超える）
 //   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
+//
+// startDevServer の返す `loads(path)` は、そのパスの HTML を返した回数（ページを読み込み直したかの確かめ）。
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -423,7 +426,7 @@ function acceptWebSocket(request, socket) {
 /**
  * 試験用の開発サーバを立てる。
  * @param {{ port?: number, dir?: string }} [options]
- * @returns {Promise<{ url: string, port: number, dir: string, close: () => Promise<void> }>}
+ * @returns {Promise<{ url: string, port: number, dir: string, loads: (path: string) => number, close: () => Promise<void> }>}
  */
 export async function startDevServer({ port = 0, dir } = {}) {
   const root = dir ?? await mkdtemp(join(tmpdir(), 'kemi-dev-'));
@@ -434,8 +437,13 @@ export async function startDevServer({ port = 0, dir } = {}) {
   const clients = new Set();
   let version = 0;
   let actual = port;
+  /** @type {Map<string, number>} パス → HTML を返した回数 */
+  const loads = new Map();
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
+    if (url.pathname === '/' || url.pathname.endsWith('.html')) {
+      loads.set(url.pathname, (loads.get(url.pathname) ?? 0) + 1);
+    }
     if (url.pathname === '/__hmr.js') {
       response.writeHead(200, { 'Content-Type': 'text/javascript' });
       response.end(HMR_CLIENT);
@@ -459,6 +467,11 @@ export async function startDevServer({ port = 0, dir } = {}) {
     if (url.pathname === '/referrer.html') {
       response.writeHead(200, { 'Content-Type': TYPES['.html'] });
       response.end(referrerPage(url.searchParams.get('image') ?? ''));
+      return;
+    }
+    if (url.pathname === '/big.html') {
+      response.writeHead(200, { 'Content-Type': TYPES['.html'] });
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><title>Big</title></head><body><p>${'big page '.repeat(280_000)}</p></body></html>`);
       return;
     }
     if (url.pathname === '/resources.html') {
@@ -508,6 +521,7 @@ export async function startDevServer({ port = 0, dir } = {}) {
     url: `http://127.0.0.1:${actual}/`,
     port: actual,
     dir: root,
+    loads: (path) => loads.get(path) ?? 0,
     close: async () => {
       watcher.close();
       for (const client of clients) client.socket.destroy();

@@ -568,6 +568,7 @@ async function snapshotsAreTakenShownAndChosen(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     console.log('PASS 渡す前のレビューで、開始時のスナップショットが既定の比べる相手になる');
 
@@ -644,6 +645,7 @@ async function snapshotsCarryTheirResources(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -704,6 +706,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await post(kemi.url, 'api/message', { body: 'before the mock' });
@@ -825,6 +828,7 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`${notRecorded} || ${showsSnapshot('Start')}`);
@@ -862,15 +866,221 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
     assert.ok((await comparePixels(live0, live100, join(shots, 'changed-diff.png'))).different > 0, 'the opacity changes what is seen');
     console.log('PASS 重ねて透かす表示で、透かし具合を変えると比べる相手の見え方が変わる');
 
+    // 狭い画面では重ねて透かさず、1 枚ずつ切り替えて見る（R-PAGE-VIEW）。
     await browser('set', 'viewport', '390', '800');
-    await waitFor(`${visible('.lv-compare-select')} && ${visible('.lv-mode')} && ${visible(`${livePane}`)} && ${visible(`${refPane} .lv-frame:not([hidden])`)}`);
-    await browser('click', '.lv-mode button[data-compare="side"]');
-    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side' && ${visible('.lv-side')}`);
-    await browser('click', '.lv-mode button[data-compare="overlay"]');
-    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay' && ${visible(`${refPane} .lv-frame:not([hidden])`)} && ${visible(livePane)}`);
-    console.log('PASS 幅 390px でも、比べる相手の選択と重ねて透かす表示に切り替えられる');
+    await waitFor(`${visible('.lv-side')} && ${visible(livePane)} && !${visible(refPane)}`);
+    await new Promise((done) => setTimeout(done, 500));
+    await browser('click', '.lv-side button[data-side="ref"]');
+    await waitFor(`${visible(`${refPane} .lv-frame:not([hidden])`)} && !${visible(livePane)} && getComputedStyle(document.querySelector('${refPane} .lv-box')).opacity === '1'`);
+    await browser('click', '.lv-side button[data-side="live"]');
+    await waitFor(`${visible(livePane)} && !${visible(refPane)}`);
+    console.log('PASS 広い画面で重ねて透かすを選んだまま幅 390px にすると、重ねずに 1 枚ずつ切り替えて見る');
   } finally {
     await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/** 見比べ方を切り替え、舞台がその見比べ方になるのを待つ。 */
+async function chooseCompare(mode) {
+  await waitFor(visible(`.lv-mode button[data-compare="${mode}"]`));
+  await browser('click', `.lv-mode button[data-compare="${mode}"]`);
+  await waitFor(`document.querySelector('#live-stage').dataset.compare === '${mode}'`);
+}
+
+/** 見る対象の見出しに出ている倍率。 */
+const liveScale = `Number(document.querySelector('${livePane} .lv-bar-label').textContent.match(/×([0-9.]+)/)?.[1] ?? NaN)`;
+
+/** /tall.html の最後の帯の色（hsl(324, 70%, 70%)）。 */
+const isLastBand = ([r, g, b]) => r > 215 && g > 105 && g < 145 && b > 170 && b < 210;
+
+/**
+ * 見比べ方と倍率と読み込み直す操作（R-PAGE-VIEW、R-PAGE-REF）: 開いた直後は見る対象だけで比べる相手の選択が見えず、
+ * 並べる・重ねるの間だけ見える。等倍では倍率が 1 と出て、枠の中をスクロールしてページの下端まで見られ、枠に合わせると
+ * 縮む。読み込み直す操作で見る対象が読み込み直される。
+ */
+async function compareModesScaleAndReload(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
+    assert.equal(await evaluate(`${visible('.lv-compare-select')} || ${visible(refPane)}`), false, 'only the running page is shown at first');
+    for (const mode of ['side', 'overlay']) {
+      await chooseCompare(mode);
+      await waitFor(visible('.lv-compare-select'));
+    }
+    await chooseCompare('now');
+    await waitFor(`!${visible('.lv-compare-select')} && !${visible(refPane)}`);
+    console.log('PASS 開いた直後は見る対象だけで比べる相手の選択が見えず、並べる・重ねるに切り替えると見え、見る対象だけに戻すと見えない');
+
+    await waitFor(`${liveScale} < 1`);
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await waitFor(`${liveScale} === 1 && document.querySelector('${livePane} .lv-viewport').scrollWidth > document.querySelector('${livePane} .lv-viewport').clientWidth`);
+    const middle = await evaluate(`(() => { const r = document.querySelector('${livePane} .lv-viewport').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), height: Math.floor(r.height) }; })()`);
+    // 別のオリジンの枠にはホイールが届かないので、ページを押してから End を押す。
+    await browser('mouse', 'move', String(middle.x), String(middle.y));
+    await browser('mouse', 'down');
+    await browser('mouse', 'up');
+    await browser('press', 'End');
+    await waitForPixels(`${livePane} .lv-viewport`, shots, 'full-bottom', [0, middle.height - 60, 300, middle.height - 30], isLastBand);
+    await browser('click', '.lv-zoom button[data-zoom="fit"]');
+    await waitFor(`${liveScale} < 1`);
+    console.log('PASS 等倍にすると倍率が 1 と出て、枠の中でスクロールしてページの下端まで見られ、枠に合わせると縮む');
+
+    // 等倍で横と縦にスクロールしたまま重ねても、比べる相手（開始時のスナップショット。ページは変えていない）が重なる。
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await chooseCompare('overlay');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'snapshot'`);
+    await evaluate(`document.querySelector('${livePane} .lv-viewport').scrollLeft = 200; true`);
+    await waitFor(`document.querySelector('${refPane} .lv-viewport').scrollLeft === 200 && /translate\\(0px, -[1-9]/.test(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform)`);
+    await new Promise((done) => setTimeout(done, 500));
+    const setOpacity = async (value) => {
+      await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+      await new Promise((done) => setTimeout(done, 300));
+    };
+    await setOpacity(0);
+    const underneath = await shot(`${livePane} .lv-viewport`, shots, 'full-overlay-0');
+    await setOpacity(100);
+    const overlaid = await shot(`${livePane} .lv-viewport`, shots, 'full-overlay-100');
+    const compared = await comparePixels(underneath, overlaid, join(shots, 'full-overlay-diff.png'));
+    if (compared.different === 0) {
+      console.log('PASS 等倍で横と縦にスクロールしたまま重ねて透かしても、比べる相手が見る対象と画素まで重なる');
+    } else {
+      console.log(`CHECK 等倍で重ねた比べる相手と見る対象の画素が ${compared.different} / ${compared.total}（${(compared.ratio * 100).toFixed(3)}%）違う。差の画像: ${join(shots, 'full-overlay-diff.png')}（人が確かめる）`);
+    }
+    await chooseCompare('now');
+    await browser('click', '.lv-zoom button[data-zoom="fit"]');
+
+    const before = dev.loads('/tall.html');
+    await browser('click', '.lv-reload');
+    for (const until = Date.now() + 10000; dev.loads('/tall.html') === before;) {
+      assert.ok(Date.now() < until, 'the page is loaded again');
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    console.log('PASS 読み込み直す操作を押すと、見る対象のページが読み込み直される');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
+ * 比べる相手の名前と見出し（R-PAGE-REF）と、見る対象だけのときの知らせ・覚える範囲（R-PAGE-VIEW）: 2 回渡してから並べると、
+ * 選択に出ている名前は 2 回目に渡した時点の項目の名前を含む。重ねて透かす見出しは、透かし具合の途中・両端と見る対象だけの
+ * ときで互いに違う。見る対象だけのまま 2 MB を超えるページを手で取ると、取れなかったことが見える。並べる・等倍にしてから
+ * 画面を読み込み直すと、見る対象だけ・枠に合わせるに戻る。
+ */
+async function referenceNamesHeadingsAndNotices(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
+  const opacity = async (value) => {
+    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+  };
+  const heading = `document.querySelector('.lv-stage-name').textContent`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
+    for (const body of ['first', 'second']) {
+      await post(kemi.url, 'api/message', { body });
+      await handInThePage(kemi, repository, state);
+    }
+    const handed = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'handed' && snapshot.width === 1280);
+    assert.equal(handed.length, 2);
+    await chooseCompare('side');
+    const second = `document.querySelector('.lv-compare-select option[value="${handed[1].id}"]')`;
+    await waitFor(`${second} !== null && document.querySelector('.lv-compare-select').value === 'latest' && document.querySelector('.lv-compare-select').selectedOptions[0].textContent.includes(${second}.textContent)`);
+    console.log('PASS 2 回渡してから並べると、選択に出ている名前が選択肢の 2 回目に渡した時点の項目の名前を含む');
+
+    await chooseCompare('overlay');
+    const headings = [];
+    for (const value of [0, 50, 100]) {
+      await opacity(value);
+      headings.push(await evaluate(heading));
+    }
+    await chooseCompare('now');
+    headings.push(await evaluate(heading));
+    assert.equal(new Set(headings).size, 4, JSON.stringify(headings));
+    console.log('PASS 重ねて透かす見出しは、透かし具合の 0・途中・100 と見る対象だけのときで互いに違う');
+
+    await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${kemi.live.replace(/\/tall\.html$/, '')}/big.html`)}; true`);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/big.html') && document.querySelector('${livePane} .lv-notice').hidden`);
+    await browser('click', '.lv-band .lv-record-now');
+    await waitFor(`${visible('.lv-band .lv-notice')} && document.querySelector('.lv-band .lv-notice').textContent.trim() !== ''`, 30000);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now');
+    console.log('PASS 見る対象だけのまま 2 MB を超えるページを手で取ると、取れなかったことが見える');
+
+    await chooseCompare('side');
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await waitFor(`${liveScale} === 1`);
+    await browser('open', kemi.url);
+    await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('.lv-zoom button[data-zoom="fit"]').getAttribute('aria-pressed') === 'true'`);
+    console.log('PASS 並べると等倍にしてから画面を読み込み直すと、見る対象だけ・枠に合わせるに戻る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
+ * 並べたときの上端（R-PAGE-REF）: パスが 200 文字のモックを割り当てて並べ、見出しが長くなる幅にしても、両方のページの
+ * 上端の差が 1px 以内。
+ */
+async function sideBySidePagesShareTheirTop(repository) {
+  // git が無視する場所に置き、ほかの検査の作業ツリーの差分を変えない。
+  await writeFile(join(repository, '.git', 'info', 'exclude'), 'ignored-mocks/\n');
+  await mkdir(join(repository, 'ignored-mocks'), { recursive: true });
+  const path = `ignored-mocks/${'m'.repeat(200 - 'ignored-mocks/'.length - '.html'.length)}.html`;
+  assert.equal(path.length, 200);
+  await writeFile(join(repository, path), '<!doctype html><html><body style="margin:0"><p>mock</p></body></html>\n');
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}other.html`]);
+  try {
+    await browser('set', 'viewport', '900', '800');
+    await browser('open', kemi.url);
+    await waitFor(visible('.lv-mock-input'));
+    await browser('fill', '.lv-mock-input', path);
+    await browser('click', '.lv-mock-assign');
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
+    await chooseCompare('side');
+    await waitFor(`${visible(`${refPane} .lv-viewport`)} && ${visible(`${livePane} .lv-viewport`)}`);
+    const gap = await evaluate(`Math.abs(document.querySelector('${refPane} .lv-viewport').getBoundingClientRect().top - document.querySelector('${livePane} .lv-viewport').getBoundingClientRect().top)`);
+    assert.ok(gap <= 1, `the tops differ by ${gap}px`);
+    console.log(`PASS パスが 200 文字のモックを並べても、両方のページの上端の差が 1px 以内（${gap}px）`);
+  } finally {
+    await stop(kemi);
+    await dev.close();
+    await rm(join(repository, 'ignored-mocks'), { recursive: true, force: true });
+  }
+}
+
+/** 見る対象だけの見比べ方でも、変化の一覧と見る対象の側の印が出る（R-PAGE-VIEW、R-PAGE-REF）。 */
+async function changesShowWithThePageAlone(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && document.querySelector('${livePane} .lv-notice').hidden`);
+    await browser('click', '.lv-band .lv-record-now');
+    await waitFor(`${changeList}?.dataset.main === '0'`);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`${changeList}?.dataset.main === '1'`);
+    await waitForPixels(`${livePane} .lv-frame`, shots, 'alone-marks', changingRegions(false).button, isRed);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now');
+    console.log('PASS 見る対象だけのまま CSS を変えると、変化の一覧と見る対象の側の印が出る');
+  } finally {
     await stop(kemi);
     await dev.close();
   }
@@ -895,6 +1105,7 @@ async function changeListFollowsThePage(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await evaluate(`window.__kemiNotReloaded = true; true`);
     await waitFor(showsSnapshot('Start'));
     await waitFor(`${changeList}?.dataset.main === '0' && ${changeList}.querySelector('.lv-changes-none') !== null`);
@@ -994,9 +1205,9 @@ async function changeListFollowsThePage(repository) {
     // 比べる相手の側を見ている（動いているページの枠が隠れている）間に取ったスナップショットも、選んだ幅で
     // 並べた文書から記述する。ページを変えずに動いているページの側に戻せば、それと比べた変化は 0。
     await evaluate(`document.querySelector('.lv-side button[data-side="ref"]').click(); true`);
-    await waitFor(`!${visible(`${livePane} .lv-frame`)} && ${visible('.lv-compare .lv-record')}`);
+    await waitFor(`!${visible(`${livePane} .lv-frame`)} && ${visible('.lv-band .lv-record-now')}`);
     // ページのツリーの引き出しが開いたままなので、押すのはスクリプトで。
-    await evaluate(`document.querySelector('.lv-compare .lv-record').click(); true`);
+    await evaluate(`document.querySelector('.lv-band .lv-record-now').click(); true`);
     await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
     await chooseReference('Recorded 2');
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
@@ -1103,6 +1314,7 @@ async function marksFollowTheChanges(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -1121,7 +1333,7 @@ async function marksFollowTheChanges(repository) {
     const marked = await evaluate(counts);
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(counts), marked, 'marking adds no change');
-    await browser('click', '.lv-compare .lv-record');
+    await browser('click', '.lv-band .lv-record-now');
     await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
     await chooseReference('Recorded 2');
     await waitFor(`${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
@@ -1152,7 +1364,7 @@ async function marksFollowTheChanges(repository) {
     await waitFor(`${changeList}?.dataset.main === '1'`);
     console.log('PASS モックと比べている間は印が付かない');
 
-    await browser('click', '.lv-compare .lv-record');
+    await browser('click', '.lv-band .lv-record-now');
     await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 3'))`);
     await chooseReference('Recorded 3');
     await waitFor(`${changeList}?.dataset.main === '0'`);
@@ -1223,6 +1435,7 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -1251,6 +1464,7 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -1285,6 +1499,7 @@ async function removedMarksSurviveReparsing(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -1318,6 +1533,7 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -1400,6 +1616,7 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
     await browser('click', '.lv-widths button[data-width="768"]');
     await waitFor(notRecorded);
@@ -1637,6 +1854,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await evaluate(`window.__kemiErrors = []; addEventListener('error', (event) => window.__kemiErrors.push(String(event.message))); addEventListener('unhandledrejection', (event) => window.__kemiErrors.push(String(event.reason))); true`);
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
@@ -2180,6 +2398,7 @@ async function placesMakeNoChange(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
@@ -2403,8 +2622,9 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
-    await browser('click', '.lv-compare .lv-record');
+    await browser('click', '.lv-band .lv-record-now');
     await waitFor(`${options}.some((label) => label.startsWith('Recorded 1'))`);
     const [listed] = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'start');
     start = await getJson(kemi.url, `api/snapshot/${listed.id}`);
@@ -2418,6 +2638,7 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   kemi = await startKemi(repository, state, ['--resume', kemi.id]);
   try {
     await browser('open', kemi.url);
+    await chooseCompare('side');
     await waitFor(`${showsSnapshot('Start')} && ${options}.some((label) => label.startsWith('Recorded 1'))`);
     await waitFor(`document.querySelector('#page-tree .lv-page[data-page="/rich.html"] .lv-comment-count')?.textContent === '1'`);
     // 動いているページが読み込まれた後も、開始時のものを取り直さない。
@@ -2454,6 +2675,10 @@ try {
   await mocksAreAssignedShownAndKeptApart(repository);
   await snapshotsSendNoTokenToExternalImages(repository);
   await overlayFollowsTheScrollAndTheOpacity(repository);
+  await compareModesScaleAndReload(repository);
+  await referenceNamesHeadingsAndNotices(repository);
+  await sideBySidePagesShareTheirTop(repository);
+  await changesShowWithThePageAlone(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);

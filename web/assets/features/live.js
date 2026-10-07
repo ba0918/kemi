@@ -10,9 +10,11 @@ import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { state } from "../state.js";
 import {
+  AUTO_RULE,
   addPlace,
   buildPageTree,
   chooseReference,
+  compareHeading,
   fitScale,
   liveOrigin,
   overlayPlacement,
@@ -21,10 +23,11 @@ import {
   emptyDraft,
   imageUnsavedNotice,
   parseWidth,
+  referenceName,
+  referenceOptions,
   removePlace,
   snapshotLabel,
   startSnapshotDue,
-  snapshotOptions,
   undoPlace,
   unsavedSnapshotNotice,
 } from "../live-model.js";
@@ -116,9 +119,12 @@ const live = {
   mockReloadAsked: false,
   /** 出し始めるときに読めなかったモックの条件（mockShownKey と同じ形）。読めたら空。 */
   mockUnreadable: "",
-  /** 見比べ方。並べるか、重ねて透かすか（live-compare.md の R-PAGE-REF）。 */
-  /** @type {"side" | "overlay"} */
-  compare: "side",
+  /** 見比べ方。見る対象だけ・並べる・重ねて透かす（live-compare.md の R-PAGE-REF）。画面を開いている間だけ覚える。 */
+  /** @type {"now" | "side" | "overlay"} */
+  compare: "now",
+  /** 枠に合わせて縮めるか、等倍で枠の中をスクロールして見るか（R-PAGE-VIEW）。画面を開いている間だけ覚える。 */
+  /** @type {"fit" | "full"} */
+  zoom: "fit",
   /** 重ねた比べる相手の不透明度（0〜100）。 */
   opacity: 50,
   /** 見る対象のスクロールの位置と中身の高さ（中継したページが知らせる）。 */
@@ -256,17 +262,32 @@ export function startLive(info) {
   });
   shell.modeSeg.addEventListener("click", (event) => {
     const mode = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.compare;
-    if (mode === "side" || mode === "overlay") {
+    if (mode === "now" || mode === "side" || mode === "overlay") {
       live.compare = mode;
       render();
     }
   });
+  shell.zoomSeg.addEventListener("click", (event) => {
+    const zoom = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.zoom;
+    if (zoom === "fit" || zoom === "full") {
+      live.zoom = zoom;
+      render();
+    }
+  });
+  shell.reloadButton.addEventListener("click", reloadPage);
   shell.opacity.addEventListener("input", () => {
     if (!shell) {
       return;
     }
     live.opacity = Number(shell.opacity.value);
     shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
+    renderStageName();
+  });
+  // 等倍で横にスクロールした分は、重ねた（並べた）比べる相手も同じだけずらす。
+  shell.liveViewport.addEventListener("scroll", () => {
+    if (shell) {
+      shell.refViewport.scrollLeft = shell.liveViewport.scrollLeft;
+    }
   });
   shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
   shell.mockAssign.addEventListener("click", () => void assignMock());
@@ -437,6 +458,14 @@ function applyWidthInput() {
   }
   shell.widthError.textContent = result.message;
   shell.widthError.hidden = false;
+}
+
+/** 見る対象を手で読み込み直す（R-PAGE-VIEW）。保存している間は、画像を作るページを読み込み直さない。 */
+function reloadPage() {
+  if (!shell || live.saving) {
+    return;
+  }
+  shell.liveFrame.src = live.origin + live.page;
 }
 
 /**
@@ -618,10 +647,12 @@ function startComposing(shell) {
     (event) => {
       event.preventDefault();
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? layer.clientHeight : 1;
-      shell.liveFrame.contentWindow?.postMessage(
-        { kemi: "live", type: "scroll-by", x: event.deltaX * unit, y: event.deltaY * unit },
-        live.origin,
-      );
+      // 等倍で枠より広いページは、枠のほうを横にスクロールする。枠が動ききった残りだけをページに送る。
+      const viewport = shell.liveViewport;
+      const before = viewport.scrollLeft;
+      viewport.scrollLeft += event.deltaX * unit;
+      const x = event.deltaX * unit - (viewport.scrollLeft - before);
+      shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y: event.deltaY * unit }, live.origin);
     },
     { passive: false },
   );
@@ -1257,20 +1288,25 @@ function renderBand() {
   }
   shell.stage.dataset.side = live.side;
   shell.stage.dataset.compare = live.compare;
+  shell.stage.dataset.zoom = live.zoom;
   for (const choice of shell.modeSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.compare === live.compare));
   }
+  for (const choice of shell.zoomSeg.querySelectorAll("button")) {
+    choice.setAttribute("aria-pressed", String(choice.dataset.zoom === live.zoom));
+  }
+  shell.reloadButton.disabled = live.saving;
+  // 比べる相手の選択は、比べる相手を出している間だけ出す（R-PAGE-REF）。
+  shell.compareSlot.hidden = live.compare === "now";
   shell.opacity.hidden = live.compare !== "overlay";
   const mock = live.mocks.get(live.page) ?? null;
   renderCompareOptions(
     shell.compareSelect,
-    [
-      ...(mock ? [{ value: "mock", label: `Mock: ${mock.path}` }] : []),
-      { value: "latest", label: "Latest snapshot (handed, start, recorded)" },
-      ...snapshotOptions(live.snapshots, live.page).map((option) => ({ value: option.id, label: option.label })),
-    ],
+    referenceOptions({ snapshots: live.snapshots, page: live.page, width: live.width, mock: mock?.path ?? null }),
     live.chosen.get(live.page) ?? (mock ? "mock" : "latest"),
+    AUTO_RULE,
   );
+  renderStageName();
   shell.mockRemove.hidden = mock === null;
   shell.mockReload.hidden = mock === null;
   shell.recordButton.disabled = !live.reachable;
@@ -1280,7 +1316,8 @@ function renderBand() {
   }
   shell.capture.hidden = live.tool === "interact" || state.submitted;
   shell.capture.dataset.tool = live.tool;
-  shell.liveLabel.textContent = `${live.page} · ${live.width}${live.scale < 1 ? ` · ×${live.scale.toFixed(2)}` : ""}`;
+  // 今の倍率はいつも見る対象の見出しに出す（R-PAGE-VIEW）。
+  shell.liveLabel.textContent = `${live.page} · ${live.width} · ×${live.scale.toFixed(2)}`;
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {
     shell.liveNotice.textContent = "Waiting for the page";
@@ -1290,6 +1327,18 @@ function renderBand() {
     shell.liveNotice.dataset.kind = "rewrote";
     shell.liveNotice.title = `kemi changed ${live.rewrote.join(" and ")} so that the page can be shown here`;
   }
+}
+
+/** 舞台の見出し: 見比べ方の名前。重ねて透かす間は、両方の名前と透かし具合（R-PAGE-REF）。 */
+function renderStageName() {
+  if (!shell) {
+    return;
+  }
+  shell.stageName.textContent = compareHeading({
+    compare: live.compare,
+    reference: referenceName(live.snapshots, currentReference()),
+    opacity: live.opacity,
+  });
 }
 
 /** 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。 */
@@ -1503,14 +1552,20 @@ function layoutFrames() {
   }
   // 狭い画面では片方が隠れているので、見えている方の枠で測る。どちらも同じ大きさ。
   const viewport = shell.liveViewport.clientWidth > 0 ? shell.liveViewport : shell.refViewport;
-  const scale = fitScale(viewport.clientWidth, live.width);
-  const height = viewport.clientHeight / scale;
+  // 等倍では縮めず、枠より広い分は枠を横にスクロールして見る。縦はページの中でスクロールする。
+  const scale = live.zoom === "full" ? 1 : fitScale(viewport.clientWidth, live.width);
   shell.liveFrame.style.width = `${live.width}px`;
+  // 横のスクロールバーの分だけ低くなった枠の高さで描く（幅を決めてから読む）。
+  const height = viewport.clientHeight / scale;
   shell.liveFrame.style.height = `${height}px`;
   shell.liveFrame.style.transform = `scale(${scale})`;
-  // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。
+  // 道具の層は、横にスクロールして出てくる所も含めてページの上を覆う。
+  shell.capture.style.width = `${Math.max(viewport.clientWidth, live.width * scale)}px`;
+  shell.capture.style.height = `${viewport.clientHeight}px`;
+  // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。狭い画面では
+  // 重ねず 1 枚ずつ見る（R-PAGE-VIEW）。
   const placement =
-    live.compare === "overlay"
+    live.compare === "overlay" && !state.narrow
       ? overlayPlacement({
           scale,
           viewportHeight: viewport.clientHeight,
