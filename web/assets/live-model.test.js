@@ -22,6 +22,7 @@ import {
   liveOrigin,
   pageKey,
   parseWidth,
+  placeSummary,
   snapshotLabel,
   startSnapshotDue,
   snapshotOptions,
@@ -359,6 +360,14 @@ test("undo takes away the place added last", () => {
   draft = undoPlace(draft);
   assert.deepEqual(numbers(draft), [1]);
   assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
+});
+
+test("a place without elements is shown as an area only, and one with elements names them", () => {
+  const area = { kind: /** @type {const} */ ("pen"), points: [{ x: 1, y: 2 }], elements: [], n: 1 };
+  assert.equal(placeSummary(area), "Area only (no element)");
+  assert.equal(placeSummary({ ...area, kind: "arrow" }), "Area only (no element)");
+  assert.equal(placeSummary({ ...place("pen"), n: 1 }), "1 element inside");
+  assert.equal(placeSummary({ ...place("arrow", "#buy"), n: 2 }), "→ #buy");
 });
 
 test("a place at another URL or width is not added to a draft that has places", () => {

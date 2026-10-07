@@ -4,7 +4,7 @@
 // `--live` のレビューでだけ読み込む。
 
 import { button, el, svgIcon, textEl } from "../dom.js";
-import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
+import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model.js";
 
 /**
  * 表示中のページの変化の一覧の中身。`unmarked` は、消えた要素をスナップショットの側に印で示せないこと。
@@ -522,12 +522,7 @@ export function renderPlaces(compose, places, handlers, locked) {
     if (first) {
       row.dataset.selector = first.selector;
     }
-    const what =
-      place.kind === "pen"
-        ? `${place.elements.length} element${place.elements.length === 1 ? "" : "s"} inside`
-        : first
-          ? `${place.kind === "arrow" ? "→ " : ""}${first.selector}${first.text ? ` “${first.text.slice(0, 40)}”` : ""}`
-          : "no element";
+    const what = placeSummary(place);
     const remove = button("lv-place-remove");
     remove.textContent = "×";
     remove.title = `Remove place ${place.n}`;

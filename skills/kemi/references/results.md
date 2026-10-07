@@ -93,7 +93,10 @@
   `element` (a chosen element, `points` is `[]`), `arrow` (the points of the arrow, and the
   element at its head), or `pen` (the points of the line, and up to five elements that overlap
   the area it encloses, even partly, largest overlap first; elements that contain the whole line, such as a wrapper around the
-  page, are left out, and a line drawn inside one element names that innermost element). Each element carries a `selector`, its `text`, and its `rect`; all
+  page, are left out, and a line drawn inside one element names that innermost element). `html` and
+  `body` are never named: an arrow pointing at the empty background, or a line around nothing but
+  background, has `elements` `[]` and only its `points` (an area only); look at the comment's
+  `image` to see what it points at. There is one image per comment, not per place. Each element carries a `selector`, its `text`, and its `rect`; all
   coordinates are CSS pixels of the page, independent of scrolling. For an element inside an
   open shadow root, `selector` joins the host's selector and the selector inside the shadow root
   with ` >>> ` (for example `#host >>> p:nth-of-type(2)`), which is not CSS: query the host in the

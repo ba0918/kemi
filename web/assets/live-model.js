@@ -326,8 +326,8 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
  * `dangling` は、消した場所を指していた `#n` の本文の中の範囲。詰め直した後の番号と同じ字面になりうるので、
  * 字面ではなく範囲で覚え、本文の編集に合わせて動かす。
  * @typedef {{ selector: string, text: string, rect: { x: number, y: number, w: number, h: number } }} PlaceElement
- * `at` は要素の場所の押した点（文書の座標）。画像の頼みにだけ載せ、保存する場所には入れない。
- * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[], at?: { x: number, y: number } }} NewPlace
+ * 矢印とペンは、意味のある要素（`html` と `body` を除く）が無ければ `elements` が空の「範囲だけ」の場所。
+ * @typedef {{ kind: "element" | "arrow" | "pen", points: { x: number, y: number }[], elements: PlaceElement[] }} NewPlace
  * @typedef {NewPlace & { n: number }} Place
  * @typedef {{ start: number, end: number }} Span
  * @typedef {{ url: string, width: number, places: Place[], body: string, dangling: Span[] }} PlaceDraft
@@ -357,6 +357,22 @@ export function draftElsewhere(draft, url, width) {
     return null;
   }
   return { url: draft.url, width: draft.width };
+}
+
+/**
+ * 場所の一覧の行に出す、場所が指すもの。要素の無い場所は範囲だけ（R-PAGE-COMMENT）。
+ * @param {Place} place
+ * @returns {string}
+ */
+export function placeSummary(place) {
+  const first = place.elements[0];
+  if (!first) {
+    return "Area only (no element)";
+  }
+  if (place.kind === "pen") {
+    return `${place.elements.length} element${place.elements.length === 1 ? "" : "s"} inside`;
+  }
+  return `${place.kind === "arrow" ? "→ " : ""}${first.selector}${first.text ? ` “${first.text.slice(0, 40)}”` : ""}`;
 }
 
 /**

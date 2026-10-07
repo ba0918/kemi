@@ -753,7 +753,7 @@ async function finishStroke() {
   }
   live.composeError = "";
   const place = { kind, points: answer.points ?? [], elements: answer.elements ?? [] };
-  setDraft(addPlace(live.draft, answer.at ? { ...place, at: answer.at } : place, page, width));
+  setDraft(addPlace(live.draft, place, page, width));
 }
 
 /**
@@ -934,7 +934,7 @@ async function savePageComment() {
     );
     image = typeof answer.png === "string" ? answer.png : null;
   }
-  // 押した点（`at`）は画像の頼みにだけ載せる。保存する場所の形は R-SUBMIT の `page.places`。
+  // 保存する場所の形は R-SUBMIT の `page.places`。
   const places = draft.places.map(({ n, kind, points, elements }) => ({ n, kind, points, elements }));
   const request = { op: "add_page", page: { url: draft.url, width: draft.width, places }, body };
   try {

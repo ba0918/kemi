@@ -219,10 +219,14 @@ it opens with the first place. Until the first page comment of the review is
 saved, three steps are shown above the page — point at a place, write and
 press Comment, hand to the agent; they do not come back after that, even
 when the comments are deleted or the review is suspended and resumed. An element place is the element you
-click, and clicking it again takes it away; an arrow names the element at its
+click, and clicking it again takes it away (clicking the empty background,
+where only `html` or `body` is, puts no place); an arrow names the element at its
 head; a pen line names up to five elements that overlap the area it
 encloses, even partly, largest overlap first, leaving out elements that contain the whole line (a line drawn inside
-one element names that element). Places are numbered from 1 in the order they
+one element names that element). `html` and `body` are never named: an arrow
+pointing at the background, or a line around nothing but background, is an
+area only, shown as such in the comment box, and reaches the agent with
+`elements` `[]`, its points, and the comment's image. Places are numbered from 1 in the order they
 were put, on the page and in the comment box below it; the text refers to a
 place as `#n`, and clicking a place number in the box inserts `#n` where you
 are typing (a number without `#` is not a reference). Removing a place —
@@ -577,7 +581,8 @@ The JSON printed at the end:
   body refers to a place as `#n`), a `kind`
   (`element`, `arrow`, or `pen`), `points` (`[]` for an element), and
   `elements` with a `selector`, `text`, and `rect`, in CSS pixels of the
-  page. For an element inside an open shadow root, `selector` is the host's
+  page (`[]` for an arrow or pen on the background: an area only; `html`
+  and `body` are never named). For an element inside an open shadow root, `selector` is the host's
   selector and the selector inside the shadow root joined by ` >>> `, which
   is not CSS: query the host, then its `shadowRoot` with the inner part.
   `image`, the PNG of the area with the places drawn on it, is an

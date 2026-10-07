@@ -24,7 +24,7 @@
 // - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消すと番号と本文の #n が
 //   詰まり、渡した JSON も同じ。消した場所を指す #n があると保存できない。一覧の番号を押すと本文に #n が入る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
 //   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
@@ -2170,10 +2170,6 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
   }
 }
 
-/**
- * ページの地の上の場所（R-PAGE-COMMENT）: どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、その位置の
- * 要素（地では文書の根）が場所の要素になり、座標だけにはならない。
- */
 /** 保存の要求に載せた画像を `window.__kemiSavedImage` に控える。 */
 async function keepSavedImage() {
   await evaluate(`(() => {
@@ -2186,7 +2182,13 @@ async function keepSavedImage() {
   })()`);
 }
 
-async function placesOnTheBackgroundNameThePage(repository) {
+/**
+ * ページの余白の上の場所（R-PAGE-COMMENT、R-SUBMIT）: 要素の道具で `html` か `body` にしか当たらない余白を押しても場所は
+ * 増えない。余白を指す矢印と余白だけを囲むペンは、要素の無い「範囲だけ」の場所になり（一覧に要素が出ない）、渡した
+ * `kemi wait` の JSON で `elements` が `[]` で `points` を持ち、場所ごとの画像は無くコメントの画像が 1 つある。画像は
+ * 文書全体ではなく場所の周りを写す。
+ */
+async function placesOnTheBackgroundAreAreasOnly(repository) {
   const dev = await startDevServer();
   const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
@@ -2197,33 +2199,44 @@ async function placesOnTheBackgroundNameThePage(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
+    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await handInThePage(kemi, repository, state);
     await keepSavedImage();
-    // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない地。
+    // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない余白。
     await chooseTool('element');
     await clickInPane(livePane, 350, 450);
-    await waitFor(`${draftNumbers} === '[1]'`);
+    await new Promise((done) => setTimeout(done, 800));
+    assert.equal(await evaluate(draftNumbers), '[]', 'a click on the background adds no place');
+    console.log('PASS 要素の道具でページの余白を押しても場所が増えない');
+
     await chooseTool('arrow');
     await dragInPane(livePane, [[200, 360], [300, 420], [350, 450]]);
-    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await waitFor(`${draftNumbers} === '[1]'`);
     await chooseTool('pen');
     await dragInPane(livePane, [[320, 360], [380, 360], [380, 500], [320, 500], [320, 362]]);
-    await waitFor(`${draftNumbers} === '[1,2,3]'`);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    const rows = JSON.parse(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('#live-compose .lv-place')).map((row) => [row.dataset.selector ?? null, row.querySelector('.lv-place-what').textContent]))`));
+    assert.deepEqual(rows, [[null, 'Area only (no element)'], [null, 'Area only (no element)']]);
+    console.log('PASS 余白を指す矢印と余白だけを囲むペンの場所の行には、要素が出ず範囲だけと出る');
+
     await savePageCommentInThePage('the empty space');
-    const places = (await reviewJson(kemi)).comments.at(-1).page.places;
-    const root = /^html( > body)?$/;
-    for (const place of places) {
-      assert.equal(place.elements.length, 1, `place ${place.n} (${place.kind}) names one element: ${JSON.stringify(place.elements)}`);
-      assert.match(place.elements[0].selector, root, `place ${place.n} (${place.kind}) names the page`);
+    const answer = await handAndWait(kemi, repository, state);
+    const comment = answer.events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+    assert.ok(comment, `a page comment is handed: ${JSON.stringify(answer)}`);
+    for (const place of comment.page.places) {
+      assert.deepEqual(place.elements, [], `place ${place.n} (${place.kind}) names no element`);
+      assert.ok(place.points.length > 0, `place ${place.n} (${place.kind}) has its points`);
+      assert.deepEqual(Object.keys(place).sort(), ['elements', 'kind', 'n', 'points'], `place ${place.n} has no image of its own`);
     }
-    console.log('PASS どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、文書の根が場所の要素になる');
-    // 画像は文書の根の箱ではなく、場所の周りを写す。要素の場所は押した点（矢印の先端と同じ点）、矢印とペンは線の点。
-    const points = places.flatMap((place) => place.points);
+    assert.ok(typeof comment.page.image === 'string' && comment.page.image !== '', `the comment has one image: ${comment.page.image}`);
+    console.log('PASS 余白を指す矢印と余白だけを囲むペンは、kemi wait の JSON で elements が [] で points を持ち、画像はコメントに 1 つ');
     const saved = await evaluate('window.__kemiSavedImage ?? null');
     assert.notEqual(saved, null, 'the image is made');
     const image = decodePng(Buffer.from(saved, 'base64'));
+    const points = comment.page.places.flatMap((place) => place.points);
     const shown = `${image.width}x${image.height}, places ${JSON.stringify(points)}`;
     assert.ok(image.width > 0 && image.width < 390, `the image is narrower than the page: ${shown}`);
-    console.log('PASS 地に置いた場所の画像は、文書の根の箱ではなく場所の周りを写す');
+    console.log('PASS 余白に置いた場所の画像は、文書全体ではなく場所の周りを写す');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -2909,7 +2922,7 @@ try {
   await manyElementsAreRecordedAndCompared(repository);
   await pageCommentPlacesArePutAndSaved(repository);
   await penPlacesLeaveOutWhatContainsTheLine(repository);
-  await placesOnTheBackgroundNameThePage(repository);
+  await placesOnTheBackgroundAreAreasOnly(repository);
   await draftPlacesStayAtTheirWidth(repository);
   await latePlacesKeepTheirWidth(repository);
   await draftsStayWhileSaving(repository);
