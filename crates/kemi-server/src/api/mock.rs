@@ -9,10 +9,11 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use kemi_core::domain::live::{LiveError, is_html, served_path, url_path};
+use kemi_core::source::html_files::html_files;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -92,6 +93,39 @@ pub(super) async fn assign_mock(
     // 割り当ては保存するが、会話にはならない。会話の無いセッションは残らない（R-PAGE-SESSION）。
     persist(&state);
     Ok(Json(mock_json(live, &request.page, &path)))
+}
+
+/// モックのパネルの一覧に出す数の上限（R-PAGE-MOCK）。集める速さではなく、目で探せる量で決めた。
+const MOCK_FILES_SHOWN: usize = 200;
+
+#[derive(Debug, Deserialize)]
+pub(super) struct MockFilesQuery {
+    /// パスに含む文字（大文字小文字を区別しない）。空ならすべて。
+    #[serde(default)]
+    q: String,
+}
+
+/// モックに選べるファイルの一覧（R-PAGE-MOCK）。検索に合うものをパスの辞書順に 200 件まで返し、
+/// 検索に合う全体の数を添える。
+pub(super) async fn list_mock_files(
+    State(state): State<Arc<AppState>>,
+    Path(_token): Path<String>,
+    Query(query): Query<MockFilesQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let root = live(&state)?.root.clone();
+    let files = tokio::task::spawn_blocking(move || html_files(&root))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::internal)?;
+    let wanted = query.q.trim().to_lowercase();
+    let matching: Vec<String> = files
+        .into_iter()
+        .filter(|path| path.to_lowercase().contains(&wanted))
+        .collect();
+    Ok(Json(json!({
+        "files": matching.iter().take(MOCK_FILES_SHOWN).collect::<Vec<_>>(),
+        "total": matching.len(),
+    })))
 }
 
 pub(super) async fn list_mocks(
