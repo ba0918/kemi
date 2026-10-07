@@ -1,7 +1,8 @@
 //! 新側の供給元の監視（R-LIVE）。変更を debounce して SSE の更新通知にする。
 //!
-//! worktree では作業ツリー全体を、ディレクトリごとに見張る（`.git` と git が無視するものを
-//! 除く）。ほかの供給元と、作業ツリー全体を見張れないときは、
+//! worktree では作業ツリー全体を見張る（`.git` と git が無視するものを除く）。Linux は
+//! ディレクトリごとに、macOS と Windows は根の再帰の見張り 1 つで見張る。ほかの供給元と、
+//! 作業ツリー全体を見張れないときは、
 //! 監視は対象ファイルの親ディレクトリごとに行い、イベントは対象ファイルの
 //! パスに完全一致する場合だけ採用する。読み取り（Access）は変更ではないので
 //! 通知しない。ref の親ディレクトリを渡しても、その下の別ブランチの更新や
@@ -44,24 +45,30 @@ pub(crate) fn start(
         };
 
         let mut files: HashSet<PathBuf> = HashSet::new();
-        let mut watch_targets: HashSet<PathBuf> = HashSet::new();
+        let mut diff = DiffWatch::default();
         for path in paths {
             let canonical = canonical(path);
             if let Some(parent) = canonical.parent() {
-                watch_targets.insert(parent.to_path_buf());
+                diff.directories.insert(parent.to_path_buf());
             }
             files.insert(canonical);
         }
-        // 差分のファイルの見張りを先に足す。作業ツリー全体の登録に時間がかかっても、
-        // その間の差分のファイルの変更は取りこぼさない。
-        for target in &watch_targets {
-            let _ = watcher.watch(target, RecursiveMode::NonRecursive);
+        let strategy = Strategy::of_this_os();
+        // ディレクトリごとに見張るときは、差分のファイルの見張りを先に足す。作業ツリー全体の
+        // 登録に時間がかかっても、その間の差分のファイルの変更は取りこぼさない。根の再帰の
+        // 見張りはその下を全部含むので、見張れなかったときだけ足す（Windows ではディレクトリの
+        // 見張りがそのディレクトリの改名や削除を妨げる）。
+        if strategy == Strategy::PerDirectory || tree.is_none() {
+            diff.ensure(&mut watcher);
         }
         let mut whole = tree.and_then(|tree| {
-            TreeWatch::start(&mut watcher, tree, watch_targets)
+            TreeWatch::start(&mut watcher, tree, strategy, diff.directories.clone())
                 .map_err(|fallback| notices.notify(Notice::WorkTreeNotWatched(fallback)))
                 .ok()
         });
+        if whole.is_none() {
+            diff.ensure(&mut watcher);
+        }
 
         let mut debounce = Debounce::new(DEBOUNCE);
         // 無視の規則が変わったら辿り直す。保存やブランチの切り替えは規則のファイルを
@@ -83,9 +90,13 @@ pub(crate) fn start(
                     if let Some(tree) = whole.as_mut() {
                         match tree.changes(&mut watcher, &event) {
                             Ok(tree_changed) => changed |= tree_changed,
-                            Err(fallback) => {
-                                fall_back(&mut whole, &mut watcher, notices.as_ref(), fallback)
-                            }
+                            Err(fallback) => fall_back(
+                                &mut whole,
+                                &mut diff,
+                                &mut watcher,
+                                notices.as_ref(),
+                                fallback,
+                            ),
                         }
                     }
                     if whole.as_mut().is_some_and(TreeWatch::take_rules_changed) {
@@ -102,7 +113,13 @@ pub(crate) fn start(
                 && let Some(tree) = whole.as_mut()
                 && let Err(fallback) = tree.rewalk(&mut watcher)
             {
-                fall_back(&mut whole, &mut watcher, notices.as_ref(), fallback);
+                fall_back(
+                    &mut whole,
+                    &mut diff,
+                    &mut watcher,
+                    notices.as_ref(),
+                    fallback,
+                );
             }
             if debounce.take_due(Instant::now()) {
                 let _ = events.send(Event::Update);
@@ -111,16 +128,58 @@ pub(crate) fn start(
     });
 }
 
-/// 作業ツリー全体の見張りをやめ、差分のファイルの見張りだけを残して知らせる。
+/// 作業ツリー全体の見張りをやめ、差分のファイルの見張りだけにして知らせる。
 fn fall_back(
     whole: &mut Option<TreeWatch>,
+    diff: &mut DiffWatch,
     watcher: &mut impl Watcher,
     notices: &dyn NoticeSink,
     fallback: WatchFallback,
 ) {
     if let Some(mut tree) = whole.take() {
         tree.stop(watcher);
+        diff.ensure(watcher);
         notices.notify(Notice::WorkTreeNotWatched(fallback));
+    }
+}
+
+/// 起動時の差分のファイルの親ディレクトリの見張り。
+#[derive(Default)]
+struct DiffWatch {
+    /// 見張るディレクトリ（実体の場所）。
+    directories: HashSet<PathBuf>,
+    watched: bool,
+}
+
+impl DiffWatch {
+    /// まだ見張っていなければ見張る。
+    fn ensure(&mut self, watcher: &mut impl Watcher) {
+        if std::mem::replace(&mut self.watched, true) {
+            return;
+        }
+        for directory in &self.directories {
+            let _ = watcher.watch(directory, RecursiveMode::NonRecursive);
+        }
+    }
+}
+
+/// 作業ツリー全体の見張り方（R-LIVE の worktree）。OS で分ける。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Strategy {
+    /// ディレクトリごとに見張り、無視したディレクトリの下には潜らない（Linux）。
+    PerDirectory,
+    /// 作業ツリーの根に OS の再帰の見張りを 1 つだけ付け、無視するものへの変化は届いた後で
+    /// 捨てる（macOS と Windows）。
+    RecursiveRoot,
+}
+
+impl Strategy {
+    fn of_this_os() -> Self {
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            Strategy::RecursiveRoot
+        } else {
+            Strategy::PerDirectory
+        }
     }
 }
 
@@ -131,9 +190,10 @@ const VERDICT_LIMIT: usize = 100_000;
 /// そこへの変化は変更として数えない。
 struct TreeWatch {
     tree: WorkTree,
+    strategy: Strategy,
     /// 作業ツリーの根の実体の場所。差分のファイルの見張りはこの表記でイベントを返す。
     canonical_root: PathBuf,
-    /// 見張っている作業ツリーのディレクトリ（数を上限と比べる）。
+    /// 見張っている作業ツリーのディレクトリ（数を上限と比べる）。根の再帰の見張りでは空。
     directories: HashSet<PathBuf>,
     /// このうち、ここで足した見張り。落とすときに外すのはこれだけ。
     added: HashSet<PathBuf>,
@@ -142,8 +202,10 @@ struct TreeWatch {
     /// パスごとの「git が無視するか」。消えたディレクトリは git に聞いても無視と
     /// 分からないので、見えていたときの判定を使う。
     verdicts: HashMap<PathBuf, bool>,
-    /// `info/exclude`（`.git` の中の無視の規則）。その親のディレクトリを見張っている。
+    /// `info/exclude`（`.git` の中の無視の規則）の実体の場所。変化が届く場合だけ持つ。
     exclude: Option<PathBuf>,
+    /// `info/exclude` のためにここで足した、その親のディレクトリの見張り。
+    exclude_watch: Option<PathBuf>,
     /// 無視の規則が変わり、辿り直していない。
     rules_changed: bool,
 }
@@ -152,8 +214,12 @@ impl TreeWatch {
     fn start(
         watcher: &mut impl Watcher,
         tree: WorkTree,
+        strategy: Strategy,
         kept: HashSet<PathBuf>,
     ) -> Result<Self, WatchFallback> {
+        if strategy == Strategy::RecursiveRoot {
+            return Self::start_recursive(watcher, tree, kept);
+        }
         let found = tree
             .directories(WATCH_DIRECTORY_LIMIT)
             .map_err(|error| WatchFallback::Refused(error.to_string()))?;
@@ -165,26 +231,73 @@ impl TreeWatch {
         let mut this = TreeWatch {
             canonical_root: canonical(tree.root().to_path_buf()),
             tree,
+            strategy: Strategy::PerDirectory,
             directories: HashSet::new(),
             added: HashSet::new(),
             kept,
             verdicts: found.ignored.into_iter().map(|path| (path, true)).collect(),
             exclude: None,
+            exclude_watch: None,
             rules_changed: false,
         };
         if let Err(fallback) = this.add(watcher, found.directories) {
             this.stop(watcher);
             return Err(fallback);
         }
-        // `.git` の中は見張らないが、`info/exclude` が変わると無視するものが変わる。
-        // 見張れなくても作業ツリーの見張りは続ける（無いリポジトリもある）。
-        if let Ok(exclude) = this.tree.exclude_file()
-            && let Some(parent) = exclude.parent()
+        this.watch_exclude(watcher);
+        Ok(this)
+    }
+
+    /// 根に再帰の見張りを 1 つだけ付ける。辿らないので上限も無い。
+    fn start_recursive(
+        watcher: &mut impl Watcher,
+        tree: WorkTree,
+        kept: HashSet<PathBuf>,
+    ) -> Result<Self, WatchFallback> {
+        watcher
+            .watch(tree.root(), RecursiveMode::Recursive)
+            .map_err(|error| WatchFallback::Refused(error.to_string()))?;
+        let mut this = TreeWatch {
+            canonical_root: canonical(tree.root().to_path_buf()),
+            tree,
+            strategy: Strategy::RecursiveRoot,
+            directories: HashSet::new(),
+            added: HashSet::new(),
+            kept,
+            verdicts: HashMap::new(),
+            exclude: None,
+            exclude_watch: None,
+            rules_changed: false,
+        };
+        this.watch_exclude(watcher);
+        Ok(this)
+    }
+
+    /// `.git` の中は見張らないが、`info/exclude` が変わると無視するものが変わるので、その変化を
+    /// 受け取る。根の再帰の見張りの下にあれば足さない。見張れなくても作業ツリーの見張りは
+    /// 続ける（無いリポジトリもある）。
+    fn watch_exclude(&mut self, watcher: &mut impl Watcher) {
+        let Ok(exclude) = self.tree.exclude_file() else {
+            return;
+        };
+        let exclude = canonical(exclude);
+        let covered =
+            self.strategy == Strategy::RecursiveRoot && exclude.starts_with(&self.canonical_root);
+        if covered {
+            self.exclude = Some(exclude);
+        } else if let Some(parent) = exclude.parent()
             && watcher.watch(parent, RecursiveMode::NonRecursive).is_ok()
         {
-            this.exclude = Some(exclude);
+            self.exclude_watch = Some(parent.to_path_buf());
+            self.exclude = Some(exclude);
         }
-        Ok(this)
+    }
+
+    /// イベントのパスが `info/exclude` か。
+    fn is_exclude(&self, path: &Path) -> bool {
+        self.exclude.as_ref().is_some_and(|exclude| {
+            path.file_name() == exclude.file_name() && canonical(path.to_path_buf()) == *exclude
+        })
     }
 
     /// 無視の規則が変わったか。読むと戻す。
@@ -194,7 +307,12 @@ impl TreeWatch {
 
     /// 作業ツリーを辿り直し、無視されなくなったディレクトリを見張りに足し、無視される
     /// ようになったディレクトリの見張りを外す。上限を超えるか OS が断ったら Err。
+    /// 根の再帰の見張りは無視したものの下も見張っているので、何もしない（覚えた判定は
+    /// 規則が変わったときに忘れている）。
     fn rewalk(&mut self, watcher: &mut impl Watcher) -> Result<(), WatchFallback> {
+        if self.strategy == Strategy::RecursiveRoot {
+            return Ok(());
+        }
         let found = self
             .tree
             .directories(WATCH_DIRECTORY_LIMIT)
@@ -260,11 +378,15 @@ impl TreeWatch {
     /// ここで足した見張りをすべて外し、差分のファイルの見張りだけを残す。
     fn stop(&mut self, watcher: &mut impl Watcher) {
         let mut paths = watcher.paths_mut();
+        if self.strategy == Strategy::RecursiveRoot {
+            let _ = paths.remove(self.tree.root());
+        }
         for directory in self.added.drain() {
             let _ = paths.remove(&directory);
         }
-        if let Some(parent) = self.exclude.take().as_deref().and_then(Path::parent) {
-            let _ = paths.remove(parent);
+        self.exclude = None;
+        if let Some(parent) = self.exclude_watch.take() {
+            let _ = paths.remove(&parent);
         }
         let _ = paths.commit();
         self.directories.clear();
@@ -296,10 +418,7 @@ impl TreeWatch {
         if paths
             .iter()
             .any(|path| path.file_name() == Some(".gitignore".as_ref()))
-            || event
-                .paths
-                .iter()
-                .any(|path| Some(path) == self.exclude.as_ref())
+            || event.paths.iter().any(|path| self.is_exclude(path))
         {
             self.rules_changed = true;
             self.verdicts.clear();
@@ -307,11 +426,19 @@ impl TreeWatch {
         if self.verdicts.len() > VERDICT_LIMIT {
             self.verdicts.clear();
         }
-        let unknown: Vec<PathBuf> = paths
-            .iter()
-            .filter(|path| !self.verdicts.contains_key(*path))
-            .cloned()
-            .collect();
+        // 無視したディレクトリの下のパスも無視されるので、聞かない。聞くときは祖先も
+        // 一緒に聞いて覚え、その下で続く書き込み（ビルドの出力など）は git を呼ばずに捨てる。
+        let mut unknown: Vec<PathBuf> = Vec::new();
+        for path in &paths {
+            if self.under_ignored(path) {
+                continue;
+            }
+            for asked in self.unjudged_ancestors(path).chain([path.clone()]) {
+                if !self.verdicts.contains_key(&asked) && !unknown.contains(&asked) {
+                    unknown.push(asked);
+                }
+            }
+        }
         if !unknown.is_empty() {
             // git に聞けないときは、無視しないものとして数える（変化を見落とさない側に倒す）。
             let ignored = self.tree.ignored(&unknown).unwrap_or_default();
@@ -323,10 +450,13 @@ impl TreeWatch {
 
         let mut changed = false;
         for path in paths {
-            if self.verdicts.get(&path) == Some(&true) {
+            if self.verdicts.get(&path) == Some(&true) || self.under_ignored(&path) {
                 continue;
             }
             changed = true;
+            if self.strategy == Strategy::RecursiveRoot {
+                continue;
+            }
             let is_directory = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir());
             if (gone.contains(&path) || !is_directory) && self.directories.contains(&path) {
                 // 消えた・改名したディレクトリの見張りは、その下の分も含めて notify が外している。
@@ -340,6 +470,26 @@ impl TreeWatch {
             }
         }
         Ok(changed)
+    }
+
+    /// `path` の祖先（根を除く）に、git が無視すると覚えたディレクトリがあるか。
+    fn under_ignored(&self, path: &Path) -> bool {
+        self.ancestors(path)
+            .any(|ancestor| self.verdicts.get(ancestor) == Some(&true))
+    }
+
+    /// `path` の祖先（根を除く）のうち、判定を覚えていないもの。
+    fn unjudged_ancestors<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = PathBuf> + 'a {
+        self.ancestors(path)
+            .filter(|ancestor| !self.verdicts.contains_key(*ancestor))
+            .map(Path::to_path_buf)
+    }
+
+    /// 作業ツリーの根からの表記の `path` の祖先（`path` 自身と根を除く）。
+    fn ancestors<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Path> + 'a {
+        path.ancestors()
+            .skip(1)
+            .take_while(|ancestor| *ancestor != self.tree.root())
     }
 
     fn watch_new_directory(
@@ -554,6 +704,138 @@ mod tests {
 
     fn event(kind: EventKind, path: &str) -> notify::Event {
         notify::Event::new(kind).add_path(PathBuf::from(path))
+    }
+
+    /// 足した見張りと外した見張りを覚える偽の見張り。`refuse` なら足すのを断る。
+    #[derive(Default)]
+    struct Recorder {
+        watched: Vec<(PathBuf, RecursiveMode)>,
+        unwatched: Vec<PathBuf>,
+        refuse: bool,
+    }
+
+    impl Watcher for Recorder {
+        fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+            Ok(Recorder::default())
+        }
+
+        fn watch(&mut self, path: &Path, mode: RecursiveMode) -> notify::Result<()> {
+            if self.refuse {
+                return Err(notify::Error::generic("refused"));
+            }
+            self.watched.push((path.to_path_buf(), mode));
+            Ok(())
+        }
+
+        fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+            self.unwatched.push(path.to_path_buf());
+            Ok(())
+        }
+
+        fn kind() -> notify::WatcherKind {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    /// git の作業ツリーではない場所。見張りの登録だけを試す（git に聞く処理は失敗する）。
+    fn missing_root() -> PathBuf {
+        std::env::temp_dir().join(format!("kemi-watch-missing-{}", std::process::id()))
+    }
+
+    #[test]
+    fn the_recursive_strategy_watches_only_the_root_recursively_and_unwatches_it_on_stop() {
+        let root = missing_root();
+        let mut watcher = Recorder::default();
+
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(root.clone()),
+            Strategy::RecursiveRoot,
+            HashSet::new(),
+        )
+        .expect("the root is watched");
+
+        assert_eq!(
+            watcher.watched,
+            vec![(root.clone(), RecursiveMode::Recursive)]
+        );
+        tree.stop(&mut watcher);
+        assert_eq!(watcher.unwatched, vec![root]);
+    }
+
+    #[test]
+    fn the_recursive_strategy_falls_back_when_the_root_cannot_be_watched() {
+        let mut watcher = Recorder {
+            refuse: true,
+            ..Recorder::default()
+        };
+
+        let started = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(missing_root()),
+            Strategy::RecursiveRoot,
+            HashSet::new(),
+        );
+
+        assert!(matches!(started, Err(WatchFallback::Refused(_))));
+    }
+
+    /// `.gitignore` に `build/` を書いた一時リポジトリ。落とすと消す。
+    struct IgnoringRepo(PathBuf);
+
+    impl IgnoringRepo {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("kemi-watch-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            let status = std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&root)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
+            std::fs::create_dir_all(root.join("build/deep")).unwrap();
+            IgnoringRepo(root)
+        }
+    }
+
+    impl Drop for IgnoringRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn the_recursive_strategy_drops_changes_under_ignored_directories_and_dot_git() {
+        use notify::event::{CreateKind, ModifyKind};
+        let repo = IgnoringRepo::new("recursive-drops");
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::RecursiveRoot,
+            HashSet::new(),
+        )
+        .unwrap();
+        let mut changes = |kind, relative: &str| {
+            let path = repo.0.join(relative);
+            tree.changes(&mut watcher, &notify::Event::new(kind).add_path(path))
+                .unwrap()
+        };
+
+        assert!(!changes(
+            EventKind::Create(CreateKind::File),
+            "build/deep/x.o"
+        ));
+        assert!(!changes(
+            EventKind::Create(CreateKind::File),
+            "build/deep/y.o"
+        ));
+        assert!(!changes(EventKind::Modify(ModifyKind::Any), ".git/index"));
+        assert!(changes(EventKind::Create(CreateKind::File), "src/new.rs"));
+        assert!(changes(EventKind::Modify(ModifyKind::Any), "a.txt"));
     }
 
     #[test]
