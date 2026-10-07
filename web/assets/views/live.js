@@ -342,8 +342,10 @@ export function buildShell() {
   refGlow.hidden = true;
   const refWheel = el("div", "lv-ref-wheel");
   refWheel.hidden = true;
-  // ずらした形の間は、比べる相手を動かすのはこの層だけなので、キーボードでも届くようにする。
+  // ずらした形の間は、比べる相手を動かすのはこの層だけなので、キーボードでも届くようにする。名前を読み上げられるよう、
+  // 名前を持てる役割（キーボードで動かす領域によく使う region）を付ける。
   refWheel.tabIndex = 0;
+  refWheel.setAttribute("role", "region");
   refWheel.setAttribute("aria-label", "Snapshot moved to the removed element; scroll, drag, or use the arrow keys to move it");
   ref.port.append(refWheel);
   ref.viewport.append(refGlow);
