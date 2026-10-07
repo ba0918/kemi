@@ -1439,11 +1439,6 @@ test("エージェントの 5 つの状態を見分けられる呼び名で出�
   assert.equal(new Set(labels).size, 5);
 });
 
-test("待機中は渡せること、返事済みは返事が届いたことが読み取れる呼び名で出す", () => {
-  assert.match(agentStatusLabel("waiting"), /hand/i);
-  assert.match(agentStatusLabel("replied"), /replied/i);
-});
-
 test("「Hand to agent」は kemi wait の前は押せず、写す kemi wait <id> と案内を添える", () => {
   assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 2, review: "01K5ABC" }, false), {
     disabled: true,

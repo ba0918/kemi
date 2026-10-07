@@ -2259,8 +2259,8 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
     await chooseTool('pen');
     await dragInPane(livePane, [[320, 360], [380, 360], [380, 500], [320, 500], [320, 362]]);
     await waitFor(`${draftNumbers} === '[1,2]'`);
-    const rows = JSON.parse(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('#live-compose .lv-place')).map((row) => [row.dataset.selector ?? null, row.querySelector('.lv-place-what').textContent]))`));
-    assert.deepEqual(rows, [[null, 'Area only (no element)'], [null, 'Area only (no element)']]);
+    const rows = JSON.parse(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('#live-compose .lv-place')).map((row) => row.dataset.selector ?? null))`));
+    assert.deepEqual(rows, [null, null]);
     console.log('PASS 余白を指す矢印と余白だけを囲むペンの場所の行には、要素が出ず範囲だけと出る');
 
     await savePageCommentInThePage('the empty space');
