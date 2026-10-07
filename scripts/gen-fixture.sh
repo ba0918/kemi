@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: gen-fixture.sh <dir> --files N --lines M [--commits K] [--ignored-dirs D]" >&2
+  echo "usage: gen-fixture.sh <dir> --files N --lines M [--commits K] [--ignored-dirs D] [--changed C]" >&2
   exit 2
 }
 
@@ -13,6 +13,7 @@ files=""
 lines=""
 commits=1
 ignored_dirs=0
+changed=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --files)
@@ -29,6 +30,10 @@ while [ $# -gt 0 ]; do
       ;;
     --ignored-dirs)
       ignored_dirs=$2
+      shift 2
+      ;;
+    --changed)
+      changed=$2
       shift 2
       ;;
     -*)
@@ -99,8 +104,12 @@ while [ "$commit" -le "$commits" ]; do
 done
 
 # 未コミットの変更を残し、worktree モードでも全ファイルが見えるようにする。
+# `--changed C` を渡すと、先頭の C ファイルだけを変える（既定は全ファイル）。
+if [ -z "$changed" ] || [ "$changed" -gt "$files" ]; then
+  changed=$files
+fi
 index=0
-while [ "$index" -lt "$files" ]; do
+while [ "$index" -lt "$changed" ]; do
   sub=$((index % 100))
   printf 'file %s worktree change\n' "$index" >> "src/dir$sub/file$index.txt"
   index=$((index + 1))
@@ -117,4 +126,4 @@ while [ "$index" -lt "$ignored_dirs" ]; do
 done
 
 tree=$(git rev-parse "HEAD^{tree}")
-echo "fixture ready: $dir files=$files lines=$lines commits=$commits ignored_dirs=$ignored_dirs tree=$tree"
+echo "fixture ready: $dir files=$files lines=$lines commits=$commits ignored_dirs=$ignored_dirs changed=$changed tree=$tree"
