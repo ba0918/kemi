@@ -106,6 +106,10 @@ impl ReviewSource for LiveSource {
             .unwrap_or_default()
     }
 
+    fn work_tree(&self) -> Option<super::work_tree::WorkTree> {
+        self.code.as_ref().and_then(ReviewSource::work_tree)
+    }
+
     fn reads_repository(&self) -> bool {
         self.code.is_some()
     }
@@ -133,6 +137,20 @@ mod tests {
     fn a_file_id_is_decided_by_the_path_alone() {
         assert_eq!(stable_id(b"a.txt"), stable_id(b"a.txt"));
         assert_ne!(stable_id(b"a.txt"), stable_id(b"b.txt"));
+    }
+
+    #[test]
+    fn the_code_view_watches_the_work_tree_it_reads() {
+        let repo = crate::source::testutil::TempRepo::new();
+        repo.write("a.txt", "a\n");
+        repo.add_and_commit("base");
+
+        let source = LiveSource::new(&LivePage::File("a.txt".to_string()), &repo.path);
+
+        assert_eq!(
+            source.work_tree().map(|tree| tree.root().to_path_buf()),
+            Some(super::super::git::repo_root(&repo.path).unwrap())
+        );
     }
 
     #[cfg(unix)]

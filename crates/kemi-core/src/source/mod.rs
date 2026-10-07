@@ -5,6 +5,7 @@ pub mod git;
 mod live;
 pub mod manifest;
 mod origin;
+pub mod work_tree;
 
 pub use frozen::FrozenSource;
 pub use live::LiveSource;
@@ -96,6 +97,10 @@ pub trait ReviewSource: Send + Sync {
     /// 監視する「新側の供給元」のパス（R-LIVE）。空なら監視しない。
     fn watch_paths(&self) -> Vec<PathBuf> {
         Vec::new()
+    }
+    /// 全体を見張る作業ツリー（R-LIVE の worktree）。None なら `watch_paths` だけを見張る。
+    fn work_tree(&self) -> Option<work_tree::WorkTree> {
+        None
     }
     /// リポジトリの中のファイルを、描画の時点で読めるか（R-RENDER の相対パス画像）。
     /// git の入力モードだけが真で、manifest と復元は偽。
@@ -353,6 +358,10 @@ impl ReviewSource for FocusSource {
         self.inner.watch_paths()
     }
 
+    fn work_tree(&self) -> Option<work_tree::WorkTree> {
+        self.inner.work_tree()
+    }
+
     fn reads_repository(&self) -> bool {
         self.inner.reads_repository()
     }
@@ -421,6 +430,21 @@ mod tests {
         fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
             Err(SourceError::UnknownFileId(file_id.to_string()))
         }
+    }
+
+    #[test]
+    fn focus_keeps_the_work_tree_of_the_source_it_wraps() {
+        let repo = testutil::TempRepo::new();
+        let inner = Box::new(git::GitSource::new(
+            repo.path.clone(),
+            git::GitMode::Worktree,
+        ));
+        let source = FocusSource::new(inner, focus::parse_focus("{}").unwrap());
+
+        assert_eq!(
+            source.work_tree(),
+            Some(work_tree::WorkTree::new(repo.path.clone()))
+        );
     }
 
     #[test]

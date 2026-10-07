@@ -1,6 +1,6 @@
 //! サーバからの知らせを stderr の 1 行にする。ライブラリは出力せず、書き方はここで決める。
 
-use kemi_server::{Notice, NoticeSink};
+use kemi_server::{Notice, NoticeSink, WatchFallback};
 
 /// 知らせを stderr に書く。
 pub struct StderrNotices;
@@ -40,6 +40,15 @@ pub fn notice_line(notice: &Notice) -> String {
             "kemi: cannot watch {} for page reloads: {reason}",
             directory.display()
         ),
+        Notice::WorkTreeNotWatched(fallback) => {
+            let reason = match fallback {
+                WatchFallback::TooManyDirectories { limit } => {
+                    format!("more than {limit} directories to watch")
+                }
+                WatchFallback::Refused(reason) => reason.clone(),
+            };
+            format!("kemi: watching only the files in the starting diff for updates: {reason}")
+        }
     }
 }
 

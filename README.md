@@ -572,7 +572,7 @@ cargo build --release          # the binary
 cargo test                     # Rust tests
 node --test web                # frontend pure logic
 npx tsc -p web --noEmit        # frontend types (JSDoc, no build step)
-scripts/gen-fixture.sh <dir> --files N --lines M [--commits K]
+scripts/gen-fixture.sh <dir> --files N --lines M [--commits K] [--ignored-dirs D] [--changed C]
 scripts/measure-startup.sh <fixture> target/release/kemi
 scripts/measure-range.sh <fixture> target/release/kemi <commit|file|busy>
 ```

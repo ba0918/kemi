@@ -72,6 +72,24 @@ fn kemi_command(dir: &Path, state: &Path) -> Command {
     command
 }
 
+/// 子プロセスがまだ動いていれば止めて回収する。テストが途中で失敗しても、起動した kemi を
+/// cargo test の後に残さないよう、`Drop` から呼ぶ。止め終えたものには何もしない。
+fn stop(child: &mut Child) {
+    if let Ok(None) = child.try_wait() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// `Kemi` を通さずに起動した子プロセスを、捨てるときに止める。
+struct StopOnDrop(Child);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        stop(&mut self.0);
+    }
+}
+
 struct Kemi {
     child: Child,
     stdout: ChildStdout,
@@ -148,8 +166,7 @@ impl Kemi {
     }
 
     fn kill(mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        stop(&mut self.child);
     }
 
     /// サーバが応答するまで待つ。応答した時点で、サーブ前の stderr の行は出終わり、
@@ -160,6 +177,12 @@ impl Kemi {
             .unwrap();
         assert_eq!(response.status(), 200);
         let _ = response.bytes().await;
+    }
+}
+
+impl Drop for Kemi {
+    fn drop(&mut self) {
+        stop(&mut self.child);
     }
 }
 
@@ -679,21 +702,24 @@ async fn exit_code_changes_requested_is_1() {
 async fn stdin_dash_reads_manifest() {
     let dir = TempDir::new();
     let state = TempDir::new();
-    let mut child = kemi_command(&dir.path, &state.path)
-        .args(["-", "--no-open", "--port", "0"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = StopOnDrop(
+        kemi_command(&dir.path, &state.path)
+            .args(["-", "--no-open", "--port", "0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     child
+        .0
         .stdin
         .take()
         .unwrap()
         .write_all(MANIFEST.as_bytes())
         .unwrap();
 
-    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut stderr = BufReader::new(child.0.stderr.take().unwrap());
     let mut line = String::new();
     let url = loop {
         line.clear();
@@ -710,9 +736,6 @@ async fn stdin_dash_reads_manifest() {
         .await
         .unwrap();
     assert_eq!(review["title"], "e2e のレビュー");
-
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(unix)]
@@ -1156,16 +1179,18 @@ async fn result_relative_xdg_state_home_falls_back_to_home() {
     let dir = TempDir::new();
     let home = TempDir::new();
     dir.write("manifest.json", MANIFEST);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kemi"))
-        .args(["manifest.json", "--no-open", "--port", "0"])
-        .current_dir(&dir.path)
-        .env("XDG_STATE_HOME", "relative/state")
-        .env("HOME", &home.path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut child = StopOnDrop(
+        Command::new(env!("CARGO_BIN_EXE_kemi"))
+            .args(["manifest.json", "--no-open", "--port", "0"])
+            .current_dir(&dir.path)
+            .env("XDG_STATE_HOME", "relative/state")
+            .env("HOME", &home.path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stderr = BufReader::new(child.0.stderr.take().unwrap());
     let mut line = String::new();
     let url = loop {
         line.clear();
@@ -1183,7 +1208,7 @@ async fn result_relative_xdg_state_home_falls_back_to_home() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    child.wait().unwrap();
+    child.0.wait().unwrap();
 
     assert_eq!(
         result_files(&home.path.join(".local/state")).len(),
@@ -3883,4 +3908,327 @@ async fn a_mock_assignment_comes_back_after_resuming() {
     assert_eq!(mocks["mocks"][0]["page"], "/products?x=1");
     assert_eq!(mocks["mocks"][0]["path"], "mocks/products.html");
     resumed.kill();
+}
+
+/// `api/events` の SSE を読み、`update` を数える。
+struct Updates {
+    response: reqwest::Response,
+    buffer: String,
+}
+
+impl Updates {
+    async fn open(kemi: &Kemi) -> Self {
+        let response = reqwest::get(format!("{}api/events", kemi.url))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        Updates {
+            response,
+            buffer: String::new(),
+        }
+    }
+
+    /// `within` のあいだに届いた `update` の数。
+    async fn count(&mut self, within: std::time::Duration) -> usize {
+        let deadline = tokio::time::Instant::now() + within;
+        let mut count = 0;
+        loop {
+            count += self.drain();
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return count;
+            }
+            match tokio::time::timeout(remaining, self.response.chunk()).await {
+                Ok(Ok(Some(chunk))) => self.buffer.push_str(&String::from_utf8_lossy(&chunk)),
+                Ok(Ok(None) | Err(_)) | Err(_) => return count,
+            }
+        }
+    }
+
+    fn drain(&mut self) -> usize {
+        let needle = "event: update";
+        let mut count = 0;
+        while let Some(index) = self.buffer.find(needle) {
+            count += 1;
+            self.buffer.drain(..index + needle.len());
+        }
+        count
+    }
+
+    /// `update` が届くまで `change` を繰り返す。見張りの登録は起動の応答を待たせず裏で
+    /// 進むので、登録の前の書き込みは取りこぼしうる。届いたら、続く通知が静まるまで待つ。
+    async fn after_repeating(&mut self, mut change: impl FnMut(usize)) -> bool {
+        for attempt in 0..30 {
+            change(attempt);
+            if self.count(std::time::Duration::from_millis(1000)).await > 0 {
+                while self.count(std::time::Duration::from_millis(800)).await > 0 {}
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// `a.txt` だけに差分があり、`b.txt` は追跡しているが変わっていない作業ツリー。
+fn worktree_with_an_unchanged_file(dir: &TempDir) {
+    git_repo(dir);
+    dir.write(".gitignore", "build/\n*.log\n");
+    dir.write("a.txt", "a1\n");
+    dir.write("b.txt", "b1\n");
+    git(&dir.path, &["add", ".gitignore", "a.txt", "b.txt"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    dir.write("a.txt", "a2\n");
+    dir.write("build/out.o", "o\n");
+}
+
+async fn review_paths(kemi: &Kemi) -> Vec<String> {
+    let review = reqwest::get(format!("{}api/review?refresh=1", kemi.url))
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    review["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["files"].as_array().unwrap().clone())
+        .map(|file| file["path"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn worktree_change_to_a_file_outside_the_startup_diff_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+
+    let updated = updates
+        .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+        .await;
+
+    assert!(
+        updated,
+        "changing a tracked file outside the diff sent no update"
+    );
+    assert!(review_paths(&kemi).await.contains(&"b.txt".to_string()));
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_new_file_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+
+    let updated = updates
+        .after_repeating(|attempt| dir.write("new.txt", &format!("new {attempt}\n")))
+        .await;
+
+    assert!(updated, "creating a file sent no update");
+    assert!(review_paths(&kemi).await.contains(&"new.txt".to_string()));
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_change_in_a_directory_created_while_watching_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+            .await
+    );
+    std::fs::create_dir_all(dir.path.join("fresh/inner")).unwrap();
+    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+
+    dir.write("fresh/inner/c.txt", "c\n");
+
+    assert!(
+        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        "a change in a new directory sent no update"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_change_under_a_directory_renamed_away_and_back_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    std::fs::create_dir_all(dir.path.join("moved/inner")).unwrap();
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+            .await
+    );
+    std::fs::rename(dir.path.join("moved"), dir.path.join("away")).unwrap();
+    std::fs::rename(dir.path.join("away"), dir.path.join("moved")).unwrap();
+    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+
+    dir.write("moved/inner/c.txt", "c\n");
+
+    assert!(
+        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        "a change under a directory renamed back sent no update"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_change_in_a_directory_no_longer_ignored_by_gitignore_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+            .await
+    );
+    dir.write(".gitignore", "*.log\n");
+    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+
+    dir.write("build/new.txt", "n\n");
+
+    assert!(
+        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        "a change in a directory .gitignore stopped ignoring sent no update"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_change_in_a_directory_no_longer_ignored_by_info_exclude_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    dir.write(".git/info/exclude", "scratch/\n");
+    dir.write("scratch/old.txt", "o\n");
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+            .await
+    );
+    dir.write(".git/info/exclude", "");
+    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+
+    dir.write("scratch/new.txt", "n\n");
+
+    assert!(
+        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        "a change in a directory info/exclude stopped ignoring sent no update"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_writes_to_ignored_paths_and_dot_git_send_no_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    // 見張りが登録し終わったことを、見張る側への変更で確かめてから書く。
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+            .await
+    );
+
+    for round in 0..5 {
+        dir.write("build/out.o", &format!("o {round}\n"));
+        dir.write("build/deep/x.o", &format!("x {round}\n"));
+        dir.write("debug.log", &format!("log {round}\n"));
+        dir.write(".git/kemi-e2e.txt", &format!("git {round}\n"));
+    }
+
+    assert_eq!(
+        updates.count(std::time::Duration::from_millis(1500)).await,
+        0,
+        "writes to ignored paths or .git sent an update"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
+async fn worktree_watch_lets_a_directory_in_the_work_tree_be_renamed_and_removed() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    // 差分のファイルと、変わっていない追跡済みのファイルを両方持つディレクトリ。
+    dir.write("sub/inner/changed.txt", "c1\n");
+    dir.write("sub/inner/same.txt", "s1\n");
+    git(&dir.path, &["add", "sub"]);
+    git(&dir.path, &["commit", "-q", "-m", "sub"]);
+    dir.write("sub/inner/changed.txt", "c2\n");
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    // 見張りが登録し終わったことを、そのディレクトリの中への変更で確かめてから動かす。
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("sub/inner/same.txt", &format!("s2 {attempt}\n")))
+            .await
+    );
+
+    std::fs::rename(dir.path.join("sub"), dir.path.join("moved"))
+        .expect("renaming a directory in the work tree while watching");
+    std::fs::remove_dir_all(dir.path.join("moved"))
+        .expect("removing a directory in the work tree while watching");
+
+    assert!(!review_paths(&kemi).await.is_empty());
+    kemi.kill();
+}
+
+/// 差分のファイルを変えて `update` が届くのを確かめてから submit し、レビューの間に stderr に
+/// 出た行をすべて返す。
+#[cfg(target_os = "linux")]
+async fn stderr_of_a_review_that_sees_an_update(dir: &TempDir) -> Vec<String> {
+    let mut kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+
+    let updated = updates
+        .after_repeating(|attempt| dir.write("a.txt", &format!("a3 {attempt}\n")))
+        .await;
+    assert!(updated, "changing a file in the diff sent no update");
+
+    let response = kemi
+        .post("api/submit", serde_json::json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    drop(updates);
+    let mut lines = kemi.preamble.clone();
+    for line in kemi.stderr.by_ref().lines() {
+        lines.push(line.unwrap());
+    }
+    let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
+    assert_eq!(status.code(), Some(0));
+    lines
+}
+
+// 上限は Linux だけ（macOS と Windows は根の再帰の見張り 1 つで、ディレクトリを数えない）。
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn worktree_over_the_directory_limit_watches_only_the_diff_and_says_so_once() {
+    let within = TempDir::new();
+    worktree_with_an_unchanged_file(&within);
+    let over = TempDir::new();
+    worktree_with_an_unchanged_file(&over);
+    for index in 0..10_001 {
+        std::fs::create_dir_all(over.path.join(format!("many/d{index}"))).unwrap();
+    }
+
+    let usual = stderr_of_a_review_that_sees_an_update(&within).await;
+    let fallen_back = stderr_of_a_review_that_sees_an_update(&over).await;
+
+    // 文言は契約ではないので、上限の内側のレビューより 1 行だけ多いことで確かめる。
+    assert_eq!(
+        fallen_back.len(),
+        usual.len() + 1,
+        "within the limit: {usual:?}, over the limit: {fallen_back:?}"
+    );
 }
