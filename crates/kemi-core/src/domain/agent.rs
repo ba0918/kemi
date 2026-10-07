@@ -1177,6 +1177,19 @@ mod tests {
     }
 
     #[test]
+    fn a_write_before_a_wait_that_timed_out_does_not_count_for_a_deletion() {
+        let events = [handed_event(&["c1", "c2"], &[], 0)];
+        let mut link = working_on(&events);
+        link.agent_wrote(true, T0, &["c1".to_string()], false, &existing());
+        link.wait_started();
+        link.wait_ended_empty(T0);
+
+        link.comment_deleted(true, T0, &[comment("c1", "body")]);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
     fn a_write_before_the_last_return_does_not_count_for_a_deletion() {
         let events = [handed_event(&["c1"], &[], 0)];
         let mut link = working_on(&events);
