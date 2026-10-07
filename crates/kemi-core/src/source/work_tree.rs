@@ -21,7 +21,7 @@ pub struct WorkTree {
 pub struct WatchDirectories {
     /// 見張るディレクトリ。`.git` と git が無視するディレクトリとその下を含まない。
     pub directories: Vec<PathBuf>,
-    /// 辿る途中で見つけた、git が無視するディレクトリ（その下は辿っていない）。
+    /// 辿る途中で見つけた、git が無視するか判定を断ったディレクトリ（その下は辿っていない）。
     pub ignored: Vec<PathBuf>,
     /// 上限を超えた。超えた時点で辿るのをやめるので、`directories` は全部ではない。
     pub over_limit: bool,
