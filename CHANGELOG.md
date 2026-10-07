@@ -31,7 +31,10 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
   返事済みは、最後に返った `kemi wait` が返した 1 回分のスレッドすべてにエージェントが返信した
   （発言だけの 1 回分には発言した）ときで、何分たっても応答なしにならない。待機中は渡せることが
   分かる言い方で出す。画面は状態を `data-kemi-agent-state`（`not-connected`・`waiting`・
-  `working`・`replied`・`no-response`）に出す。狭い画面では
+  `working`・`replied`・`no-response`）に出す。渡した後は、その 1 回分に入ったスレッドの末尾に
+  受け取り待ちの行が出て、`kemi wait` が返すと作業中に変わり、そのスレッドにエージェントが返信すると
+  消える（発言だけの 1 回分は並びの末尾に 1 つ出て、エージェントの発言で消える）。行は
+  `data-kemi-hand-line`（`pending`・`working`）を持つ。狭い画面では
   同じパネルを画面いっぱいのシートで出す。
 - 返信・解決・発言・状態はどのレビューでも使え、`kemi wait` を使わないレビューで書いた
   返信と発言も submit の結果に入る。「Hand to agent」は一度でも `kemi wait` が呼ばれた

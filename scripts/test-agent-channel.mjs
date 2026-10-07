@@ -17,7 +17,8 @@
 // 読み直しても読み込み直しても「消えたコミット」と示される、「This file」で上のほうを見たまま
 // 別のファイルを選んでも、別のファイルを読めなかった後に描き直しても届いた印が出ない、まだ読んで
 // いないファイルのスレッドを開いても、開いたまま表示色の明暗を切り替えても対象の行の前後が見える、
-// 畳んだ帯にも未渡しの件数つきで渡すが出る。
+// 畳んだ帯にも未渡しの件数つきで渡すが出る、渡した 1 回分の行が受け取り待ち → 作業中 → 返信で消える
+// と変わり、状態が未接続 → 待機中 → 作業中 → 返事済みと変わる。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -526,5 +527,105 @@ try {
 } finally {
   fileKemi.child.kill('SIGTERM');
   await fileKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
+// (11) 渡した 1 回分の行と状態（R-AGENT-HAND、R-AGENT-STATE）。kemi wait が待っていない間に c1 を渡すと
+// c1 のスレッドの末尾に受け取り待ちの行が出て、kemi wait が返すと作業中、kemi reply で返信すると消えて
+// 返事済みになり、次の kemi wait で待機中になる。c2 と c3 を 1 回分で渡して c2 にだけ返信すると、c2 の
+// 行だけが消えて作業中のまま、c3 にも返信すると返事済み。返事済みの間に渡すと返事済みのまま受け取り
+// 待ちの行が出る。発言だけを渡すと並びの末尾に行が出て、エージェントの発言で消える。
+const handFixture = await makeFixture();
+const handState = await mkdtemp(join(tmpdir(), 'kemi-agent-hand-state-'));
+const handKemi = await startKemi(handFixture, handState);
+try {
+  const handFile = (await (await fetch(new URL('api/review', handKemi.url))).json()).groups[0].files[0].id;
+  // API で足したコメントは開いている画面には届かない（コメントの増減は更新バッジに任せる）ので、読み込み直す。
+  const addComment = async (line, body) => {
+    const comment = await post(handKemi.url, 'api/comment', { op: 'add', file_id: handFile, side: 'new', start_line: line, end_line: line, body });
+    await browser('reload');
+    await waitFor(`${panelOpen} && document.querySelector('#cv-items .cv-card[data-id="${comment.id}"]') !== null`);
+    return comment;
+  };
+  const reply = (writes) => agentCommand(handFixture, handState, ['reply', handKemi.id], JSON.stringify({ writes }));
+  const waitOnce = (timeout) => agentCommand(handFixture, handState, ['wait', handKemi.id, '--timeout', String(timeout)]);
+  const lineOf = (id) => `(document.querySelector('#cv-items .cv-card[data-id="${id}"] [data-kemi-hand-line]')?.dataset.kemiHandLine ?? null)`;
+  const endLine = `(() => { const last = document.querySelector('#cv-items > li:last-child'); return last && !last.querySelector('.cv-card, .cv-msg') ? last.querySelector('[data-kemi-hand-line]')?.dataset.kemiHandLine ?? null : null; })()`;
+  const pressHand = async () => {
+    const button = `(${shown('#btn-hand')} ? document.querySelector('#btn-hand') : ${shown('#rail-hand')} ? document.querySelector('#rail-hand') : null)`;
+    await waitFor(`${button} !== null && !${button}.disabled`);
+    await evaluate(`${button}.click(); true`);
+  };
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', handKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await browser('click', '#cv-rail');
+  await waitFor(`${panelOpen} && ${statusIs('not-connected')}`);
+  const first = waitOnce(30);
+  await waitFor(statusIs('waiting'));
+  await post(handKemi.url, 'api/message', { body: 'starting' });
+  await pressHand();
+  assert.equal((await first).code, 0);
+  await waitFor(statusIs('working'));
+  await reply([{ type: 'message', body: 'ok' }]);
+  await waitFor(statusIs('replied'));
+  console.log('PASS 状態が未接続 → 待機中 → 作業中 → 返事済みと変わる');
+
+  await addComment(3, 'first thread');
+  await pressHand();
+  await waitFor(`${lineOf('c1')} === 'pending'`);
+  const pickedUp = waitOnce(30);
+  await waitFor(`${lineOf('c1')} === 'working'`);
+  assert.equal((await pickedUp).code, 0);
+  await waitFor(statusIs('working'));
+  await reply([{ type: 'reply', comment_id: 'c1', body: 'done' }]);
+  await waitFor(`${lineOf('c1')} === null && ${statusIs('replied')}`);
+  console.log('PASS kemi wait が待っていない間に c1 を渡すと受け取り待ちの行が出て、kemi wait が返すと作業中、返信すると消えて返事済みになる');
+
+  const next = waitOnce(30);
+  await waitFor(statusIs('waiting'));
+  console.log('PASS 返事済みの後に kemi wait を呼ぶと待機中になる');
+  await addComment(60, 'second thread');
+  await addComment(100, 'third thread');
+  await pressHand();
+  assert.equal((await next).code, 0);
+  await waitFor(`${statusIs('working')} && ${lineOf('c2')} === 'working' && ${lineOf('c3')} === 'working'`);
+  await reply([{ type: 'reply', comment_id: 'c2', body: 'done' }]);
+  await waitFor(`${lineOf('c2')} === null && ${lineOf('c3')} === 'working'`);
+  assert.equal(await evaluate(statusIs('working')), true, 'one thread is still waiting for an answer');
+  console.log('PASS c2 と c3 を 1 回分で渡して c2 にだけ返信すると、c2 の行だけが消えて c3 の行と作業中が残る');
+  await reply([{ type: 'reply', comment_id: 'c3', body: 'done too' }]);
+  await waitFor(`${lineOf('c3')} === null && ${statusIs('replied')}`);
+  console.log('PASS c3 にも返信すると返事済みになる');
+
+  await addComment(4, 'fourth thread');
+  await pressHand();
+  await waitFor(`${lineOf('c4')} === 'pending'`);
+  assert.equal(await evaluate(statusIs('replied')), true, 'handing does not change the status');
+  console.log('PASS 返事済みの間に渡すと、返事済みのまま受け取り待ちの行が出る');
+
+  const opened = `(document.querySelector('#cv-thread-body [data-kemi-hand-line]')?.dataset.kemiHandLine ?? null)`;
+  await browser('click', '#cv-items .cv-card[data-id="c4"]');
+  await waitFor(`${threadOpen('fourth thread')} && ${opened} === 'pending'`);
+  console.log('PASS 開いたスレッドの末尾にも、そのスレッドの行が出る');
+  await browser('click', '#cv-thread-head .cv-back');
+  await waitFor(`!document.querySelector('#cv-list').hidden`);
+  const fourth = waitOnce(30);
+  assert.equal((await fourth).code, 0);
+  await reply([{ type: 'reply', comment_id: 'c4', body: 'done' }]);
+  await waitFor(`${lineOf('c4')} === null`);
+
+  await post(handKemi.url, 'api/message', { body: 'one more thing' });
+  await pressHand();
+  await waitFor(`${endLine} === 'pending'`);
+  const messages = waitOnce(30);
+  await waitFor(`${endLine} === 'working'`);
+  assert.equal((await messages).code, 0);
+  await reply([{ type: 'message', body: 'noted' }]);
+  await waitFor(`${endLine} === null && ${agentMessage('noted')}`);
+  console.log('PASS 発言だけを渡すと並びの末尾に行が出て、エージェントの発言で消える');
+} finally {
+  handKemi.child.kill('SIGTERM');
+  await handKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }

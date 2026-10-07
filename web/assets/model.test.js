@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   pageCommentElsewhere,
+  handLineState,
   buildTree,
   collapseDefault,
   commentLabel,
@@ -1446,6 +1447,19 @@ test("kemi wait が一度でも呼ばれたレビューでだけ「Hand to agent
   assert.equal(handShown({ called: false, status: "not-connected", unhanded: 2 }), false);
   assert.equal(handShown({ called: true, status: "working", unhanded: 0 }), true);
   assert.equal(handShown(null), false);
+});
+
+test("渡した 1 回分の行は、スレッドごとと、発言だけの並びの末尾のものを見分ける", () => {
+  /** @type {import("./model.js").HandLine[]} */
+  const lines = [
+    { thread: "c1", state: "working" },
+    { thread: null, state: "pending" },
+  ];
+
+  assert.equal(handLineState(lines, "c1"), "working");
+  assert.equal(handLineState(lines, "c2"), null);
+  assert.equal(handLineState(lines, null), "pending");
+  assert.equal(handLineState(undefined, "c1"), null);
 });
 
 test("書いた人が人間かエージェントかを見分けられる呼び名で出す", () => {

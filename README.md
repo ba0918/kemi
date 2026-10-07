@@ -305,7 +305,12 @@ returned and you wait for the agent), replied (the agent has answered every
 thread the last returned `kemi wait` carried; it stays so however long it
 takes you), and not responding (working for 10 minutes with neither `kemi
 wait` nor `kemi reply`); the page puts it in `data-kemi-agent-state` as
-`not-connected`, `waiting`, `working`, `replied`, or `no-response`. Only the
+`not-connected`, `waiting`, `working`, `replied`, or `no-response`. After a
+hand-over, each thread it carried ends with a line saying the agent has yet
+to pick it up, which turns into "working" when `kemi wait` returns it and
+goes away when the agent replies in that thread (a hand-over of messages
+only puts one line at the end of the list, gone at the agent's next
+message); the line carries `data-kemi-hand-line="pending"` or `"working"`. Only the
 **Hand to agent** button waits until `kemi wait` has been called once in that
 review. The agent API listens on
 `127.0.0.1` whatever `--bind` says, accepts only

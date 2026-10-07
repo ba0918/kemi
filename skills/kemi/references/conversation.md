@@ -116,5 +116,6 @@ is waiting, so the person can hand), working (`kemi wait` returned and the perso
 answer), replied (you have answered every thread the last returned `kemi wait` carried — a
 message answers a hand-over of messages only), and not responding (working for 10 minutes with
 neither `kemi wait` nor `kemi reply`; replied never turns into it). Reply to each thread you were
-handed, so the person can see which ones you have answered. **Hand to agent** appears only once `kemi wait` has been
+handed, so the person can see which ones you have answered: each thread you were handed shows a
+"working" line until you reply in it (a hand-over of messages only waits for a message). **Hand to agent** appears only once `kemi wait` has been
 called in that review, so a review where you never call it stays submit-only.

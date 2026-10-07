@@ -1588,6 +1588,16 @@ export function agentStatusLabel(status) {
 }
 
 /**
+ * そのスレッド（`null` なら発言だけの 1 回分の、並びの末尾）の渡した 1 回分の行の状態。行が無ければ null。
+ * @param {HandLine[] | undefined} lines
+ * @param {string | null} thread
+ * @returns {"pending" | "working" | null}
+ */
+export function handLineState(lines, thread) {
+  return (lines ?? []).find((line) => line.thread === thread)?.state ?? null;
+}
+
+/**
  * 「Hand to agent」を出すか。`kemi wait` が一度でも呼ばれたレビューでだけ出す
  * （R-AGENT-STATE）。状態・会話パネル・返信・解決はどのレビューでも出す。
  * @param {AgentState | null} agent

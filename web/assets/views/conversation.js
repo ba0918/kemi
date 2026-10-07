@@ -25,6 +25,7 @@ import {
   filterConversation,
   firstLine,
   followsNewest,
+  handLineState,
   handShown,
   pageCommentElsewhere,
   threadChip,
@@ -174,6 +175,11 @@ function renderList(options) {
       );
       dom.cvItems.append(row);
     }
+    // 発言だけの 1 回分の行は、並びの末尾に出す（R-AGENT-HAND）。
+    const row = el("li");
+    if (appendHandLine(row, null)) {
+      dom.cvItems.append(row);
+    }
   });
 }
 
@@ -222,6 +228,31 @@ function place(comment, info) {
   return where;
 }
 
+/** 渡した 1 回分の行の文言（画面モックの状態 3）。 */
+const HAND_LINE_TEXT = {
+  pending: "Waiting for the agent to pick this up",
+  working: "Agent is working…",
+};
+
+/**
+ * 渡した 1 回分の行を末尾に足す（R-AGENT-HAND）。行が無ければ足さない。
+ * @param {HTMLElement} parent
+ * @param {string | null} thread スレッドの id。null なら発言だけの 1 回分
+ * @returns {boolean} 足したか
+ */
+function appendHandLine(parent, thread) {
+  const line = handLineState(state.agent.lines, thread);
+  if (line === null) {
+    return false;
+  }
+  const row = el("span", "cv-hand-line");
+  row.dataset.kemiHandLine = line;
+  row.setAttribute("role", "status");
+  row.textContent = HAND_LINE_TEXT[line];
+  parent.append(row);
+  return true;
+}
+
 /**
  * 一覧のスレッドの項目。場所、件名（コミットごと）、最後の書き込みを示し、押すとパネル全体が
  * そのスレッドになる。畳んだスレッドは場所の 1 行だけにする（R-AGENT-HAND）。
@@ -260,6 +291,7 @@ function threadCard(comment, context) {
     line.append(textEl("b", "cv-who", authorLabel(last.author)), textEl("span", "cv-first", firstLine(last.body)));
     card.append(line);
   }
+  appendHandLine(card, comment.id);
   card.addEventListener("click", () => actions.openThread(comment.id));
   return card;
 }
@@ -391,6 +423,7 @@ function renderThread(comment, options) {
     for (const reply of comment.replies || []) {
       dom.cvThreadBody.append(post(reply.author, reply.body, "cv-reply-post", reply.id));
     }
+    appendHandLine(dom.cvThreadBody, comment.id);
     const editor = /** @type {HTMLTextAreaElement | null} */ (
       opening.querySelector(".cv-page-edit-text")
     );
