@@ -336,7 +336,8 @@ export function buildShell() {
   ref.box.append(refFrame, refMockFrame, refEmpty);
   // 消えた要素の行を押したとき（R-PAGE-DIFF）: 比べる相手の側のその要素の光と、比べる相手を中身の高さで描いて外側で
   // ずらしている間にホイール・指やマウスで引く操作・キーを受ける層。スナップショットの枠はスクリプトを止めていて中を動かせないので、レビュー画面の
-  // 側に置く。光は重ねて透かすときの透かし具合を受けないよう、枠を収める箱の外に置く。
+  // 側に置く。光は重ねて透かすときの透かし具合を受けないよう、枠を収める箱の外に置く。光は描いた要素と一緒に横にスクロールするので枠の外側の
+  // 中に、層は横にスクロールしても見えている所をちょうど覆うよう枠の外側の外に置く。
   const refGlow = el("div", "lv-ref-glow");
   refGlow.hidden = true;
   const refWheel = el("div", "lv-ref-wheel");
@@ -344,7 +345,8 @@ export function buildShell() {
   // ずらした形の間は、比べる相手を動かすのはこの層だけなので、キーボードでも届くようにする。
   refWheel.tabIndex = 0;
   refWheel.setAttribute("aria-label", "Snapshot moved to the removed element; scroll, drag, or use the arrow keys to move it");
-  ref.viewport.append(refWheel, refGlow);
+  ref.port.append(refWheel);
+  ref.viewport.append(refGlow);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
   liveNotice.hidden = true;
@@ -703,7 +705,8 @@ export function renderStrayRefs(compose, stray, onShow) {
 }
 
 /**
- * 舞台の 1 枚。上に何を出しているかの帯、下にページを縮めて収める枠。
+ * 舞台の 1 枚。上に何を出しているかの帯、下にページを縮めて収める枠。枠の外側（`viewport`）は等倍で横にスクロールするので、
+ * 枠の見えている所にとどまる層は、それを包む `port` に置く。
  * @param {string} side
  * @param {string} title
  */
@@ -713,11 +716,13 @@ function pane(side, title) {
   const bar = el("div", "lv-bar");
   const label = el("span", "lv-bar-label");
   bar.append(textEl("b", "", title), label);
+  const port = el("div", "lv-port");
   const viewport = el("div", "lv-viewport");
   const box = el("div", "lv-box");
   viewport.append(box);
-  element.append(bar, viewport);
-  return { pane: element, bar, label, viewport, box };
+  port.append(viewport);
+  element.append(bar, port);
+  return { pane: element, bar, label, port, viewport, box };
 }
 
 /**

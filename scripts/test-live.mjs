@@ -1743,7 +1743,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
     const shifted = `new DOMMatrix(getComputedStyle(${refFrameNow}).transform).m42`;
     const down = await evaluate(shifted);
     assert.ok(down < 0, `the snapshot is moved up to the element: ${down}`);
-    await evaluate(`(() => { const layer = document.querySelector('${refView} .lv-ref-wheel'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: r.x + 50, clientY: r.y + 50, bubbles: true, cancelable: true })); })()`);
+    await evaluate(`(() => { const layer = document.querySelector('${refPane} .lv-ref-wheel'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: r.x + 50, clientY: r.y + 50, bubbles: true, cancelable: true })); })()`);
     await waitFor(`${shifted} > ${down}`);
     await chooseCompare('now');
     await chooseCompare('side');
@@ -1836,6 +1836,14 @@ async function wideTargetsAreRevealedSideways(repository) {
     await evaluate(`${removedRow}.querySelector('button').click(); true`);
     await waitFor(`${refView}.scrollLeft > 0 && ${glowInside}`);
     console.log('PASS 等倍で枠より広いページの右の方の消えた要素の行を押すと、比べる相手の枠が横にもその要素まで動き、光が枠の中に見える');
+
+    // 横に動いた後も、比べる相手の見えている所の上で回したホイールで、ずらした比べる相手が動く（枠の真ん中で受ける）。
+    const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
+    const shifted = `new DOMMatrix(getComputedStyle(${refFrameNow}).transform).m42`;
+    const before = await evaluate(shifted);
+    await evaluate(`(() => { const v = ${refView}.getBoundingClientRect(); const x = v.left + v.width / 2; const y = v.top + v.height / 2; return document.elementFromPoint(x, y).dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: x, clientY: y, bubbles: true, cancelable: true })); })()`);
+    await waitFor(`${shifted} > ${before}`);
+    console.log('PASS 横に動いた後も、比べる相手の見えている所の上のホイールでずらした比べる相手が動く');
 
     await evaluate(`${liveView}.scrollLeft = 0; true`);
     await waitFor(`${liveView}.scrollLeft === 0`);

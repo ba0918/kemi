@@ -436,6 +436,15 @@ body[data-live-view="code"] #main > .lv-band {
   display: none;
 }
 
+/* 枠の外側を包み、その見えている所に重ねる層の基準になる。 */
+.lv-port {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .lv-viewport {
   position: relative;
   flex: 1;
