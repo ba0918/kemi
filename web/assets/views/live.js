@@ -3,7 +3,7 @@
 // ページを並べる舞台、左のページのツリー。状態は持たず、押されたときの処理は呼ぶ側が渡す。
 // `--live` のレビューでだけ読み込む。
 
-import { button, el, textEl } from "../dom.js";
+import { button, el, svgIcon, textEl } from "../dom.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 
 /**
@@ -21,15 +21,22 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
 /**
  * @typedef {{
  *   band: HTMLElement,
- *   viewSeg: HTMLElement,
- *   pageButton: HTMLButtonElement,
- *   codeButton: HTMLButtonElement,
+ *   bandPage: HTMLElement,
+ *   bandWidth: HTMLElement,
+ *   bandAgent: HTMLElement,
+ *   menu: HTMLElement,
+ *   widthGroup: HTMLElement,
+ *   mockGroup: HTMLElement,
+ *   stageHead: HTMLElement,
  *   widthSeg: HTMLElement,
  *   widthInput: HTMLInputElement,
  *   widthError: HTMLElement,
  *   compareSlot: HTMLElement,
  *   compareSelect: HTMLSelectElement,
  *   recordButton: HTMLButtonElement,
+ *   stageName: HTMLElement,
+ *   zoomSeg: HTMLElement,
+ *   reloadButton: HTMLButtonElement,
  *   modeSeg: HTMLElement,
  *   opacity: HTMLInputElement,
  *   mockInput: HTMLInputElement,
@@ -58,6 +65,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  *   noCode: HTMLElement,
  *   pageTree: HTMLElement,
  *   toolSeg: HTMLElement,
+ *   hint: HTMLElement,
  *   capture: HTMLElement,
  *   stroke: SVGPolylineElement,
  *   compose: ComposeShell,
@@ -80,12 +88,28 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN } from "../live-model.js";
  * }} ComposeShell
  */
 
-/** コメントの場所を置く道具と、ページを普通に触る「操作」（画面モックの案 A の上の帯）。 */
+/** コメントの場所を置く道具と、ページを普通に触る「操作」。名前とアイコン（画面モック docs/design/ui-mock-live-v2.html）。 */
 export const TOOLS = /** @type {const} */ ([
-  ["element", "Element"],
-  ["arrow", "Arrow"],
-  ["pen", "Pen"],
-  ["interact", "Interact"],
+  [
+    "element",
+    "Element",
+    '<svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.5 2"/><path d="M7 7l6 2.5-2.6.9-.9 2.6z" fill="currentColor"/></svg>',
+  ],
+  [
+    "arrow",
+    "Arrow",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13L12.5 3.5M7 3.5h5.5V9"/></svg>',
+  ],
+  [
+    "pen",
+    "Pen",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 13l1-3.5 7-7 2.5 2.5-7 7z"/></svg>',
+  ],
+  [
+    "interact",
+    "Interact",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 2l8 6.5-3.6.6 2 4-1.6.8-2-4L4 12.5z"/></svg>',
+  ],
 ]);
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -97,17 +121,6 @@ const SVG = "http://www.w3.org/2000/svg";
 export function buildShell() {
   const band = el("div", "lv-band");
   band.id = "live-band";
-
-  const viewSeg = el("div", "lv-seg lv-view");
-  viewSeg.setAttribute("role", "group");
-  viewSeg.setAttribute("aria-label", "View");
-  const pageButton = button("");
-  pageButton.textContent = "Page";
-  pageButton.dataset.view = "page";
-  const codeButton = button("");
-  codeButton.textContent = "Code";
-  codeButton.dataset.view = "code";
-  viewSeg.append(pageButton, codeButton);
 
   const widthGroup = el("div", "lv-widths lv-page-only");
   widthGroup.append(textEl("span", "lv-label", "Width"));
@@ -130,31 +143,12 @@ export function buildShell() {
   widthError.hidden = true;
   widthGroup.append(widthSeg, widthInput, widthError);
 
-  const compareSlot = el("div", "lv-compare lv-page-only");
-  compareSlot.append(textEl("span", "lv-label", "Compare with"));
-  const compareSelect = /** @type {HTMLSelectElement} */ (el("select", "lv-compare-select"));
-  compareSelect.setAttribute("aria-label", "Compare with");
-  const recordButton = button("lv-record");
-  recordButton.textContent = "Record now";
-  recordButton.title = "Take a snapshot of the page as it is now";
-  compareSlot.append(compareSelect, recordButton);
-  const modeSeg = el("div", "lv-seg lv-mode");
-  modeSeg.setAttribute("role", "group");
-  modeSeg.setAttribute("aria-label", "How to compare");
-  for (const [mode, label] of [["side", "Side by side"], ["overlay", "Overlay"]]) {
-    const choice = button("");
-    choice.textContent = label;
-    choice.dataset.compare = mode;
-    modeSeg.append(choice);
-  }
-  const opacity = /** @type {HTMLInputElement} */ (el("input", "lv-opacity"));
-  opacity.type = "range";
-  opacity.min = "0";
-  opacity.max = "100";
-  opacity.value = "50";
-  opacity.setAttribute("aria-label", "Opacity of the reference");
-  opacity.title = "Opacity of the reference";
-  compareSlot.append(modeSeg, opacity);
+  // 手で取る操作とモックの操作は、見比べ方によらず使えるよう帯に置く（R-PAGE-SNAPSHOT、R-PAGE-MOCK）。
+  // 広い画面の帯ではアイコンだけ、狭い画面のメニューでは名前も出す。
+  const recordButton = button("lv-record lv-record-now");
+  recordButton.append(svgIcon(RECORD_ICON), textEl("span", "lv-record-label", "Record now"));
+  recordButton.title = "Record now: take a snapshot of the page as it is now";
+  recordButton.setAttribute("aria-label", "Record now");
   const mockGroup = el("div", "lv-mock");
   const mockInput = /** @type {HTMLInputElement} */ (el("input", "lv-mock-input"));
   mockInput.type = "text";
@@ -171,7 +165,57 @@ export function buildShell() {
   mockError.setAttribute("role", "alert");
   mockError.hidden = true;
   mockGroup.append(mockInput, mockAssign, mockRemove, mockReload, mockError);
-  compareSlot.append(mockGroup);
+  // 取れなかった・保存しなかったスナップショットの知らせは、比べる相手を出していなくても見える帯に出す。
+  const refNotice = el("span", "lv-notice lv-band-notice");
+  refNotice.setAttribute("role", "status");
+  refNotice.hidden = true;
+
+  // 舞台の見出し: 見比べ方の名前、倍率の切り替え、比べる相手の選択、読み込み直す操作、見比べ方の切り替え。
+  const stageHead = el("div", "lv-stage-head");
+  const stageName = el("span", "lv-stage-name");
+  const zoomSeg = el("div", "lv-seg lv-zoom");
+  zoomSeg.setAttribute("role", "group");
+  zoomSeg.setAttribute("aria-label", "Scale");
+  for (const [zoom, label, title] of [
+    ["fit", "Fit", "Shrink the page to fit the frame"],
+    ["full", "100%", "Show the page at its actual size and scroll in the frame"],
+  ]) {
+    const choice = button("");
+    choice.textContent = label;
+    choice.title = title;
+    choice.dataset.zoom = zoom;
+    zoomSeg.append(choice);
+  }
+  const compareSlot = el("div", "lv-compare");
+  compareSlot.append(textEl("span", "lv-label", "Compare with"));
+  const compareSelect = /** @type {HTMLSelectElement} */ (el("select", "lv-compare-select"));
+  compareSelect.setAttribute("aria-label", "Compare with");
+  const opacity = /** @type {HTMLInputElement} */ (el("input", "lv-opacity"));
+  opacity.type = "range";
+  opacity.min = "0";
+  opacity.max = "100";
+  opacity.value = "50";
+  opacity.setAttribute("aria-label", "Opacity of the reference");
+  opacity.title = "Opacity of the reference";
+  compareSlot.append(compareSelect, opacity);
+  const reloadButton = button("iconbtn lv-reload");
+  reloadButton.title = "Reload page";
+  reloadButton.setAttribute("aria-label", "Reload page");
+  reloadButton.append(svgIcon(RELOAD_ICON));
+  const modeSeg = el("div", "lv-seg lv-mode");
+  modeSeg.setAttribute("role", "group");
+  modeSeg.setAttribute("aria-label", "How to compare");
+  for (const [mode, label, icon] of COMPARE_MODES) {
+    const choice = button("");
+    choice.title = label;
+    choice.setAttribute("aria-label", label);
+    choice.dataset.compare = mode;
+    choice.append(svgIcon(icon));
+    modeSeg.append(choice);
+  }
+  const stageLine = el("div", "lv-stage-line");
+  stageLine.append(stageName, zoomSeg, el("span", "lv-spacer"), compareSlot, reloadButton, modeSeg);
+  stageHead.append(stageLine);
 
   const sideSeg = el("div", "lv-seg lv-side lv-page-only");
   sideSeg.setAttribute("role", "group");
@@ -186,23 +230,53 @@ export function buildShell() {
   const toolSeg = el("div", "lv-seg lv-tools lv-page-only");
   toolSeg.setAttribute("role", "group");
   toolSeg.setAttribute("aria-label", "Comment tools");
-  for (const [tool, label] of TOOLS) {
-    const choice = button("");
-    choice.textContent = label;
+  for (const [tool, label, icon] of TOOLS) {
+    const choice = button("lv-tool");
+    choice.append(svgIcon(icon), label);
     choice.dataset.tool = tool;
     choice.title =
       tool === "interact" ? "Use the page as it is" : `Put a place of a comment with the ${label.toLowerCase()} tool`;
     toolSeg.append(choice);
   }
 
-  band.append(viewSeg, widthGroup, compareSlot, el("span", "lv-spacer"), toolSeg, sideSeg);
+  // 狭い画面では帯を 1 行にまとめ、ページの名前・表示幅・エージェントの状態と「…」のメニューを出す。手で取る操作・
+  // 表示幅の選択・モック・比べる相手の選択・枠に合わせると等倍は、そのメニューに移す（features/live.js）。
+  const bandPage = el("span", "lv-band-page");
+  const bandWidth = el("span", "lv-band-width");
+  const bandAgent = el("span", "agent-status lv-band-agent");
+  bandAgent.setAttribute("role", "status");
+  const menu = el("div", "lv-menu");
+  menu.id = "live-menu";
+  menu.setAttribute("popover", "");
+  menu.setAttribute("aria-label", "Page view options");
+  const menuButton = button("iconbtn lv-menu-button");
+  menuButton.title = "Page view options";
+  menuButton.setAttribute("aria-label", "Page view options");
+  menuButton.setAttribute("popovertarget", menu.id);
+  menuButton.append(svgIcon(MORE_ICON));
+  band.append(
+    widthGroup,
+    recordButton,
+    mockGroup,
+    refNotice,
+    el("span", "lv-spacer"),
+    sideSeg,
+    bandPage,
+    bandWidth,
+    bandAgent,
+    menuButton,
+    menu,
+  );
+
+  // 道具は見る対象の枠のすぐ上に、始め方の案内はその下に置く（R-PAGE-COMMENT）。
+  const toolbar = el("div", "lv-toolbar");
+  toolbar.append(toolSeg);
+  const hint = buildHint();
+  stageHead.prepend(toolbar, hint);
 
   const stage = el("div", "lv-stage");
   stage.id = "live-stage";
   const ref = pane("ref", "Before");
-  const refNotice = el("span", "lv-notice");
-  refNotice.hidden = true;
-  ref.bar.append(refNotice);
   // スクリプトを止める（allow-scripts を付けない）。allow-same-origin も付けないので、
   // 中身はレビュー画面と別の不透明なオリジンになる（R-PAGE-SNAPSHOT）。
   const refFrame = /** @type {HTMLIFrameElement} */ (el("iframe", "lv-frame"));
@@ -241,7 +315,7 @@ export function buildShell() {
   capture.append(strokeSvg);
   live.box.append(liveFrame, capture);
   const compose = buildCompose();
-  stage.append(ref.pane, live.pane, compose.box);
+  stage.append(stageHead, ref.pane, live.pane, compose.box);
 
   const noCode = textEl(
     "div",
@@ -256,15 +330,22 @@ export function buildShell() {
 
   return {
     band,
-    viewSeg,
-    pageButton,
-    codeButton,
+    bandPage,
+    bandWidth,
+    bandAgent,
+    menu,
+    widthGroup,
+    mockGroup,
+    stageHead,
     widthSeg,
     widthInput,
     widthError,
     compareSlot,
     compareSelect,
     recordButton,
+    stageName,
+    zoomSeg,
+    reloadButton,
     modeSeg,
     opacity,
     mockInput,
@@ -293,10 +374,96 @@ export function buildShell() {
     noCode,
     pageTree,
     toolSeg,
+    hint,
     capture,
     stroke,
     compose,
   };
+}
+
+/** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
+const RELOAD_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3.3H9.7"/></svg>';
+
+const RECORD_ICON =
+  '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.6" fill="currentColor"/></svg>';
+
+const MORE_ICON =
+  '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="12.5" cy="8" r="1.5"/></svg>';
+
+/** 見比べ方（live-compare.md の R-PAGE-REF）。値、名前、アイコン。 */
+const COMPARE_MODES = /** @type {const} */ ([
+  ["now", "Now only", '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/></svg>'],
+  [
+    "side",
+    "Side by side",
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3" width="5.6" height="10" rx="1.2"/><rect x="8.9" y="3" width="5.6" height="10" rx="1.2"/></svg>',
+  ],
+  [
+    "overlay",
+    "Overlay",
+    '<svg viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2" width="9" height="8" rx="1.2" fill="none"/><rect x="5.5" y="6" width="9" height="8" rx="1.2" fill="currentColor" fill-opacity=".3"/></svg>',
+  ],
+]);
+
+const PAGE_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1.5" y="2" width="13" height="9.5" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg>';
+const CODE_TAB_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4L1.8 8l3.7 4M10.5 4l3.7 4-3.7 4M9.2 2.5L6.8 13.5"/></svg>';
+
+/**
+ * ページの見方とコードの見方を切り替えるタブと、ページの見方の間に上部バーに出すもの（live.md の R-PAGE-MODE）。
+ * @typedef {{
+ *   tabs: HTMLElement,
+ *   codeCount: HTMLElement,
+ *   meta: HTMLElement,
+ *   metaPage: HTMLElement,
+ *   metaWidth: HTMLElement,
+ *   agent: HTMLElement,
+ * }} LiveTopbar
+ * @returns {LiveTopbar}
+ */
+export function buildTopbar() {
+  const tabs = el("div", "lv-modetabs lv-view");
+  tabs.setAttribute("role", "group");
+  tabs.setAttribute("aria-label", "View");
+  const pageTab = button("lv-modetab");
+  pageTab.dataset.view = "page";
+  pageTab.title = "The running page";
+  pageTab.append(svgIcon(PAGE_ICON), textEl("span", "lv-modetab-long", "Live page"), textEl("span", "lv-modetab-short", "Page"));
+  const codeTab = button("lv-modetab");
+  codeTab.dataset.view = "code";
+  codeTab.title = "The changes in the working tree";
+  const codeCount = textEl("span", "lv-modetab-count", "");
+  codeTab.append(svgIcon(CODE_TAB_ICON), textEl("span", "lv-modetab-long", "Code changes"), textEl("span", "lv-modetab-short", "Code"), codeCount);
+  tabs.append(pageTab, codeTab);
+  const meta = el("span", "lv-topmeta");
+  const metaPage = el("span", "lv-topmeta-page");
+  const metaWidth = el("span", "lv-topmeta-width");
+  meta.append(textEl("b", "", "Live review"), " · ", metaPage, " · ", metaWidth);
+  const agent = el("span", "agent-status lv-top-agent");
+  agent.setAttribute("role", "status");
+  return { tabs, codeCount, meta, metaPage, metaWidth, agent };
+}
+
+/** 始め方の 3 つの手順（R-PAGE-COMMENT）。ページへのコメントを初めて保存するまで出す。 */
+const HINT_STEPS = ["Point at a place on the page", "Write, then Comment", "Hand to agent"];
+
+/** @returns {HTMLElement} */
+function buildHint() {
+  const hint = el("div", "lv-hint");
+  hint.setAttribute("role", "note");
+  hint.setAttribute("aria-label", "How to start");
+  for (const [index, step] of HINT_STEPS.entries()) {
+    if (index > 0) {
+      hint.append(textEl("span", "lv-hint-arrow", "→"));
+    }
+    const item = el("span", "lv-hint-step");
+    item.append(textEl("span", "lv-hint-n", String(index + 1)), step);
+    hint.append(item);
+  }
+  hint.append(textEl("span", "lv-hint-end", "Shown until you save your first page comment"));
+  return hint;
 }
 
 /** @returns {ComposeShell} */
@@ -386,18 +553,26 @@ function pane(side, title) {
 }
 
 /**
- * 比べる相手の選択の中身。先頭は既定（決まった順で選ぶ）。
+ * 比べる相手の選択の中身。先頭は自動で、そのすぐ下に自動の選び方の説明（選べない項目）を置く。
  * @param {HTMLSelectElement} select
  * @param {{ value: string, label: string }[]} options
  * @param {string} chosen
+ * @param {string} rule 自動の選び方の説明
  */
-export function renderCompareOptions(select, options, chosen) {
+export function renderCompareOptions(select, options, chosen, rule) {
   select.textContent = "";
-  for (const option of options) {
+  for (const [index, option] of options.entries()) {
     const element = /** @type {HTMLOptionElement} */ (el("option"));
     element.value = option.value;
     element.textContent = option.label;
     select.append(element);
+    if (index === 0) {
+      const note = /** @type {HTMLOptionElement} */ (el("option", "lv-compare-rule"));
+      note.disabled = true;
+      note.value = "";
+      note.textContent = rule;
+      select.append(note);
+    }
   }
   select.value = chosen;
 }

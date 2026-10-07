@@ -3665,6 +3665,39 @@ fn start_live_review(dir: &TempDir, state: &TempDir) -> (Kemi, String) {
     (kemi, id)
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_saved_page_comment_stays_marked_after_deleting_it_and_resuming() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    kemi.wait_serving().await;
+    assert_eq!(
+        kemi.review_json().await["live"]["page_comment_saved"],
+        false
+    );
+
+    let first = kemi.add_page_comment("first").await;
+    kemi.add_page_comment("second").await;
+    let deleted = kemi
+        .post(
+            "api/comment",
+            serde_json::json!({ "op": "delete", "id": first["id"] }),
+        )
+        .await;
+    assert_eq!(deleted.status(), 200);
+    assert_eq!(kemi.review_json().await["live"]["page_comment_saved"], true);
+
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    let review = resumed.review_json().await;
+
+    assert_eq!(review["live"]["page_comment_saved"], true, "{review}");
+    resumed.kill();
+}
+
 #[tokio::test]
 async fn a_handed_page_comment_reaches_wait_with_its_places_and_a_readable_image() {
     let dir = TempDir::new();

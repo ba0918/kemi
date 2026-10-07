@@ -162,20 +162,105 @@ export function snapshotLabel(snapshots, snapshot) {
   return `${label} ${index + 1}`;
 }
 
+/** 選択肢の中の時点の並び（live-compare.md の R-PAGE-REF）。 */
+const OPTION_KINDS = ["handed", "start", "manual"];
+
 /**
- * 比べる相手の選択に並べる時点。そのページのスナップショットを新しい順に、表示幅を添えて。
+ * 比べる相手の選択に並べる時点。そのページのスナップショットを、渡した時点 → 開始時 → 手で取った時点の順に、
+ * 同じ種類の中は新しい順に、表示幅を添えて。
  * @param {SnapshotSummary[]} snapshots 取った順
  * @param {string} page
  * @returns {{ id: string, label: string }[]}
  */
 export function snapshotOptions(snapshots, page) {
-  return snapshots
-    .filter((snapshot) => snapshot.page === page)
-    .reverse()
-    .map((snapshot) => {
-      const label = `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}`;
-      return { id: snapshot.id, label: snapshot.unsaved ? `${label} · not saved` : label };
-    });
+  const here = snapshots.filter((snapshot) => snapshot.page === page);
+  return OPTION_KINDS.flatMap((kind) => here.filter((snapshot) => snapshot.kind === kind).reverse()).map((snapshot) => ({
+    id: snapshot.id,
+    label: optionLabel(snapshots, snapshot),
+  }));
+}
+
+/**
+ * @param {SnapshotSummary[]} snapshots 取った順
+ * @param {SnapshotSummary} snapshot
+ * @returns {string}
+ */
+function optionLabel(snapshots, snapshot) {
+  const label = `${snapshotLabel(snapshots, snapshot)} · ${snapshot.width}`;
+  return snapshot.unsaved ? `${label} · not saved` : label;
+}
+
+/** 自動の選び方の短い説明。選択肢のそばに出す（R-PAGE-REF）。 */
+export const AUTO_RULE = "Auto picks, in order: the last snapshot you handed → Start → the last one you recorded.";
+
+/**
+ * 比べる相手の選択肢（R-PAGE-REF）。自動 → 渡した時点 → 開始時 → 手で取った時点 → モック。自動の名前には、いまの
+ * ページと表示幅で自動が選んでいる時点を、その時点の選択肢と同じ名前で入れる。
+ * @param {{ snapshots: SnapshotSummary[], page: string, width: number, mock: string | null }} input
+ * @returns {{ value: string, label: string }[]}
+ */
+export function referenceOptions({ snapshots, page, width, mock }) {
+  const picked = chooseSnapshot(snapshots, page, width, null);
+  const auto = picked ? `Auto — ${optionLabel(snapshots, picked)}` : "Auto — not recorded at this width";
+  return [
+    { value: "latest", label: auto },
+    ...snapshotOptions(snapshots, page).map((option) => ({ value: option.id, label: option.label })),
+    ...(mock === null ? [] : [{ value: "mock", label: mockLabel(mock) }]),
+  ];
+}
+
+/**
+ * いま比べている相手の名前。選択肢の項目と同じ作り（R-PAGE-REF）。
+ * @param {SnapshotSummary[]} snapshots 取った順
+ * @param {Reference} reference
+ * @returns {string}
+ */
+export function referenceName(snapshots, reference) {
+  switch (reference.type) {
+    case "snapshot":
+      return optionLabel(snapshots, reference.snapshot);
+    case "mock":
+      return mockLabel(reference.path);
+    case "none":
+      return "Not recorded";
+  }
+}
+
+/**
+ * @param {string} path
+ * @returns {string}
+ */
+function mockLabel(path) {
+  return `Mock: ${path}`;
+}
+
+/**
+ * 見比べ方の見出し（R-PAGE-REF）。重ねて透かす間は、両方の名前と透かし具合。透かし具合が端のときは見えている方を
+ * 出し、重ねていることも分かる書き方にする（見る対象だけの見出しと同じにしない）。狭い画面では見比べ方によらず
+ * 1 枚ずつ見る（R-PAGE-VIEW）ので、見ている 1 枚に合わせる: 動いているページなら見る対象だけの見出し、比べる相手
+ * ならその名前。
+ * @param {{ compare: "now" | "side" | "overlay", reference: string, opacity: number, shown?: "live" | "ref" | null }} input
+ *   reference は比べる相手の名前、opacity は重ねた比べる相手の不透明度（0〜100）、shown は狭い画面で見ている 1 枚
+ *   （広い画面では null）
+ * @returns {string}
+ */
+export function compareHeading({ compare, reference, opacity, shown = null }) {
+  if (shown === "ref") {
+    return reference;
+  }
+  if (compare === "now" || shown === "live") {
+    return "Now";
+  }
+  if (compare === "side") {
+    return "Side by side";
+  }
+  if (opacity <= 0) {
+    return "Overlay — Now only visible";
+  }
+  if (opacity >= 100) {
+    return `Overlay — ${reference} only visible`;
+  }
+  return `Overlay — Now ⇄ ${reference} · ${opacity}%`;
 }
 
 /**

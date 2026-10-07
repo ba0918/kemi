@@ -10,9 +10,12 @@ import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { state } from "../state.js";
 import {
+  AUTO_RULE,
+  WIDTH_CHOICES,
   addPlace,
   buildPageTree,
   chooseReference,
+  compareHeading,
   fitScale,
   liveOrigin,
   overlayPlacement,
@@ -21,16 +24,18 @@ import {
   emptyDraft,
   imageUnsavedNotice,
   parseWidth,
+  referenceName,
+  referenceOptions,
   removePlace,
   snapshotLabel,
   startSnapshotDue,
-  snapshotOptions,
   undoPlace,
   unsavedSnapshotNotice,
 } from "../live-model.js";
 import { diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
   buildShell,
+  buildTopbar,
   markRemovedInSnapshot,
   renderChanges,
   renderCompareOptions,
@@ -38,12 +43,14 @@ import {
   renderPlaces,
 } from "../views/live.js";
 import { closeSheet } from "./conversation.js";
+import { refresh } from "./files.js";
 import { renderConversation } from "../views/conversation.js";
 import { renderHeader } from "../views/header.js";
 import { refreshCommentBadges } from "../views/tree.js";
 
 /**
- * @typedef {{ port: number, start: string, page: string, code: boolean }} LiveInfo
+ * `page_comment_saved` は、このレビューでページへのコメントを一度でも保存したか（始め方の案内を出すかを決める）。
+ * @typedef {{ port: number, start: string, page: string, code: boolean, page_comment_saved?: boolean }} LiveInfo
  * @typedef {import("../live-model.js").SnapshotSummary} SnapshotSummary
  * @typedef {import("../live-diff.js").Description} Description
  * @typedef {import("../live-diff.js").Change} Change
@@ -114,9 +121,12 @@ const live = {
   mockReloadAsked: false,
   /** 出し始めるときに読めなかったモックの条件（mockShownKey と同じ形）。読めたら空。 */
   mockUnreadable: "",
-  /** 見比べ方。並べるか、重ねて透かすか（live-compare.md の R-PAGE-REF）。 */
-  /** @type {"side" | "overlay"} */
-  compare: "side",
+  /** 見比べ方。見る対象だけ・並べる・重ねて透かす（live-compare.md の R-PAGE-REF）。画面を開いている間だけ覚える。 */
+  /** @type {"now" | "side" | "overlay"} */
+  compare: "now",
+  /** 枠に合わせて縮めるか、等倍で枠の中をスクロールして見るか（R-PAGE-VIEW）。画面を開いている間だけ覚える。 */
+  /** @type {"fit" | "full"} */
+  zoom: "fit",
   /** 重ねた比べる相手の不透明度（0〜100）。 */
   opacity: 50,
   /** 見る対象のスクロールの位置と中身の高さ（中継したページが知らせる）。 */
@@ -150,15 +160,19 @@ const live = {
   shiftedOpen: false,
   /** 一覧に並べた項目の数（主な変化とずれただけ）。同じページの間だけ保ち、ページを移ったら戻す。 */
   listed: { main: 0, shifted: 0 },
-  /** 選んでいる道具（R-PAGE-COMMENT）。「操作」ではページを普通に触れる。 */
+  /** 選んでいる道具（R-PAGE-COMMENT）。既定は要素。「操作」ではページを普通に触れる。 */
   /** @type {"element" | "arrow" | "pen" | "interact"} */
-  tool: "interact",
+  tool: "element",
+  /** ページへのコメントを一度でも保存したか。保存するまで始め方の案内を出す（R-PAGE-COMMENT）。 */
+  pageCommentSaved: false,
   /** 書いているコメントの場所。 */
   draft: emptyDraft("/", DEFAULT_WIDTH),
   /** コメントを保存している途中。 */
   saving: false,
   /** 書く欄に出す知らせ（場所を置けなかった、保存できなかった）。 */
   composeError: "",
+  /** 最後に描いたときの画面が狭い画面だったか。境をまたいだら描き直す。 */
+  renderedNarrow: false,
 };
 
 /** 描いている途中の線。点は枠の中の画面の座標（ページの CSS ピクセル）と、重ねた層の中の座標。 */
@@ -167,6 +181,9 @@ let drawing = null;
 
 /** @type {import("../views/live.js").LiveShell | null} */
 let shell = null;
+
+/** @type {import("../views/live.js").LiveTopbar | null} */
+let topbar = null;
 
 /** 写しか記述を頼んで返事を待っているもの。 */
 /** @type {Map<number, (message: any) => void>} */
@@ -203,6 +220,7 @@ export function startLive(info) {
   live.info = info;
   live.origin = liveOrigin(location.protocol, location.hostname, info.port);
   live.page = pageKey(info.start);
+  live.pageCommentSaved = info.page_comment_saved === true;
   const stylesheet = document.createElement("link");
   stylesheet.rel = "stylesheet";
   stylesheet.href = "assets/live.css";
@@ -215,7 +233,16 @@ export function startLive(info) {
   dom.tree.before(shell.pageTree);
   mirrorDrawer(shell.pageTree);
 
-  shell.viewSeg.addEventListener("click", (event) => {
+  topbar = buildTopbar();
+  dom.titleBlock.before(topbar.tabs, topbar.meta, topbar.agent);
+  mirrorAgentState(topbar.agent);
+  mirrorAgentState(shell.bandAgent);
+  const menu = shell.menu;
+  // 狭い画面の帯のメニューは、帯のすぐ下に開く。
+  menu.addEventListener("beforetoggle", () => {
+    menu.style.top = `${Math.round(shell?.band.getBoundingClientRect().bottom ?? 0) + 4}px`;
+  });
+  topbar.tabs.addEventListener("click", (event) => {
     const view = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.view;
     if (view === "page" || view === "code") {
       setView(view);
@@ -248,17 +275,32 @@ export function startLive(info) {
   });
   shell.modeSeg.addEventListener("click", (event) => {
     const mode = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.compare;
-    if (mode === "side" || mode === "overlay") {
+    if (mode === "now" || mode === "side" || mode === "overlay") {
       live.compare = mode;
       render();
     }
   });
+  shell.zoomSeg.addEventListener("click", (event) => {
+    const zoom = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.zoom;
+    if (zoom === "fit" || zoom === "full") {
+      live.zoom = zoom;
+      render();
+    }
+  });
+  shell.reloadButton.addEventListener("click", reloadPage);
   shell.opacity.addEventListener("input", () => {
     if (!shell) {
       return;
     }
     live.opacity = Number(shell.opacity.value);
     shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
+    renderStageName();
+  });
+  // 等倍で横にスクロールした分は、重ねた（並べた）比べる相手も同じだけずらす。
+  shell.liveViewport.addEventListener("scroll", () => {
+    if (shell) {
+      shell.refViewport.scrollLeft = shell.liveViewport.scrollLeft;
+    }
   });
   shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
   shell.mockAssign.addEventListener("click", () => void assignMock());
@@ -277,8 +319,13 @@ export function startLive(info) {
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
   window.addEventListener("message", receive);
   new ResizeObserver(() => {
+    // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
+    // 倍率が変わらないこともあるので、まるごと描き直す。
+    if (live.renderedNarrow !== state.narrow) {
+      render();
+      return;
+    }
     layoutFrames();
-    // 狭い画面との境をまたぐと、並べたまま隠れている側も変わる。
     syncLaidOutInert();
   }).observe(shell.stage);
 
@@ -331,6 +378,25 @@ function mirrorDrawer(pageTree) {
 }
 
 /**
+ * 上部バーのエージェントの状態は、会話パネルの見出しの状態（views/conversation.js が描く）を写す。
+ * @param {HTMLElement} target
+ */
+function mirrorAgentState(target) {
+  const copy = () => {
+    target.dataset.status = dom.agentStatus.dataset.status ?? "";
+    target.textContent = dom.agentStatus.textContent;
+  };
+  new MutationObserver(copy).observe(dom.agentStatus, {
+    attributes: true,
+    attributeFilter: ["data-status"],
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  copy();
+}
+
+/**
  * @param {"page" | "code"} view
  */
 function setView(view) {
@@ -342,6 +408,34 @@ function setView(view) {
     window.dispatchEvent(new Event("resize"));
   }
   render();
+  // 見たの進捗はページの見方の間は出さない（views/header.js が state.live を見る）。
+  renderHeader();
+}
+
+/** 更新バッジを押した。ページの見方の間なら、コードの見方に切り替えてから読み直す（R-PAGE-MODE）。 */
+export async function refreshFromBadge() {
+  if (live.view !== "code") {
+    setView("code");
+  }
+  await refresh();
+  renderTopbar();
+}
+
+/** 上部バーのタブの変更ファイルの数と、ページの見方の間に出すページと表示幅。 */
+function renderTopbar() {
+  if (!topbar) {
+    return;
+  }
+  for (const tab of topbar.tabs.querySelectorAll("button")) {
+    tab.setAttribute("aria-pressed", String(tab.dataset.view === live.view));
+  }
+  /** @type {{ files: unknown[] }[]} */
+  const groups = state.review?.groups ?? [];
+  const files = groups.reduce((count, group) => count + group.files.length, 0);
+  topbar.codeCount.textContent = live.info?.code ? `· ${files}` : "";
+  topbar.codeCount.title = `${files} changed file${files === 1 ? "" : "s"}`;
+  topbar.metaPage.textContent = live.page;
+  topbar.metaWidth.textContent = `${live.width}px`;
 }
 
 /**
@@ -365,7 +459,8 @@ function setWidth(width) {
   forgetFailures();
   sendPlaces();
   if (shell) {
-    shell.widthInput.value = "";
+    // 選んでいる幅が分かるよう、プリセットの幅はそのボタンで、それ以外は欄に残して示す（R-PAGE-VIEW）。
+    shell.widthInput.value = WIDTH_CHOICES.includes(width) ? "" : String(width);
     shell.widthError.hidden = true;
   }
   render();
@@ -382,6 +477,14 @@ function applyWidthInput() {
   }
   shell.widthError.textContent = result.message;
   shell.widthError.hidden = false;
+}
+
+/** 見る対象を手で読み込み直す（R-PAGE-VIEW）。保存している間は、画像を作るページを読み込み直さない。 */
+function reloadPage() {
+  if (!shell || live.saving) {
+    return;
+  }
+  shell.liveFrame.src = live.origin + live.page;
 }
 
 /**
@@ -563,10 +666,12 @@ function startComposing(shell) {
     (event) => {
       event.preventDefault();
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? layer.clientHeight : 1;
-      shell.liveFrame.contentWindow?.postMessage(
-        { kemi: "live", type: "scroll-by", x: event.deltaX * unit, y: event.deltaY * unit },
-        live.origin,
-      );
+      // 等倍で枠より広いページは、枠のほうを横にスクロールする。枠が動ききった残りだけをページに送る。
+      const viewport = shell.liveViewport;
+      const before = viewport.scrollLeft;
+      viewport.scrollLeft += event.deltaX * unit;
+      const x = event.deltaX * unit - (viewport.scrollLeft - before);
+      shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y: event.deltaY * unit }, live.origin);
     },
     { passive: false },
   );
@@ -752,8 +857,8 @@ function renderCompose() {
     compose.awayText.textContent = `These places are on ${away.url} at ${away.width}px. Places can be added and the comment saved there.`;
     compose.back.textContent = `Back to ${away.url} at ${away.width}px`;
   }
-  compose.box.hidden =
-    live.view !== "page" || (live.tool === "interact" && places.length === 0 && compose.body.value === "");
+  // 道具を選んだだけでは開かず、最初の場所を置いたときに開く（R-PAGE-COMMENT）。
+  compose.box.hidden = live.view !== "page" || (places.length === 0 && compose.body.value === "");
   // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
   renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)), live.saving);
   compose.undo.disabled = places.length === 0 || live.saving;
@@ -808,6 +913,7 @@ async function savePageComment() {
     });
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
+    live.pageCommentSaved = true;
     const notice = imageUnsavedNotice(comment);
     if (notice !== "") {
       live.refNotice = notice;
@@ -891,6 +997,7 @@ async function capture(kind) {
 }
 
 function render() {
+  live.renderedNarrow = state.narrow;
   const shown = live.view === "page" ? { page: live.page, width: live.width } : null;
   const moved = JSON.stringify(shown) !== JSON.stringify(state.live);
   state.live = shown;
@@ -1187,13 +1294,34 @@ async function whileLaidOut(task) {
   }
 }
 
+/**
+ * 狭い画面では、手で取る操作・表示幅の選択・モック・比べる相手の選択・枠に合わせると等倍を帯の「…」のメニューに移し、
+ * 広い画面では元の場所に戻す（R-PAGE-VIEW の狭い画面）。幅をまたいだら閉じる。
+ */
+function placeControls() {
+  if (!shell) {
+    return;
+  }
+  const { menu, compareSlot, zoomSeg, recordButton, widthGroup, mockGroup, refNotice, stageName, reloadButton } = shell;
+  const inMenu = menu.contains(compareSlot);
+  if (state.narrow && !inMenu) {
+    menu.append(compareSlot, zoomSeg, recordButton, widthGroup, mockGroup);
+  } else if (!state.narrow && inMenu) {
+    menu.hidePopover();
+    refNotice.before(widthGroup, recordButton, mockGroup);
+    stageName.after(zoomSeg);
+    reloadButton.before(compareSlot);
+  }
+}
+
 function renderBand() {
   if (!shell) {
     return;
   }
-  for (const choice of shell.viewSeg.querySelectorAll("button")) {
-    choice.setAttribute("aria-pressed", String(choice.dataset.view === live.view));
-  }
+  placeControls();
+  shell.bandPage.textContent = live.page;
+  shell.bandWidth.textContent = String(live.width);
+  renderTopbar();
   for (const choice of shell.widthSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(Number(choice.dataset.width) === live.width));
     choice.disabled = live.saving;
@@ -1204,20 +1332,25 @@ function renderBand() {
   }
   shell.stage.dataset.side = live.side;
   shell.stage.dataset.compare = live.compare;
+  shell.stage.dataset.zoom = live.zoom;
   for (const choice of shell.modeSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.compare === live.compare));
   }
+  for (const choice of shell.zoomSeg.querySelectorAll("button")) {
+    choice.setAttribute("aria-pressed", String(choice.dataset.zoom === live.zoom));
+  }
+  shell.reloadButton.disabled = live.saving;
+  // 比べる相手の選択は、比べる相手を出している間だけ出す（R-PAGE-REF）。
+  shell.compareSlot.hidden = live.compare === "now" && !state.narrow;
   shell.opacity.hidden = live.compare !== "overlay";
   const mock = live.mocks.get(live.page) ?? null;
   renderCompareOptions(
     shell.compareSelect,
-    [
-      ...(mock ? [{ value: "mock", label: `Mock: ${mock.path}` }] : []),
-      { value: "latest", label: "Latest snapshot (handed, start, recorded)" },
-      ...snapshotOptions(live.snapshots, live.page).map((option) => ({ value: option.id, label: option.label })),
-    ],
+    referenceOptions({ snapshots: live.snapshots, page: live.page, width: live.width, mock: mock?.path ?? null }),
     live.chosen.get(live.page) ?? (mock ? "mock" : "latest"),
+    AUTO_RULE,
   );
+  renderStageName();
   shell.mockRemove.hidden = mock === null;
   shell.mockReload.hidden = mock === null;
   shell.recordButton.disabled = !live.reachable;
@@ -1226,8 +1359,9 @@ function renderBand() {
     choice.disabled = state.submitted && choice.dataset.tool !== "interact";
   }
   shell.capture.hidden = live.tool === "interact" || state.submitted;
+  shell.hint.hidden = live.pageCommentSaved;
   shell.capture.dataset.tool = live.tool;
-  shell.liveLabel.textContent = `${live.page} · ${live.width}${live.scale < 1 ? ` · ×${live.scale.toFixed(2)}` : ""}`;
+  renderPaneLabels();
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {
     shell.liveNotice.textContent = "Waiting for the page";
@@ -1237,6 +1371,39 @@ function renderBand() {
     shell.liveNotice.dataset.kind = "rewrote";
     shell.liveNotice.title = `kemi changed ${live.rewrote.join(" and ")} so that the page can be shown here`;
   }
+}
+
+/**
+ * 見る対象と比べる相手の枠の見出し。今の倍率はいつも見る対象の見出しに出し、狭い画面で比べる相手の 1 枚を見ている
+ * ときは、その見出しにも出す（R-PAGE-VIEW）。倍率が変わったときにも描き直すよう、比べる相手を出す所とは分けておく。
+ */
+function renderPaneLabels() {
+  if (!shell) {
+    return;
+  }
+  const scale = `×${live.scale.toFixed(2)}`;
+  shell.liveLabel.textContent = `${live.page} · ${live.width} · ${scale}`;
+  const reference = currentReference();
+  const label =
+    reference.type === "mock"
+      ? `Mock · ${reference.path} · ${live.width}`
+      : reference.type === "none"
+        ? `${live.page} · ${live.width}`
+        : `${snapshotLabel(live.snapshots, reference.snapshot)} · ${reference.snapshot.page} · ${reference.snapshot.width}`;
+  shell.refLabel.textContent = state.narrow && live.side === "ref" ? `${label} · ${scale}` : label;
+}
+
+/** 舞台の見出し: 見比べ方の名前。重ねて透かす間は、両方の名前と透かし具合（R-PAGE-REF）。狭い画面では見ている 1 枚の名前。 */
+function renderStageName() {
+  if (!shell) {
+    return;
+  }
+  shell.stageName.textContent = compareHeading({
+    compare: live.compare,
+    reference: referenceName(live.snapshots, currentReference()),
+    opacity: live.opacity,
+    shown: state.narrow ? live.side : null,
+  });
 }
 
 /** 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。 */
@@ -1306,7 +1473,6 @@ function renderReference() {
   if (reference.type === "mock") {
     shell.refPane.dataset.reference = "mock";
     delete shell.refPane.dataset.snapshot;
-    shell.refLabel.textContent = `Mock · ${reference.path} · ${live.width}`;
     shell.refFrame.hidden = true;
     live.shownSnapshot = "";
     showMock(mock?.url ?? "");
@@ -1322,7 +1488,6 @@ function renderReference() {
   if (reference.type === "none") {
     shell.refPane.dataset.reference = "none";
     delete shell.refPane.dataset.snapshot;
-    shell.refLabel.textContent = `${live.page} · ${live.width}`;
     shell.refFrame.hidden = true;
     shell.refEmpty.hidden = false;
     shell.refEmptyText.textContent = "This page at this width has not been recorded yet.";
@@ -1334,7 +1499,6 @@ function renderReference() {
   const snapshot = reference.snapshot;
   shell.refPane.dataset.reference = "snapshot";
   shell.refPane.dataset.snapshot = snapshot.id;
-  shell.refLabel.textContent = `${snapshotLabel(live.snapshots, snapshot)} · ${snapshot.page} · ${snapshot.width}`;
   shell.refEmpty.hidden = true;
   shell.refFrame.hidden = false;
   if (live.shownSnapshot !== snapshot.id) {
@@ -1450,14 +1614,20 @@ function layoutFrames() {
   }
   // 狭い画面では片方が隠れているので、見えている方の枠で測る。どちらも同じ大きさ。
   const viewport = shell.liveViewport.clientWidth > 0 ? shell.liveViewport : shell.refViewport;
-  const scale = fitScale(viewport.clientWidth, live.width);
-  const height = viewport.clientHeight / scale;
+  // 等倍では縮めず、枠より広い分は枠を横にスクロールして見る。縦はページの中でスクロールする。
+  const scale = live.zoom === "full" ? 1 : fitScale(viewport.clientWidth, live.width);
   shell.liveFrame.style.width = `${live.width}px`;
+  // 横のスクロールバーの分だけ低くなった枠の高さで描く（幅を決めてから読む）。
+  const height = viewport.clientHeight / scale;
   shell.liveFrame.style.height = `${height}px`;
   shell.liveFrame.style.transform = `scale(${scale})`;
-  // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。
+  // 道具の層は、横にスクロールして出てくる所も含めてページの上を覆う。
+  shell.capture.style.width = `${Math.max(viewport.clientWidth, live.width * scale)}px`;
+  shell.capture.style.height = `${viewport.clientHeight}px`;
+  // 重ねて透かすときは、比べる相手を中身の高さで描き、見る対象のスクロールの分だけずらす。狭い画面では
+  // 重ねず 1 枚ずつ見る（R-PAGE-VIEW）。
   const placement =
-    live.compare === "overlay"
+    live.compare === "overlay" && !state.narrow
       ? overlayPlacement({
           scale,
           viewportHeight: viewport.clientHeight,

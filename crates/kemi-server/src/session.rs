@@ -33,6 +33,9 @@ pub struct Session {
     /// `--live` のモックの割り当て（ページ → 配れる範囲の根からの相対パス）。状態と一緒に
     /// 保存し、復元で戻す（live-compare.md の R-PAGE-MOCK）。
     pub mocks: BTreeMap<String, String>,
+    /// ページへのコメントを一度でも保存したか。始め方の案内を出すかを決める
+    /// （live.md の R-PAGE-COMMENT）。コメントを消しても戻さない。
+    pub page_comment_saved: bool,
 }
 
 impl Session {
@@ -69,6 +72,7 @@ impl Session {
             channel: state.channel,
             received: 0,
             mocks: state.mocks,
+            page_comment_saved: state.page_comment_saved,
         }
     }
 
@@ -91,6 +95,7 @@ impl Session {
             last_seq: self.last_seq,
             channel: self.channel.clone(),
             mocks: self.mocks.clone(),
+            page_comment_saved: self.page_comment_saved,
         }
     }
 }

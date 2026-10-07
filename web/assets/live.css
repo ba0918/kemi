@@ -1,5 +1,83 @@
 /* `--live` のページの見方（live.md の R-PAGE-VIEW）。`--live` のレビューでだけ読み込む。
-   見た目は docs/design/ui-mock-live.html の案 A に倣う。 */
+   見た目は docs/design/ui-mock-live-v2.html に倣う。 */
+
+/* ---- 上部バー: モードのタブと、ページの見方の間の上部バー（live.md の R-PAGE-MODE） ---- */
+.lv-modetabs {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 3px;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.lv-modetab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lv-modetab svg {
+  width: 17px;
+  height: 17px;
+}
+
+.lv-modetab-count {
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.lv-modetab[aria-pressed="true"] {
+  background: var(--bg);
+  color: var(--ai);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), inset 0 -2px 0 var(--ai);
+}
+
+.lv-modetab[aria-pressed="true"] .lv-modetab-count {
+  color: var(--ai);
+}
+
+.lv-modetab-short {
+  display: none;
+}
+
+.lv-topmeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.lv-topmeta-page {
+  font-family: var(--mono);
+}
+
+/* ページの見方の間は、コードの見方だけで使う操作と数を出さない。見たの進捗は views/header.js が隠す。 */
+body[data-live-view="page"] .title-block,
+body[data-live-view="page"] #review-meta,
+body[data-live-view="page"] #unit-switch,
+body[data-live-view="page"] .tools .seg[aria-label="Display mode"],
+body[data-live-view="page"] #btn-wrap,
+body[data-live-view="page"] #chip-focus,
+body[data-live-view="page"] #chip-sort,
+body:not([data-live-view="page"]) .lv-topmeta,
+body:not([data-live-view="page"]) .lv-top-agent {
+  display: none;
+}
 
 /* ---- ページとコードの見方の切り替え ---- */
 body[data-live-view="page"] #main > :not(.lv-band):not(.lv-stage) {
@@ -31,7 +109,9 @@ body:not([data-live-view="page"]) #page-tree {
   display: none;
 }
 
-body[data-live-view="code"] .lv-page-only {
+/* 帯の操作はどれもページの見方のもので、コードの見方は --worktree と同じ表示にする（R-PAGE-MODE）。 */
+body[data-live-view="code"] .lv-page-only,
+body[data-live-view="code"] #main > .lv-band {
   display: none;
 }
 
@@ -112,10 +192,159 @@ body[data-live-view="code"] .lv-page-only {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px 10px;
   padding: 10px;
   background: var(--panel-2);
+}
+
+/* 見比べ方の名前と、倍率・比べる相手・読み込み直す・見比べ方の操作。 */
+.lv-stage-head {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.lv-toolbar,
+.lv-hint {
+  flex: 0 0 100%;
+}
+
+.lv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 始め方の 3 つの手順（R-PAGE-COMMENT）。 */
+.lv-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--ai-soft);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-2);
+}
+
+.lv-hint[hidden] {
+  display: none;
+}
+
+.lv-hint-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.lv-hint-n {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ai);
+  color: #fff;
+  font-size: 11px;
+}
+
+.lv-hint-arrow {
+  color: var(--ink-3);
+}
+
+.lv-hint-end {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* 見出しの行は折り返さず、長い見出し（重ねている間の両方の名前）は … で切る。 */
+.lv-stage-line {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lv-stage-line > * {
+  flex-shrink: 0;
+}
+
+.lv-stage-line > .lv-stage-name {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* 狭くなったら、見出しより先に比べる相手の選択を縮める。 */
+.lv-stage-line .lv-compare {
+  flex-shrink: 8;
+  min-width: 0;
+}
+
+.lv-stage-line .lv-label {
+  white-space: nowrap;
+}
+
+.lv-stage-line .lv-compare-select {
+  min-width: 0;
+  max-width: 160px;
+}
+
+.lv-stage-head .lv-seg svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+.lv-stage-head .lv-seg button {
+  padding: 3px 8px;
+}
+
+.lv-reload {
+  height: 26px;
+  padding: 0 6px;
+}
+
+.lv-reload svg {
+  width: 15px;
+  height: 15px;
+}
+
+.lv-compare[hidden] {
+  display: none;
+}
+
+.lv-pane {
+  grid-row: 2;
+}
+
+/* 見る対象だけ: 比べる相手は出さない（選択は続いていて、変化の一覧と見る対象の側の印は出る）。 */
+.lv-stage[data-compare="now"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lv-stage[data-compare="now"] .lv-pane[data-side="ref"] {
+  display: none;
+}
+
+/* 等倍: 縮めずに描き、枠より広い分は枠を横にスクロールする。比べる相手の枠は見る対象の枠に合わせてずらす。 */
+.lv-stage[data-zoom="full"] .lv-pane[data-side="live"] .lv-viewport {
+  overflow: auto;
 }
 
 .lv-pane {
@@ -129,15 +358,25 @@ body[data-live-view="code"] .lv-page-only {
   overflow: hidden;
 }
 
+/* 並べた 2 枚のページの上端をそろえるため、見出しは 1 行の同じ高さにし、長い名前は … で切る（R-PAGE-REF）。 */
 .lv-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 10px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--line-soft);
   font-size: 11.5px;
   color: var(--ink-3);
-  min-height: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.lv-bar-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lv-bar b {
@@ -147,12 +386,21 @@ body[data-live-view="code"] .lv-page-only {
 
 .lv-notice {
   margin-left: auto;
+  flex-shrink: 0;
   font-size: 11px;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 8px;
   color: var(--ink-2);
   background: var(--panel);
+}
+
+.lv-band-notice {
+  margin-left: 0;
+}
+
+.lv-notice[hidden] {
+  display: none;
 }
 
 .lv-notice[data-kind="waiting"] {
@@ -269,7 +517,7 @@ body[data-live-view="code"] .lv-page-only {
 }
 
 .lv-stage[data-compare="overlay"] .lv-pane {
-  grid-area: 1 / 1;
+  grid-area: 2 / 1;
 }
 
 .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] {
@@ -292,48 +540,165 @@ body[data-live-view="code"] .lv-page-only {
 }
 
 .lv-opacity {
-  width: 110px;
+  width: 90px;
 }
 
 .lv-opacity[hidden] {
   display: none;
 }
 
+/* 狭い画面でだけ使う帯の要素。 */
+.lv-band-page,
+.lv-band-width,
+.lv-band-agent,
+.lv-menu-button {
+  display: none;
+}
+
+/* 狭い画面の帯の「…」のメニュー。開いていないときはブラウザ既定の [popover] の規則で隠れる。 */
+.lv-menu:popover-open {
+  display: grid;
+  gap: 10px;
+  inset: auto;
+  right: 8px;
+  margin: 0;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+}
+
+.lv-menu .lv-widths,
+.lv-menu .lv-compare,
+.lv-menu .lv-mock {
+  flex-wrap: wrap;
+}
+
+.lv-menu > * {
+  justify-self: start;
+}
+
+/* ページの見方の間は、上部バーの「…」のメニューに表示の操作のうちテーマだけを出す（R-PAGE-VIEW の狭い画面）。 */
+body[data-live-view="page"] #menu-wrap,
+body[data-live-view="page"] #menu-focus,
+body[data-live-view="page"] #menu-sort,
+body[data-live-view="page"] #menu-comments {
+  display: none;
+}
+
 /* ---- 狭い画面（R-NARROW と同じしきい値）: 1 枚ずつ切り替えて見る ---- */
 @media (max-width: 719.98px) {
-  /* 帯は横に流さず折り返す。横に流すと、押した操作が帯の外へ流れて見えなくなる。 */
+  /* 上部バーの 1 段目に短いタブを置く。ページの URL とエージェントの状態は下の帯に出す。 */
+  .lv-modetabs {
+    order: 2;
+    padding: 2px;
+  }
+
+  .lv-modetab {
+    height: 28px;
+    padding: 0 8px;
+    gap: 5px;
+    font-size: 13px;
+  }
+
+  .lv-modetab-long,
+  .lv-topmeta,
+  .lv-top-agent {
+    display: none;
+  }
+
+  .lv-modetab-short {
+    display: inline;
+  }
+
+  /* 帯は 1 行: 動いているページと比べる相手の切り替え、ページの名前、表示幅、エージェントの状態、メニュー。
+     知らせがあるときだけ、その下に出す。 */
   .lv-band {
+    flex-wrap: wrap;
+    align-items: stretch;
     gap: 6px 8px;
     padding: 6px 8px;
   }
 
-  .lv-widths,
-  .lv-compare,
-  .lv-mock {
-    flex-wrap: wrap;
-  }
-
-  /* 今どちらを見ているかの切り替えは、帯の先頭に置く。 */
   .lv-side {
     display: inline-flex;
-    order: -1;
+    flex-shrink: 0;
   }
 
-  .lv-spacer {
+  .lv-band-page,
+  .lv-band-width {
+    line-height: 26px;
+  }
+
+  .lv-band-page {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+
+  .lv-band-width {
+    display: inline;
+    flex-shrink: 0;
+    color: var(--ink-3);
+  }
+
+  .lv-band-agent,
+  .lv-menu-button {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .lv-menu-button {
+    height: 26px;
+    padding: 0 6px;
+  }
+
+  .lv-menu-button svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .lv-band > .lv-band-notice {
+    order: 1;
+    flex: 0 1 100%;
+  }
+
+  .lv-spacer,
+  .lv-mode,
+  .lv-opacity {
     display: none;
   }
 
-  .lv-stage {
+  /* 見比べ方によらず、動いているページと比べる相手を 1 枚ずつ切り替えて見る（重ねて透かさない）。 */
+  .lv-stage,
+  .lv-stage[data-compare] {
     grid-template-columns: minmax(0, 1fr);
     padding: 6px;
   }
 
-  .lv-stage[data-compare="side"][data-side="live"] .lv-pane[data-side="ref"],
-  .lv-stage[data-compare="side"][data-side="ref"] .lv-pane[data-side="live"] {
+  .lv-stage[data-side="ref"] .lv-pane[data-side="ref"] {
+    display: flex;
+  }
+
+  /* 等倍は見ている 1 枚に効く。比べる相手の 1 枚も、枠より広い分は枠を横にスクロールして見る（R-PAGE-VIEW）。 */
+  .lv-stage[data-zoom="full"][data-side="ref"] .lv-pane[data-side="ref"] .lv-viewport {
+    overflow: auto;
+  }
+
+  .lv-stage[data-side="live"] .lv-pane[data-side="ref"],
+  .lv-stage[data-side="ref"] .lv-pane[data-side="live"] {
     display: none;
   }
 
-  .lv-stage[data-compare="side"][data-side="ref"][data-measuring] .lv-pane[data-side="live"] {
+  .lv-stage[data-side="ref"][data-measuring] .lv-pane[data-side="live"] {
     display: flex;
     position: fixed;
     inset: 0;
@@ -341,9 +706,27 @@ body[data-live-view="code"] .lv-page-only {
     pointer-events: none;
   }
 
-  /* 重ねて透かすときは 2 枚を重ねるので、どちらを見るかの切り替えは要らない。 */
-  body:has(.lv-stage[data-compare="overlay"]) .lv-side {
-    display: none;
+  .lv-stage[data-compare="overlay"] .lv-pane {
+    grid-area: auto;
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] {
+    z-index: auto;
+    pointer-events: auto;
+    background: var(--bg);
+    border-color: var(--line);
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-bar {
+    visibility: visible;
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-viewport {
+    background: #fff;
+  }
+
+  .lv-stage[data-compare="overlay"] .lv-pane[data-side="ref"] .lv-box {
+    opacity: 1;
   }
 }
 
@@ -365,6 +748,24 @@ body[data-live-view="code"] .lv-page-only {
   color: var(--ink-2);
   font-size: 12px;
   padding: 2px 10px;
+}
+
+.lv-record-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 7px;
+}
+
+.lv-record-now svg {
+  width: 15px;
+  height: 15px;
+  color: var(--del-ink);
+}
+
+.lv-band .lv-record-label {
+  display: none;
 }
 
 .lv-empty {
@@ -525,6 +926,19 @@ body[data-live-view="code"] .lv-page-only {
 }
 
 /* ---- ページへのコメント（live.md の R-PAGE-COMMENT）: 道具、枠の上の層、書く欄 ---- */
+.lv-tools .lv-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+}
+
+.lv-tool svg {
+  width: 15px;
+  height: 15px;
+}
+
 .lv-tools button[aria-pressed="true"] {
   background: var(--star-soft);
   color: var(--star);
@@ -563,7 +977,7 @@ body[data-live-view="code"] .lv-page-only {
 /* 書く欄は 2 枚の下に横いっぱいに置く（重ねて透かすときも比べる相手が上に重ならない）。 */
 .lv-compose {
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   flex-direction: column;
   gap: 6px;

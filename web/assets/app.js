@@ -170,6 +170,10 @@ function handleKey(event) {
 /** @type {() => Promise<void>} */
 let beforeHand = async () => {};
 
+/** 更新バッジを押したとき。`--live` のレビューでは、ページの見方の間ならコードの見方に切り替えてから読み直す。 */
+/** @type {() => Promise<void>} */
+let onUpdateBadge = () => refresh();
+
 /** ページへのコメントをページの見方で見せる・変わったコメントを描き直す。`--live` のレビューでだけ入れる。 */
 /** @type {{ show: (comment: any) => void, changed: () => void }} */
 let pageComments = { show: () => {}, changed: () => {} };
@@ -224,9 +228,12 @@ async function boot() {
     }
     // ページの見方は `--live` のレビューでだけ読み込む（R-VERIFY）。modulepreload にも載せない。
     if (state.review?.live) {
-      const { startLive, captureBeforeHand, showPageComment, refreshPageComments } = await import("./features/live.js");
+      const { startLive, captureBeforeHand, showPageComment, refreshPageComments, refreshFromBadge } = await import(
+        "./features/live.js"
+      );
       startLive(state.review.live);
       beforeHand = captureBeforeHand;
+      onUpdateBadge = refreshFromBadge;
       pageComments = { show: showPageComment, changed: refreshPageComments };
     }
   } catch (error) {
@@ -264,7 +271,7 @@ dom.chipFocus.addEventListener("click", toggleFocusOnly);
 dom.chipSort.addEventListener("click", toggleSortBySize);
 dom.btnTheme.addEventListener("click", stepTheme);
 dom.notes.addEventListener("beforetoggle", placeNotes);
-dom.updateBadge.addEventListener("click", () => void refresh());
+dom.updateBadge.addEventListener("click", () => void onUpdateBadge());
 dom.btnHand.addEventListener("click", () => void handToAgent());
 dom.railHand.addEventListener("click", () => void handToAgent());
 dom.btnComments.addEventListener("click", toggleConversation);

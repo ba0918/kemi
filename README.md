@@ -143,18 +143,35 @@ reloads it, and a link to another HTML file there moves to that page. Paths
 outside the directory, symlinks pointing outside, and `.git/` return 404. If
 the file is gone, the page says so and waits for it.
 
-The page has two views, switched in the band above it:
+The review has two views, switched by the two tabs at the left of the top
+bar:
 
-- **Page**: the running page next to what it is compared with, at the same
-  width — 390, 768, 1280, or any width from 320 to 3840 — scaled down
-  together when they do not fit. The page may change on its own (hot reload,
-  a saved file). The left column lists the pages: the one shown and every
-  page with a snapshot, a comment, or a mock, with the widths of its
-  snapshots and comments and the number of its comments; click a page or a
-  width to go there. On a narrow screen the two are shown one at a
-  time, the page list is a drawer, and the conversation is a sheet.
-- **Code**: the same diff as `--worktree`. Outside a git repository there is
-  no code view; the page says why.
+- **Live page**: the running page at a width of 390, 768, 1280, or any width
+  from 320 to 3840 (type it and press Enter or leave the field; the field
+  keeps showing a width that is not one of the presets). The page may change
+  on its own (hot reload, a saved file), and the reload button next to the
+  page loads it again by hand. **Fit** shrinks the page to the frame;
+  **100%** shows it unscaled and scrolls it inside the frame. The scale is
+  always shown above the page. While this view is shown, the top bar leaves
+  out the code controls and counts (display mode, wrap, focused only, sort,
+  files, changes, seen) and shows that this is a live review, the page's URL
+  and width, and the agent's state instead. The left column lists the pages:
+  the one shown and every page with a snapshot, a comment, or a mock, with
+  the widths of its snapshots and comments and the number of its comments;
+  click a page or a width to go there.
+- **Code changes**: the same diff as `--worktree`, with the number of
+  changed files on the tab and the top bar as in other reviews. Outside a
+  git repository there is no code view; the page says why. The update badge
+  shows in both views; pressing it in the page view switches to the code
+  view and reloads it.
+
+On a narrow screen the tabs are shortened to **Page** and **Code** in the
+first row of the top bar, whose **…** menu then holds only the theme. The
+controls of the page view fit in one row: Now / Before (the running page or
+what it is compared with, one at a time), the page, its width, the agent's
+state, and a **…** menu with what the page is compared with, **Record now**,
+Fit / 100%, the width, and the mock. Overlay is not offered there. The page
+list is a drawer and the conversation is a sheet.
 
 What the page is compared with is chosen per page (path and query):
 
@@ -166,7 +183,10 @@ What the page is compared with is chosen per page (path and query):
   By default the page is compared with the snapshot of the same page and
   width taken at the last hand-over, then at the start, then the last one
   recorded by hand. You can pick another point; it stays picked when the
-  width changes, and a width it lacks says it has not been recorded.
+  width changes, and a width it lacks says it has not been recorded. The
+  choices are listed as Auto, then the hand-overs, the start, the recorded
+  ones, and the mock; Auto names the snapshot it picks for the page and
+  width shown, and a note under it says how it picks.
 - A **mock** is an HTML file in the served directory that you assign to the
   page by its path. A page with a mock is compared with it by default;
   removing the mock goes back to the snapshots. The mock runs its scripts in
@@ -191,9 +211,14 @@ the snapshot. The list and the marks follow the page as it changes. A page
 compared with a mock gets neither.
 
 You can comment on the page itself. The tools **Element**, **Arrow**, and
-**Pen** in the band put places on the running page (never on what it is
-compared with; while overlaid, a click reaches the page underneath), and
-**Interact** uses the page as usual. An element place is the element you
+**Pen** in the toolbar right above the page put places on the running page
+(never on what it is compared with; while overlaid, a click reaches the page
+underneath), and **Interact** uses the page as usual. **Element** is chosen
+when the review opens, and choosing a tool does not open the comment box:
+it opens with the first place. Until the first page comment of the review is
+saved, three steps are shown above the page — point at a place, write and
+press Comment, hand to the agent; they do not come back after that, even
+when the comments are deleted or the review is suspended and resumed. An element place is the element you
 click, and clicking it again takes it away; an arrow names the element at its
 head; a pen line names up to five elements that overlap the area it
 encloses, even partly, largest overlap first, leaving out elements that contain the whole line (a line drawn inside
@@ -213,10 +238,16 @@ text can be edited. On a narrow screen, places are drawn with a finger and
 elements chosen by tapping. The agent gets the places and the image path
 through `kemi wait`; see `page` in the [submit contract](#submit-contract).
 
-**Side by side** puts the two next to each other. **Overlay** lays what the
-page is compared with over the page at the same width, with an opacity
-slider; it follows the page's scroll and lets clicks through to the page
-underneath. `--live` takes only `--port`, `--bind`, `--no-open`,
+The page is shown alone when the review opens. The icons above it switch to
+**Side by side**, which puts what it is compared with next to it with their
+tops level, or **Overlay**, which lays it over the page at the same width,
+with an opacity slider; it follows the page's scroll and lets clicks through
+to the page underneath, and the heading names both and the opacity, or which
+one is visible at either end. The choice of what to compare with is shown
+only while comparing, but the changes and the marks on the page show while
+the page is alone too. **Record now** and the mock stay in the band whatever
+the way of comparing. The way of comparing, Fit / 100%, and what is compared
+with are kept while the review page is open and reset when it is reloaded. `--live` takes only `--port`, `--bind`, `--no-open`,
 `--live-port`, `--focus`, and `--serve`. The review title is
 `Live review of <url>`; for a file the URL is its path from the served
 directory, such as `/docs/mock.html`.
