@@ -4131,13 +4131,9 @@ async fn worktree_writes_to_ignored_paths_and_dot_git_send_no_update() {
     kemi.kill();
 }
 
-#[tokio::test]
-async fn worktree_over_the_directory_limit_watches_only_the_diff_and_says_so_once() {
-    let dir = TempDir::new();
-    worktree_with_an_unchanged_file(&dir);
-    for index in 0..10_001 {
-        std::fs::create_dir_all(dir.path.join(format!("many/d{index}"))).unwrap();
-    }
+/// 差分のファイルを変えて `update` が届くのを確かめてから submit し、レビューの間に stderr に
+/// 出た行をすべて返す。
+async fn stderr_of_a_review_that_sees_an_update(dir: &TempDir) -> Vec<String> {
     let mut kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
     let mut updates = Updates::open(&kemi).await;
 
@@ -4151,16 +4147,32 @@ async fn worktree_over_the_directory_limit_watches_only_the_diff_and_says_so_onc
         .await;
     assert_eq!(response.status(), 200);
     drop(updates);
-    let mut stderr_lines = Vec::new();
+    let mut lines = kemi.preamble.clone();
     for line in kemi.stderr.by_ref().lines() {
-        stderr_lines.push(line.unwrap());
+        lines.push(line.unwrap());
     }
     let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
     assert_eq!(status.code(), Some(0));
-    let mentions: Vec<&String> = stderr_lines
-        .iter()
-        .chain(&kemi.preamble)
-        .filter(|line| line.contains("watch"))
-        .collect();
-    assert_eq!(mentions.len(), 1, "stderr: {stderr_lines:?}");
+    lines
+}
+
+#[tokio::test]
+async fn worktree_over_the_directory_limit_watches_only_the_diff_and_says_so_once() {
+    let within = TempDir::new();
+    worktree_with_an_unchanged_file(&within);
+    let over = TempDir::new();
+    worktree_with_an_unchanged_file(&over);
+    for index in 0..10_001 {
+        std::fs::create_dir_all(over.path.join(format!("many/d{index}"))).unwrap();
+    }
+
+    let usual = stderr_of_a_review_that_sees_an_update(&within).await;
+    let fallen_back = stderr_of_a_review_that_sees_an_update(&over).await;
+
+    // 文言は契約ではないので、上限の内側のレビューより 1 行だけ多いことで確かめる。
+    assert_eq!(
+        fallen_back.len(),
+        usual.len() + 1,
+        "within the limit: {usual:?}, over the limit: {fallen_back:?}"
+    );
 }
