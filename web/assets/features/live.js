@@ -231,7 +231,7 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe" | "place" | "image" | "saved-at" | "glow-element"} type
+ * @param {"capture" | "describe" | "place" | "image" | "saved-at" | "glow-element" | "glow-places"} type
  * @param {number} timeout
  * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
@@ -651,7 +651,7 @@ function receive(event) {
   const waiting = glowAfterLoad;
   glowAfterLoad = null;
   if (waiting && waiting.page === live.page && waiting.width === live.width) {
-    glowPlaces(waiting.comment, null, "flash");
+    void glowPlaces(waiting.comment, null, "flash");
   }
 }
 
@@ -1186,20 +1186,30 @@ export function showPageComment(comment) {
   }
   glowAfterLoad = null;
   // 表示幅を変えたときは、枠の新しい大きさがページに届いてから（並べ直した後の文書の座標で）光らせる。
-  requestAnimationFrame(() => requestAnimationFrame(() => glowPlaces(comment.id, null, "flash")));
+  requestAnimationFrame(() => requestAnimationFrame(() => void glowPlaces(comment.id, null, "flash")));
 }
 
 /**
  * ページの上の場所を光らせる（R-PAGE-COMMENT）。`flash` は場所までスクロールして明滅させ、`on` は `off` まで光らせる。
+ * `flash` では、等倍で枠より広いページの枠の横のスクロールも、その場所が見える位置に合わせる。
  * @param {string | null} comment 保存したコメントの id。null なら書きかけの場所
  * @param {number | null} n 場所の番号。null ならそのコメントのすべての場所
  * @param {"on" | "off" | "flash"} mode
  */
-function glowPlaces(comment, n, mode) {
-  shell?.liveFrame.contentWindow?.postMessage(
-    { kemi: "live", type: "glow-places", comment, n, mode, scroll: mode === "flash" },
-    live.origin,
-  );
+async function glowPlaces(comment, n, mode) {
+  const frame = shell?.liveFrame.contentWindow;
+  if (!shell || !frame) {
+    return;
+  }
+  if (mode !== "flash") {
+    frame.postMessage({ kemi: "live", type: "glow-places", comment, n, mode, scroll: false }, live.origin);
+    return;
+  }
+  const answer = await ask(frame, "glow-places", GLOW_TIMEOUT, { comment, n, mode, scroll: true });
+  const rect = answer?.rect;
+  if (rect && typeof rect.x === "number" && typeof rect.w === "number") {
+    revealSideways(shell.liveViewport, rect.x, rect.w);
+  }
 }
 
 /**
@@ -1251,7 +1261,7 @@ function renderCompose() {
     {
       remove: (n) => setDraft(removePlace(live.draft, n)),
       insert: insertReference,
-      glow: (n, mode) => glowPlaces(null, n, mode),
+      glow: (n, mode) => void glowPlaces(null, n, mode),
     },
     live.saving,
   );
@@ -1877,7 +1887,7 @@ function showRemovedElement(index) {
     live.compare = "side";
     render();
   }
-  const [, top, , height] = element.box;
+  const [left, top, width, height] = element.box;
   live.refGlow = { snapshot: id, box: element.box };
   if (refGlowTimer !== null) {
     clearTimeout(refGlowTimer);
@@ -1891,12 +1901,34 @@ function showRemovedElement(index) {
   const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
   if (!state.narrow && live.compare === "overlay") {
     shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: centered - live.scroll.y }, live.origin);
-    layoutFrames();
+  } else {
+    const contentHeight = Math.max(viewHeight, live.descriptions.get(id)?.height ?? 0);
+    live.refShift = { key: refShiftKey(), y: Math.min(centered, contentHeight - viewHeight) };
+  }
+  layoutFrames();
+  revealSideways(shell.refViewport, left, width);
+}
+
+/**
+ * 等倍で枠より広いページの中の箱（文書の横の位置と幅）が見えるよう、枠の横のスクロールを合わせる（R-PAGE-DIFF、
+ * R-PAGE-COMMENT）。見る対象と比べる相手の枠は横のスクロールをそろえているので、両方に入れる（狭い画面で隠れている側の
+ * 枠は動かないので、見えている側の枠で測る）。
+ * @param {HTMLElement} viewport 箱が見えている側の枠の外側
+ * @param {number} left
+ * @param {number} width
+ */
+function revealSideways(viewport, left, width) {
+  if (!shell) {
     return;
   }
-  const contentHeight = Math.max(viewHeight, live.descriptions.get(id)?.height ?? 0);
-  live.refShift = { key: refShiftKey(), y: Math.min(centered, contentHeight - viewHeight) };
-  layoutFrames();
+  const scrollLeft = revealScrollLeft({
+    left: left * live.scale,
+    width: width * live.scale,
+    scrollLeft: viewport.scrollLeft,
+    viewportWidth: viewport.clientWidth,
+  });
+  shell.liveViewport.scrollLeft = scrollLeft;
+  shell.refViewport.scrollLeft = scrollLeft;
 }
 
 /**
@@ -1939,13 +1971,7 @@ async function showChangedElement(index) {
   if (!rect || typeof rect.x !== "number" || typeof rect.w !== "number") {
     return;
   }
-  const viewport = shell.liveViewport;
-  viewport.scrollLeft = revealScrollLeft({
-    left: rect.x * live.scale,
-    width: rect.w * live.scale,
-    scrollLeft: viewport.scrollLeft,
-    viewportWidth: viewport.clientWidth,
-  });
+  revealSideways(shell.liveViewport, rect.x, rect.w);
 }
 
 /**

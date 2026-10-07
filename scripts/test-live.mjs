@@ -46,7 +46,7 @@
 //   見る対象だけのときも、一覧の見出しの名前が並べたときの比べる相手の選択の文字に含まれる。html と body はずれただけに
 //   出ず、body の背景色の変化は主な変化に出る。下の方の消えた要素の行を押すと、見る対象だけなら並べる見比べ方に、幅 390px
 //   では比べる相手の 1 枚にしてスナップショットのその要素が見えて光る（その間もホイールで動かせ、見比べ方を変えると元の形に
-//   戻る）。重ねて透かすときは見比べ方を変えず、そろったままその位置へ動いて光る。
+//   戻る）。等倍で枠より広いページでは、右の方の消えた要素の行と、右の方の場所の「ページで見る」で枠が横にも動く。重ねて透かすときは見比べ方を変えず、そろったままその位置へ動いて光る。
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
 //   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
 //   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。枠が隠れている間（比べる相手の
@@ -1770,6 +1770,61 @@ async function removedRowsLeadToTheSnapshot(repository) {
     const shift = await evaluate(`new DOMMatrix(getComputedStyle(document.querySelector('${refPane} .lv-frame:not([hidden])')).transform).m42`);
     assert.ok(shift < -1000, `the overlaid snapshot follows the page scrolled down to the element: ${shift}`);
     console.log('PASS 重ねて透かすときに同じ行を押すと、見比べ方は変わらず、そろったままその要素の位置までスクロールして光る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/** 幅 1280 の文書の右下の方に要素（#far）を置いたページ（/tall.html を置き換えて使う）。`far` が false なら置かない。 */
+const farPage = (far) => `<!doctype html><html><head><meta charset="utf-8"><script type="module" src="/__hmr.js"></script></head>
+<body style="margin:0;width:1280px;height:1600px;position:relative">
+<p style="margin:0;padding:20px">Far page</p>
+${far ? '<div id="far" style="position:absolute;left:1100px;top:900px;width:120px;height:60px;background:rgb(0, 120, 0)">Far right</div>' : ''}
+</body></html>
+`;
+
+/**
+ * 等倍で枠より広いページ（R-PAGE-DIFF、R-PAGE-COMMENT）: 右の方にあった要素を消してその行を押すと、比べる相手の枠が横にも
+ * その要素まで動き、光がその枠の中に見える。右の方の場所を持つコメントの「ページで見る」を押すと、見る対象の枠が横にも
+ * その場所まで動く。
+ */
+async function wideTargetsAreRevealedSideways(repository) {
+  const dev = await startDevServer();
+  await writeFile(join(dev.dir, 'tall.html'), farPage(true));
+  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}tall.html`]);
+  const liveView = `document.querySelector('${livePane} .lv-viewport')`;
+  const refView = `document.querySelector('${refPane} .lv-viewport')`;
+  const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
+  const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
+  try {
+    const far = await post(kemi.url, 'api/comment', {
+      op: 'add_page',
+      page: { url: '/tall.html', width: 1280, places: [{ n: 1, kind: 'arrow', points: [{ x: 1080, y: 1000 }, { x: 1200, y: 1060 }], elements: [] }] },
+      body: 'far to the right',
+    });
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
+    await chooseCompare('side');
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-zoom button[data-zoom="full"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.transform === 'scale(1)' && ${liveView}.scrollWidth > ${liveView}.clientWidth`);
+    await writeFile(join(dev.dir, 'tall.html'), farPage(false));
+    await waitFor(`${removedRow} !== null && ${removedRow}.textContent.includes('Far right')`);
+    assert.equal(await evaluate(`${refView}.scrollLeft`), 0);
+    await evaluate(`${removedRow}.querySelector('button').click(); true`);
+    await waitFor(`${refView}.scrollLeft > 0 && ${glowInside}`);
+    console.log('PASS 等倍で枠より広いページの右の方の消えた要素の行を押すと、比べる相手の枠が横にもその要素まで動き、光が枠の中に見える');
+
+    await evaluate(`${liveView}.scrollLeft = 0; true`);
+    await waitFor(`${liveView}.scrollLeft === 0`);
+    await browser('click', '#cv-rail');
+    await browser('click', `.cv-card[data-id="${far.id}"]`);
+    await waitFor(`document.querySelector('#cv-thread .cv-go')?.textContent === 'Show on page'`);
+    await browser('click', '#cv-thread .cv-go');
+    await waitFor(`${liveView}.scrollLeft > 0`);
+    console.log('PASS 等倍で枠より広いページの右の方の場所を持つコメントの「ページで見る」を押すと、見る対象の枠が横にもその場所まで動く');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -3563,6 +3618,7 @@ try {
   await changeListFollowsThePage(repository);
   await changeRowsAreElementsThatLeadToThePage(repository);
   await removedRowsLeadToTheSnapshot(repository);
+  await wideTargetsAreRevealedSideways(repository);
   await marksFollowTheChanges(repository);
   await marksAreDrawnUnderAStrictStylePolicy(repository);
   await snapshotsAreTakenUnderTrustedTypes(repository);

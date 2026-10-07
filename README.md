@@ -237,7 +237,7 @@ snapshot. A legend under the list says what the colors mean. Clicking a row
 scrolls the page to that element and makes its mark flash (at 100%, the frame
 also scrolls sideways to it). A removed element is always listed; clicking its
 row shows the snapshot side by side (on a narrow screen, switches to it), moves
-the snapshot to the element and makes it flash. As the snapshot runs no script
+the snapshot to the element (sideways too, at 100%) and makes it flash. As the snapshot runs no script
 and cannot be scrolled from outside, it is then drawn at its full height and
 moved within its frame; the wheel over it still moves it, and it goes back to
 scrolling by itself once what it is compared with, the way of comparing, the
@@ -267,7 +267,7 @@ were put, on the page and in the comment box below it; the text refers to a
 place as `#n`, and clicking a place number in the box inserts `#n` where you
 are typing (a number without `#` is not a reference). Pointing at a place in
 the box lights it up on the page, and clicking it scrolls the page to it and
-makes it flash. Removing a place —
+makes it flash (at 100%, the frame also scrolls sideways to it). Removing a place —
 from the list, by undoing the last, or by choosing the same element again —
 renumbers the rest from 1 and rewrites the `#n` in the text to match. A `#n`
 that pointed at the removed place, or a number beyond the places, is shown
@@ -283,8 +283,8 @@ small marks without numbers — pointing at one, with any tool, shows which
 comment it belongs to — and numbered only while its thread is open, so they
 are not mistaken for the numbered places of the comment being written; a comment left
 at another width shows that width and switches to it when pressed. **Show on
-page** in the thread scrolls the page to the comment's places and makes them
-flash, once the page at its URL and width has loaded. Only its
+page** in the thread scrolls the page to the comment's places (sideways too,
+at 100%) and makes them flash, once the page at its URL and width has loaded. Only its
 text can be edited. On a narrow screen, places are drawn with a finger and
 elements chosen by tapping. The agent gets the places and the image path
 through `kemi wait`; see `page` in the [submit contract](#submit-contract).
