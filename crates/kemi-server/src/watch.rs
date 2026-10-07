@@ -418,9 +418,8 @@ impl TreeWatch {
     ) -> Result<bool, WatchFallback> {
         // 消えたかどうかはイベントで決める。続けて同じ名前に戻されると、処理する時点では
         // ディレクトリがあるように見える。
-        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut occurrences: Vec<Occurrence> = Vec::new();
         let mut gone: HashSet<PathBuf> = HashSet::new();
-        let mut arrived: HashSet<PathBuf> = HashSet::new();
         for event in events {
             if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
                 continue;
@@ -432,15 +431,22 @@ impl TreeWatch {
                 let Some(path) = self.inside(path) else {
                     continue;
                 };
-                if moves_away(&event.kind, position) {
+                let moved = if moves_away(&event.kind, position) {
                     gone.insert(path.clone());
+                    Moved::Away
                 } else if arrives(&event.kind, position) {
-                    arrived.insert(path.clone());
-                }
+                    Moved::In
+                } else {
+                    Moved::Stayed
+                };
                 if path.file_name() == Some(".gitignore".as_ref()) {
                     self.rules_changed = true;
                 }
-                paths.push(path);
+                occurrences.push(Occurrence {
+                    path,
+                    moved,
+                    settled: None,
+                });
             }
         }
         if self.rules_changed {
@@ -451,17 +457,19 @@ impl TreeWatch {
         }
         // 消えたパスは見えていたときの判定で決め、その判定は忘れる。現れたパスは判定を
         // 忘れて聞き直す。同じ名前でディレクトリとファイルが入れ替わると、判定も変わる。
-        let mut settled: HashMap<PathBuf, bool> = HashMap::new();
-        for path in &gone {
-            if let Some(verdict) = self.verdicts.remove(path) {
-                settled.insert(path.clone(), verdict);
+        // 1 回のまとまりに消えたのと現れたのが続けて入るので、イベントの順に決める。
+        for occurrence in &mut occurrences {
+            match occurrence.moved {
+                Moved::Away => occurrence.settled = self.verdicts.remove(&occurrence.path),
+                Moved::In => {
+                    self.verdicts.remove(&occurrence.path);
+                }
+                Moved::Stayed => {}
             }
         }
-        for path in &arrived {
-            self.verdicts.remove(path);
-        }
-        let known: HashSet<PathBuf> = paths
+        let known: HashSet<PathBuf> = occurrences
             .iter()
+            .map(|occurrence| &occurrence.path)
             .filter(|path| files.contains(&self.canonical_of(path)))
             .cloned()
             .collect();
@@ -469,8 +477,8 @@ impl TreeWatch {
         // 一緒に聞いて覚え、その下で続く書き込み（ビルドの出力など）は git を呼ばずに捨てる。
         let mut unknown: Vec<PathBuf> = Vec::new();
         let mut asking: HashSet<PathBuf> = HashSet::new();
-        for path in &paths {
-            if known.contains(path) || settled.contains_key(path) || self.under_ignored(path) {
+        for Occurrence { path, settled, .. } in &occurrences {
+            if known.contains(path) || settled.is_some() || self.under_ignored(path) {
                 continue;
             }
             for asked in self.unjudged_ancestors(path).chain([path.clone()]) {
@@ -490,15 +498,14 @@ impl TreeWatch {
 
         let mut changed = false;
         let mut created: Vec<PathBuf> = Vec::new();
-        for path in paths {
+        for Occurrence { path, settled, .. } in occurrences {
             if known.contains(&path) {
                 changed = true;
                 continue;
             }
             let ignored = settled
-                .get(&path)
-                .or_else(|| self.verdicts.get(&path))
-                .is_some_and(|verdict| *verdict);
+                .or_else(|| self.verdicts.get(&path).copied())
+                .is_some_and(|verdict| verdict);
             if ignored || self.under_ignored(&path) {
                 continue;
             }
@@ -603,6 +610,26 @@ fn moves_away(kind: &EventKind, position: usize) -> bool {
         kind,
         EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From))
     ) || (matches!(kind, EventKind::Modify(ModifyKind::Name(RenameMode::Both))) && position == 0)
+}
+
+/// 1 回のまとまりのイベントに出てきたパス 1 つ。
+struct Occurrence {
+    /// 作業ツリーの根からの表記。
+    path: PathBuf,
+    moved: Moved,
+    /// 消えたパスの、見えていたときの判定（無視するなら true）。
+    settled: Option<bool>,
+}
+
+/// イベントでパスがその場所から無くなったか、現れたか。
+#[derive(Clone, Copy)]
+enum Moved {
+    /// 削除と改名の元。
+    Away,
+    /// 作成と改名の先。
+    In,
+    /// 書き込みなど、その場所のまま。
+    Stayed,
 }
 
 /// イベントの `position` 番目のパスが、その場所に現れたか（作成と改名の先）。macOS の
@@ -1026,6 +1053,37 @@ mod tests {
             EventKind::Modify(ModifyKind::Any),
             repo.0.join("build"),
         ));
+    }
+
+    #[test]
+    fn a_file_that_replaces_an_ignored_directory_in_the_same_batch_of_events_is_a_change() {
+        use notify::event::{CreateKind, RemoveKind};
+        let repo = IgnoringRepo::new("directory-to-file-batch");
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::PerDirectory,
+            HashSet::new(),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(repo.0.join("build")).unwrap();
+        std::fs::write(repo.0.join("build"), "now a file\n").unwrap();
+
+        let changed = tree
+            .changes(
+                &mut watcher,
+                &[
+                    notify::Event::new(EventKind::Remove(RemoveKind::Folder))
+                        .add_path(repo.0.join("build")),
+                    notify::Event::new(EventKind::Create(CreateKind::File))
+                        .add_path(repo.0.join("build")),
+                ],
+                &HashSet::new(),
+            )
+            .unwrap();
+
+        assert!(changed);
     }
 
     #[test]
