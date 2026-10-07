@@ -199,6 +199,15 @@ impl TreeWatch {
             .iter()
             .filter_map(|path| self.inside(path))
             .collect();
+        // 消えたかどうかはイベントで決める。続けて同じ名前に戻されると、処理する時点では
+        // ディレクトリがあるように見える。
+        let gone: HashSet<PathBuf> = event
+            .paths
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| moves_away(&event.kind, *position))
+            .filter_map(|(_, path)| self.inside(path))
+            .collect();
         if paths
             .iter()
             .any(|path| path.file_name() == Some(".gitignore".as_ref()))
@@ -226,13 +235,16 @@ impl TreeWatch {
                 continue;
             }
             changed = true;
-            if path.is_dir() {
-                if !self.directories.contains(&path) {
-                    self.watch_new_directory(watcher, &path)?;
-                }
-            } else if self.directories.remove(&path) {
-                // 消えたディレクトリの見張りは OS が外している。
-                self.added.remove(&path);
+            let is_directory = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir());
+            if (gone.contains(&path) || !is_directory) && self.directories.contains(&path) {
+                // 消えた・改名したディレクトリの見張りは、その下の分も含めて notify が外している。
+                // 下の分を覚えたままだと、同じ名前に戻ったときに見張り直さない。
+                self.directories
+                    .retain(|directory| !directory.starts_with(&path));
+                self.added.retain(|directory| !directory.starts_with(&path));
+            }
+            if is_directory && !self.directories.contains(&path) {
+                self.watch_new_directory(watcher, &path)?;
             }
         }
         Ok(changed)
@@ -275,6 +287,15 @@ impl TreeWatch {
         }
         Some(self.tree.root().join(relative))
     }
+}
+
+/// イベントの `position` 番目のパスが、その場所から無くなったか（削除と改名の元）。
+fn moves_away(kind: &EventKind, position: usize) -> bool {
+    use notify::event::{ModifyKind, RenameMode};
+    matches!(
+        kind,
+        EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From))
+    ) || (matches!(kind, EventKind::Modify(ModifyKind::Name(RenameMode::Both))) && position == 0)
 }
 
 /// 配れる範囲を見張る（R-PAGE-MODE の `--live <ファイル>`）。範囲の中のファイルが保存・作成

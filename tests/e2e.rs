@@ -4031,6 +4031,31 @@ async fn worktree_change_in_a_directory_created_while_watching_sends_update() {
 }
 
 #[tokio::test]
+async fn worktree_change_under_a_directory_renamed_away_and_back_sends_update() {
+    let dir = TempDir::new();
+    worktree_with_an_unchanged_file(&dir);
+    std::fs::create_dir_all(dir.path.join("moved/inner")).unwrap();
+    let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut updates = Updates::open(&kemi).await;
+    assert!(
+        updates
+            .after_repeating(|attempt| dir.write("b.txt", &format!("b2 {attempt}\n")))
+            .await
+    );
+    std::fs::rename(dir.path.join("moved"), dir.path.join("away")).unwrap();
+    std::fs::rename(dir.path.join("away"), dir.path.join("moved")).unwrap();
+    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+
+    dir.write("moved/inner/c.txt", "c\n");
+
+    assert!(
+        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        "a change under a directory renamed back sent no update"
+    );
+    kemi.kill();
+}
+
+#[tokio::test]
 async fn worktree_writes_to_ignored_paths_and_dot_git_send_no_update() {
     let dir = TempDir::new();
     worktree_with_an_unchanged_file(&dir);
