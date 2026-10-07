@@ -46,6 +46,7 @@ import {
   renderPlaces,
   renderStrayRefs,
 } from "../views/live.js";
+import { handToAgent } from "./agent.js";
 import { closeSheet } from "./conversation.js";
 import { refresh } from "./files.js";
 import { renderConversation } from "../views/conversation.js";
@@ -241,6 +242,7 @@ export function startLive(info) {
   dom.titleBlock.before(topbar.tabs, topbar.meta, topbar.agent);
   mirrorAgentState(topbar.agent);
   mirrorAgentState(shell.bandAgent);
+  mirrorHand(shell.hand);
   const menu = shell.menu;
   // 狭い画面の帯のメニューは、帯のすぐ下に開く。
   menu.addEventListener("beforetoggle", () => {
@@ -379,6 +381,28 @@ function mirrorDrawer(pageTree) {
   };
   new MutationObserver(copy).observe(dom.tree, { attributes: true, attributeFilter: ["data-drawer"] });
   copy();
+}
+
+/**
+ * 狭い画面の道具のツールバーの「Hand to agent」は、全モード共通の浮かぶもの（views/conversation.js が描く）の押せる・
+ * 押せないと文言を写し、押すと同じく渡す。
+ * @param {HTMLButtonElement} target
+ */
+function mirrorHand(target) {
+  const source = dom.handFloat;
+  const copy = () => {
+    target.disabled = source.disabled;
+    target.textContent = source.textContent;
+  };
+  new MutationObserver(copy).observe(source, {
+    attributes: true,
+    attributeFilter: ["disabled"],
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  copy();
+  target.addEventListener("click", () => void handToAgent());
 }
 
 /**

@@ -92,14 +92,15 @@ export function renderAgentState() {
   dom.railStatus.title = label;
   const count = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
   const control = handControl(agent, state.submitted);
-  for (const hand of [dom.btnHand, dom.railHand]) {
+  for (const hand of [dom.btnHand, dom.railHand, dom.handFloat]) {
     hand.disabled = control.disabled;
     hand.dataset.handNote = control.note ?? "";
   }
-  for (const note of [dom.handNote, dom.railHandNote]) {
+  for (const note of [dom.handNote, dom.railHandNote, dom.handFloatNote]) {
     renderHandNote(note, control);
   }
   dom.handCount.textContent = count;
+  dom.handFloatCount.textContent = count;
   dom.railHandCount.textContent = count;
   dom.railHand.setAttribute("aria-label", `Hand to agent${count ? ` (${agent.unhanded})` : ""}`);
   const unread = unreadCount(state.allComments, state.messages, state.conversation.read);

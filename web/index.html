@@ -261,6 +261,15 @@
       </aside>
     </div>
 
+    <!-- 狭い画面でだけ画面の下に浮かぶ「Hand to agent」（R-AGENT-STATE、R-NARROW）。会話パネルの外に置く
+         （閉じたシートは中身ごと隠れるため）。 -->
+    <div class="hand-float" id="hand-float-bar">
+      <div class="hand-note" id="hand-float-note" hidden></div>
+      <button class="btn primary" id="hand-float" type="button" title="Hand everything written since the last hand-over to the agent">
+        Hand to agent<span class="hand-count" id="hand-float-count"></span>
+      </button>
+    </div>
+
     <div class="modal" id="modal" hidden>
       <div class="box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <h3 id="modal-title"></h3>

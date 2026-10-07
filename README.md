@@ -170,7 +170,9 @@ first row of the top bar, whose **…** menu then holds only the theme. The
 controls of the page view fit in one row: Now / Before (the running page or
 what it is compared with, one at a time), the page, its width, the agent's
 state, and a **…** menu with what the page is compared with, **Record now**,
-Fit / 100%, the width, and the mock. Overlay is not offered there. The page
+Fit / 100%, the width, and the mock. Overlay is not offered there. The tools
+(Element, Arrow, Pen, Interact) and **Hand to agent** float together in one
+toolbar at the bottom of the screen instead of sitting above the page. The page
 list is a drawer and the conversation is a sheet.
 
 What the page is compared with is chosen per page (path and query):
@@ -390,7 +392,10 @@ other than a line number, clears the selection; taps on the top bar or the
 file header do not. While the editor is open the selection stays, and
 cancelling the editor clears it. In the rendered view, tap a block to show its
 `+`. The conversation panel opens as a full-screen sheet from the comment
-count in the top bar, and always starts closed on a narrow screen; tapping a
+count in the top bar, and always starts closed on a narrow screen; **Hand to
+agent** floats at the bottom of the screen in every mode, so you can hand
+without opening the sheet (it can be pressed exactly when the one in the
+panel can); tapping a
 chip opens its thread in the sheet, and jumping to the line from a thread
 closes the sheet. "Comments" behind the "..." button hides the chips; the
 comment count in the top bar and the coloured line beside the line numbers

@@ -221,6 +221,11 @@ body[data-live-view="code"] #main > .lv-band {
   gap: 8px;
 }
 
+/* 道具のツールバーの「Hand to agent」は狭い画面でだけ使う（R-NARROW）。 */
+.lv-hand {
+  display: none;
+}
+
 /* 始め方の 3 つの手順（R-PAGE-COMMENT）。 */
 .lv-hint {
   display: flex;
@@ -592,6 +597,31 @@ body[data-live-view="page"] #menu-comments {
 
 /* ---- 狭い画面（R-NARROW と同じしきい値）: 1 枚ずつ切り替えて見る ---- */
 @media (max-width: 719.98px) {
+  /* 道具（要素・矢印・ペン・操作）と「Hand to agent」は、画面の下に浮かぶ 1 つのツールバーにまとめる（R-PAGE-VIEW）。
+     ページの見方では、全モード共通の浮かぶ「Hand to agent」は出さない（同じものを 2 つ出さない）。 */
+  .lv-toolbar {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 10px;
+    z-index: 30;
+    justify-content: space-between;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  }
+
+  .lv-hand {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  body[data-live-view="page"] .hand-float {
+    display: none;
+  }
+
   /* 上部バーの 1 段目に短いタブを置く。ページの URL とエージェントの状態は下の帯に出す。 */
   .lv-modetabs {
     order: 2;
@@ -678,10 +708,11 @@ body[data-live-view="page"] #menu-comments {
   }
 
   /* 見比べ方によらず、動いているページと比べる相手を 1 枚ずつ切り替えて見る（重ねて透かさない）。 */
+  /* 下は、画面の下に浮かぶ道具のツールバーの分を空け、書く欄の操作を覆わせない。 */
   .lv-stage,
   .lv-stage[data-compare] {
     grid-template-columns: minmax(0, 1fr);
-    padding: 6px;
+    padding: 6px 6px 62px;
   }
 
   .lv-stage[data-side="ref"] .lv-pane[data-side="ref"] {

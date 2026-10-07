@@ -53,6 +53,8 @@
 // - CSSOM だけの変化: 構築したスタイルシートを replaceSync で差し替えると、DOM が変わらなくても変化の一覧が変わる。
 // - 表示幅の切り替え: <html> の min-width より狭い幅どうしで切り替えても（文書の幅は変わらない）、切り替えた幅の
 //   変化の一覧が出る。
+// - 狭い画面の道具: 幅 390px のページの見方では、道具と「Hand to agent」が画面の下の 1 つの浮かぶツールバーにあり、
+//   コードの見方では全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらも見えない。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
@@ -1168,6 +1170,47 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
   } finally {
     await stop(tall);
     await tallDev.close();
+  }
+}
+
+/**
+ * 狭い画面の道具と「エージェントに渡す」（R-PAGE-VIEW の狭い画面、R-AGENT-STATE、R-NARROW）: 幅 390px のページの見方では、
+ * 道具と「Hand to agent」が画面の下の 1 つの浮かぶツールバーにあり、全モード共通の浮かぶ「Hand to agent」は出ない。
+ * 道具を切り替えて場所を置ける。コードの見方では全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらの浮かぶ
+ * ものも見えない。
+ */
+async function narrowToolsFloatWithHand(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '844');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
+    assert.equal(await evaluate(`${visible('.lv-toolbar .lv-hand')} || ${visible('#hand-float')}`), false, 'nothing floats on a wide screen');
+    console.log('PASS 幅 1280px では、ページの見方の浮かぶ「Hand to agent」も全モード共通のものも見えない');
+
+    await browser('set', 'viewport', '390', '844');
+    await waitFor(`${visible(livePane)} && ${visible('.lv-toolbar .lv-hand')} && ${visible('.lv-tools')}`);
+    const bar = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.lv-toolbar').getBoundingClientRect())`));
+    const hand = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.lv-toolbar .lv-hand').getBoundingClientRect())`));
+    assert.ok(bar.bottom > 844 - 80 && bar.bottom <= 844, `the tools float at the bottom: ${JSON.stringify(bar)}`);
+    assert.ok(hand.top >= bar.top && hand.bottom <= bar.bottom, `Hand to agent is in the floating toolbar: ${JSON.stringify(hand)}`);
+    assert.equal(await evaluate(visible('#hand-float')), false, 'the floating button of every mode is not shown twice');
+    await chooseTool('pen');
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    console.log('PASS 幅 390px のページの見方では、道具と「Hand to agent」が画面の下の浮かぶツールバーにあり、道具を切り替えて場所を置ける');
+
+    await browser('click', '#live-compose .lv-compose-cancel');
+    await browser('click', '.topbar .lv-view button[data-view="code"]');
+    await waitFor(`document.body.dataset.liveView === 'code' && ${visible('#hand-float')} && !${visible('.lv-toolbar .lv-hand')}`);
+    console.log('PASS 幅 390px のコードの見方では、全モード共通の浮かぶ「Hand to agent」だけが出る');
+  } finally {
+    await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
   }
 }
 
@@ -2965,6 +3008,7 @@ try {
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
   await narrowPageViewFitsOneRow(repository);
+  await narrowToolsFloatWithHand(repository);
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);

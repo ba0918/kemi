@@ -476,7 +476,7 @@ try {
   assert.equal(await isShown('#review-meta'), true);
   assert.ok(await evaluate(`document.querySelectorAll('#review-meta span').length`) > 0);
   assert.equal(await evaluate(`document.querySelector('#review-subtitle').hidden || getComputedStyle(document.querySelector('#review-subtitle')).display !== 'none'`), true);
-  for (const selector of ['#btn-tree', '#btn-title', '#btn-more', '#view-menu', '#title-sheet', '#drawer-scrim']) {
+  for (const selector of ['#btn-tree', '#btn-title', '#btn-more', '#view-menu', '#title-sheet', '#drawer-scrim', '#hand-float']) {
     assert.equal(await isShown(selector), false, `${selector} should be hidden on a wide screen`);
   }
   assert.equal(await isShown('#btn-split'), true);

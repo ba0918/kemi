@@ -2194,6 +2194,11 @@ ul.files ul {
   display: none;
 }
 
+/* 狭い画面でだけ使う、画面の下に浮かぶ「Hand to agent」。広い画面では隠す（R-NARROW）。 */
+.hand-float {
+  display: none;
+}
+
 /* 畳んだ帯。上は開く操作、下に「Hand to agent」。 */
 .cv-rail-col {
   position: relative;
@@ -3022,6 +3027,37 @@ ul.files ul {
   #toast {
     right: 14px;
     z-index: 31;
+  }
+
+  /* 画面の下に浮かぶ「Hand to agent」（R-AGENT-STATE）。右下の変更の移動（.navpill、高さ約 36px）のすぐ上に置き、
+     重ならないようにする。 */
+  .hand-float {
+    position: fixed;
+    right: 14px;
+    bottom: 58px;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    max-width: calc(100vw - 28px);
+  }
+
+  .hand-float .hand-note {
+    margin: 0;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg);
+    box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+  }
+
+  .hand-float .hand-note[hidden] {
+    display: none;
+  }
+
+  #hand-float {
+    box-shadow: 0 6px 18px rgb(0 0 0 / 20%);
   }
 }
 

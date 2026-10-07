@@ -743,3 +743,33 @@ try {
   await newsKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
+
+// (15) 狭い画面の浮かぶ「Hand to agent」（R-AGENT-STATE、R-NARROW）: 幅 390px の worktree のレビューで、会話パネルの
+// シートを閉じたまま、画面の下に浮かぶ「Hand to agent」で渡せ、kemi wait がその 1 回分を返す。
+const floatFixture = await makeFixture();
+const floatState = await mkdtemp(join(tmpdir(), 'kemi-agent-float-state-'));
+const floatKemi = await startKemi(floatFixture, floatState);
+try {
+  const floatFile = (await (await fetch(new URL('api/review', floatKemi.url))).json()).groups[0].files[0].id;
+  await post(floatKemi.url, 'api/comment', { op: 'add', file_id: floatFile, side: 'new', start_line: 3, end_line: 3, body: 'from the phone' });
+  await browser('set', 'viewport', '390', '844');
+  await browser('open', floatKemi.url);
+  await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelClosed}`);
+  await waitFor(`${shown('#hand-float')} && document.querySelector('#hand-float').disabled`);
+  const waiting = agentCommand(floatFixture, floatState, ['wait', floatKemi.id, '--timeout', '30']);
+  await waitFor(`${statusIs('waiting')} && !document.querySelector('#hand-float').disabled`);
+  const rect = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('#hand-float').getBoundingClientRect())`));
+  assert.ok(rect.bottom > 844 - 80 && rect.bottom <= 844, `the button floats at the bottom: ${JSON.stringify(rect)}`);
+  await browser('click', '#hand-float');
+  const waited = await waiting;
+  assert.equal(waited.code, 0, waited.stderr);
+  const handed = JSON.parse(waited.stdout).events.filter((event) => event.type === 'handed');
+  assert.equal(handed[0].comments[0].comment.body, 'from the phone');
+  assert.equal(await evaluate(panelClosed), true, 'the sheet stays closed');
+  console.log('PASS 幅 390px で会話パネルのシートを閉じたまま、画面の下に浮かぶ「Hand to agent」で渡すと kemi wait がその 1 回分を返す');
+} finally {
+  await browser('set', 'viewport', '1280', '800').catch(() => {});
+  floatKemi.child.kill('SIGTERM');
+  await floatKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}

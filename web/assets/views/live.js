@@ -65,6 +65,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   noCode: HTMLElement,
  *   pageTree: HTMLElement,
  *   toolSeg: HTMLElement,
+ *   hand: HTMLButtonElement,
  *   hint: HTMLElement,
  *   capture: HTMLElement,
  *   savedTip: HTMLElement,
@@ -272,7 +273,10 @@ export function buildShell() {
 
   // 道具は見る対象の枠のすぐ上に、始め方の案内はその下に置く（R-PAGE-COMMENT）。
   const toolbar = el("div", "lv-toolbar");
-  toolbar.append(toolSeg);
+  // 狭い画面では、道具のツールバーごと画面の下に浮かべ、「Hand to agent」も入れる（R-PAGE-VIEW）。広い画面では隠す。
+  const hand = button("btn primary lv-hand");
+  hand.title = "Hand everything written since the last hand-over to the agent";
+  toolbar.append(toolSeg, hand);
   const hint = buildHint();
   stageHead.prepend(toolbar, hint);
 
@@ -380,6 +384,7 @@ export function buildShell() {
     noCode,
     pageTree,
     toolSeg,
+    hand,
     hint,
     capture,
     savedTip,
