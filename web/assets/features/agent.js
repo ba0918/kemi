@@ -13,7 +13,7 @@ import { renderConversation } from "../views/conversation.js";
 import { showOverlay, showToast } from "../views/overlay.js";
 
 /**
- * エージェントの状態と未渡しの件数（通知と、書いた後の応答から）。
+ * 通知で届いたエージェントの状態と未渡しの件数を取り込む。
  * @param {import("../model.js").AgentState} agent
  */
 function applyAgent(agent) {
@@ -89,6 +89,15 @@ export function receiveAgent(agent) {
   whenNotComposing(() => applyAgent(agent));
 }
 
+/**
+ * 通知で届いた発言。取り込みは開いているスレッドも描き直すので、返信と同じく変換が終わるまで待つ
+ * （自分で書いた発言は書いた応答からその場で取り込む）。
+ * @param {any} message
+ */
+export function receiveMessage(message) {
+  whenNotComposing(() => applyMessage(message));
+}
+
 /** 通知が届かなかったときの読み直し。 */
 export function receiveMissed() {
   whenNotComposing(() => void resyncAgent());
@@ -98,7 +107,7 @@ export function receiveMissed() {
  * 発言を取り込む。書いた画面には応答と通知の両方で届くが、二度は足さない。
  * @param {any} message
  */
-export function applyMessage(message) {
+function applyMessage(message) {
   const before = state.messages;
   state.messages = addMessage(state.messages, message);
   if (conversationShown()) {
