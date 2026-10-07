@@ -4288,6 +4288,27 @@ async fn replying_to_one_of_two_handed_threads_keeps_it_working_and_to_both_make
 }
 
 #[tokio::test]
+async fn a_deleted_handed_comment_leaves_no_line_and_is_not_waited_for() {
+    let server = AgentServer::start().await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    let c2 = server.page.add_comment_with_body(12, "second").await["id"].clone();
+    server.page.hand().await;
+    server.wait(Some(1000)).await;
+    server.wait_until_status("working").await;
+
+    server.page.comment(json!({"op": "delete", "id": c2})).await;
+
+    assert_eq!(
+        server.hand_lines().await,
+        vec![(c1.clone(), "working".to_string())]
+    );
+    server
+        .reply(json!([{ "type": "reply", "comment_id": c1, "body": "done" }]))
+        .await;
+    assert_eq!(server.agent_status().await, "replied");
+}
+
+#[tokio::test]
 async fn handing_while_replied_keeps_it_replied_with_a_pending_line() {
     let server = AgentServer::start().await;
     let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();

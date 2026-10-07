@@ -392,6 +392,14 @@ impl AgentLink {
         self.last_activity = now;
     }
 
+    /// 人間がコメントを消した。エージェントは消えたコメントに返信できないので、そのスレッドの行を消し、
+    /// 最後に返った応答の行からも外す（残りの行に数えない）。状態は変えない。
+    pub fn comment_deleted(&mut self, id: &str) {
+        let at = HandLineAt::Thread(id.to_string());
+        self.lines.retain(|line| line.at != at);
+        self.last_returned.retain(|returned| *returned != at);
+    }
+
     /// 最後に返った応答の行のうち、まだ作業中で残っているものがあるか。
     fn lines_left(&self) -> bool {
         self.lines.iter().any(|line| {
@@ -992,6 +1000,17 @@ mod tests {
         link.agent_wrote(true, T0, &["c1".to_string()], false);
 
         assert_eq!(lines(&link), vec![(Some("c2"), HandLineState::Working)]);
+    }
+
+    #[test]
+    fn deleting_a_comment_takes_away_its_line_so_it_is_no_line_left() {
+        let mut link = working_on(&[handed_event(&["c1", "c2"], &[], 0)]);
+
+        link.comment_deleted("c2");
+        assert_eq!(lines(&link), vec![(Some("c1"), HandLineState::Working)]);
+        link.agent_wrote(true, T0 + 1_000, &["c1".to_string()], false);
+
+        assert_eq!(link.status(true, T0 + 1_000), AgentStatus::Replied);
     }
 
     #[test]
