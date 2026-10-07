@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kemi --live 画面モック v2（使い勝手の見直し）</title>
+<style>
+/* ===== トークン（ui-mock-live.html と同じ） ===== */
+:root {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #f5f6f8; --panel-2: #eceef2;
+  --ink: #1b1f24; --ink-2: #555e6a; --ink-3: #7c8490;
+  --line: #d6dae0; --line-soft: #e8ebef;
+  --ai: #3b4ea8; --ai-soft: #e9ecfa; --ai-ink: #ffffff;
+  --add-bg: #e8f7ec; --add-ink: #1a7f37; --del-bg: #fdeceb; --del-ink: #c62a2a;
+  --note-bg: #fff6d6; --note-line: #e0ac2b; --note-ink: #7a5200;
+  --star: #7b4fd0; --star-soft: #f1eafd;
+  --warn: #d29922; --moved: #b9a6e6;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.7; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input { font: inherit; }
+:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: .92em; }
+
+/* ===== 文書の枠（画面の外。日本語） ===== */
+.doc { max-width: 1320px; margin: 0 auto; padding: 18px 20px 0; }
+h1 { font-size: 24px; margin: 0 0 6px; }
+.lead { margin: 0 0 6px; max-width: 100ch; color: var(--ink-2); font-size: 14px; }
+.lead b { color: var(--ink); }
+.switch { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 6px; align-items: center; }
+.switch .g { font-size: 12px; color: var(--ink-3); margin: 0 2px 0 6px; }
+.switch button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 3px 12px; font-size: 13px; color: var(--ink-2); }
+.switch button[aria-pressed="true"] { background: var(--ai); border-color: var(--ai); color: #fff; font-weight: 700; }
+.about { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 4px 0 10px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 13.5px; color: var(--ink-2); }
+.about .t { font-weight: 700; color: var(--ink); }
+.about .ags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.about .ag { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--star); color: var(--star); background: var(--star-soft); border-radius: 999px; padding: 0 7px; }
+.about .ag.cap { border-style: dashed; }
+.about .subs { display: inline-flex; gap: 4px; align-items: center; }
+.about .subs button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 1px 10px; font-size: 12.5px; }
+.about .subs button[aria-pressed="true"] { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); font-weight: 700; }
+.about .d { flex-basis: 100%; margin: 0; }
+.screen-outer { overflow: clip; padding: 0 0 40px; }
+.screen { transform-origin: 0 0; width: 1280px; margin: 0 auto; }
+.screen.narrow { width: auto; }
+.foot { max-width: 1320px; margin: 0 auto; padding: 0 20px 60px; font-size: 13px; color: var(--ink-3); }
+
+/* ===== アプリ（画面の中。英語） ===== */
+.app { width: 1280px; height: 800px; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13px; line-height: 1.45; position: relative; }
+.ic { width: 16px; height: 16px; flex: none; }
+.sp { flex: 1; }
+.dim { color: var(--ink-3); }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line); background: #fff; font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.btn.primary { background: var(--ai); border-color: var(--ai); color: #fff; }
+.btn.dark { border-color: var(--ink); }
+.btn.sm { height: 28px; padding: 0 11px; font-size: 12.5px; }
+.icb { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 30px; min-width: 30px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink-2); font-size: 12.5px; }
+.icb.on { background: var(--ai-soft); border-color: var(--ai); color: var(--ai); }
+.icb.rec { color: var(--del-ink); }
+.icb.rec.on { background: var(--del-bg); border-color: var(--del-ink); }
+[data-tip] { position: relative; }
+[data-tip]:hover::after, [data-tip].tip-on::after { content: attr(data-tip); position: absolute; z-index: 40; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; font-size: 11.5px; font-weight: 600; line-height: 1.4; border-radius: 5px; padding: 2px 8px; white-space: nowrap; pointer-events: none; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.seg > button { border: 0; background: none; height: 28px; padding: 0 10px; font-size: 12.5px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; }
+.seg > button + button { border-left: 1px solid var(--line); }
+.seg > button:first-child { border-radius: 6px 0 0 6px; }
+.seg > button:last-child { border-radius: 0 6px 6px 0; }
+.seg > button.on { background: var(--ai-soft); color: var(--ai); font-weight: 700; }
+.seg.icons > button { width: 32px; padding: 0; justify-content: center; }
+.lbl { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+
+/* 上部バー（A8・A24） */
+.top { display: flex; align-items: center; gap: 10px; height: 56px; flex: none; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.brand { font-weight: 800; font-size: 18px; margin-right: 2px; }
+.mtabs { display: inline-flex; gap: 3px; padding: 3px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+.mtab { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; font-size: 14px; font-weight: 700; color: var(--ink-2); }
+.mtab .ic { width: 18px; height: 18px; }
+.mtab .n { font-weight: 500; color: var(--ink-3); }
+.mtab.on { background: #fff; color: var(--ai); box-shadow: 0 1px 2px rgba(0,0,0,.14), inset 0 -2px 0 var(--ai); }
+.mtab.on .n { color: var(--ai); }
+.lvmeta { color: var(--ink-3); font-size: 13px; margin-left: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lvmeta b { color: var(--ink); font-size: 14px; }
+.lvmeta .mono { color: var(--ink-2); }
+.cmeta { display: inline-flex; gap: 10px; align-items: baseline; font-size: 13px; color: var(--ink-2); margin-left: 4px; }
+.cmeta b { color: var(--ink); }
+.cmeta .p { color: var(--add-ink); } .cmeta .m { color: var(--del-ink); }
+.cmeta .seen { color: var(--ink-3); }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; border-radius: 999px; padding: 0 10px; background: #fff; border: 1px solid var(--line); color: var(--ink-2); font-size: 12.5px; white-space: nowrap; }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa1ab; }
+.pill.ok { border-color: var(--add-ink); color: var(--add-ink); } .pill.ok .dot { background: var(--add-ink); }
+.pill.busy { border-color: var(--ai); color: var(--ai); background: var(--ai-soft); }
+.pill.done { border-color: var(--star); color: var(--star); background: var(--star-soft); } .pill.done .dot { background: var(--star); }
+.dots { display: inline-flex; gap: 3px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ai); animation: blink 1.2s infinite ease-in-out; }
+.dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dots i, .m-flash { animation: none !important; } }
+.cnt { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--star); color: #fff; font-size: 11px; font-weight: 700; }
+
+/* 本体 */
+.body { display: grid; grid-template-columns: 240px minmax(0, 1fr) var(--pane, 340px); flex: 1; min-height: 0; }
+.app.folded .body { --pane: 44px; }
+
+/* 左: ページのツリーと変化の一覧（A15） */
+.tree { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
+.t-head { font-size: 12.5px; font-weight: 700; color: var(--ink-3); padding: 2px 6px; }
+.t-page { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 7px; background: var(--ai-soft); box-shadow: inset 3px 0 0 var(--ai); }
+.t-page .mono { font-weight: 700; color: var(--ink); }
+.wtag { font-family: var(--mono); font-size: 11px; color: var(--ink-2); border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 0 6px; }
+.ccount { margin-left: auto; }
+.chg { margin: 2px 0 0 10px; padding: 6px 4px 6px 8px; border-left: 2px solid var(--line); font-size: 12.5px; }
+.chg-h { display: flex; justify-content: space-between; color: var(--ink-3); font-weight: 700; font-size: 12px; margin-bottom: 4px; }
+.chg-none { color: var(--ink-3); font-size: 12px; padding: 2px 0 4px; }
+.crow { display: flex; gap: 7px; align-items: flex-start; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+.crow:hover { background: #fff; }
+.crow.hot { background: #fff; box-shadow: 0 0 0 1.5px var(--ai); }
+.sq { width: 8px; height: 8px; border-radius: 2px; margin-top: 5px; flex: none; background: var(--del-ink); }
+.sq.add { background: var(--add-ink); } .sq.mv { background: var(--moved); }
+.crow .el { font-weight: 700; }
+.crow .props { color: var(--ink-2); }
+.crow .where { display: block; color: var(--ink-3); font-size: 11.5px; }
+.crow del { color: var(--del-ink); }
+.crow ins { color: var(--add-ink); text-decoration: none; font-weight: 700; }
+.sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(0,0,0,.28); vertical-align: -1px; margin: 0 1px; }
+.fold { padding: 5px 6px; color: var(--ink-2); font-weight: 700; font-size: 12px; }
+.fold span { display: block; font-weight: 400; color: var(--ink-3); font-size: 11.5px; padding-left: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-3); }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend .sq { margin-top: 0; }
+
+/* 中央 */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel-2); position: relative; }
+.band { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex: none; position: relative; }
+.winput { width: 84px; height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font-size: 12.5px; background: #fff; color: var(--ink); }
+.winput::placeholder { color: var(--ink-3); }
+.winput.set { border-color: var(--ai); background: var(--ai-soft); color: var(--ai); font-weight: 700; }
+.vsep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
+.notice { display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: #fff; border-radius: 7px; padding: 4px 6px 4px 12px; font-size: 12.5px; box-shadow: 0 4px 14px rgba(0,0,0,.2); white-space: nowrap; }
+.notice .go { border: 0; background: rgba(255,255,255,.16); color: #c9d1ff; font-weight: 700; border-radius: 5px; padding: 1px 8px; font-size: 12.5px; }
+.band .rec-notice { position: relative; margin-left: 8px; }
+.band .rec-notice::before { content: ""; position: absolute; left: -5px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 0; border-right-color: var(--ink); }
+.notice .tm { color: #9aa1ab; font-size: 11.5px; }
+.toolbar { display: flex; align-items: center; gap: 6px; padding: 10px 12px 8px; flex: none; }
+.tool { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.tool.on { background: var(--star); border-color: var(--star); color: #fff; }
+.toolbar .hint-r { margin-left: 8px; font-size: 12px; color: var(--ink-3); }
+.stage { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.frame { background: #fff; border: 1px solid var(--line); border-radius: 9px; display: flex; flex-direction: column; min-height: 0; min-width: 0; flex: 1; position: relative; }
+.frame.flat { flex: none; }
+.fhead { display: flex; align-items: center; gap: 8px; height: 40px; flex: none; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; min-width: 0; }
+.fhead .name { font-weight: 700; font-size: 13.5px; }
+.fhead .src { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.zl { color: var(--ai); font-weight: 700; font-family: var(--mono); font-size: 12px; }
+.vp { flex: 1; min-height: 0; overflow: hidden; position: relative; background: #fff; border-radius: 0 0 9px 9px; }
+.vp.scroll { overflow: auto; }
+.panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.panes .frame .fhead { height: 34px; }
+.csel { display: inline-flex; align-items: center; gap: 6px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 0 9px; font-size: 12.5px; color: var(--ink); white-space: nowrap; }
+.csel::after { content: "▾"; color: var(--ink-3); font-size: 10px; }
+.csel.open { border-color: var(--ai); box-shadow: 0 0 0 3px var(--ai-soft); }
+.csel .s { color: var(--ink-3); }
+.anchor { position: relative; display: inline-flex; }
+.dd { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; background: #fff; border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 28px rgba(0,0,0,.18); padding: 5px 0; font-size: 13px; min-width: 300px; white-space: nowrap; }
+.dd .it { display: flex; gap: 8px; align-items: center; padding: 4px 14px; color: var(--ink); }
+.dd .it .s { color: var(--ink-3); margin-left: auto; font-size: 12px; }
+.dd .it.on { background: var(--ai-soft); color: var(--ai); font-weight: 700; }
+.dd .it.mockf { color: var(--star); font-weight: 700; }
+.dd .grp { padding: 4px 14px 1px; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+.dd .sepl { border-top: 1px solid var(--line-soft); margin: 5px 0; }
+.dd .rule { margin: 2px 10px 4px; padding: 5px 8px; background: var(--panel); border-radius: 6px; color: var(--ink-2); font-size: 12px; white-space: normal; line-height: 1.45; }
+.dd .it.del { color: var(--del-ink); }
+.kebab { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink-2); }
+.kebab.on { border-color: var(--ai); color: var(--ai); background: var(--ai-soft); }
+.fpanel { position: absolute; z-index: 31; top: calc(100% + 6px); right: 0; width: 360px; background: #fff; border: 1.5px solid var(--star); border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.2); font-size: 13px; overflow: hidden; white-space: normal; }
+.fpanel .ph { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; font-weight: 700; }
+.fpanel .ex { margin: 6px 12px 0; color: #4b2f8f; background: var(--star-soft); border-radius: 6px; padding: 6px 9px; line-height: 1.45; font-size: 12.5px; }
+.fpanel .srch { margin: 8px 12px 4px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--ai); box-shadow: 0 0 0 3px var(--ai-soft); border-radius: 7px; height: 30px; padding: 0 8px; }
+.fpanel .srch .ic { color: var(--ink-3); }
+.fpanel .f { display: flex; gap: 7px; align-items: center; padding: 4px 14px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.fpanel .f.on { background: var(--star-soft); color: var(--star); font-weight: 700; }
+.fpanel .f mark { background: #fde68a; color: inherit; padding: 0; }
+.fpanel .scope { padding: 5px 12px 6px; color: var(--ink-3); font-size: 11.5px; border-top: 1px solid var(--line-soft); margin-top: 4px; }
+.fpanel .other { display: flex; gap: 6px; align-items: center; padding: 6px 12px 10px; }
+.fpanel .other input { flex: 1; height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font-family: var(--mono); font-size: 12px; }
+.slider { display: flex; align-items: center; gap: 10px; padding: 6px 14px 14px; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; flex: none; }
+.slider b { color: var(--ink); }
+.slider .rng { position: relative; flex: 1; max-width: 420px; }
+.slider input[type=range] { width: 100%; margin: 0; accent-color: var(--ai); }
+.slider .tick { position: absolute; top: 18px; width: 1px; height: 6px; background: var(--ink-3); }
+.slider .tl { position: absolute; top: 22px; transform: translateX(-50%); font-size: 10.5px; color: var(--ink-3); }
+.ovl-top { position: absolute; left: 0; top: 0; }
+
+/* 案内の帯（A6） */
+.hint { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; background: var(--star-soft); border-bottom: 1px solid #d9c9f6; color: #4b2f8f; padding: 7px 12px; font-size: 13px; flex: none; border-radius: 9px 9px 0 0; }
+.hint .st { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.hint .n { display: inline-flex; width: 20px; height: 20px; border-radius: 50%; background: var(--star); color: #fff; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 700; }
+.hint .ar { color: #a48bd6; }
+.hint .end { margin-left: auto; color: var(--ink-3); font-size: 12px; }
+
+/* 書く欄（場所の一覧つき。A2・A18・A22） */
+.compose { flex: none; background: #fff; border: 1.5px solid var(--star); border-radius: 9px; padding: 8px 12px 10px; }
+.compose .ch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-3); margin-bottom: 4px; }
+.compose .ch b { color: var(--ink); }
+.prow { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+.prow:hover, .prow.hot { background: var(--star-soft); box-shadow: 0 0 0 1.5px var(--star); }
+.prow .k { font-weight: 700; width: 52px; }
+.prow .m { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.prow .m.area { font-family: var(--sans); color: var(--star); font-weight: 700; font-size: 12.5px; }
+.prow .x { margin-left: auto; border: 0; background: none; color: var(--ink-3); font-size: 15px; line-height: 1; padding: 0 4px; }
+.prow .x:hover { color: var(--del-ink); }
+.thumb { width: 46px; height: 22px; border: 1px solid var(--line); border-radius: 3px; background: repeating-linear-gradient(135deg, #fff 0 4px, #f2f3f5 4px 8px); position: relative; flex: none; }
+.thumb::after { content: ""; position: absolute; inset: 4px 9px; border: 1.5px solid var(--star); border-radius: 50%; }
+.pn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--star); color: #fff; font-size: 11.5px; font-weight: 700; flex: none; }
+.compose .ta { margin-top: 6px; border: 1px solid var(--ai); border-radius: 7px; padding: 7px 10px; min-height: 48px; font-size: 13.5px; color: var(--ink); }
+.compose .acts { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.compose .acts .hint2 { flex: 1; font-size: 12px; color: var(--ink-3); }
+
+/* 右: 会話パネル */
+.pane { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.p-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px 6px 12px; white-space: nowrap; }
+.p-head b { font-size: 14px; }
+.p-status { display: flex; align-items: center; gap: 6px; padding: 0 12px 8px; border-bottom: 1px solid var(--line); }
+.p-head .cnt, .p-head .icb { flex: none; }
+.p-filter { display: flex; gap: 5px; padding: 6px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 0 9px; background: #fff; color: var(--ink-2); }
+.chip.on { border-color: var(--ai); background: var(--ai-soft); color: var(--ai); }
+.p-body { flex: 1; min-height: 0; overflow: hidden; padding: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.p-empty { margin: 24px 18px; text-align: center; color: var(--ink-3); font-size: 13px; }
+.tcard { margin: 0 10px; background: #fff; border: 1px solid var(--note-line); border-radius: 9px; overflow: hidden; }
+.tcard .chd { display: flex; align-items: center; gap: 7px; padding: 5px 10px; background: var(--note-bg); color: var(--note-ink); font-size: 12px; }
+.tcard .chd .loc { font-family: var(--mono); }
+.tag2 { margin-left: auto; font-size: 11px; border: 1px solid var(--note-line); border-radius: 999px; padding: 0 7px; background: #fff; }
+.msg { padding: 6px 10px; font-size: 13px; }
+.msg .who { display: block; font-size: 11.5px; font-weight: 700; color: var(--ink-2); }
+.msg .who.ag { color: var(--ai); }
+.msg p { margin: 1px 0 0; }
+.msg.you { background: var(--panel); }
+.msg.clip p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.working { margin: 4px 10px 8px; display: flex; align-items: center; gap: 8px; color: var(--ai); font-size: 12.5px; padding: 5px 9px; border: 1px dashed var(--ai); border-radius: 7px; background: var(--ai-soft); }
+.newbar { margin: 0 10px; display: flex; align-items: center; gap: 7px; background: var(--star); color: #fff; border: 0; border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 12.5px; box-shadow: 0 3px 10px rgba(123,79,208,.35); text-align: left; }
+.newbar .go { margin-left: auto; background: rgba(255,255,255,.22); border-radius: 5px; padding: 0 7px; }
+.thead { background: var(--note-bg); border-top: 1px solid var(--note-line); border-bottom: 1px solid var(--note-line); padding: 6px 12px; font-size: 12.5px; }
+.thead .bk { color: var(--ai); font-weight: 600; }
+.thead .loc { font-family: var(--mono); color: var(--note-ink); }
+.thead .acts { display: flex; gap: 12px; margin-top: 2px; }
+.thead .acts button { border: 0; background: none; padding: 0; color: var(--note-ink); text-decoration: underline; font-size: 12px; }
+.p-foot { border-top: 1px solid var(--line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 7px; background: var(--panel); }
+.p-foot .ta { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 6px 9px; color: var(--ink-3); min-height: 44px; font-size: 13px; }
+.p-foot .frow { display: flex; align-items: center; gap: 8px; }
+.p-foot .frow .btn.primary.post { margin-left: auto; }
+.hand { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--ai); background: #fff; color: var(--ai); font-weight: 700; font-size: 13px; white-space: nowrap; }
+.hand.ready { background: var(--ai); color: #fff; }
+.hand.off { color: var(--ink-3); background: var(--panel-2); border: 1px dashed var(--ink-3); cursor: not-allowed; }
+.hand .c { display: inline-flex; min-width: 18px; height: 18px; justify-content: center; align-items: center; border-radius: 9px; background: #fff; color: var(--ai); font-size: 11px; padding: 0 5px; }
+.waitnote { background: #fff; border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; color: var(--ink-2); font-size: 12.5px; line-height: 1.5; }
+.cmd { display: inline-flex; align-items: center; gap: 8px; margin-top: 5px; font-family: var(--mono); font-size: 12px; background: var(--ink); color: #e6e9ee; border-radius: 6px; padding: 2px 4px 2px 9px; }
+.cmd button { border: 0; font-family: var(--sans); font-size: 11.5px; color: #fff; background: rgba(255,255,255,.18); border-radius: 4px; padding: 0 7px; }
+/* 畳んだ会話パネル（縦帯） */
+.rail { align-items: center; gap: 10px; padding: 10px 0; }
+.rail .vt { writing-mode: vertical-rl; font-size: 12.5px; color: var(--ink-2); letter-spacing: .04em; }
+.rail .rdot { width: 9px; height: 9px; border-radius: 50%; background: var(--add-ink); }
+.rail .hv { writing-mode: vertical-rl; border: 1px solid var(--ai); background: #fff; color: var(--ai); font-weight: 700; font-size: 12.5px; border-radius: 7px; padding: 10px 4px; }
+.toast { position: absolute; z-index: 35; left: 50%; bottom: 18px; transform: translateX(-50%); }
+
+/* コードの見方（今どおり。A24 のタブだけ新しい） */
+.files .f { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 4px 8px 4px 14px; border-radius: 6px; color: var(--ink-2); font-family: var(--mono); font-size: 12.5px; }
+.files .f.on { background: var(--ai-soft); color: var(--ink); box-shadow: inset 3px 0 0 var(--ai); }
+.files .f .st { font-size: 11.5px; } .files .f .st .p { color: var(--add-ink); } .files .f .st .m { color: var(--del-ink); }
+.code { flex: 1; min-height: 0; overflow: hidden; background: #fff; display: flex; flex-direction: column; }
+.code .fh { display: flex; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 13px; }
+.code .fh .p { color: var(--add-ink); } .code .fh .m { color: var(--del-ink); }
+.ln { display: grid; grid-template-columns: 46px 46px 18px 1fr; font-family: var(--mono); font-size: 12.5px; line-height: 22px; }
+.ln .n { text-align: right; padding-right: 8px; color: var(--ink-3); background: var(--panel); }
+.ln.add { background: var(--add-bg); } .ln.add .n { background: #cdeed6; color: var(--add-ink); }
+.ln.del { background: var(--del-bg); } .ln.del .n { background: #f8d3cf; color: var(--del-ink); }
+.ln .s { text-align: center; color: var(--ink-3); }
+.ln code { white-space: pre; font-size: 12.5px; }
+
+/* ===== 動いているページ（/mock.html の料金カード）。中身は日本語のまま ===== */
+.pg { --u: calc(var(--z, .5) * 1px); position: relative; width: calc(var(--w, 1280) * var(--u)); height: calc(1080 * var(--u)); background: #fff; color: #1f2328; font-family: var(--sans); line-height: 1.3; overflow: hidden; }
+.pg-in { position: absolute; left: calc(64 * var(--u)); right: calc(64 * var(--u)); top: calc(56 * var(--u)); }
+.pg-h1 { font-size: calc(30 * var(--u)); line-height: calc(40 * var(--u)); font-weight: 800; }
+.pg-sub { font-size: calc(15 * var(--u)); line-height: calc(24 * var(--u)); color: #6b7280; margin-bottom: calc(32 * var(--u)); }
+.pg-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: calc(24 * var(--u)); }
+.pg-lab { font-size: calc(12 * var(--u)); line-height: calc(18 * var(--u)); color: #6b7280; font-weight: 700; margin-bottom: calc(8 * var(--u)); white-space: nowrap; }
+.pg-card { position: relative; height: calc(300 * var(--u)); padding: calc(28 * var(--u)); border: calc(1.5 * var(--u)) solid #e5e7eb; border-radius: calc(14 * var(--u)); background: #fff; }
+.pg-plan { font-size: calc(15 * var(--u)); line-height: calc(22 * var(--u)); font-weight: 600; }
+.pg-price { font-size: calc(40 * var(--u)); line-height: calc(52 * var(--u)); font-weight: 800; white-space: nowrap; }
+.pg-price small { font-size: calc(14 * var(--u)); font-weight: 400; color: #6b7280; }
+.pg-ul { margin: calc(16 * var(--u)) 0 calc(24 * var(--u)); padding-left: calc(20 * var(--u)); font-size: calc(15 * var(--u)); line-height: calc(30 * var(--u)); }
+.pg-ul li { white-space: nowrap; }
+.pg-btn { position: relative; height: calc(40 * var(--u)); border-radius: calc(8 * var(--u)); display: flex; align-items: center; justify-content: center; font-size: calc(14 * var(--u)); font-weight: 700; background: #222; color: #fff; }
+.pg-card.b { background: linear-gradient(135deg, #7c5cf6, #a855f7); color: #fff; border-color: transparent; }
+.pg-card.b small { color: rgba(255,255,255,.8); }
+.pg-card.b .pg-btn { background: #fff; color: #7c3aed; }
+.pg-card.c { border: calc(2 * var(--u)) solid #ff8a00; }
+.pg-card.c .pg-btn { background: #ff8a00; color: #fff; }
+.pg-card.c .pg-btn.now { background: #fff; color: #ff8a00; border: calc(1.5 * var(--u)) solid #ff8a00; }
+.pg.mock .pg-btn { border-radius: 999px; }
+.pg-badge { position: absolute; top: calc(-11 * var(--u)); left: calc(20 * var(--u)); background: #ff8a00; color: #fff; font-size: calc(11 * var(--u)); line-height: calc(20 * var(--u)); padding: 0 calc(9 * var(--u)); border-radius: 999px; font-weight: 700; white-space: nowrap; }
+.pg-faq { position: absolute; left: calc(64 * var(--u)); right: calc(64 * var(--u)); top: calc(790 * var(--u)); }
+.pg-faq h2 { margin: 0 0 calc(12 * var(--u)); font-size: calc(22 * var(--u)); line-height: calc(30 * var(--u)); }
+.pg-faq div { border-top: calc(1 * var(--u)) solid #e5e7eb; font-size: calc(15 * var(--u)); line-height: calc(54 * var(--u)); display: flex; justify-content: space-between; }
+.pg-faq div::after { content: "+"; color: #9ca3af; }
+.pe { position: relative; }
+.pg-badge.pe { position: absolute; }
+.pg-ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 2; }
+/* 印（ページの上に重ねる。大きさは縮尺に関わらず一定） */
+.m-hl { outline: 2px solid var(--star); outline-offset: 2px; background-color: rgba(123,79,208,.12); border-radius: 3px; }
+.m-chg { outline: 2px solid #d64545; outline-offset: 2px; border-radius: 3px; }
+.m-flash { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--ai), 0 0 18px 8px rgba(59,78,168,.55); animation: flash 1.4s ease-in-out infinite; border-radius: 4px; }
+@keyframes flash { 50% { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--ai), 0 0 4px 2px rgba(59,78,168,.2); } }
+.pin { position: absolute; z-index: 3; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--star); color: #fff; font: 700 12px/22px var(--sans); text-align: center; box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0,0,0,.3); }
+.pin.blue { background: var(--ai); }
+.pe > .pin { left: -16px; top: 50%; }
+.gdot { position: absolute; z-index: 3; right: -5px; top: -5px; width: 10px; height: 10px; border-radius: 50%; background: #9aa1ab; box-shadow: 0 0 0 2px #fff; cursor: default; }
+.gdot::after { content: attr(data-c); position: absolute; left: 14px; top: -5px; background: var(--ink); color: #fff; font: 700 11px/18px var(--sans); border-radius: 4px; padding: 0 6px; display: none; white-space: nowrap; }
+.gdot:hover::after, .gdot.show::after { display: block; }
+
+/* ===== 狭い画面（電話の枠） ===== */
+.phones { display: flex; gap: 40px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
+.phone-cap { font-size: 13px; color: var(--ink-2); margin: 0 0 6px; text-align: center; }
+.phone { position: relative; width: 414px; height: 800px; border: 12px solid #22262c; border-radius: 40px; background: var(--panel); overflow: hidden; font-size: 13px; line-height: 1.45; }
+.phone .ptop { display: flex; align-items: center; gap: 7px; height: 52px; padding: 0 10px; background: #fff; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.phone .ptop .pg-name { font-family: var(--mono); font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.phone .ptop .adot { width: 9px; height: 9px; border-radius: 50%; background: var(--add-ink); flex: none; }
+.phone .ptop .csel { height: 30px; }
+.phone .ptop .seg > button { height: 28px; padding: 0 9px; }
+.phone .ptop .kebab { height: 30px; width: 32px; }
+.phone .pbody { padding: 8px; }
+.phone .frame { flex: none; }
+.phone .pbody { height: calc(100% - 52px); }
+.phone .pbody .frame { height: 100%; }
+.phone .dd { right: 8px; top: 58px; min-width: 300px; font-size: 14px; }
+.phone .dd .it { padding: 7px 16px; }
+.fbar { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 5px; background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 8px 22px rgba(0,0,0,.22); z-index: 20; }
+.fbar .ft { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 10px; border: 0; background: none; border-radius: 13px; color: var(--ink-2); font-size: 11px; font-weight: 600; }
+.fbar .ft .ic { width: 20px; height: 20px; }
+.fbar .ft.on { background: var(--star); color: #fff; }
+.fbar .ft.hd { color: var(--ai); font-weight: 800; }
+.fbar .vsep { height: 34px; }
+
+/* ===== v2 の見直しで足したもの（A28〜A30） ===== */
+.upd { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--note-line); background: var(--note-bg); color: var(--note-ink); border-radius: 999px; font-size: 12.5px; font-weight: 700; }
+.upd .ic { width: 14px; height: 14px; }
+.chg-h { flex-wrap: wrap; gap: 2px 6px; }
+.chg-h .vs { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
+.chg-h .vs b { color: var(--ink); }
+.chg-h .kebab { width: 24px; height: 22px; }
+.sq.gone { background: #fff; border: 1.5px solid var(--ink-3); }
+.pg-rib { position: absolute; top: calc(14 * var(--u)); right: calc(14 * var(--u)); background: #10b981; color: #fff; font-size: calc(11 * var(--u)); line-height: calc(20 * var(--u)); padding: 0 calc(8 * var(--u)); border-radius: calc(4 * var(--u)); font-weight: 700; }
+.pg-rib.pe { position: absolute; }
+.hand.off + .nn, .nn { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.working.wait { color: var(--ink-2); border-color: var(--ink-3); background: #fff; }
+.working.wait .ic { width: 14px; height: 14px; }
+.rail { position: relative; }
+.rail .rdot.gray { background: #9aa1ab; }
+.rail .hv.off { border: 1px dashed var(--ink-3); color: var(--ink-3); background: var(--panel-2); cursor: not-allowed; }
+.railnote { position: absolute; right: 50px; bottom: 12px; width: 270px; z-index: 30; background: #fff; border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 8px 22px rgba(0,0,0,.16); padding: 9px 11px; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+.railnote b { color: var(--ink); }
+.railnote .cmd { display: flex; width: max-content; }
+.railnote.small { width: auto; white-space: nowrap; padding: 4px 10px; color: var(--ink-3); }
+.railnote::after { content: ""; position: absolute; right: -6px; bottom: 26px; border: 6px solid transparent; border-right: 0; border-left-color: #fff; filter: drop-shadow(1px 0 0 var(--line)); }
+.railnote.small::after { bottom: 8px; }
+.prow .pn { border: 0; cursor: pointer; }
+.prow .pn:hover { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--star); }
+.prev { font-size: 11px; color: var(--ink-3); border: 1px dashed var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.ref { display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--star); background: var(--star-soft); border-radius: 4px; padding: 0 4px; }
+.ref.re { box-shadow: 0 0 0 2px var(--ai); color: var(--ai); background: var(--ai-soft); }
+.ref.dead { color: var(--del-ink); background: var(--del-bg); text-decoration: line-through wavy var(--del-ink); box-shadow: 0 0 0 1.5px var(--del-ink); }
+.compose .acts .why { flex: 1; font-size: 12.5px; color: var(--del-ink); font-weight: 600; }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.phone .ptabs { display: flex; align-items: center; gap: 6px; height: 46px; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.phone .ptabs .brand { font-size: 15px; }
+.phone .ptabs .mtab { height: 30px; padding: 0 9px; font-size: 13px; gap: 5px; }
+.phone .ptabs .mtab .ic { width: 15px; height: 15px; }
+.phone .ptop { height: 46px; gap: 5px; padding: 0 8px; }
+.phone .ptop .pg-name { font-size: 12px; }
+.phone .ptop .csel { padding: 0 6px; height: 28px; }
+.phone .ptop .seg > button { padding: 0 7px; }
+.phone .ptop .kebab { height: 28px; width: 28px; }
+.pill.sm { height: 22px; padding: 0 7px; font-size: 11.5px; gap: 4px; }
+.phone .pbody { height: calc(100% - 92px); }
+.phone .dd { top: 98px; }
+.fbar { left: 10px; transform: none; }
+.fhand { position: absolute; z-index: 21; right: 12px; bottom: 92px; display: inline-flex; align-items: center; gap: 7px; height: 44px; padding: 0 16px; border: 0; border-radius: 22px; background: var(--ai); color: #fff; font-weight: 800; font-size: 14px; box-shadow: 0 8px 22px rgba(59,78,168,.4); }
+.fhand .ic { width: 18px; height: 18px; }
+.fhand .c { display: inline-flex; min-width: 20px; height: 20px; justify-content: center; align-items: center; border-radius: 10px; background: #fff; color: var(--ai); font-size: 11.5px; padding: 0 6px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-el" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.5 2"/><path d="M7 7l6 2.5-2.6.9-.9 2.6z" fill="currentColor"/></symbol>
+  <symbol id="i-ar" viewBox="0 0 16 16"><path d="M3 13L12.5 3.5M7 3.5h5.5V9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 16 16"><path d="M3 13l1-3.5 7-7 2.5 2.5-7 7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-int" viewBox="0 0 16 16"><path d="M4 2l8 6.5-3.6.6 2 4-1.6.8-2-4L4 12.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-one" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-sbs" viewBox="0 0 16 16"><rect x="1.5" y="3" width="5.6" height="10" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="8.9" y="3" width="5.6" height="10" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-ovl" viewBox="0 0 16 16"><rect x="1.5" y="2" width="9" height="8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="5.5" y="6" width="9" height="8" rx="1.2" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.6" fill="currentColor"/></symbol>
+  <symbol id="i-rl" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3.3H9.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M12.5 10.2A5.5 5.5 0 0 1 5.8 3.5a5.5 5.5 0 1 0 6.7 6.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 1.8h5.2L12.5 5v9.2H4z M9 1.8V5.3h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+  <symbol id="i-srch" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.2 10.2L14 14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="12.5" cy="8" r="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 16 16"><path d="M2 8h9M8 4.5L11.5 8 8 11.5M13.5 3v10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-page" viewBox="0 0 16 16"><rect x="1.5" y="2" width="13" height="9.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 14h5M8 11.5V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-code" viewBox="0 0 16 16"><path d="M5.5 4L1.8 8l3.7 4M10.5 4l3.7 4-3.7 4M9.2 2.5L6.8 13.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-col1" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-col2" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.5v11" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-wrap" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h9a2 2 0 0 1 0 4H8m1.5-1.6L8 12l1.5 1.6M2.5 12h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star" viewBox="0 0 16 16"><path d="M8 2l1.8 3.8 4.1.5-3 2.8.8 4.1L8 11.2 4.3 13.2l.8-4.1-3-2.8 4.1-.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 16 16"><path d="M4.5 2.5v11m0 0L2.5 11.5m2 2 2-2M9 4h5M9 8h3.5M9 12h2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<div class="doc">
+  <h1>kemi --live 画面モック v2（使い勝手の見直し・採用）</h1>
+  <p class="lead"><b>--live の使い勝手の見直しで採用した画面のモック。</b>3 回の「絵で選ぶ」質問でどれも案 A を選んだ結果（Q5 は英語の言い換えとして読み替え）を、1 つの画面にまとめた。前の採用モック <code>ui-mock-live.html</code> の置き方（左にページのツリーと変化の一覧、中央にページ、右に会話）と見た目はそのまま引き継ぐ。<b>モックと仕様（<code>docs/spec/live.md</code>・<code>live-compare.md</code>・<code>agent-channel.md</code>・<code>kemi.md</code>）が食い違うときは仕様が正しい。</b></p>
+  <p class="lead">2026-10-07 の仕様の見直し（A28〜A30）を反映した。下のボタンで状態を切り替える。画面の中の文言は英語、ページ（/mock.html の料金カード）の中身はページの内容なので日本語のまま。紫の札は、その状態で絵に描いた決定（A 番号）。点線の札は絵ではなく説明だけで示すもの。変えないと決めたこと（R1: 渡した時点のスナップショットは表示中の幅だけ、R2: 承認ダイアログの数え方）は今どおりなので描いていない。A4（リリースは使い勝手を直してから）は進め方の決定なので画面には出ない。</p>
+  <div class="switch" role="group" aria-label="状態">
+    <span class="g">広い画面（1280）</span>
+    <button type="button" data-s="1">1 最初の画面</button>
+    <button type="button" data-s="2">2 書いている途中</button>
+    <button type="button" data-s="3">3 渡した後</button>
+    <button type="button" data-s="4">4 並べて見る</button>
+    <button type="button" data-s="5">5 重ねて見る</button>
+    <button type="button" data-s="6">6 Mock file…</button>
+    <button type="button" data-s="7">7 変化の一覧</button>
+    <button type="button" data-s="8">8 Record now</button>
+    <button type="button" data-s="9">9 別スレッドの新着</button>
+    <button type="button" data-s="10">10 Code changes</button>
+    <span class="g">狭い画面（390）</span>
+    <button type="button" data-s="11">11 狭い画面</button>
+  </div>
+  <div class="about" id="about"></div>
+</div>
+<div class="screen-outer"><div class="screen" id="screen"></div></div>
+<p class="foot">このモックは見た目と流れを決めるための絵で、数値（倍率・時刻・件数）は例。</p>
+
+<script>
+"use strict";
+const ic = (id, cls = "ic") => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+
+/* ---------- 状態ごとの説明（画面の外。日本語） ---------- */
+const ABOUT = {
+  1: { t: "最初の画面（コメントはまだ無い）", ags: ["A5", "A6", "A7", "A8", "A9", "A10", "A11", "A16", "A17", "A23", "A24", "A28-UA2", "A29-D10"], cap: ["A22-1"],
+       d: "上部バーの左端に大きなモードのタブ。ページの見方の間は「Live review · /mock.html · 1280px」とエージェントの状態だけで、コード用の操作は出ない。会話パネルは畳んだ細い縦帯で始まり、Hand to agent は縦帯に残る。つながる前は押せない見た目で、kemi wait（レビューの id 付き）のコピーを添える。ページの上の 3 ステップの案内は、ページへのコメントを初めて保存したら消え、全部消しても二度と出ない。道具は Now の枠のすぐ上で、既定は Element（選んだだけでは書く欄は開かない）。見方は既定で Now だけ。" },
+  2: { t: "書いている途中", subs: [["places", "場所 3 つ"], ["renum", "2 を外した後"], ["dangling", "3 を外した後"]], ags: ["A2", "A30", "A18", "A19", "A22-1", "A22-2", "A28-UL4", "A29-D5"],
+       d: "書きかけの場所だけ紫の丸数字。保存済みの c1 の印は小さな灰色の点（触れると c1）。本文で場所を指すのは #n の形で、場所の行の丸数字を押すと #n を本文に入れる。場所を外して詰め直すと本文の #n も同じ対応で書き換える（「2 を外した後」で #3 が #2 に変わる）。外した場所を指す #n が本文に残ると、その箇所を赤く示して Comment を押せなくする（「3 を外した後」）。# の付かない数字は参照ではない。余白をペンで囲んだ場所は「Area only (no element)」で、行の小さな絵は画面の上だけのプレビュー（場所ごとの画像は送らない）。行の × や丸数字は押して確かめられる。" },
+  3: { t: "渡した後", subs: [["waiting", "渡した直後"], ["working", "受け取った後"], ["c1replied", "c1 にだけ返事"]], ags: ["A1", "A10", "A26", "A9", "A29-D4", "A29-D5", "A28-UL11", "A29-D7"], cap: ["A22-5"],
+       d: "c1 と c2 をまとめて渡した。渡したスレッドの末尾の行は、まず「Waiting for the agent to pick this up」、エージェントが受け取ると「Agent is working…」。返事が来たスレッドの行だけ消える（「c1 にだけ返事」では c2 の行は残る）。返事の後の状態は Agent: replied（次の kemi wait まで。応答なしにはしない）。エージェントがコードを変えたので上部バーに更新バッジが出る（押すとコードの見方に切り替えて読み直す）。渡すものが無い間の Hand to agent は押せない見た目で Nothing new to hand。保存して書く欄が閉じた後は、ページの枠が下まで伸びて白い帯は残らない（A22-5）。" },
+  4: { t: "並べて見る", ags: ["A5", "A11", "A13", "A22-4", "A17", "A29-D5"],
+       d: "見出しの右端のアイコンで Side by side に切り替えたときだけ、Compare with が出る。自動で選ばれた実物の名前（Auto — Handed 2 (last handed)）を出し、一覧は Handed n / Start / Recorded n / Mock file… の順。自動の規則（最後に渡した時点 → 開始時 → 最後に手で取った時点）は一覧の中の小さな説明。左右の見出しは高さを揃え、長い名前は … で切る。この状態と 5〜7 は会話パネルを畳んだ縦帯で描いた（Hand to agent は縦帯に残る）。" },
+  5: { t: "重ねて見る", subs: [["mid", "途中（60%）"], ["end", "右端"], ["start", "左端"]], ags: ["A12", "A11", "A29-D11"],
+       d: "見出しに両方の名前と割合（Now ⇄ Before (start) · 60%）。スライダーの両端に Now / Before と目盛り。端に寄せても重ねていることが分かる見出しにする（Overlay — Before (start) only visible / Overlay — Now only visible）。見方の名前の「Now only」とは同じ文言にしない。スライダーは動かせる。" },
+  6: { t: "Mock file…", subs: [["panel", "パネル"], ["assigned", "割り当てた後"], ["removed", "外した後"]], ags: ["A14", "A25", "A22-6", "A17"],
+       d: "比べる相手の一覧の最後の「Mock file…」から小さなパネル。一行の説明・検索・git が無視しない .html/.htm の一覧（配れる範囲の中だけ、.git の中は出さない）。無視されたファイルは下の欄にパスを入れて割り当てる。割り当て中は「Mock: mock-d.html」で、読み直す・外すは横の … メニュー。外すと Undo 付きの知らせ。" },
+  7: { t: "変化の一覧", subs: [["list", "一覧"], ["gone", "消えた要素を押した後"], ["mock", "モックと比べているとき"]], ags: ["A15", "A29-D1", "A29-D2", "A28-UL6"],
+       d: "要素ごとに 1 行、色は色見本。行を押すとページのその要素までスクロールして印を光らせる（押して確かめられる）。Now だけの間も一覧の見出しに比べる相手（vs Handed 2）を出し、モックと比べているときは「Mock: mock-d.html」とその … メニューを見出しに出す。消えた要素も 1 行出し、押すと並べる見方に切り替えて Before 側で光らせる。「Moved only (7)」は既定で畳み、何なのかを一言で説明。html/body は「動いただけ」から外す。下に色の点の凡例。" },
+  8: { t: "Now だけの見方で Record now", subs: [["notice", "押した直後"], ["compare", "Compare → を押した後"]], ags: ["A3", "A27", "A17", "A22-3"],
+       d: "見方は Now だけのまま変えず、比べる相手だけを取ったもの（Recorded 1）に切り替え、知らせに「Compare →」を付ける。押すと並べる見方になる。幅の入力欄に 1000 を入れて離れたところ（Enter を待たずに効き、今の幅が欄に残る。A22-3）。" },
+  9: { t: "別スレッドの新着", ags: ["A20", "A19", "A22-7", "A10", "A29-D5"],
+       d: "c1 を開いている間に c2 へ返事が届いた。開いているスレッドの上に「New reply in c2 →」、会話パネルの見出しに新着の数。スレッドを開いている間だけ、そのコメントの印を番号付き（青）で出す。Show on page はその場所までスクロールして光らせる（押して確かめられる）。" },
+  10: { t: "Code changes のタブを選んだとき", ags: ["A24", "A8"],
+       d: "上部バーはコードのレビュー用の操作（数字、1 列/2 列、Wrap、focused、Sort）に今どおり切り替わる。タブには変更ファイルの数。今の Page | Code の小さな切り替えは無い。" },
+  11: { t: "狭い画面（390）", ags: ["A21", "A9", "A28-UL7", "A28-UL8", "A29-D6"],
+       d: "上部バーの 1 段目にモードのタブを短く（Page / Code · 3）。その下の 1 行にページ名・幅・Now / Before・エージェントの状態・… メニュー。比べる相手・Mock file…・Fit / 100%・Record now は … メニューの中。重ねて透かすは狭い画面では出さない。道具は下に浮かぶツールバー、Hand to agent はその上に浮かぶボタン（全モード共通）。右は … を開いたところ（Before を表示中）。" },
+};
+
+/* ---------- ページ（/mock.html） ---------- */
+/* o.v: "now" | "before" | "mock" ; o.marks: 描く印 */
+function pricingPage(o = {}) {
+  const v = o.v || "now", mk = o.marks || {};
+  const cls = (k) => [mk.hl === k ? "m-hl" : "", mk.chg && mk.chg.includes(k) ? "m-chg" : "", mk.flash === k ? "m-flash" : ""].join(" ");
+  const extra = (k) => (mk.pins && mk.pins[k] ? mk.pins[k] : "") + (mk.dots && mk.dots[k] ? `<span class="gdot ${mk.dots[k].show ? "show" : ""}" data-c="${mk.dots[k].c}"></span>` : "");
+  const bLi = v === "now" ? "チーム 10 人まで" : "チーム 5 人まで";
+  const sub = v === "mock" ? "案 D: B のグラデーションに A のピル型ボタン。" : "料金カードの見た目の案。A・B・C を見比べる。";
+  const card = (k, lab, li2, btn) => `<div><div class="pg-lab">${lab}</div><div class="pg-card ${k}">${k === "a" && v === "before" ? `<span class="pg-rib pe ${cls("rib-a")}">おすすめ</span>` : ""}${k === "c" ? `<span class="pg-badge pe ${cls("badge")}" data-pe="badge">いちばん人気${extra("badge")}</span>` : ""}<div class="pg-plan">Pro</div><div class="pg-price">¥1,200 <small>/ 月</small></div><ul class="pg-ul"><li>プロジェクト無制限</li><li><span class="pe ${cls("li-" + k)}" data-pe="li-${k}">${li2}${extra("li-" + k)}</span></li><li>優先サポート</li></ul>${btn}</div></div>`;
+  const cBtn = `<div class="pg-btn pe ${v === "now" ? "now" : ""} ${cls("btn-c")}" data-pe="btn-c">はじめる${extra("btn-c")}</div>`;
+  return `<div class="pg ${v === "mock" ? "mock" : ""}" style="--w:${o.w || 1280}"><div class="pg-in"><div class="pg-h1">Pro プラン</div><div class="pg-sub">${sub}</div><div class="pg-cols">${card("a", "案 A — シンプル", "チーム 5 人まで", `<div class="pg-btn">はじめる</div>`)}${card("b", "案 B — 色で目立たせる", v === "mock" ? "チーム 5 人まで" : bLi, `<div class="pg-btn">はじめる</div>`)}${card("c", "案 C — バッジ付き", "チーム 5 人まで", cBtn)}</div></div><div class="pg-faq"><h2>よくある質問</h2><div>途中でプランを変えられますか？</div><div>請求書は発行できますか？</div><div>チームの人数を増やすには？</div></div>${mk.ink || ""}</div>`;
+}
+const at = (x, y) => `left:calc(${x} * var(--u));top:calc(${y} * var(--u))`;
+
+/* ---------- 部品（画面の中。英語） ---------- */
+const AGENT = { none: ["", "Agent: not connected"], ready: ["ok", "Agent: ready (you can hand)"], working: ["busy", "Agent: working…"], replied: ["done", "Agent: replied"] };
+function agentPill(a) {
+  const [c, t] = AGENT[a];
+  return `<span class="pill ${c}">${a === "working" ? `<span class="dots"><i></i><i></i><i></i></span>` : `<span class="dot"></span>`}${t}</span>`;
+}
+function topBar(o) {
+  const tabs = `<div class="mtabs" role="tablist"><button type="button" class="mtab ${o.mode === "page" ? "on" : ""}" role="tab" data-go="1">${ic("i-page")}Live page</button><button type="button" class="mtab ${o.mode === "code" ? "on" : ""}" role="tab" data-go="10">${ic("i-code")}Code changes<span class="n">· 3 files</span></button></div>`;
+  const mid = o.mode === "page"
+    ? `<span class="lvmeta"><b>Live review</b> · <span class="mono">/mock.html</span> · ${o.w || 1280}px</span>${agentPill(o.agent)}${o.update ? `<button type="button" class="upd tip-on" data-tip="Opens the code view and reloads it">${ic("i-rl")}Code updated</button>` : ""}<span class="sp"></span>`
+    : `<span class="cmeta"><span><b>Files</b> 3</span><span><b>Changes</b> <span class="p">+46</span> <span class="m">−6</span></span><span class="seen">Seen 1 / 3</span></span><span class="sp"></span><span class="seg icons"><button type="button" class="on" data-tip="One column">${ic("i-col1")}</button><button type="button" data-tip="Two columns">${ic("i-col2")}</button></span><button type="button" class="icb" data-tip="Wrap">${ic("i-wrap")}</button><button type="button" class="icb" data-tip="Focused">${ic("i-star")}</button><button type="button" class="icb" data-tip="Sort">${ic("i-sort")}</button>`;
+  return `<div class="top"><span class="brand">kemi</span>${tabs}${mid}<button type="button" class="icb" data-tip="Theme">${ic("i-moon")}</button><button type="button" class="icb ${o.pane === false ? "" : "on"}" data-tip="${o.pane === false ? "Open conversation" : "Close conversation"}">${ic("i-chat")}${o.threads ?? 0}</button><button type="button" class="btn primary">Approve</button><button type="button" class="btn dark">Request changes</button></div>`;
+}
+function band(o) {
+  const w = o.w || 1280, preset = [390, 768, 1280].includes(w);
+  return `<div class="band"><span class="lbl">Width</span><span class="seg">${[390, 768, 1280].map((x) => `<button type="button" class="${x === w ? "on" : ""}">${x}</button>`).join("")}</span><input class="winput ${preset ? "" : "set"}" aria-label="Width" placeholder="320–3840" value="${preset ? "" : w}"><span class="vsep"></span><button type="button" class="icb rec ${o.recOn ? "on" : ""} ${o.recTip ? "tip-on" : ""}" data-tip="Record now">${ic("i-cam")}</button>${o.notice || ""}</div>`;
+}
+function toolbar(tool, note) {
+  const T = [["el", "Element", "i-el"], ["ar", "Arrow", "i-ar"], ["pen", "Pen", "i-pen"], ["int", "Interact", "i-int"]];
+  return `<div class="toolbar">${T.map(([k, n, i]) => `<button type="button" class="tool ${k === tool ? "on" : ""}">${ic(i)}${n}</button>`).join("")}${note ? `<span class="hint-r">${note}</span>` : ""}</div>`;
+}
+const hintBand = `<div class="hint"><span class="st"><span class="n">1</span>Point at a place on the page</span><span class="ar">→</span><span class="st"><span class="n">2</span>Write, then Comment</span><span class="ar">→</span><span class="st"><span class="n">3</span>Hand to agent</span><span class="end">Shown until you save your first page comment</span></div>`;
+function views(v) {
+  const V = [["one", "Now only", "i-one"], ["sbs", "Side by side", "i-sbs"], ["ovl", "Overlay", "i-ovl"]];
+  return `<span class="seg icons">${V.map(([k, n, i]) => `<button type="button" class="${k === v ? "on" : ""}" data-tip="${n}" data-go="${k === "sbs" ? 4 : k === "ovl" ? 5 : ""}">${ic(i)}</button>`).join("")}</span>`;
+}
+const fitSeg = (fit = true) => `<span class="seg"><button type="button" class="${fit ? "on" : ""}" data-fit="1">Fit</button><button type="button" class="${fit ? "" : "on"}" data-fit="0">100%</button></span>`;
+const reloadBtn = (tip) => `<button type="button" class="icb ${tip ? "tip-on" : ""}" data-tip="Reload page">${ic("i-rl")}</button>`;
+function compareList(cur) {
+  const it = (n, s, on) => `<div class="it ${on ? "on" : ""}">${on ? "✓ " : ""}${n}<span class="s">${s}</span></div>`;
+  return `<div class="dd"><div class="it on">✓ Auto — Handed 2 <span class="s">(last handed)</span></div><div class="rule">Auto picks, in order: the last snapshot you handed → Start → the last one you recorded.</div><div class="sepl"></div>${it("Handed 2", "14:20")}${it("Handed 1", "14:02")}${it("Start", "13:51")}${it("Recorded 1", "14:25")}<div class="sepl"></div><div class="it mockf">${ic("i-file")}Mock file…</div></div>`;
+}
+function mockPanel() {
+  const f = (p, on) => `<div class="f ${on ? "on" : ""}">${ic("i-file")}<span>${p}</span></div>`;
+  return `<div class="fpanel"><div class="ph">${ic("i-file")}Mock file</div><div class="ex">A mock is another HTML file (for example a design idea) to put next to or over this page.</div><div class="srch">${ic("i-srch")}<span>mock</span></div>${f("docs/<mark>mock</mark>-d.html", true)}${f("docs/<mark>mock</mark>-e.html")}${f("design/pricing-<mark>mock</mark>.html")}${f("<mark>mock</mark>.html")}<div class="scope">HTML files git doesn't ignore (tracked or untracked), inside the folder kemi serves.</div><div class="other"><input aria-label="Other file" placeholder="Other file, e.g. build/preview.html"><button type="button" class="btn sm">Assign</button></div></div>`;
+}
+function compareCtl(o) {
+  return `<span class="lbl">Compare with</span><span class="anchor"><button type="button" class="csel ${o.open ? "open" : ""}">${o.name}</button>${o.drop || ""}</span>${o.kebab ? `<span class="anchor"><button type="button" class="kebab ${o.kebabOpen ? "on" : ""}" aria-label="Mock actions">${ic("i-more")}</button>${o.kebabOpen ? `<div class="dd" style="min-width:170px"><div class="it">${ic("i-rl")}Reload mock</div><div class="it del">Remove mock</div></div>` : ""}</span>` : ""}`;
+}
+function nowOnlyFrame(o) {
+  return `<div class="frame">${o.hint ? hintBand : ""}<div class="fhead"><span class="name">Now</span><span class="src">/mock.html · ${o.w || 1280}</span><span class="zl" data-zl>×—</span>${fitSeg(true)}<span class="sp"></span>${reloadBtn(o.reloadTip)}${views("one")}</div><div class="vp" data-fit="${o.w || 1280}">${pricingPage({ v: "now", w: o.w, marks: o.marks })}</div></div>`;
+}
+function sbsStage(o) {
+  return `<div class="frame flat" style="z-index:5"><div class="fhead"><span class="name">Side by side</span><span class="src">/mock.html · 1280</span>${fitSeg(true)}<span class="sp"></span>${compareCtl(o.cmp)}${reloadBtn()}${views("sbs")}</div></div>
+  <div class="panes"><div class="frame"><div class="fhead"><span class="name">Before</span><span class="src">${o.beforeName}</span><span class="sp"></span><span class="zl" data-zl>×—</span></div><div class="vp" data-fit="1280">${pricingPage({ v: o.beforeV || "before", marks: o.bMarks })}</div></div>
+  <div class="frame"><div class="fhead"><span class="name">Now</span><span class="src">/mock.html · 1280</span><span class="sp"></span><span class="zl" data-zl>×—</span></div><div class="vp" data-fit="1280">${pricingPage({ v: "now", marks: o.nMarks })}</div></div></div>`;
+}
+function overlayFrame(val) {
+  return `<div class="frame"><div class="fhead"><span class="name" id="ovlName"></span><span class="sp"></span><span class="zl" data-zl>×—</span>${fitSeg(true)}<span class="vsep"></span>${compareCtl({ name: `Start <span class="s">· 13:51</span>` })}${reloadBtn()}${views("ovl")}</div>
+  <div class="slider"><b>Now</b><span class="rng"><input type="range" min="0" max="100" step="1" value="${val}" id="ovlRange" aria-label="Opacity of Before"><span class="tick" style="left:0"></span><span class="tl" style="left:0">0</span><span class="tick" style="left:50%"></span><span class="tl" style="left:50%">50</span><span class="tick" style="left:100%"></span><span class="tl" style="left:100%">100</span></span><b>Before</b><span class="dim">(start)</span></div>
+  <div class="vp" data-fit="1280"><div>${pricingPage({ v: "now", marks: { chg: ["li-b", "btn-c"] } })}</div><div class="ovl-top" id="ovlTop">${pricingPage({ v: "before" })}</div></div></div>`;
+}
+
+/* 左の列 */
+function tree(o) {
+  const vsTxt = o.mock ? `vs <b>Mock: mock-d.html</b>` : `vs ${o.vs}`;
+  const kebab = o.mock ? `<span class="anchor"><button type="button" class="kebab on" aria-label="Mock actions">${ic("i-more")}</button><div class="dd" style="min-width:170px;right:0"><div class="it">${ic("i-rl")}Reload mock</div><div class="it del">Remove mock</div></div></span>` : "";
+  const head = (n) => `<div class="chg-h"><span>Changes${n ? " " + n : ""}</span><span class="vs">${vsTxt}${kebab}</span></div>`;
+  const rows = o.changes === "none"
+    ? `${head()}<div class="chg-none">No changes since ${o.vs}.</div>`
+    : `${head(3)}
+      <div class="crow ${o.hot === "btn-c" ? "hot" : ""}" data-chg="btn-c"><span class="sq"></span><span><span class="el">button “はじめる”</span> <span class="props">— color <span class="sw" style="background:#fff"></span>→<span class="sw" style="background:#ff8a00"></span>, background <span class="sw" style="background:#ff8a00"></span>→<span class="sw" style="background:#fff"></span>, border</span><span class="where">in card 案 C</span></span></div>
+      <div class="crow ${o.hot === "li-b" ? "hot" : ""}" data-chg="li-b"><span class="sq"></span><span><span class="el">li</span> <span class="props">— text <del>チーム 5 人まで</del> → <ins>チーム 10 人まで</ins></span><span class="where">in card 案 B</span></span></div>
+      <div class="crow ${o.hot === "gone" ? "hot" : ""}" data-chg="gone"><span class="sq gone"></span><span><span class="el">span “おすすめ”</span> <span class="props">— removed</span><span class="where">in card 案 A · shown on Before</span></span></div>
+      <div class="fold">▸ Moved only (7)<span>Layout shifted; nothing else changed.</span></div>
+      <div class="legend"><span><span class="sq"></span>changed</span><span><span class="sq add"></span>added</span><span><span class="sq gone"></span>removed</span><span><span class="sq mv"></span>moved only</span></div>`;
+  return `<div class="tree"><div class="t-head">Pages 1</div><div class="t-page"><span class="mono">/mock.html</span><span class="wtag">${o.w || 1280}</span>${o.threads ? `<span class="cnt ccount">${o.threads}</span>` : ""}</div><div class="chg">${rows}</div></div>`;
+}
+
+/* 右の会話パネル */
+const REVIEW_ID = "7f3a2c";
+const waitCmd = `<span class="cmd">kemi wait ${REVIEW_ID}<button type="button">Copy</button></span>`;
+/* h: "off"（つながる前） | "none"（渡すものが無い） | 数（渡すものがある） */
+function handBtn(h) {
+  if (typeof h === "number") return `<button type="button" class="hand ready">${ic("i-hand")}Hand to agent<span class="c">${h}</span></button>`;
+  return `<button type="button" class="hand off" aria-disabled="true">${ic("i-hand")}Hand to agent</button>`;
+}
+function tail(st, reply) {
+  if (st === "waiting") return `<div class="working wait">${ic("i-hand")}Waiting for the agent to pick this up</div>`;
+  if (st === "working") return `<div class="working"><span class="dots"><i></i><i></i><i></i></span>Agent is working…</div>`;
+  if (st === "replied") return `<div class="msg"><span class="who ag">Agent</span><p>${reply}</p></div>`;
+  return "";
+}
+const tagOf = (st) => (st ? "Handed 1" : "Not handed");
+function c1card(st) {
+  return `<div class="tcard"><div class="chd"><span class="loc">c1 · /mock.html 1280px · 1 place</span><span class="tag2">${tagOf(st)}</span></div><div class="msg you"><span class="who">You</span><p>いちばん人気のバッジを少し小さく。</p></div>${tail(st, "バッジを 12px に小さくしました。")}</div>`;
+}
+function c2card(st) {
+  return `<div class="tcard"><div class="chd"><span class="loc">c2 · /mock.html 1280px · 3 places</span><span class="tag2">${tagOf(st)}</span></div><div class="msg you"><span class="who">You</span><p>#1 の文言はこれで OK。矢印のボタンは B と同じ白地に。#3 の余白は詰めて。</p></div>${tail(st, "ボタンを白地にし、余白を 48px 詰めました。")}</div>`;
+}
+function pane(o) {
+  if (o.folded) {
+    const off = o.hand === "off";
+    const note = off ? `<div class="railnote"><b>Hand to agent</b> works once the agent runs <code>kemi wait ${REVIEW_ID}</code>.${waitCmd}</div>`
+      : o.hand === "none" ? `<div class="railnote small">Nothing new to hand</div>` : "";
+    return `<aside class="pane rail"><button type="button" class="icb" data-tip="Open conversation">‹</button><span class="rdot ${off ? "gray" : ""}"></span><span class="vt">Conversation ${o.threads}</span><span class="sp"></span><button type="button" class="hv ${typeof o.hand === "number" ? "" : "off"}" ${typeof o.hand === "number" ? "" : 'aria-disabled="true"'}>Hand to agent</button>${note}</aside>`;
+  }
+  let body;
+  if (o.view === "empty") body = `<div class="p-empty">No comments yet.<br>Point at the page, write, then Comment.</div>`;
+  else if (o.view === "thread") body = `<button type="button" class="newbar">${ic("i-chat")}New reply in c2<span class="go">Open →</span></button>
+    <div><div class="thead"><div><span class="bk">‹ Conversation</span> <span class="loc">c1 · /mock.html 1280px · 1 place</span></div><div class="acts"><button type="button" data-show>Show on page</button><button type="button">Resolve</button><button type="button">Edit</button><button type="button">Delete</button></div></div>
+    <div class="msg you"><span class="who">You</span><p>いちばん人気のバッジを少し小さく。</p></div><div class="msg"><span class="who ag">Agent</span><p>バッジを 12px に小さくしました。</p></div><div class="msg you"><span class="who">You</span><p>色はそのままで OK。</p></div></div>`;
+  else body = (o.cards || []).join("");
+  const foot = o.view === "thread"
+    ? `<div class="ta">Reply (Cmd/Ctrl+Enter to send)</div><div class="frow">${handBtn(o.hand)}<button type="button" class="btn primary post">Reply</button></div>${o.hand === "none" ? `<span class="nn">Nothing new to hand</span>` : ""}`
+    : `<div class="ta">Write to the agent about the whole review</div><div class="frow">${handBtn(o.hand)}<button type="button" class="btn primary post">Post</button></div>${o.hand === "none" ? `<span class="nn">Nothing new to hand</span>` : ""}${o.hand === "off" ? `<div class="waitnote">You can hand comments once the agent runs <code>kemi wait ${REVIEW_ID}</code>.<br>${waitCmd}</div>` : ""}`;
+  return `<aside class="pane"><div class="p-head"><b>Conversation</b>${o.newCount ? `<span class="cnt">${o.newCount} new</span>` : ""}<span class="sp"></span><button type="button" class="icb" data-tip="Close conversation">›</button></div><div class="p-status">${agentPill(o.agent)}</div><div class="p-filter"><span class="chip on">All</span><span class="chip">Unresolved</span><span class="chip">This page</span></div><div class="p-body">${body}</div><div class="p-foot">${foot}</div></aside>`;
+}
+
+/* ---------- 状態 2 の場所と本文（#n で場所を指す。A30） ---------- */
+const PLACES0 = [
+  { k: "Element", m: `li “チーム 10 人まで” <span class="dim">· card 案 B</span>`, at: "li-b" },
+  { k: "Arrow", m: `→ button “はじめる” <span class="dim">· card 案 C</span>`, at: "arrow" },
+  { k: "Pen", m: `<span class="m area">Area only (no element)</span>`, at: "pen", thumb: true },
+];
+let places, body, hotPlace;
+function resetDraft() {
+  places = PLACES0.slice();
+  body = [{ ref: "li-b" }, " の文言はこれで OK。矢印のボタンは B と同じ白地に。", { ref: "pen" }, " の余白は詰めて。"];
+  hotPlace = "li-b";
+}
+resetDraft();
+const numOf = (key) => places.findIndex((p) => p.at === key) + 1;
+function removePlace(key) {
+  const before = new Map(body.filter((t) => t.ref).map((t) => [t, numOf(t.ref)]));
+  const gone = numOf(key);
+  places = places.filter((p) => p.at !== key);
+  for (const t of body) {
+    if (!t.ref) continue;
+    if (t.ref === key) { t.dead = gone; t.re = false; continue; }
+    if (t.dead) continue;
+    t.re = before.get(t) !== numOf(t.ref);
+  }
+  if (!places.some((p) => p.at === hotPlace)) hotPlace = places[0] ? places[0].at : null;
+}
+function insertRef(key) {
+  for (const t of body) if (t.ref) t.re = false;
+  body.push(" ", { ref: key, re: true });
+}
+function draftMarks() {
+  const pins = {}, ink = [];
+  const num = numOf;
+  let svg = "";
+  if (num("arrow")) svg += `<line x1="1130" y1="615" x2="1042" y2="468" stroke="#7b4fd0" stroke-width="2.5" vector-effect="non-scaling-stroke" marker-end="url(#ah)"/>`;
+  if (num("pen")) svg += `<path d="M300 612 C 300 560, 520 552, 565 598 C 598 640, 520 690, 410 686 C 320 682, 290 650, 300 612 Z" fill="rgba(123,79,208,.08)" stroke="#7b4fd0" stroke-width="2.5" vector-effect="non-scaling-stroke" ${hotPlace === "pen" ? `filter="url(#glow)"` : ""}/>`;
+  const def = `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7b4fd0"/></marker><filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#3b4ea8" flood-opacity=".7"/></filter></defs>`;
+  ink.push(`<svg class="pg-ink" viewBox="0 0 1280 1080" preserveAspectRatio="none">${def}${svg}</svg>`);
+  if (num("arrow")) ink.push(`<span class="pin" style="${at(1130, 615)}${hotPlace === "arrow" ? ";box-shadow:0 0 0 2px #fff,0 0 0 5px #3b4ea8" : ""}">${num("arrow")}</span>`);
+  if (num("pen")) ink.push(`<span class="pin" style="${at(300, 600)}">${num("pen")}</span>`);
+  if (num("li-b")) pins["li-b"] = `<span class="pin">${num("li-b")}</span>`;
+  return {
+    hl: num("li-b") && hotPlace === "li-b" ? "li-b" : null, pins, ink: ink.join(""),
+    flash: hotPlace === "arrow" && num("arrow") ? "btn-c" : null,
+    dots: { badge: { c: "c1", show: true } },
+  };
+}
+function composeBox() {
+  const rows = places.map((p, i) => `<div class="prow ${hotPlace === p.at ? "hot" : ""}" data-place="${p.at}"><button type="button" class="pn" data-ins="${p.at}" data-tip="Insert #${i + 1} into the text">${i + 1}</button><span class="k">${p.k}</span>${p.thumb ? `<span class="thumb" title="Preview on this screen only. No image is sent per place; the agent gets the comment's image."></span><span class="prev">preview · screen only</span>` : ""}<span class="m">${p.m}</span><button type="button" class="x" data-rm="${p.at}" aria-label="Remove place ${i + 1}">×</button></div>`).join("");
+  const dead = body.filter((t) => t.dead);
+  const text = body.map((t) => typeof t === "string" ? t
+    : t.dead ? `<span class="ref dead" title="This place was removed">#${t.dead}</span>`
+    : `<span class="ref ${t.re ? "re" : ""}">#${numOf(t.ref)}</span>`).join("");
+  const why = dead.length ? `<span class="why">#${dead[0].dead} points to a removed place. Change or delete it to save.</span>` : `<span class="hint2">Click a place number to insert #n · Cmd/Ctrl+Enter to save</span>`;
+  return `<div class="compose"><div class="ch"><b>New comment</b><span>/mock.html · 1280px</span><span>·</span><span>Places ${places.length}</span></div>${rows}<div class="ta">${text}</div><div class="acts">${why}<button type="button" class="btn sm">Cancel</button><button type="button" class="btn sm primary" ${dead.length ? 'disabled aria-disabled="true"' : ""}>Comment</button></div></div>`;
+}
+
+/* ---------- 状態ごとの画面 ---------- */
+function wide(o) {
+  const cls = o.pane && o.pane.folded ? "app folded" : "app";
+  return `<div class="${cls}">${topBar(o.top)}<div class="body">${o.tree}<div class="main">${o.main}${o.toast || ""}</div>${pane(o.pane)}</div></div>`;
+}
+const ST = {
+  1: () => wide({
+    top: { mode: "page", agent: "none", threads: 0, pane: false },
+    tree: tree({ changes: "none", vs: "Start" }),
+    main: band({}) + toolbar("el") + `<div class="stage">${nowOnlyFrame({ hint: true, reloadTip: true, marks: {} })}</div>`,
+    pane: { folded: true, hand: "off", threads: 0 },
+  }),
+  2: () => wide({
+    top: { mode: "page", agent: "ready", threads: 1 },
+    tree: tree({ vs: "Start", threads: 1, changes: "none" }),
+    main: band({}) + toolbar("pen") + `<div class="stage">${nowOnlyFrame({ marks: draftMarks() })}${composeBox()}</div>`,
+    pane: { agent: "ready", view: "list", cards: [c1card(null)], hand: 1 },
+  }),
+  3: (sub) => {
+    const c1 = sub === "c1replied" ? "replied" : sub, c2 = sub === "c1replied" ? "working" : sub;
+    return wide({
+      top: { mode: "page", agent: sub === "c1replied" ? "replied" : "working", threads: 2, update: sub === "c1replied" },
+      tree: tree({ vs: "Handed 1", threads: 2, changes: sub === "c1replied" ? undefined : "none" }),
+      main: band({}) + toolbar("el") + `<div class="stage">${nowOnlyFrame({ marks: { dots: { badge: { c: "c1" }, "li-b": { c: "c2" }, "btn-c": { c: "c2" } } } })}</div>`,
+      pane: { agent: sub === "c1replied" ? "replied" : "working", view: "list", cards: [c1card(c1), c2card(c2)], hand: "none" },
+    });
+  },
+  4: () => wide({
+    top: { mode: "page", agent: "ready", threads: 2, pane: false },
+    tree: tree({ vs: "Handed 2", threads: 2 }),
+    main: band({}) + toolbar("el") + `<div class="stage">${sbsStage({
+      cmp: { name: `Auto — Handed 2 <span class="s">(last handed)</span>`, open: true, drop: compareList() },
+      beforeName: "Handed 2 · 14:20 · /mock.html · 1280",
+      bMarks: { chg: ["li-b", "btn-c"] }, nMarks: { chg: ["li-b", "btn-c"] },
+    })}</div>`,
+    pane: { folded: true, threads: 2, hand: "none" },
+  }),
+  5: (sub) => wide({
+    top: { mode: "page", agent: "ready", threads: 2, pane: false },
+    tree: tree({ vs: "Start", threads: 2 }),
+    main: band({}) + toolbar("el") + `<div class="stage">${overlayFrame(sub === "end" ? 100 : sub === "start" ? 0 : 60)}</div>`,
+    pane: { folded: true, threads: 2, hand: "none" },
+  }),
+  6: (sub) => {
+    const assigned = sub === "assigned";
+    const cmp = sub === "panel" || !sub ? { name: `${ic("i-file")}Mock file…`, open: true, drop: mockPanel() }
+      : assigned ? { name: `Mock: mock-d.html`, kebab: true, kebabOpen: true }
+      : { name: `Auto — Handed 2 <span class="s">(last handed)</span>` };
+    return wide({
+      top: { mode: "page", agent: "ready", threads: 2, pane: false },
+      tree: tree({ vs: assigned ? "Mock" : "Handed 2", threads: 2 }),
+      main: band({}) + toolbar("el") + `<div class="stage">${sbsStage({
+        cmp, beforeName: assigned ? "Mock · docs/mock-d.html" : "Handed 2 · 14:20 · /mock.html · 1280",
+        beforeV: assigned ? "mock" : "before",
+      })}</div>`,
+      toast: sub === "removed" ? `<div class="toast"><span class="notice">Mock removed · mock-d.html<span class="tm">5s</span><button type="button" class="go">Undo</button></span></div>` : "",
+      pane: { folded: true, threads: 2, hand: "none" },
+    });
+  },
+  7: (sub) => {
+    const gone = sub === "gone", mock = sub === "mock";
+    return wide({
+      top: { mode: "page", agent: "ready", threads: 2, pane: false },
+      tree: tree({ vs: "Handed 2", threads: 2, hot: gone ? "gone" : mock ? null : chgHot, mock }),
+      main: band({}) + toolbar("el") + `<div class="stage">${gone
+        ? sbsStage({ cmp: { name: `Auto — Handed 2 <span class="s">(last handed)</span>` }, beforeName: "Handed 2 · 14:20 · /mock.html · 1280", bMarks: { flash: "rib-a" }, nMarks: { chg: ["li-b", "btn-c"] } })
+        : nowOnlyFrame({ marks: mock ? {} : { chg: ["li-b", "btn-c"], flash: chgHot } })}</div>`,
+      pane: { folded: true, threads: 2, hand: "none" },
+    });
+  },
+  8: (sub) => {
+    const cmp = sub === "compare";
+    const notice = cmp ? "" : `<span class="notice rec-notice">Recorded 1 ·<button type="button" class="go" data-sub="compare">Compare →</button></span>`;
+    return wide({
+      top: { mode: "page", agent: "ready", threads: 2, w: 1000 },
+      tree: tree({ vs: "Recorded 1", threads: 2, changes: "none", w: 1000 }),
+      main: band({ w: 1000, recOn: !cmp, notice }) + toolbar("el") + `<div class="stage">${cmp
+        ? sbsStage({ cmp: { name: `Recorded 1 <span class="s">· 14:25</span>` }, beforeName: "Recorded 1 · 14:25 · /mock.html · 1000", beforeV: "now" }).replace(/data-fit="1280"/g, 'data-fit="1000"').replace(/--w:1280/g, "--w:1000").replace(/\/mock\.html · 1280/g, "/mock.html · 1000")
+        : nowOnlyFrame({ w: 1000, marks: { dots: { badge: { c: "c1" }, "li-b": { c: "c2" } } } })}</div>`,
+      pane: { agent: "ready", view: "list", cards: [c1card("replied"), c2card("replied")], hand: "none" },
+    });
+  },
+  9: () => wide({
+    top: { mode: "page", agent: "replied", threads: 2 },
+    tree: tree({ vs: "Handed 2", threads: 2 }),
+    main: band({}) + toolbar("el") + `<div class="stage">${nowOnlyFrame({ marks: { pins: { badge: `<span class="pin blue">1</span>` }, flash: showOnPage ? "badge" : null } })}</div>`,
+    pane: { agent: "replied", view: "thread", newCount: 1, hand: "none" },
+  }),
+  10: () => {
+    const L = (c, a, b, s, t) => `<div class="ln ${c}"><span class="n">${a}</span><span class="n">${b}</span><span class="s">${s}</span><code>${t}</code></div>`;
+    const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const lines = [
+      ["", 18, 18, " ", '    <section class="variant">'],
+      ["", 19, 19, " ", '      <p class="plan">Pro</p>'],
+      ["", 20, 20, " ", '      <ul>'],
+      ["", 21, 21, " ", '        <li>プロジェクト無制限</li>'],
+      ["del", 22, "", "−", '        <li>チーム 5 人まで</li>'],
+      ["add", "", 22, "+", '        <li>チーム 10 人まで</li>'],
+      ["", 23, 23, " ", '        <li>優先サポート</li>'],
+      ["", 24, 24, " ", '      </ul>'],
+      ["", 25, 25, " ", '      <button>はじめる</button>'],
+      ["", 26, 26, " ", '    </section>'],
+      ["", 41, 41, " ", '    .variant.c button {'],
+      ["del", 42, "", "−", '      background: #ff8a00; color: #fff;'],
+      ["add", "", 42, "+", '      background: #fff; color: #ff8a00;'],
+      ["add", "", 43, "+", '      border: 1.5px solid #ff8a00;'],
+      ["", 43, 44, " ", '    }'],
+    ];
+    return wide({
+      top: { mode: "code", threads: 2 },
+      tree: `<div class="tree files"><div class="t-head">Changes 3 files</div><div class="f on"><span>mock.html</span><span class="st"><span class="p">+12</span> <span class="m">−4</span></span></div><div class="f"><span>styles/pricing.css</span><span class="st"><span class="p">+30</span> <span class="m">−2</span></span></div><div class="f"><span>docs/notes.md</span><span class="st"><span class="p">+4</span></span></div></div>`,
+      main: `<div class="code"><div class="fh"><b>mock.html</b><span class="p">+12</span><span class="m">−4</span></div>${lines.map(([c, a, b, s, t]) => L(c, a, b, s, esc(t))).join("")}</div>`,
+      pane: { agent: "ready", view: "list", cards: [c1card("replied"), c2card("replied")], hand: "none" },
+    });
+  },
+  11: () => {
+    const fb = `<div class="fbar"><button type="button" class="ft on">${ic("i-el")}Element</button><button type="button" class="ft">${ic("i-ar")}Arrow</button><button type="button" class="ft">${ic("i-pen")}Pen</button><button type="button" class="ft">${ic("i-int")}Interact</button></div><button type="button" class="fhand">${ic("i-hand")}Hand to agent<span class="c">1</span></button>`;
+    const menuDd = `<div class="dd"><div class="grp">Compare with</div><div class="it on">✓ Auto — Handed 2 <span class="s">(last handed)</span></div><div class="it">Handed 2<span class="s">14:20</span></div><div class="it">Handed 1<span class="s">14:02</span></div><div class="it">Start<span class="s">13:51</span></div><div class="it">Recorded 1<span class="s">14:25</span></div><div class="it mockf">${ic("i-file")}Mock file…</div><div class="sepl"></div><div class="grp">Scale</div><div class="it on">✓ Fit</div><div class="it">100%</div><div class="sepl"></div><div class="it" style="color:var(--del-ink)">${ic("i-cam")}Record now</div></div>`;
+    const phone = (menu) => `<div class="phone"><div class="ptabs"><span class="brand">kemi</span><span class="mtabs"><button type="button" class="mtab on">${ic("i-page")}Page</button><button type="button" class="mtab">${ic("i-code")}Code<span class="n">· 3</span></button></span><span class="sp"></span><button type="button" class="icb" aria-label="Conversation">${ic("i-chat")}2</button></div>
+      <div class="ptop"><span class="pg-name">/mock.html</span><button type="button" class="csel">1280</button><span class="seg"><button type="button" class="${menu ? "" : "on"}">Now</button><button type="button" class="${menu ? "on" : ""}">Before</button></span><span class="sp"></span><span class="pill ok sm"><span class="dot"></span>Ready</span><button type="button" class="kebab ${menu ? "on" : ""}" aria-label="More">${ic("i-more")}</button></div>
+      <div class="pbody"><div class="frame"><div class="fhead"><span class="name">${menu ? "Before" : "Now"}</span><span class="src">${menu ? "Auto — Handed 2" : "/mock.html · 1280"}</span><span class="sp"></span><span class="zl" data-zl>×—</span>${reloadBtn()}</div><div class="vp" data-fit="1280">${pricingPage({ v: menu ? "before" : "now", marks: menu ? {} : { dots: { badge: { c: "c1" } } } })}</div></div></div>
+      ${menu ? menuDd : ""}${fb}</div>`;
+    return `<div class="phones"><div><p class="phone-cap">ふだん（Now を表示中）</p>${phone(false)}</div><div><p class="phone-cap">… を開いたとき（Before を表示中）</p>${phone(true)}</div></div>`;
+  },
+};
+
+/* ---------- 切り替えと描画 ---------- */
+let cur = 1, sub = null, chgHot = "btn-c", showOnPage = false;
+const screen = document.getElementById("screen");
+function fitPages() {
+  for (const vp of screen.querySelectorAll(".vp[data-fit]")) {
+    const w = Number(vp.dataset.fit), full = vp.dataset.full === "1";
+    const z = full ? 1 : vp.clientWidth / w;
+    for (const pg of vp.querySelectorAll(".pg")) pg.style.setProperty("--z", z.toFixed(4));
+    const fr = vp.closest(".frame");
+    for (const zl of fr.querySelectorAll("[data-zl]")) zl.textContent = "×" + z.toFixed(2);
+    if (!fr.querySelector("[data-zl]")) {
+      /* 並べる見方の外側の見出しには倍率を出さない */
+    }
+  }
+}
+function overlaySync() {
+  const r = document.getElementById("ovlRange");
+  if (!r) return;
+  const v = Number(r.value);
+  document.getElementById("ovlTop").style.opacity = v / 100;
+  document.getElementById("ovlName").textContent = v >= 100 ? "Overlay — Before (start) only visible" : v <= 0 ? "Overlay — Now only visible" : `Now ⇄ Before (start) · ${v}%`;
+}
+function scaleScreen() {
+  const avail = document.querySelector(".screen-outer").clientWidth - 16;
+  const natural = screen.classList.contains("narrow") ? screen.scrollWidth : 1280;
+  const s = Math.min(1, avail / natural);
+  screen.style.transform = s < 1 ? `scale(${s})` : "";
+  screen.style.marginLeft = s < 1 ? "8px" : "";
+  screen.parentElement.style.height = s < 1 ? `${screen.offsetHeight * s + 40}px` : "";
+}
+function renderAbout() {
+  const a = ABOUT[cur];
+  const subs = a.subs ? `<span class="subs">${a.subs.map(([k, n]) => `<button type="button" data-sub="${k}" aria-pressed="${(sub || a.subs[0][0]) === k}">${n}</button>`).join("")}</span>` : "";
+  document.getElementById("about").innerHTML = `<span class="t">${cur}. ${a.t}</span><span class="ags">${a.ags.map((x) => `<span class="ag">${x}</span>`).join("")}${(a.cap || []).map((x) => `<span class="ag cap" title="説明だけ">${x}</span>`).join("")}</span>${subs}<p class="d">${a.d}</p>`;
+}
+function render() {
+  for (const b of document.querySelectorAll(".switch button")) b.setAttribute("aria-pressed", String(Number(b.dataset.s) === cur));
+  renderAbout();
+  screen.classList.toggle("narrow", cur === 11);
+  screen.innerHTML = ST[cur](sub || (ABOUT[cur].subs ? ABOUT[cur].subs[0][0] : null));
+  fitPages();
+  overlaySync();
+  scaleScreen();
+}
+function setDraft(k) {
+  resetDraft();
+  if (k === "renum") removePlace("arrow");
+  if (k === "dangling") removePlace("pen");
+}
+function go(s, sb = null) { cur = s; sub = sb; if (s === 2) setDraft(sb); showOnPage = false; render(); }
+
+document.querySelector(".switch").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-s]"); if (b) go(Number(b.dataset.s));
+});
+document.getElementById("about").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-sub]"); if (!b) return;
+  sub = b.dataset.sub; if (cur === 2) setDraft(sub); render();
+});
+screen.addEventListener("click", (e) => {
+  const t = e.target;
+  const rm = t.closest("[data-rm]");
+  if (rm) { removePlace(rm.dataset.rm); render(); return; }
+  const ins = t.closest("[data-ins]"); if (ins) { insertRef(ins.dataset.ins); render(); return; }
+  const pr = t.closest("[data-place]"); if (pr) { hotPlace = pr.dataset.place; render(); return; }
+  const cr = t.closest("[data-chg]");
+  if (cr) { if (cr.dataset.chg === "gone") { cur = 7; sub = "gone"; } else { chgHot = cr.dataset.chg; if (cur === 7) sub = "list"; } render(); return; }
+  if (t.closest("[data-show]")) { showOnPage = true; render(); return; }
+  const sb = t.closest("[data-sub]"); if (sb) { sub = sb.dataset.sub; render(); return; }
+  const g = t.closest("[data-go]"); if (g && g.dataset.go) { go(Number(g.dataset.go)); return; }
+  const f = t.closest("[data-fit]:not(.vp)");
+  if (f) {
+    const fr = f.closest(".frame"), vp = fr && fr.querySelector(".vp[data-fit]");
+    if (vp) { vp.dataset.full = f.dataset.fit === "1" ? "0" : "1"; vp.classList.toggle("scroll", vp.dataset.full === "1"); for (const b of f.parentElement.children) b.classList.toggle("on", b === f); fitPages(); }
+  }
+});
+screen.addEventListener("mouseover", (e) => {
+  const pr = e.target.closest("[data-place]");
+  if (pr && pr.dataset.place !== hotPlace) { hotPlace = pr.dataset.place; render(); }
+});
+screen.addEventListener("input", (e) => { if (e.target.id === "ovlRange") overlaySync(); });
+window.addEventListener("resize", () => { fitPages(); scaleScreen(); });
+render();
+</script>
+</body>
+</html>
