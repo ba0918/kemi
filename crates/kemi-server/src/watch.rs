@@ -64,8 +64,16 @@ pub(crate) fn start(
         });
 
         let mut debounce = Debounce::new(DEBOUNCE);
+        // 無視の規則が変わったら辿り直す。保存やブランチの切り替えは規則のファイルを
+        // 続けて書くので、書き込みが静まってから 1 回だけ辿る。
+        let mut rules = Debounce::new(DEBOUNCE);
         loop {
-            let received = match debounce.remaining(Instant::now()) {
+            let now = Instant::now();
+            let wait = [debounce.remaining(now), rules.remaining(now)]
+                .into_iter()
+                .flatten()
+                .min();
+            let received = match wait {
                 None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
                 Some(wait) => receiver.recv_timeout(wait),
             };
@@ -76,11 +84,12 @@ pub(crate) fn start(
                         match tree.changes(&mut watcher, &event) {
                             Ok(tree_changed) => changed |= tree_changed,
                             Err(fallback) => {
-                                tree.stop(&mut watcher);
-                                whole = None;
-                                notices.notify(Notice::WorkTreeNotWatched(fallback));
+                                fall_back(&mut whole, &mut watcher, notices.as_ref(), fallback)
                             }
                         }
+                    }
+                    if whole.as_mut().is_some_and(TreeWatch::take_rules_changed) {
+                        rules.note(Instant::now());
                     }
                     if changed {
                         debounce.note(Instant::now());
@@ -89,11 +98,30 @@ pub(crate) fn start(
                 Ok(Err(_)) | Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
+            if rules.take_due(Instant::now())
+                && let Some(tree) = whole.as_mut()
+                && let Err(fallback) = tree.rewalk(&mut watcher)
+            {
+                fall_back(&mut whole, &mut watcher, notices.as_ref(), fallback);
+            }
             if debounce.take_due(Instant::now()) {
                 let _ = events.send(Event::Update);
             }
         }
     });
+}
+
+/// 作業ツリー全体の見張りをやめ、差分のファイルの見張りだけを残して知らせる。
+fn fall_back(
+    whole: &mut Option<TreeWatch>,
+    watcher: &mut impl Watcher,
+    notices: &dyn NoticeSink,
+    fallback: WatchFallback,
+) {
+    if let Some(mut tree) = whole.take() {
+        tree.stop(watcher);
+        notices.notify(Notice::WorkTreeNotWatched(fallback));
+    }
 }
 
 /// 無視の判定を覚えておく数の上限。超えたら忘れて聞き直す。
@@ -114,6 +142,10 @@ struct TreeWatch {
     /// パスごとの「git が無視するか」。消えたディレクトリは git に聞いても無視と
     /// 分からないので、見えていたときの判定を使う。
     verdicts: HashMap<PathBuf, bool>,
+    /// `info/exclude`（`.git` の中の無視の規則）。その親のディレクトリを見張っている。
+    exclude: Option<PathBuf>,
+    /// 無視の規則が変わり、辿り直していない。
+    rules_changed: bool,
 }
 
 impl TreeWatch {
@@ -137,12 +169,62 @@ impl TreeWatch {
             added: HashSet::new(),
             kept,
             verdicts: found.ignored.into_iter().map(|path| (path, true)).collect(),
+            exclude: None,
+            rules_changed: false,
         };
         if let Err(fallback) = this.add(watcher, found.directories) {
             this.stop(watcher);
             return Err(fallback);
         }
+        // `.git` の中は見張らないが、`info/exclude` が変わると無視するものが変わる。
+        // 見張れなくても作業ツリーの見張りは続ける（無いリポジトリもある）。
+        if let Ok(exclude) = this.tree.exclude_file()
+            && let Some(parent) = exclude.parent()
+            && watcher.watch(parent, RecursiveMode::NonRecursive).is_ok()
+        {
+            this.exclude = Some(exclude);
+        }
         Ok(this)
+    }
+
+    /// 無視の規則が変わったか。読むと戻す。
+    fn take_rules_changed(&mut self) -> bool {
+        std::mem::take(&mut self.rules_changed)
+    }
+
+    /// 作業ツリーを辿り直し、無視されなくなったディレクトリを見張りに足し、無視される
+    /// ようになったディレクトリの見張りを外す。上限を超えるか OS が断ったら Err。
+    fn rewalk(&mut self, watcher: &mut impl Watcher) -> Result<(), WatchFallback> {
+        let found = self
+            .tree
+            .directories(WATCH_DIRECTORY_LIMIT)
+            .map_err(|error| WatchFallback::Refused(error.to_string()))?;
+        if found.over_limit {
+            return Err(WatchFallback::TooManyDirectories {
+                limit: WATCH_DIRECTORY_LIMIT,
+            });
+        }
+        let listed: HashSet<&PathBuf> = found.directories.iter().collect();
+        let dropped: Vec<PathBuf> = self
+            .directories
+            .iter()
+            .filter(|directory| !listed.contains(directory))
+            .cloned()
+            .collect();
+        let mut paths = watcher.paths_mut();
+        for directory in dropped {
+            self.directories.remove(&directory);
+            if self.added.remove(&directory) {
+                let _ = paths.remove(&directory);
+            }
+        }
+        paths
+            .commit()
+            .map_err(|error| WatchFallback::Refused(error.to_string()))?;
+        for ignored in found.ignored {
+            self.verdicts.insert(ignored, true);
+        }
+        self.add(watcher, found.directories)
     }
 
     /// ディレクトリの見張りを足す。上限を超えるか OS が断ったら Err で、呼び出し側が `stop` する。
@@ -181,6 +263,9 @@ impl TreeWatch {
         for directory in self.added.drain() {
             let _ = paths.remove(&directory);
         }
+        if let Some(parent) = self.exclude.take().as_deref().and_then(Path::parent) {
+            let _ = paths.remove(parent);
+        }
         let _ = paths.commit();
         self.directories.clear();
     }
@@ -211,8 +296,15 @@ impl TreeWatch {
         if paths
             .iter()
             .any(|path| path.file_name() == Some(".gitignore".as_ref()))
-            || self.verdicts.len() > VERDICT_LIMIT
+            || event
+                .paths
+                .iter()
+                .any(|path| Some(path) == self.exclude.as_ref())
         {
+            self.rules_changed = true;
+            self.verdicts.clear();
+        }
+        if self.verdicts.len() > VERDICT_LIMIT {
             self.verdicts.clear();
         }
         let unknown: Vec<PathBuf> = paths

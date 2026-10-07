@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::SourceError;
-use super::git::{git_raw, path_bytes, split_z};
+use super::git::{git_raw, path_bytes, path_from_bytes, split_z};
 
 /// 1 レビューで見張るディレクトリの数の上限（R-LIVE）。
 pub const WATCH_DIRECTORY_LIMIT: usize = 10_000;
@@ -39,6 +39,14 @@ impl WorkTree {
     /// 作業ツリーの根から辿った、見張るディレクトリ（根を含む）。
     pub fn directories(&self, limit: usize) -> Result<WatchDirectories, SourceError> {
         self.walk(vec![self.root.clone()], limit, &self.tracked()?)
+    }
+
+    /// このリポジトリの `info/exclude`（無視の規則のうち `.git` の中にあるもの）。linked
+    /// worktree では `.git` がファイルで、`info/exclude` は共通の git ディレクトリにある。
+    pub fn exclude_file(&self) -> Result<PathBuf, SourceError> {
+        let output = git_raw(&self.root, &["rev-parse", "--git-path", "info/exclude"])?;
+        let path = path_from_bytes(output.trim_ascii_end());
+        Ok(self.root.join(path))
     }
 
     /// `start` とその下の、見張るディレクトリ。`start` が作業ツリーの外・`.git` の中・
@@ -522,6 +530,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(found.directories, vec![repo.path.join("sub/fresh")]);
+    }
+
+    #[test]
+    fn the_exclude_file_of_a_linked_worktree_is_in_the_common_git_directory() {
+        let repo = repo_with_ignored_build();
+        let linked = repo.path.with_extension("linked");
+        let linked_arg = linked.to_string_lossy().into_owned();
+        repo.git(&["worktree", "add", "-q", &linked_arg]);
+        let tree = WorkTree::new(linked.clone());
+
+        let exclude = tree.exclude_file();
+
+        std::fs::remove_dir_all(&linked).unwrap();
+        assert_eq!(
+            canonical(exclude.unwrap()),
+            canonical(repo.path.join(".git/info/exclude"))
+        );
+    }
+
+    fn canonical(path: PathBuf) -> PathBuf {
+        let parent = std::fs::canonicalize(path.parent().unwrap()).unwrap();
+        parent.join(path.file_name().unwrap())
     }
 
     #[test]
