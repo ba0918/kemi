@@ -72,6 +72,24 @@ fn kemi_command(dir: &Path, state: &Path) -> Command {
     command
 }
 
+/// 子プロセスがまだ動いていれば止めて回収する。テストが途中で失敗しても、起動した kemi を
+/// cargo test の後に残さないよう、`Drop` から呼ぶ。止め終えたものには何もしない。
+fn stop(child: &mut Child) {
+    if let Ok(None) = child.try_wait() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// `Kemi` を通さずに起動した子プロセスを、捨てるときに止める。
+struct StopOnDrop(Child);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        stop(&mut self.0);
+    }
+}
+
 struct Kemi {
     child: Child,
     stdout: ChildStdout,
@@ -148,8 +166,7 @@ impl Kemi {
     }
 
     fn kill(mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        stop(&mut self.child);
     }
 
     /// サーバが応答するまで待つ。応答した時点で、サーブ前の stderr の行は出終わり、
@@ -160,6 +177,12 @@ impl Kemi {
             .unwrap();
         assert_eq!(response.status(), 200);
         let _ = response.bytes().await;
+    }
+}
+
+impl Drop for Kemi {
+    fn drop(&mut self) {
+        stop(&mut self.child);
     }
 }
 
@@ -679,21 +702,24 @@ async fn exit_code_changes_requested_is_1() {
 async fn stdin_dash_reads_manifest() {
     let dir = TempDir::new();
     let state = TempDir::new();
-    let mut child = kemi_command(&dir.path, &state.path)
-        .args(["-", "--no-open", "--port", "0"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = StopOnDrop(
+        kemi_command(&dir.path, &state.path)
+            .args(["-", "--no-open", "--port", "0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     child
+        .0
         .stdin
         .take()
         .unwrap()
         .write_all(MANIFEST.as_bytes())
         .unwrap();
 
-    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut stderr = BufReader::new(child.0.stderr.take().unwrap());
     let mut line = String::new();
     let url = loop {
         line.clear();
@@ -710,9 +736,6 @@ async fn stdin_dash_reads_manifest() {
         .await
         .unwrap();
     assert_eq!(review["title"], "e2e のレビュー");
-
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(unix)]
@@ -1156,16 +1179,18 @@ async fn result_relative_xdg_state_home_falls_back_to_home() {
     let dir = TempDir::new();
     let home = TempDir::new();
     dir.write("manifest.json", MANIFEST);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kemi"))
-        .args(["manifest.json", "--no-open", "--port", "0"])
-        .current_dir(&dir.path)
-        .env("XDG_STATE_HOME", "relative/state")
-        .env("HOME", &home.path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut child = StopOnDrop(
+        Command::new(env!("CARGO_BIN_EXE_kemi"))
+            .args(["manifest.json", "--no-open", "--port", "0"])
+            .current_dir(&dir.path)
+            .env("XDG_STATE_HOME", "relative/state")
+            .env("HOME", &home.path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stderr = BufReader::new(child.0.stderr.take().unwrap());
     let mut line = String::new();
     let url = loop {
         line.clear();
@@ -1183,7 +1208,7 @@ async fn result_relative_xdg_state_home_falls_back_to_home() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    child.wait().unwrap();
+    child.0.wait().unwrap();
 
     assert_eq!(
         result_files(&home.path.join(".local/state")).len(),
