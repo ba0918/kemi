@@ -1017,7 +1017,7 @@ async fn a_page_comment_is_added_in_the_page_group_with_its_places_in_number_ord
 
     let added = add_page_comment(
         &running,
-        serde_json::json!([page_place(3, "pen"), page_place(1, "element")]),
+        serde_json::json!([page_place(2, "pen"), page_place(1, "element")]),
     )
     .await;
 
@@ -1042,7 +1042,7 @@ async fn a_page_comment_is_added_in_the_page_group_with_its_places_in_number_ord
         comment["page"]["places"][0]["elements"][0],
         serde_json::json!({ "selector": "#buy", "text": "Buy", "rect": { "x": 0.0, "y": 120.0, "w": 200.0, "h": 60.0 } })
     );
-    assert_eq!(comment["page"]["places"][1]["n"], 3);
+    assert_eq!(comment["page"]["places"][1]["n"], 2);
     assert_eq!(comment["page"]["places"][1]["kind"], "pen");
     assert_eq!(
         comment["page"]["places"][1]["points"],
@@ -1051,6 +1051,22 @@ async fn a_page_comment_is_added_in_the_page_group_with_its_places_in_number_ord
     assert!(comment["page"]["image"].is_null());
     let review = get_review_json(&running, "api/review").await;
     assert_eq!(review["comments"][0]["page"], comment["page"]);
+}
+
+#[tokio::test]
+async fn a_page_comment_whose_place_numbers_skip_one_is_refused() {
+    let (authority, _dev) = start_dev_server().await;
+    let running = start_review(&authority).await;
+
+    let refused = add_page_comment(
+        &running,
+        serde_json::json!([page_place(1, "element"), page_place(3, "pen")]),
+    )
+    .await;
+
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    let review = get_review_json(&running, "api/review").await;
+    assert_eq!(review["comments"], serde_json::json!([]));
 }
 
 #[tokio::test]

@@ -25,7 +25,9 @@ import {
   filterConversation,
   firstLine,
   followsNewest,
-  handShown,
+  handLineState,
+  handControl,
+  otherThreadNews,
   pageCommentElsewhere,
   threadChip,
   unreadCount,
@@ -44,6 +46,9 @@ export function renderConversation(options = {}) {
   actions.pageCommentsChanged();
   const shown = conversationShown();
   dom.conversation.dataset.open = String(shown);
+  // 狭い画面のシートを開いている間は、浮かぶ「Hand to agent」を出さない（シートの中に同じ操作があり、浮かぶものが
+  // シートの操作を覆うため）。
+  dom.handFloatBar.dataset.conversationOpen = String(shown);
   dom.conversation.style.setProperty("--cv-width", `${state.conversation.width}px`);
   dom.btnComments.setAttribute("aria-expanded", String(shown));
   renderAgentState();
@@ -59,6 +64,7 @@ export function renderConversation(options = {}) {
   const row = comment ? dom.cvReplyActions : dom.cvComposeActions;
   if (dom.btnHand.parentElement !== row) {
     row.prepend(dom.btnHand);
+    row.after(dom.handNote);
   }
   if (comment) {
     renderThread(comment, options);
@@ -78,30 +84,83 @@ function openThreadComment() {
 
 /**
  * エージェントの状態（見出しと畳んだ帯）と「Hand to agent」（書く欄の並びと畳んだ帯）。
- * 「Hand to agent」は `kemi wait` が一度でも呼ばれたレビューでだけ出す（R-AGENT-STATE）。
+ * 「Hand to agent」は状態によらず出し、押せないときはそのわけをそばに出す（R-AGENT-STATE）。
  */
 export function renderAgentState() {
   const agent = state.agent;
   const label = agentStatusLabel(agent.status);
-  dom.agentStatus.dataset.status = agent.status;
+  dom.agentStatus.dataset.kemiAgentState = agent.status;
   dom.agentStatus.textContent = label;
-  dom.railStatus.dataset.status = agent.status;
+  dom.railStatus.dataset.kemiAgentState = agent.status;
   dom.railStatus.title = label;
   const count = agent.unhanded > 0 ? ` ${agent.unhanded}` : "";
-  for (const hand of [dom.btnHand, dom.railHand]) {
-    hand.hidden = !handShown(agent);
-    hand.disabled = state.submitted || agent.unhanded === 0;
+  const control = handControl(agent, state.submitted);
+  for (const hand of [dom.btnHand, dom.railHand, dom.handFloat]) {
+    hand.disabled = control.disabled;
+    hand.dataset.handNote = control.note ?? "";
+  }
+  for (const note of [dom.handNote, dom.railHandNote, dom.handFloatNote]) {
+    renderHandNote(note, control);
   }
   dom.handCount.textContent = count;
+  dom.handFloatCount.textContent = count;
   dom.railHandCount.textContent = count;
   dom.railHand.setAttribute("aria-label", `Hand to agent${count ? ` (${agent.unhanded})` : ""}`);
   const unread = unreadCount(state.allComments, state.messages, state.conversation.read);
   dom.cvUnread.hidden = unread === 0;
   dom.cvUnread.textContent = String(unread);
+  // 会話パネルを開いている間も、見出しに新着の数を出す（数え方は帯と同じ。R-AGENT-HAND）。
+  dom.cvHeadUnread.hidden = unread === 0;
+  dom.cvHeadUnread.textContent = `${unread} new`;
   dom.cvRail.setAttribute(
     "aria-label",
     unread > 0 ? `Open the conversation (${unread} new)` : "Open the conversation",
   );
+}
+
+/** 「Hand to agent」を押せないわけ（画面モックの状態 1）。 */
+const HAND_NOTES = {
+  connect: "You can hand comments once the agent runs",
+  unavailable: "No agent can connect to this review. Submit to finish it.",
+  nothing: "Nothing new to hand",
+};
+
+/**
+ * 「Hand to agent」のそばの案内。`kemi wait` の前は、渡せるようになるコマンドとそれを写す操作も出す。
+ * 中身が同じなら作り直さない（状態の知らせのたびに描き直され、写した印が消えるため）。
+ * @param {HTMLElement} note
+ * @param {ReturnType<typeof handControl>} control
+ */
+function renderHandNote(note, control) {
+  const key = `${control.note ?? ""} ${control.command ?? ""}`;
+  if (note.dataset.key === key) {
+    return;
+  }
+  note.dataset.key = key;
+  note.textContent = "";
+  note.hidden = control.note === null;
+  if (control.note === null) {
+    return;
+  }
+  note.append(textEl("span", "hand-note-text", HAND_NOTES[control.note]));
+  const command = control.command;
+  if (command === null) {
+    return;
+  }
+  const code = textEl("code", "hand-command", command);
+  const copy = button("hand-copy");
+  copy.textContent = "Copy";
+  copy.title = `Copy ${command}`;
+  // 安全でない接続（--bind で LAN のアドレスに http で開いた）では navigator.clipboard が無く、呼ぶとその場で投げる。
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      copy.textContent = "Copied";
+    } catch (error) {
+      copy.textContent = `Could not copy: ${error}`;
+    }
+  });
+  note.append(" ", code, copy);
 }
 
 /**
@@ -174,6 +233,11 @@ function renderList(options) {
       );
       dom.cvItems.append(row);
     }
+    // 発言だけの 1 回分の行は、並びの末尾に出す（R-AGENT-HAND）。
+    const row = el("li");
+    if (appendHandLine(row, null)) {
+      dom.cvItems.append(row);
+    }
   });
 }
 
@@ -222,6 +286,31 @@ function place(comment, info) {
   return where;
 }
 
+/** 渡した 1 回分の行の文言（画面モックの状態 3）。 */
+const HAND_LINE_TEXT = {
+  pending: "Waiting for the agent to pick this up",
+  working: "Agent is working…",
+};
+
+/**
+ * 渡した 1 回分の行を末尾に足す（R-AGENT-HAND）。行が無ければ足さない。
+ * @param {HTMLElement} parent
+ * @param {string | null} thread スレッドの id。null なら発言だけの 1 回分
+ * @returns {boolean} 足したか
+ */
+function appendHandLine(parent, thread) {
+  const line = handLineState(state.agent.lines, thread);
+  if (line === null) {
+    return false;
+  }
+  const row = el("span", "cv-hand-line");
+  row.dataset.kemiHandLine = line;
+  row.setAttribute("role", "status");
+  row.textContent = HAND_LINE_TEXT[line];
+  parent.append(row);
+  return true;
+}
+
 /**
  * 一覧のスレッドの項目。場所、件名（コミットごと）、最後の書き込みを示し、押すとパネル全体が
  * そのスレッドになる。畳んだスレッドは場所の 1 行だけにする（R-AGENT-HAND）。
@@ -260,8 +349,29 @@ function threadCard(comment, context) {
     line.append(textEl("b", "cv-who", authorLabel(last.author)), textEl("span", "cv-first", firstLine(last.body)));
     card.append(line);
   }
+  appendHandLine(card, comment.id);
   card.addEventListener("click", () => actions.openThread(comment.id));
   return card;
+}
+
+/**
+ * 開いているスレッドの上の、別のスレッドに返信が届いた知らせ。押すとそのスレッドを開く（R-AGENT-HAND）。
+ * @param {string} open 開いているスレッドの id
+ */
+function renderOtherNews(open) {
+  const news = otherThreadNews(state.allComments, state.conversation.read, open);
+  dom.cvOtherNew.hidden = news === null;
+  if (news === null) {
+    delete dom.cvOtherNew.dataset.id;
+    return;
+  }
+  dom.cvOtherNew.dataset.id = news.id;
+  dom.cvOtherNew.textContent = "";
+  dom.cvOtherNew.append(
+    textEl("span", "cv-other-new-text", `New reply in “${firstLine(news.body)}”`),
+    textEl("span", "cv-other-new-go", "Open →"),
+  );
+  dom.cvOtherNew.onclick = () => actions.openThread(news.id);
 }
 
 /**
@@ -270,6 +380,7 @@ function threadCard(comment, context) {
  * @param {{ toEnd?: boolean }} options
  */
 function renderThread(comment, options) {
+  renderOtherNews(comment.id);
   const context = { range: state.units.length > 0, commitGroups: commitGroups() };
   const info = describeComment(comment, context);
   const chip = threadChip(comment, state.conversation.read, state.conversation.folded);
@@ -391,6 +502,7 @@ function renderThread(comment, options) {
     for (const reply of comment.replies || []) {
       dom.cvThreadBody.append(post(reply.author, reply.body, "cv-reply-post", reply.id));
     }
+    appendHandLine(dom.cvThreadBody, comment.id);
     const editor = /** @type {HTMLTextAreaElement | null} */ (
       opening.querySelector(".cv-page-edit-text")
     );

@@ -39,6 +39,10 @@
       drawPlaceSets(Array.isArray(message.sets) ? message.sets : []);
       return;
     }
+    if (message.type === 'saved-at') {
+      post({ type: 'saved-found', id: message.id, comment: savedCommentAt(finite(message.x) + scrollX, finite(message.y) + scrollY) });
+      return;
+    }
     if (message.type === 'scroll-by') {
       scrollBy(finite(message.x), finite(message.y));
       return;
@@ -439,10 +443,19 @@
   /** 要素の文字として渡す長さの上限。 */
   const TEXT_LIMIT = 200;
   /**
-   * ペンで囲んだ範囲と重なる要素に入れない要素（ページ全体を覆い、囲んだ要素を押し出す）。押した・指した位置の要素や、
-   * 範囲を含む一番内側の要素としては選ぶ（どの要素にも掛からない地では、これが場所の要素になる）。
+   * 場所の要素として渡さない文書の根（R-PAGE-COMMENT）。余白を指してもページ全体と全文が渡り、エージェントにはどこを
+   * 指したか分からない。
    */
   const PAGE_ROOTS = new Set(['html', 'body']);
+
+  /**
+   * 場所の要素として意味があるか（文書の根でない）。
+   * @param {Element | null} element
+   * @returns {element is Element}
+   */
+  function meaningful(element) {
+    return element !== null && !PAGE_ROOTS.has(element.localName);
+  }
 
   /**
    * 画面の座標のその点にある要素。開いている shadow root の中まで下りる。
@@ -525,9 +538,9 @@
 
   /**
    * ペンで囲んだ範囲（線の外接矩形）と重なる要素を、重なる面積の大きい順に上限まで。画面の座標で比べる。範囲を丸ごと
-   * 含む要素（ページを包む入れ物など）と、文書の根（html と body）は、重なる面積が範囲いっぱいになって囲んだ要素を
-   * 押し出すので除く。除くと何も残らない（1 つの要素の内側だけか、地だけを囲んだ）ときは、範囲を含む一番内側の要素
-   * 1 つにする。
+   * 含む要素（ページを包む入れ物など）は、重なる面積が範囲いっぱいになって囲んだ要素を押し出すので除く。除くと何も
+   * 残らない（1 つの要素の内側だけを囲んだ）ときは、範囲を含む一番内側の要素 1 つにする。文書の根（html と body）は
+   * どの場合も渡さず、意味のある要素が無ければ（余白だけを囲んだ）空にする（範囲だけの場所）。
    * @param {{ x: number, y: number }[]} points 画面の座標
    */
   function enclosedElements(points) {
@@ -541,28 +554,26 @@
     const innermost = { element: null, area: Infinity };
     eachPageElement((element) => {
       const rect = element.getBoundingClientRect();
+      if (!meaningful(element)) return;
       if (rect.left <= left && rect.top <= top && rect.right >= right && rect.bottom >= bottom) {
         // 文書の順にたどるので、面積が同じなら後に来る（内側の）要素を選ぶ。
         const area = rect.width * rect.height;
         if (area <= innermost.area) Object.assign(innermost, { element, area });
         return;
       }
-      if (PAGE_ROOTS.has(element.localName)) return;
       const width = Math.min(right, rect.right) - Math.max(left, rect.left);
       const height = Math.min(bottom, rect.bottom) - Math.max(top, rect.top);
       if (width > 0 && height > 0) found.push({ element, area: width * height });
     });
-    // 文書の根の箱より外（中身の短いページの下の地）でも、地は文書の根のものとして描かれる。
-    if (found.length === 0) return [placeElement(innermost.element ?? document.documentElement)];
+    if (found.length === 0) return innermost.element ? [placeElement(innermost.element)] : [];
     found.sort((a, b) => b.area - a.area);
     return found.slice(0, ENCLOSED_LIMIT).map(({ element }) => placeElement(element));
   }
 
   /**
    * 置いた場所を決める。点は画面の座標で届き、文書の座標にして返す。要素は 1 つ、矢印は先端の要素、ペンは
-   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。押した点は `at` に入れて返す。
-   * 文書の根（地）を選んだときは、その箱ではなくこの点が画像の範囲と描き込みの位置になる。レビュー画面は
-   * これを画像の頼みにだけ載せ、保存する場所には入れない。
+   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。文書の根（html と body）は場所の要素に
+   * しない: 要素の道具では場所を作らず、矢印の先が文書の根なら要素を付けない（R-PAGE-COMMENT）。
    * @param {string} kind
    * @param {unknown[]} requested
    */
@@ -578,19 +589,65 @@
     }
     const at = kind === 'arrow' ? points[points.length - 1] : points[0];
     const element = elementAt(at.x, at.y);
-    const elements = element ? [placeElement(element)] : [];
+    const elements = meaningful(element) ? [placeElement(element)] : [];
     if (kind === 'arrow') return { kind, points: points.map(toDocument), elements };
     if (elements.length === 0) return { error: 'no element there' };
-    return { kind: 'element', points: [], elements, at: toDocument(at) };
+    return { kind: 'element', points: [], elements };
   }
 
-  /** 場所の描き込みの見た目。書いている途中と、目立たせる保存したものは濃く、ほかの保存したものは控えめに。 */
-  /** @type {Record<string, { width: number, opacity: string, numbers: boolean }>} */
+  /**
+   * 場所の描き込みの見た目。書いている途中と、開いているスレッドの保存したものは番号付きで、ほかの保存したものは
+   * 番号の無い小さな印だけ（R-PAGE-COMMENT）。
+   * @typedef {{ width: number, opacity: string, numbers: boolean, quiet: boolean }} PlaceLook
+   */
+  /** @type {Record<string, PlaceLook>} */
   const PLACE_LOOKS = {
-    draft: { width: 2, opacity: '1', numbers: true },
-    focus: { width: 2, opacity: '1', numbers: true },
-    saved: { width: 1, opacity: '0.55', numbers: true },
+    draft: { width: 2, opacity: '1', numbers: true, quiet: false },
+    focus: { width: 2, opacity: '1', numbers: true, quiet: false },
+    saved: { width: 1, opacity: '1', numbers: false, quiet: true },
   };
+  /** 保存したコメントの小さな印の大きさ（CSS ピクセル）。 */
+  const QUIET_MARK = 10;
+  /** 印や番号に触れたとみなす、その中心からの距離（CSS ピクセル）。 */
+  const MARK_REACH = 12;
+  /**
+   * 保存したコメントの印と番号の中心（文書の座標）と、そのコメントの id。触れたらどのコメントかを返すのに使う。
+   * @type {{ comment: string, x: number, y: number }[]}
+   */
+  let savedSpots = [];
+
+  /**
+   * 文書の座標のその点にある、保存したコメントの印か番号のコメントの id。無ければ null。
+   * @param {number} x
+   * @param {number} y
+   * @returns {string | null}
+   */
+  function savedCommentAt(x, y) {
+    let found = null;
+    let nearest = MARK_REACH;
+    for (const spot of savedSpots) {
+      const distance = Math.hypot(spot.x - x, spot.y - y);
+      if (distance <= nearest) {
+        nearest = distance;
+        found = spot.comment;
+      }
+    }
+    return found;
+  }
+
+  // 操作の道具の間はポインタがページに届くので、ページが印に乗ったかを見て知らせる（場所を置く道具の間は
+  // レビュー画面が重ねた層で受け、saved-at で尋ねる）。
+  let hovered = /** @type {string | null} */ (null);
+  window.addEventListener(
+    'pointermove',
+    (event) => {
+      const comment = savedSpots.length === 0 ? null : savedCommentAt(event.clientX + scrollX, event.clientY + scrollY);
+      if (comment === hovered) return;
+      hovered = comment;
+      post({ type: 'saved-hover', comment, x: event.clientX, y: event.clientY });
+    },
+    { passive: true },
+  );
   const SVG = 'http://www.w3.org/2000/svg';
 
   /**
@@ -599,10 +656,18 @@
    */
   function drawPlaceSets(sets) {
     const drawn = [];
+    savedSpots = [];
     for (const set of sets) {
-      const { places, look } = /** @type {{ places: unknown, look: unknown }} */ (set ?? {});
+      const { places, look, comment } = /** @type {{ places: unknown, look: unknown, comment: unknown }} */ (set ?? {});
       const style = PLACE_LOOKS[String(look)] ?? PLACE_LOOKS.saved;
-      drawn.push(...placeShapes(readPlaces(Array.isArray(places) ? places : []), style));
+      const read = readPlaces(Array.isArray(places) ? places : []);
+      drawn.push(...placeShapes(read, style));
+      if (typeof comment === 'string') {
+        for (const place of read) {
+          const spot = style.quiet ? quietSpot(place) : placeAnchor(place);
+          if (spot) savedSpots.push({ comment, x: spot.x, y: spot.y });
+        }
+      }
     }
     if (drawn.length === 0) {
       placesLayer?.replaceChildren();
@@ -614,14 +679,39 @@
   }
 
   /**
+   * 保存したコメントの小さな印を置く点（文書の座標）。要素の場所は要素の右上の角、矢印とペンは最初の点。
+   * @param {ImagePlace} place
+   * @returns {Point | undefined}
+   */
+  function quietSpot(place) {
+    if (place.kind !== 'element') return place.points[0];
+    const rect = place.elements[0]?.rect;
+    return rect ? { x: rect.x + rect.w, y: rect.y } : undefined;
+  }
+
+  /**
    * 1 組の場所の描き込みの要素。
    * @param {ImagePlace[]} places
-   * @param {{ width: number, opacity: string, numbers: boolean }} style
+   * @param {PlaceLook} style
    * @returns {Element[]}
    */
   function placeShapes(places, style) {
     /** @type {Element[]} */
     const drawn = [];
+    if (style.quiet) {
+      for (const place of places) {
+        const spot = quietSpot(place);
+        if (!spot) continue;
+        const mark = document.createElement('div');
+        setStyles(mark, {
+          position: 'absolute', left: `${Math.max(0, spot.x - QUIET_MARK / 2)}px`, top: `${Math.max(0, spot.y - QUIET_MARK / 2)}px`,
+          width: `${QUIET_MARK}px`, height: `${QUIET_MARK}px`, 'border-radius': '50%', background: 'rgb(154, 161, 171)',
+          'box-shadow': '0 0 0 2px rgb(255, 255, 255)', 'box-sizing': 'border-box', margin: '0', padding: '0',
+        });
+        drawn.push(mark);
+      }
+      return drawn;
+    }
     const svg = document.createElementNS(SVG, 'svg');
     svg.setAttribute('width', '1');
     svg.setAttribute('height', '1');
@@ -630,8 +720,7 @@
     setStyles(/** @type {any} */ (svg), { position: 'absolute', left: '0', top: '0', overflow: 'visible' });
     for (const place of places) {
       if (place.kind === 'element') {
-        // 文書の根の箱は文書全体を囲むので描かない。地を選んだ場所は番号だけで示す。
-        for (const { rect } of place.elements.filter(({ root }) => !root)) {
+        for (const { rect } of place.elements) {
           const box = document.createElementNS(SVG, 'rect');
           for (const [name, value] of Object.entries({ x: rect.x - 2, y: rect.y - 2, width: rect.w + 4, height: rect.h + 4 })) box.setAttribute(name, String(value));
           box.setAttribute('fill', 'none');
@@ -1159,7 +1248,7 @@
   /**
    * @typedef {{ x: number, y: number }} Point
    * @typedef {{ x: number, y: number, w: number, h: number }} Rect
-   * @typedef {{ n: number, kind: string, points: Point[], elements: { rect: Rect, root: boolean }[], at: Point | null }} ImagePlace
+   * @typedef {{ n: number, kind: string, points: Point[], elements: { rect: Rect }[] }} ImagePlace
    */
 
   /** @param {unknown} value */
@@ -1172,51 +1261,26 @@
    */
   function readPlaces(places) {
     return places.map((place) => {
-      const { n, kind, points, elements, at } = /** @type {Record<string, unknown>} */ (place ?? {});
-      const point = /** @type {Record<string, unknown> | null} */ (at && typeof at === 'object' ? at : null);
+      const { n, kind, points, elements } = /** @type {Record<string, unknown>} */ (place ?? {});
       return {
         n: finite(n),
         kind: String(kind),
         points: (Array.isArray(points) ? points : []).map((point) => ({ x: finite(point?.x), y: finite(point?.y) })),
         elements: (Array.isArray(elements) ? elements : []).map((element) => {
           const rect = element?.rect ?? {};
-          return { rect: { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) }, root: isPageRoot(element?.selector) };
+          return { rect: { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) } };
         }),
-        at: point ? { x: finite(point.x), y: finite(point.y) } : null,
       };
     });
   }
 
   /**
-   * セレクタが文書の根（html か body）を指すか。shadow root の中のセレクタ（` >>> ` を含む）は読めずに false。
-   * @param {unknown} selector
-   */
-  function isPageRoot(selector) {
-    if (typeof selector !== 'string') return false;
-    try {
-      const element = document.querySelector(selector);
-      return element !== null && (element === document.documentElement || element === document.body);
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * 文書の根だけを指す要素の場所（地を選んだ）の押した点。ほかの場所と、押した点を持たない場所（保存したもの）は null。
-   * @param {ImagePlace} place
-   */
-  function onlyRootAt(place) {
-    return place.kind === 'element' && place.elements.every(({ root }) => root) ? place.at : null;
-  }
-
-  /**
-   * 番号を置く点。要素の場所は文書の根でない最初の要素の左上か、地を選んだなら押した点。矢印とペンは最初の点。
+   * 番号を置く点。要素の場所は最初の要素の左上、矢印とペンは最初の点。
    * @param {ImagePlace} place
    * @returns {Point | undefined}
    */
   function placeAnchor(place) {
-    if (place.kind !== 'element') return place.points[0];
-    return place.elements.find(({ root }) => !root)?.rect ?? place.at ?? place.elements[0]?.rect;
+    return place.kind === 'element' ? place.elements[0]?.rect : place.points[0];
   }
 
   /**
@@ -1241,15 +1305,9 @@
           xs.push(point.x);
           ys.push(point.y);
         }
-        // 文書の根の箱は文書全体なので範囲に入れない。地を選んだ要素の場所は押した点を入れる。
-        for (const { rect } of place.elements.filter(({ root }) => !root)) {
+        for (const { rect } of place.elements) {
           xs.push(rect.x, rect.x + rect.w);
           ys.push(rect.y, rect.y + rect.h);
-        }
-        const at = onlyRootAt(place);
-        if (at) {
-          xs.push(at.x);
-          ys.push(at.y);
         }
       }
       if (xs.length === 0) throw new Error('no place to draw around');
@@ -1330,8 +1388,7 @@
     context.lineCap = 'round';
     for (const place of places) {
       if (place.kind === 'element') {
-        // 文書の根の箱は文書全体を囲むので描かない。地を選んだ場所は番号だけで示す。
-        for (const { rect } of place.elements.filter(({ root }) => !root)) context.strokeRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4);
+        for (const { rect } of place.elements) context.strokeRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4);
       } else if (place.points.length > 0) {
         context.beginPath();
         context.moveTo(place.points[0].x, place.points[0].y);

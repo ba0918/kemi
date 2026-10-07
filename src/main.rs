@@ -381,6 +381,7 @@ async fn start_agent_channel(
         AgentParams {
             listener,
             token,
+            review: id.clone(),
             control: control.clone(),
         },
         EndpointFile { dir, id },

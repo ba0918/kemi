@@ -13,6 +13,7 @@ import {
   AUTO_RULE,
   WIDTH_CHOICES,
   addPlace,
+  commentShortName,
   buildPageTree,
   chooseReference,
   compareHeading,
@@ -21,12 +22,15 @@ import {
   overlayPlacement,
   pageKey,
   draftElsewhere,
+  editBody,
+  editedSpan,
   emptyDraft,
   imageUnsavedNotice,
   parseWidth,
   referenceName,
   referenceOptions,
   removePlace,
+  strayRefs,
   snapshotLabel,
   startSnapshotDue,
   undoPlace,
@@ -41,7 +45,9 @@ import {
   renderCompareOptions,
   renderPageTree,
   renderPlaces,
+  renderStrayRefs,
 } from "../views/live.js";
+import { handToAgent } from "./agent.js";
 import { closeSheet } from "./conversation.js";
 import { refresh } from "./files.js";
 import { renderConversation } from "../views/conversation.js";
@@ -193,7 +199,7 @@ let nextCapture = 1;
 /**
  * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
  * @param {Window} frame
- * @param {"capture" | "describe" | "place" | "image"} type
+ * @param {"capture" | "describe" | "place" | "image" | "saved-at"} type
  * @param {number} timeout
  * @param {Record<string, unknown>} [details] 頼みごとの中身
  * @returns {Promise<any>}
@@ -237,6 +243,7 @@ export function startLive(info) {
   dom.titleBlock.before(topbar.tabs, topbar.meta, topbar.agent);
   mirrorAgentState(topbar.agent);
   mirrorAgentState(shell.bandAgent);
+  mirrorHand(shell.hand);
   const menu = shell.menu;
   // 狭い画面の帯のメニューは、帯のすぐ下に開く。
   menu.addEventListener("beforetoggle", () => {
@@ -378,17 +385,43 @@ function mirrorDrawer(pageTree) {
 }
 
 /**
+ * 狭い画面の道具のツールバーの「Hand to agent」は、全モード共通の浮かぶもの（views/conversation.js が描く）の押せる・
+ * 押せないと文言を写し、押すと同じく渡す。そばの案内は全モード共通のものをそのままツールバーの上に出すので、
+ * その高さを `--lv-hand-note-height` に入れ、見る対象の下をその分も空ける（書く欄の操作を覆わせない）。
+ * @param {HTMLButtonElement} target
+ */
+function mirrorHand(target) {
+  new ResizeObserver(() => {
+    document.body.style.setProperty("--lv-hand-note-height", `${dom.handFloatNote.getBoundingClientRect().height}px`);
+  }).observe(dom.handFloatNote);
+  const source = dom.handFloat;
+  const copy = () => {
+    target.disabled = source.disabled;
+    target.textContent = source.textContent;
+  };
+  new MutationObserver(copy).observe(source, {
+    attributes: true,
+    attributeFilter: ["disabled"],
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  copy();
+  target.addEventListener("click", () => void handToAgent());
+}
+
+/**
  * 上部バーのエージェントの状態は、会話パネルの見出しの状態（views/conversation.js が描く）を写す。
  * @param {HTMLElement} target
  */
 function mirrorAgentState(target) {
   const copy = () => {
-    target.dataset.status = dom.agentStatus.dataset.status ?? "";
+    target.dataset.kemiAgentState = dom.agentStatus.dataset.kemiAgentState ?? "";
     target.textContent = dom.agentStatus.textContent;
   };
   new MutationObserver(copy).observe(dom.agentStatus, {
     attributes: true,
-    attributeFilter: ["data-status"],
+    attributeFilter: ["data-kemi-agent-state"],
     childList: true,
     characterData: true,
     subtree: true,
@@ -518,8 +551,17 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (["captured", "described", "placed", "imaged"].includes(message.type)) {
+  if (["captured", "described", "placed", "imaged", "saved-found"].includes(message.type)) {
     pendingCaptures.get(Number(message.id))?.(message);
+    return;
+  }
+  if (message.type === "saved-hover") {
+    // 操作の道具の間は、ページがポインタの動きを見て、乗った印のコメントを知らせる。
+    const frame = shell.liveFrame.getBoundingClientRect();
+    showSavedTip(typeof message.comment === "string" ? message.comment : null, {
+      x: frame.left + (Number(message.x) || 0) * live.scale,
+      y: frame.top + (Number(message.y) || 0) * live.scale,
+    });
     return;
   }
   if (message.type === "changed") {
@@ -653,7 +695,11 @@ function startComposing(shell) {
     if (drawing?.pointer === event.pointerId && live.tool !== "element") {
       extendStroke(event);
     }
+    if (!drawing) {
+      void findSavedAt({ x: event.clientX, y: event.clientY });
+    }
   });
+  layer.addEventListener("pointerleave", () => showSavedTip(null, { x: 0, y: 0 }));
   layer.addEventListener("pointerup", (event) => {
     if (drawing?.pointer === event.pointerId) {
       void finishStroke();
@@ -683,7 +729,6 @@ function startComposing(shell) {
   const compose = shell.compose;
   compose.undo.addEventListener("click", () => setDraft(undoPlace(live.draft)));
   compose.cancel.addEventListener("click", () => {
-    compose.body.value = "";
     live.composeError = "";
     setDraft(emptyDraft(live.page, live.width));
   });
@@ -695,7 +740,16 @@ function startComposing(shell) {
       void savePageComment();
     }
   });
-  compose.body.addEventListener("input", () => renderCompose());
+  // 書き換わった区間は、入力の前の選択と入力の後のカーソルから求める（宙に浮いた参照を字面で見分けられないため）。
+  let selection = { start: 0, end: 0 };
+  compose.body.addEventListener("beforeinput", () => {
+    selection = { start: compose.body.selectionStart, end: compose.body.selectionEnd };
+  });
+  compose.body.addEventListener("input", () => {
+    const value = compose.body.value;
+    const edit = editedSpan(selection, compose.body.selectionEnd, value.length - live.draft.body.length);
+    setDraft(editBody(live.draft, value, edit));
+  });
 }
 
 /**
@@ -751,7 +805,7 @@ async function finishStroke() {
   }
   live.composeError = "";
   const place = { kind, points: answer.points ?? [], elements: answer.elements ?? [] };
-  setDraft(addPlace(live.draft, answer.at ? { ...place, at: answer.at } : place, page, width));
+  setDraft(addPlace(live.draft, place, page, width));
 }
 
 /**
@@ -760,8 +814,89 @@ async function finishStroke() {
  */
 function setDraft(draft) {
   live.draft = draft;
+  showDraftBody();
   renderCompose();
   sendPlaces();
+}
+
+/** 書きかけの本文を書く欄に出す（詰め直しで書き換わったとき）。入力位置は同じ所に置く。 */
+function showDraftBody() {
+  const body = shell?.compose.body;
+  if (!body || body.value === live.draft.body) {
+    return;
+  }
+  const caret = body.selectionStart;
+  body.value = live.draft.body;
+  body.setSelectionRange(Math.min(caret, body.value.length), Math.min(caret, body.value.length));
+}
+
+/**
+ * 本文の入力位置に `#n` を入れる（R-PAGE-COMMENT の、場所の一覧の番号を押す）。
+ * @param {number} n
+ */
+function insertReference(n) {
+  const body = shell?.compose.body;
+  if (!body || live.saving) {
+    return;
+  }
+  const edit = { start: body.selectionStart, end: body.selectionEnd };
+  body.setRangeText(`#${n}`, edit.start, edit.end, "end");
+  body.focus();
+  setDraft(editBody(live.draft, body.value, edit));
+}
+
+/** ポインタの下の保存したコメントをページに尋ねている間の、次に尋ねる点（尋ねている間に動いた分はまとめる）。 */
+let savedAsk = /** @type {{ x: number, y: number } | null} */ (null);
+let savedAsking = false;
+
+/**
+ * 場所を置く道具の層の上のポインタの下に、保存したコメントの印があるかをページに尋ね、あればその名前を出す
+ * （R-PAGE-COMMENT）。層が枠を覆ってポインタがページに届かないので、レビュー画面から尋ねる。
+ * @param {{ x: number, y: number }} point 画面の座標
+ */
+async function findSavedAt(point) {
+  savedAsk = point;
+  const frame = shell?.liveFrame.contentWindow;
+  if (savedAsking || !shell || !frame || pageComments().length === 0) {
+    return;
+  }
+  savedAsking = true;
+  try {
+    while (savedAsk) {
+      const asked = savedAsk;
+      savedAsk = null;
+      const box = shell.liveFrame.getBoundingClientRect();
+      const answer = await ask(frame, "saved-at", PLACE_TIMEOUT, {
+        x: (asked.x - box.left) / live.scale,
+        y: (asked.y - box.top) / live.scale,
+      });
+      showSavedTip(typeof answer.comment === "string" ? answer.comment : null, asked);
+    }
+  } finally {
+    savedAsking = false;
+  }
+}
+
+/**
+ * 保存したコメントの短い名前を、ポインタのそばに出す。コメントが無ければ隠す。
+ * @param {string | null} id
+ * @param {{ x: number, y: number }} point 画面の座標
+ */
+function showSavedTip(id, point) {
+  if (!shell) {
+    return;
+  }
+  const tip = shell.savedTip;
+  const comment = id === null ? undefined : pageComments().find((item) => item.id === id);
+  tip.hidden = comment === undefined;
+  if (comment === undefined) {
+    return;
+  }
+  tip.textContent = commentShortName(String(comment.body ?? ""));
+  tip.dataset.comment = comment.id;
+  const box = /** @type {HTMLElement} */ (tip.parentElement).getBoundingClientRect();
+  tip.style.left = `${point.x - box.left + 12}px`;
+  tip.style.top = `${point.y - box.top + 12}px`;
 }
 
 /** 保存したページへのコメント（`page` を持つもの）。 */
@@ -782,9 +917,14 @@ function sendPlaces() {
     return;
   }
   const here = (/** @type {string} */ url, /** @type {number} */ width) => url === live.page && width === live.width;
+  /** @type {{ places: unknown[], look: string, comment?: string }[]} */
   const sets = pageComments()
     .filter((comment) => here(comment.page.url, comment.page.width))
-    .map((comment) => ({ places: comment.page.places, look: state.conversation.thread === comment.id ? "focus" : "saved" }));
+    .map((comment) => ({
+      places: comment.page.places,
+      look: state.conversation.thread === comment.id ? "focus" : "saved",
+      comment: comment.id,
+    }));
   const draft = live.draft;
   if (here(draft.url, draft.width) && draft.places.length > 0) {
     sets.push({ places: draft.places, look: "draft" });
@@ -858,13 +998,19 @@ function renderCompose() {
     compose.back.textContent = `Back to ${away.url} at ${away.width}px`;
   }
   // 道具を選んだだけでは開かず、最初の場所を置いたときに開く（R-PAGE-COMMENT）。
-  compose.box.hidden = live.view !== "page" || (places.length === 0 && compose.body.value === "");
+  compose.box.hidden = live.view !== "page" || (places.length === 0 && live.draft.body === "");
   // 保存している間は書きかけを変えさせない（保存し終えると書く欄を空けるので、その間の変更は消えてしまう）。
-  renderPlaces(compose, places, (n) => setDraft(removePlace(live.draft, n)), live.saving);
+  renderPlaces(compose, places, { remove: (n) => setDraft(removePlace(live.draft, n)), insert: insertReference }, live.saving);
+  const stray = strayRefs(live.draft);
+  renderStrayRefs(compose, stray, (ref) => {
+    compose.body.focus();
+    compose.body.setSelectionRange(ref.start, ref.end);
+  });
   compose.undo.disabled = places.length === 0 || live.saving;
   compose.cancel.disabled = live.saving;
   compose.body.readOnly = live.saving;
-  compose.save.disabled = places.length === 0 || away !== null || live.saving || compose.body.value.trim() === "" || state.submitted;
+  compose.save.disabled =
+    places.length === 0 || away !== null || live.saving || live.draft.body.trim() === "" || stray.length > 0 || state.submitted;
   compose.error.hidden = live.composeError === "";
   compose.error.textContent = live.composeError;
 }
@@ -878,9 +1024,10 @@ async function savePageComment() {
     return;
   }
   const draft = live.draft;
-  const body = shell.compose.body.value.trim();
+  const body = draft.body.trim();
   // 画像は場所のあるページで作るので、保存は書きかけの URL と表示幅に戻ってから（R-PAGE-COMMENT）。
-  if (draft.places.length === 0 || body === "" || draftElsewhere(draft, live.page, live.width)) {
+  // どの場所も指さない `#n` が本文にある間は保存しない（R-PAGE-COMMENT）。
+  if (draft.places.length === 0 || body === "" || strayRefs(draft).length > 0 || draftElsewhere(draft, live.page, live.width)) {
     return;
   }
   setSaving(true);
@@ -899,7 +1046,7 @@ async function savePageComment() {
     );
     image = typeof answer.png === "string" ? answer.png : null;
   }
-  // 押した点（`at`）は画像の頼みにだけ載せる。保存する場所の形は R-SUBMIT の `page.places`。
+  // 保存する場所の形は R-SUBMIT の `page.places`。
   const places = draft.places.map(({ n, kind, points, elements }) => ({ n, kind, points, elements }));
   const request = { op: "add_page", page: { url: draft.url, width: draft.width, places }, body };
   try {
@@ -922,9 +1069,9 @@ async function savePageComment() {
     refreshCommentBadges(before);
     renderHeader();
     renderConversation();
-    shell.compose.body.value = "";
     live.composeError = "";
     live.draft = emptyDraft(live.page, live.width);
+    showDraftBody();
     sendPlaces();
   } catch (error) {
     live.composeError = `Not saved: ${error instanceof Error ? error.message : String(error)}`;

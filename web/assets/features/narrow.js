@@ -42,6 +42,17 @@ export function applyNarrow(narrow) {
 }
 
 /**
+ * 狭い画面で画面の下に浮かぶ「Hand to agent」とその案内（R-AGENT-STATE）の高さを `--hand-float-height` に入れる。
+ * 差分と描画表示の下をその分空け、終わりの行を浮かぶものの上まで送れるようにする（R-NARROW）。案内の行数は
+ * 状態で変わるので測る。
+ */
+export function reserveHandFloatSpace() {
+  new ResizeObserver(() => {
+    document.body.style.setProperty("--hand-float-height", `${dom.handFloatBar.getBoundingClientRect().height}px`);
+  }).observe(dom.handFloatBar);
+}
+
+/**
  * 狭い画面の札を隠す・戻す切り替え。行の高さが変わるので測り直させる。
  */
 export function toggleComments() {

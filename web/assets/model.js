@@ -1560,14 +1560,23 @@ export function effectiveDisplay(settings) {
   return { mode: settings.mode, wrap: settings.wrap };
 }
 
-/** @typedef {{ called: boolean, status: string, unhanded: number }} AgentState */
+/**
+ * 渡した 1 回分の行（R-AGENT-HAND）。`thread` が null なら発言だけの 1 回分の、並びの末尾の行。
+ * @typedef {{ thread: string | null, state: "pending" | "working" }} HandLine
+ * `review` は写す `kemi wait <id>` の id。エージェント用の API が無いレビューでは null。
+ * @typedef {{ called: boolean, status: string, unhanded: number, lines?: HandLine[], review?: string | null }} AgentState
+ */
 
-/** @type {Record<string, string>} */
+/**
+ * 状態の呼び名。人が次に何をすればよいかが分かる言い方にする（R-AGENT-STATE）。
+ * @type {Record<string, string>}
+ */
 const AGENT_STATUS_LABELS = {
-  unconnected: "Not connected",
-  waiting: "Waiting",
-  working: "Working",
-  unresponsive: "Not responding",
+  "not-connected": "Not connected",
+  waiting: "Ready — you can hand",
+  working: "Working…",
+  replied: "Replied",
+  "no-response": "Not responding",
 };
 
 /**
@@ -1580,13 +1589,39 @@ export function agentStatusLabel(status) {
 }
 
 /**
- * 「Hand to agent」を出すか。`kemi wait` が一度でも呼ばれたレビューでだけ出す
- * （R-AGENT-STATE）。状態・会話パネル・返信・解決はどのレビューでも出す。
- * @param {AgentState | null} agent
- * @returns {boolean}
+ * そのスレッド（`null` なら発言だけの 1 回分の、並びの末尾）の渡した 1 回分の行の状態。行が無ければ null。
+ * @param {HandLine[] | undefined} lines
+ * @param {string | null} thread
+ * @returns {"pending" | "working" | null}
  */
-export function handShown(agent) {
-  return Boolean(agent && agent.called);
+export function handLineState(lines, thread) {
+  return (lines ?? []).find((line) => line.thread === thread)?.state ?? null;
+}
+
+/**
+ * 「Hand to agent」の押せる・押せないと、そばに出す案内（R-AGENT-STATE）。ボタンは状態によらず出す。
+ * `kemi wait` の前は押せず、渡せるようになる `kemi wait <id>` を写せるようにする。エージェント用の API が無い
+ * レビュー（`review` が null）は写すものが無いので、つながれないことを言う。`review` が無い（サーバの答えをまだ
+ * 受け取っていない）間は、つながれるか分からないので案内を出さない。呼ばれた後は、渡すもの（前に渡した後の変化）が
+ * あるときだけ押せる。
+ * @param {AgentState} agent
+ * @param {boolean} submitted
+ * @returns {{ disabled: boolean, note: "connect" | "unavailable" | "nothing" | null, command: string | null }}
+ */
+export function handControl(agent, submitted) {
+  if (!agent.called) {
+    if (agent.review === undefined) {
+      return { disabled: true, note: null, command: null };
+    }
+    const review = agent.review;
+    return review === null
+      ? { disabled: true, note: "unavailable", command: null }
+      : { disabled: true, note: "connect", command: `kemi wait ${review}` };
+  }
+  if (agent.unhanded === 0) {
+    return { disabled: true, note: "nothing", command: null };
+  }
+  return { disabled: submitted, note: null, command: null };
 }
 
 /**
@@ -1628,7 +1663,8 @@ export function addMessage(messages, message) {
  * @returns {string | null}
  */
 export function unhandedNotice(agent) {
-  if (!handShown(agent) || !agent || agent.unhanded === 0) {
+  // 確認の件数は、一度でも kemi wait が呼ばれたレビューでだけ出す（R-SUBMIT）。
+  if (!agent || !agent.called || agent.unhanded === 0) {
     return null;
   }
   const one = agent.unhanded === 1;
@@ -1771,6 +1807,28 @@ export function unreadCount(comments, messages, marks) {
     (message) => message.author === "agent" && Number(message.seq) > read,
   ).length;
   return threads + arrived;
+}
+
+/**
+ * スレッドを開いている間に別のスレッドへ届いた返信の知らせ（R-AGENT-HAND）。開いているスレッドのほかで新着の
+ * あるスレッドのうち、エージェントの返信が最後に届いたもの。スレッドを開いていなければ（一覧では札の新着の印が
+ * 示すので）null。
+ * @param {any[]} comments
+ * @param {ReadMarks} marks
+ * @param {string | null} open 開いているスレッドの id
+ * @returns {any | null}
+ */
+export function otherThreadNews(comments, marks, open) {
+  if (open === null) {
+    return null;
+  }
+  const lastAgentReply = (/** @type {any} */ comment) =>
+    Math.max(0, ...(comment.replies || []).filter((/** @type {any} */ reply) => reply.author === "agent").map((/** @type {any} */ reply) => Number(reply.seq) || 0));
+  return (
+    comments
+      .filter((comment) => comment.id !== open && threadUnread(comment, marks))
+      .reduce((latest, comment) => (latest === null || lastAgentReply(comment) > lastAgentReply(latest) ? comment : latest), null)
+  );
 }
 
 /** 並びの一番下とみなす余白。行の高さの半分ほどで、端数のずれを一番下として扱う。 */

@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   pageCommentElsewhere,
+  handLineState,
   buildTree,
   collapseDefault,
   commentLabel,
@@ -57,7 +58,8 @@ import {
   shownLineNumbers,
   effectiveDisplay,
   agentStatusLabel,
-  handShown,
+  handControl,
+  otherThreadNews,
   authorLabel,
   replaceComment,
   addMessage,
@@ -1428,19 +1430,67 @@ test("広い画面では覚えている表示モードと折返しをそのま�
 
 // エージェントとの往復（agent-channel.md）。状態の呼び名、操作を出すか、届いた書き込みの
 // 取り込み、submit の確認の未渡しの件数。
-test("エージェントの 4 つの状態を見分けられる呼び名で出す", () => {
-  const labels = ["unconnected", "waiting", "working", "unresponsive"].map(agentStatusLabel);
+test("エージェントの 5 つの状態を見分けられる呼び名で出す", () => {
+  const labels = ["not-connected", "waiting", "working", "replied", "no-response"].map(agentStatusLabel);
 
   for (const label of labels) {
     assert.ok(label.trim() !== "");
   }
-  assert.equal(new Set(labels).size, 4);
+  assert.equal(new Set(labels).size, 5);
 });
 
-test("kemi wait が一度でも呼ばれたレビューでだけ「Hand to agent」を出す", () => {
-  assert.equal(handShown({ called: false, status: "unconnected", unhanded: 2 }), false);
-  assert.equal(handShown({ called: true, status: "working", unhanded: 0 }), true);
-  assert.equal(handShown(null), false);
+test("「Hand to agent」は kemi wait の前は押せず、写す kemi wait <id> と案内を添える", () => {
+  assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 2, review: "01K5ABC" }, false), {
+    disabled: true,
+    note: "connect",
+    command: "kemi wait 01K5ABC",
+  });
+});
+
+test("エージェントがつながれないレビューでは「Hand to agent」は押せず、写すコマンドは無い", () => {
+  assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 2, review: null }, false), {
+    disabled: true,
+    note: "unavailable",
+    command: null,
+  });
+});
+
+test("レビューの id をサーバから受け取る前は、つながれないとは言わず押せないだけにする", () => {
+  assert.deepEqual(handControl({ called: false, status: "not-connected", unhanded: 0 }, false), {
+    disabled: true,
+    note: null,
+    command: null,
+  });
+});
+
+test("kemi wait が呼ばれたら、渡すものがあるときだけ「Hand to agent」を押せる", () => {
+  assert.deepEqual(handControl({ called: true, status: "waiting", unhanded: 2, review: "r" }, false), {
+    disabled: false,
+    note: null,
+    command: null,
+  });
+  assert.deepEqual(handControl({ called: true, status: "replied", unhanded: 0, review: "r" }, false), {
+    disabled: true,
+    note: "nothing",
+    command: null,
+  });
+});
+
+test("submit した後は「Hand to agent」を押せない", () => {
+  assert.equal(handControl({ called: true, status: "waiting", unhanded: 2, review: "r" }, true).disabled, true);
+});
+
+test("渡した 1 回分の行は、スレッドごとと、発言だけの並びの末尾のものを見分ける", () => {
+  /** @type {import("./model.js").HandLine[]} */
+  const lines = [
+    { thread: "c1", state: "working" },
+    { thread: null, state: "pending" },
+  ];
+
+  assert.equal(handLineState(lines, "c1"), "working");
+  assert.equal(handLineState(lines, "c2"), null);
+  assert.equal(handLineState(lines, null), "pending");
+  assert.equal(handLineState(undefined, "c1"), null);
 });
 
 test("書いた人が人間かエージェントかを見分けられる呼び名で出す", () => {
@@ -1481,7 +1531,7 @@ test("発言は id が同じものを二度足さない", () => {
 });
 
 test("submit の確認には、往復しているレビューでだけ未渡しの件数を出す", () => {
-  assert.equal(unhandedNotice({ called: false, status: "unconnected", unhanded: 3 }), null);
+  assert.equal(unhandedNotice({ called: false, status: "not-connected", unhanded: 3 }), null);
   assert.equal(unhandedNotice({ called: true, status: "working", unhanded: 0 }), null);
   assert.match(unhandedNotice({ called: true, status: "working", unhanded: 1 }) ?? "", /\b1\b/);
   assert.match(unhandedNotice({ called: true, status: "waiting", unhanded: 3 }) ?? "", /\b3\b/);
@@ -1597,6 +1647,19 @@ test("解決したスレッドの札は畳み、解決済みの印を付ける�
   assert.equal(threadChip(resolved, readMarks(), new Map([["c1", false]])).folded, false);
   assert.equal(threadChip(thread("c2", 2), readMarks(), new Map([["c2", true]])).folded, true);
   assert.equal(threadChip(thread("c3", 3), readMarks(), new Map()).folded, false);
+});
+
+test("開いているスレッドのほかで、エージェントの返信が最後に届いた新着のスレッドを知らせる", () => {
+  const comments = [
+    thread("c1", 1, [{ author: "agent", seq: 9 }]),
+    thread("c2", 2, [{ author: "agent", seq: 7 }]),
+    thread("c3", 3, [{ author: "agent", seq: 8 }]),
+  ];
+
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 2 }), "c1")?.id, "c3");
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 2, opened: new Map([["c3", 8]]) }), "c1")?.id, "c2");
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 9 }), "c1"), null);
+  assert.equal(otherThreadNews(comments, readMarks({ loaded: 2 }), null), null);
 });
 
 test("スレッドを最後に開いた後に届いたエージェントの返信だけを新着にする", () => {

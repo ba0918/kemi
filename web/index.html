@@ -211,18 +211,20 @@
         <div class="cv-resizer" id="cv-resizer" title="Drag to resize"></div>
         <div class="cv-rail-col">
           <button class="cv-rail" id="cv-rail" type="button" title="Open the conversation" aria-label="Open the conversation">
-            <span class="agent-status" id="rail-status" data-status="unconnected"></span>
+            <span class="agent-status" id="rail-status" data-kemi-agent-state="not-connected"></span>
             <span class="cv-rail-label">Conversation</span>
             <span class="cv-unread" id="cv-unread" hidden></span>
           </button>
-          <button class="cv-rail-hand" id="rail-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
+          <button class="cv-rail-hand" id="rail-hand" type="button" title="Hand everything written since the last hand-over to the agent">
             <span class="cv-rail-label">Hand to agent</span><span class="hand-count" id="rail-hand-count"></span>
           </button>
+          <div class="hand-note rail-hand-note" id="rail-hand-note" hidden></div>
         </div>
         <div class="cv-panel" id="cv-panel">
           <div class="cv-head">
             <b>Conversation</b>
-            <span class="agent-status" id="agent-status" data-status="unconnected" role="status"></span>
+            <span class="cv-head-unread" id="cv-head-unread" hidden></span>
+            <span class="agent-status" id="agent-status" data-kemi-agent-state="not-connected" role="status"></span>
             <button class="cv-close" id="cv-close" type="button">Close</button>
           </div>
           <div class="cv-list" id="cv-list">
@@ -240,6 +242,7 @@
             </form>
           </div>
           <div class="cv-thread" id="cv-thread" hidden>
+            <button class="cv-other-new" id="cv-other-new" type="button" hidden></button>
             <div class="cv-thread-head" id="cv-thread-head"></div>
             <div class="cv-thread-body" id="cv-thread-body"></div>
             <form class="cv-form" id="cv-reply">
@@ -250,11 +253,21 @@
             </form>
           </div>
           <button class="cv-newer" id="cv-newer" type="button" hidden></button>
-          <button class="btn" id="btn-hand" type="button" hidden title="Hand everything written since the last hand-over to the agent">
+          <button class="btn" id="btn-hand" type="button" title="Hand everything written since the last hand-over to the agent">
             Hand to agent<span class="hand-count" id="hand-count"></span>
           </button>
+          <div class="hand-note" id="hand-note" hidden></div>
         </div>
       </aside>
+    </div>
+
+    <!-- 狭い画面でだけ画面の下に浮かぶ「Hand to agent」（R-AGENT-STATE、R-NARROW）。会話パネルの外に置く
+         （閉じたシートは中身ごと隠れるため）。 -->
+    <div class="hand-float" id="hand-float-bar">
+      <div class="hand-note" id="hand-float-note" hidden></div>
+      <button class="btn primary" id="hand-float" type="button" title="Hand everything written since the last hand-over to the agent">
+        Hand to agent<span class="hand-count" id="hand-float-count"></span>
+      </button>
     </div>
 
     <div class="modal" id="modal" hidden>

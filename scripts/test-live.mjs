@@ -21,12 +21,13 @@
 //   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
 //   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。範囲が表示幅より狭く画面の高さと違っても、
 //   動いているページと同じ幅の CSS と vh で描く。
-// - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消して保存すると番号が
-//   1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
+// - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消すと番号と本文の #n が
+//   詰まり、渡した JSON も同じ。消した場所を指す #n があると保存できない。一覧の番号を押すと本文に #n が入る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
 //   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。どの要素にも掛からない地を選ぶ・指す・囲むと、文書の根が場所の要素になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
+//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。コメントだけがあるページがツリーに
 //   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
-//   場所の印が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
+//   場所の印が出る。保存したコメントの場所は、スレッドを開いている間だけ番号付きで、それ以外は番号の無い小さな印で、
+//   乗せるとレビュー画面にそのコメントの短い名前が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
 //   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
 // - 保留と復元: コメントと手で取ったスナップショットのあるレビューを保留して復元すると、比べる相手の選択に開始時と
 //   手で取ったものが出て、開始時が既定になる。開始時のものは保留の前と同じ id と HTML で 1 つだけ（取り直さない）。
@@ -52,6 +53,8 @@
 // - CSSOM だけの変化: 構築したスタイルシートを replaceSync で差し替えると、DOM が変わらなくても変化の一覧が変わる。
 // - 表示幅の切り替え: <html> の min-width より狭い幅どうしで切り替えても（文書の幅は変わらない）、切り替えた幅の
 //   変化の一覧が出る。
+// - 狭い画面の道具: 幅 390px のページの見方では、道具と「Hand to agent」が画面の下の 1 つの浮かぶツールバーにあり、
+//   コードの見方では全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらも見えない。
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
@@ -167,7 +170,7 @@ async function post(url, path, body) {
 }
 
 /**
- * 画面の「Hand to agent」で渡す。ボタンはエージェントが kemi wait を呼んだレビューにだけ出るので、
+ * 画面の「Hand to agent」で渡す。ボタンはエージェントが kemi wait を呼んだレビューでだけ押せるので、
  * 先に待たせておき、渡して返るのを待つ。
  */
 async function handInThePage(kemi, dir, state) {
@@ -367,7 +370,7 @@ async function modeTabsSwitchTheTopbar(repository) {
     await waitFor(codeTopbarShown(false));
     const top = '.topbar .lv-topmeta';
     await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
-    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.status === document.querySelector('#agent-status').dataset.status && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
+    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
     const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
     assert.ok(files > 0);
     await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
@@ -1171,6 +1174,51 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
 }
 
 /**
+ * 狭い画面の道具と「エージェントに渡す」（R-PAGE-VIEW の狭い画面、R-AGENT-STATE、R-NARROW）: 幅 390px のページの見方では、
+ * 道具と「Hand to agent」が画面の下の 1 つの浮かぶツールバーにあり、全モード共通の浮かぶ「Hand to agent」は出ない。
+ * `kemi wait` の前は、そのそばに `kemi wait <id>` を写す操作が出る。道具を切り替えて場所を置ける。コードの見方では
+ * 全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらの浮かぶものも見えない。
+ */
+async function narrowToolsFloatWithHand(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '844');
+    await browser('open', kemi.url);
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
+    assert.equal(await evaluate(`${visible('.lv-toolbar .lv-hand')} || ${visible('#hand-float')}`), false, 'nothing floats on a wide screen');
+    console.log('PASS 幅 1280px では、ページの見方の浮かぶ「Hand to agent」も全モード共通のものも見えない');
+
+    await browser('set', 'viewport', '390', '844');
+    await waitFor(`${visible(livePane)} && ${visible('.lv-toolbar .lv-hand')} && ${visible('.lv-tools')}`);
+    const bar = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.lv-toolbar').getBoundingClientRect())`));
+    const hand = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.lv-toolbar .lv-hand').getBoundingClientRect())`));
+    assert.ok(bar.bottom > 844 - 80 && bar.bottom <= 844, `the tools float at the bottom: ${JSON.stringify(bar)}`);
+    assert.ok(hand.top >= bar.top && hand.bottom <= bar.bottom, `Hand to agent is in the floating toolbar: ${JSON.stringify(hand)}`);
+    assert.equal(await evaluate(visible('#hand-float')), false, 'the floating button of every mode is not shown twice');
+    // kemi wait の前は、浮かぶ「Hand to agent」のそばに kemi wait <id> を写す操作が出る（R-AGENT-STATE）。
+    const commands = `Array.from(document.querySelectorAll('.hand-command')).filter((item) => item.getClientRects().length > 0).map((item) => item.textContent)`;
+    assert.deepEqual(JSON.parse(await evaluate(`JSON.stringify(${commands})`)), [`kemi wait ${kemi.id}`], 'the command to copy is shown beside the floating Hand to agent');
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('.hand-copy')).filter((item) => item.getClientRects().length > 0).length`), 1, 'the command can be copied');
+    await chooseTool('pen');
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    console.log('PASS 幅 390px のページの見方では、道具と「Hand to agent」が画面の下の浮かぶツールバーにあり、道具を切り替えて場所を置ける');
+
+    await browser('click', '#live-compose .lv-compose-cancel');
+    await browser('click', '.topbar .lv-view button[data-view="code"]');
+    await waitFor(`document.body.dataset.liveView === 'code' && ${visible('#hand-float')} && !${visible('.lv-toolbar .lv-hand')}`);
+    console.log('PASS 幅 390px のコードの見方では、全モード共通の浮かぶ「Hand to agent」だけが出る');
+  } finally {
+    await browser('set', 'viewport', '1280', '800');
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
  * 狭い画面のページの見方（R-PAGE-VIEW の狭い画面、R-NARROW の `--live` の 1 段目のタブ、R-PAGE-MODE）: 幅 390px で開くと、
  * ページの見方の操作の帯が 1 行に収まり、その行にエージェントの状態があり、見たの進捗が見えず、重ねて透かす操作が無い。
  * 帯の「…」のメニューに比べる相手の選択・手で取る操作・枠に合わせると等倍・モックのファイルがある。上部バーの「…」の
@@ -1187,7 +1235,7 @@ async function narrowPageViewFitsOneRow(repository) {
     await waitFor(`${visible(livePane)} && ${visible('.lv-side')} && ${visible(`${band} .lv-menu-button`)}`);
     const tops = await evaluate(`JSON.stringify(Array.from(document.querySelector('${band}').children).filter((child) => child.getClientRects().length > 0 && getComputedStyle(child).visibility !== 'hidden').map((child) => Math.round(child.getBoundingClientRect().top)))`);
     assert.ok(JSON.parse(tops).length >= 4 && new Set(JSON.parse(tops)).size === 1, `the band is one row: ${tops}`);
-    await waitFor(`${visible(`${band} .lv-band-agent`)} && document.querySelector('${band} .lv-band-agent').dataset.status === document.querySelector('#agent-status').dataset.status`);
+    await waitFor(`${visible(`${band} .lv-band-agent`)} && document.querySelector('${band} .lv-band-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState`);
     assert.equal(await evaluate(visible('#progress')), false, 'the seen progress is not shown');
     assert.equal(await evaluate(`${visible('.lv-mode button[data-compare="overlay"]')} || ${visible('.lv-opacity')}`), false, 'no overlay on a narrow screen');
     await browser('click', `${band} .lv-menu-button`);
@@ -2031,9 +2079,11 @@ async function reviewJson(kemi) {
 const isPlaceInk = ([r, g, b]) => r > 95 && r < 160 && g > 50 && g < 120 && b > 170;
 
 /**
- * ページへのコメントの場所（R-PAGE-COMMENT、R-PAGE-REF）: 要素・矢印・ペンで場所を置き、2 番目を消して保存すると
- * 番号が 1 と 3 のまま残る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かして
- * いる間に要素を選ぶと見る対象の要素が場所になる。保存した後も画面は例外を出さない。
+ * ページへのコメントの場所（R-PAGE-COMMENT、R-PAGE-REF、R-SUBMIT）: 要素・矢印・ペンで場所を置き、本文に `#1 と #3 と 3` と
+ * 書いて 2 番目を消すと、番号が 1 と 2 に詰まり本文が `#1 と #2 と 3` になり、保存して渡すと `kemi wait` の JSON も同じ。
+ * 矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間に要素を選ぶと見る対象の
+ * 要素が場所になる。消した場所を指す `#1` が本文にある間は保存できず、本文から消すとできる。一覧の番号を押すと本文に
+ * `#n` が入る。保存した後も画面は例外を出さない。
  */
 async function pageCommentPlacesArePutAndSaved(repository) {
   const dev = await startDevServer();
@@ -2049,6 +2099,9 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューで押せるので、先に一度渡しておく。
+    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await handInThePage(kemi, repository, state);
 
     await chooseTool('element');
     await clickInPane(refPane, 150, 250);
@@ -2068,19 +2121,22 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     assert.ok(countPixels(drawn, [0, 195, 305, 305], isPlaceInk) > 0, `the places are drawn on the page: ${join(shots, 'places-drawn.png')}`);
     console.log('PASS 要素・ペン・矢印で場所を置くと、1 から番号が振られ、ページの上に描かれる。並べた比べる相手の側を押しても場所は増えない');
 
+    const body = `document.querySelector('#live-compose .lv-compose-body').value`;
+    await browser('fill', '#live-compose .lv-compose-body', '#1 と #3 と 3');
     await browser('click', '#live-compose .lv-place[data-n="2"] .lv-place-remove');
-    await waitFor(`${draftNumbers} === '[1,3]'`);
-    await browser('fill', '#live-compose .lv-compose-body', '1 and 3 point at the button');
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    assert.equal(await evaluate(body), '#1 と #2 と 3');
     await browser('click', '#live-compose .lv-compose-save');
     await waitFor(`${draftNumbers} === '[]'`);
-    const review = await reviewJson(kemi);
-    const comment = review.comments.at(-1);
-    assert.equal(comment.body, '1 and 3 point at the button');
-    assert.deepEqual(comment.page.places.map((place) => [place.n, place.kind]), [[1, 'element'], [3, 'arrow']]);
+    const answer = await handAndWait(kemi, repository, state);
+    const comment = answer.events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+    assert.ok(comment, `a page comment is handed: ${JSON.stringify(answer)}`);
+    assert.equal(comment.body, '#1 と #2 と 3');
+    assert.deepEqual(comment.page.places.map((place) => [place.n, place.kind]), [[1, 'element'], [2, 'arrow']]);
     assert.equal(comment.page.url, '/rich.html');
     assert.equal(comment.page.width, 390);
     assert.equal(comment.page.places[0].elements[0].selector, '#button');
-    console.log('PASS 2 番目の場所を消してから保存すると、場所の番号が 1 と 3 のまま残る');
+    console.log('PASS 本文に #1 と #3 と 3 と書いて 2 番目の場所を消すと、番号が 1 と 2 に詰まって本文が #1 と #2 と 3 になり、渡した JSON も同じ');
     assert.equal(comment.page.places[1].elements[0].selector, '#button', 'the arrow points at the element at its head');
     const head = comment.page.places[1].points.at(-1);
     assert.ok(Math.abs(head.x - 150) <= 1 && Math.abs(head.y - 250) <= 1, `the arrow ends where it was drawn: ${JSON.stringify(head)}`);
@@ -2093,6 +2149,25 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await waitFor(`${draftNumbers} === '[1]'`);
     assert.equal(await evaluate(`document.querySelector('#live-compose .lv-place[data-n="1"]').dataset.selector`), '#button');
     console.log('PASS 重ねて透かしている間に要素を選ぶと、下の見る対象の要素が場所になる');
+
+    // 場所が 0 になると、それだけで保存は押せないので、場所を 2 つにしておく。
+    await chooseTool('pen');
+    await dragInPane(livePane, [[20, 90], [260, 90], [260, 140], [20, 140], [20, 92]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    const save = `document.querySelector('#live-compose .lv-compose-save')`;
+    await browser('fill', '#live-compose .lv-compose-body', 'see #1');
+    await waitFor(`!${save}.disabled`);
+    await browser('click', '#live-compose .lv-place[data-n="1"] .lv-place-remove');
+    await waitFor(`${draftNumbers} === '[1]' && ${visible('#live-compose .lv-compose-stray')} && ${save}.disabled`);
+    assert.equal(await evaluate(body), 'see #1');
+    await browser('fill', '#live-compose .lv-compose-body', 'see');
+    await waitFor(`!${save}.disabled && !${visible('#live-compose .lv-compose-stray')}`);
+    console.log('PASS 消した場所を指す #1 が本文にあると、その箇所が示されて保存を押せず、本文から消すと押せる');
+
+    await evaluate(`(() => { const area = document.querySelector('#live-compose .lv-compose-body'); area.setSelectionRange(3, 3); return true; })()`);
+    await browser('click', '#live-compose .lv-place[data-n="1"] .lv-place-n');
+    await waitFor(`${body} === 'see#1'`);
+    console.log('PASS 場所の一覧の番号を押すと、本文の入力位置に #n が入る');
 
     await browser('click', '#cv-rail');
     await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
@@ -2143,10 +2218,6 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
   }
 }
 
-/**
- * ページの地の上の場所（R-PAGE-COMMENT）: どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、その位置の
- * 要素（地では文書の根）が場所の要素になり、座標だけにはならない。
- */
 /** 保存の要求に載せた画像を `window.__kemiSavedImage` に控える。 */
 async function keepSavedImage() {
   await evaluate(`(() => {
@@ -2159,7 +2230,13 @@ async function keepSavedImage() {
   })()`);
 }
 
-async function placesOnTheBackgroundNameThePage(repository) {
+/**
+ * ページの余白の上の場所（R-PAGE-COMMENT、R-SUBMIT）: 要素の道具で `html` か `body` にしか当たらない余白を押しても場所は
+ * 増えない。余白を指す矢印と余白だけを囲むペンは、要素の無い「範囲だけ」の場所になり（一覧に要素が出ない）、渡した
+ * `kemi wait` の JSON で `elements` が `[]` で `points` を持ち、場所ごとの画像は無くコメントの画像が 1 つある。画像は
+ * 文書全体ではなく場所の周りを写す。
+ */
+async function placesOnTheBackgroundAreAreasOnly(repository) {
   const dev = await startDevServer();
   const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
@@ -2170,33 +2247,98 @@ async function placesOnTheBackgroundNameThePage(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
+    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await handInThePage(kemi, repository, state);
     await keepSavedImage();
-    // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない地。
+    // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない余白。
     await chooseTool('element');
     await clickInPane(livePane, 350, 450);
-    await waitFor(`${draftNumbers} === '[1]'`);
+    await new Promise((done) => setTimeout(done, 800));
+    assert.equal(await evaluate(draftNumbers), '[]', 'a click on the background adds no place');
+    console.log('PASS 要素の道具でページの余白を押しても場所が増えない');
+
     await chooseTool('arrow');
     await dragInPane(livePane, [[200, 360], [300, 420], [350, 450]]);
-    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await waitFor(`${draftNumbers} === '[1]'`);
     await chooseTool('pen');
     await dragInPane(livePane, [[320, 360], [380, 360], [380, 500], [320, 500], [320, 362]]);
-    await waitFor(`${draftNumbers} === '[1,2,3]'`);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    const rows = JSON.parse(await evaluate(`JSON.stringify(Array.from(document.querySelectorAll('#live-compose .lv-place')).map((row) => row.dataset.selector ?? null))`));
+    assert.deepEqual(rows, [null, null]);
+    console.log('PASS 余白を指す矢印と余白だけを囲むペンの場所の行には、要素が出ず範囲だけと出る');
+
     await savePageCommentInThePage('the empty space');
-    const places = (await reviewJson(kemi)).comments.at(-1).page.places;
-    const root = /^html( > body)?$/;
-    for (const place of places) {
-      assert.equal(place.elements.length, 1, `place ${place.n} (${place.kind}) names one element: ${JSON.stringify(place.elements)}`);
-      assert.match(place.elements[0].selector, root, `place ${place.n} (${place.kind}) names the page`);
+    const answer = await handAndWait(kemi, repository, state);
+    const comment = answer.events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+    assert.ok(comment, `a page comment is handed: ${JSON.stringify(answer)}`);
+    for (const place of comment.page.places) {
+      assert.deepEqual(place.elements, [], `place ${place.n} (${place.kind}) names no element`);
+      assert.ok(place.points.length > 0, `place ${place.n} (${place.kind}) has its points`);
+      assert.deepEqual(Object.keys(place).sort(), ['elements', 'kind', 'n', 'points'], `place ${place.n} has no image of its own`);
     }
-    console.log('PASS どの要素にも掛からない地を要素で選ぶ・矢印で指す・ペンで囲むと、文書の根が場所の要素になる');
-    // 画像は文書の根の箱ではなく、場所の周りを写す。要素の場所は押した点（矢印の先端と同じ点）、矢印とペンは線の点。
-    const points = places.flatMap((place) => place.points);
+    assert.ok(typeof comment.page.image === 'string' && comment.page.image !== '', `the comment has one image: ${comment.page.image}`);
+    console.log('PASS 余白を指す矢印と余白だけを囲むペンは、kemi wait の JSON で elements が [] で points を持ち、画像はコメントに 1 つ');
     const saved = await evaluate('window.__kemiSavedImage ?? null');
     assert.notEqual(saved, null, 'the image is made');
     const image = decodePng(Buffer.from(saved, 'base64'));
+    const points = comment.page.places.flatMap((place) => place.points);
     const shown = `${image.width}x${image.height}, places ${JSON.stringify(points)}`;
     assert.ok(image.width > 0 && image.width < 390, `the image is narrower than the page: ${shown}`);
-    console.log('PASS 地に置いた場所の画像は、文書の根の箱ではなく場所の周りを写す');
+    console.log('PASS 余白に置いた場所の画像は、文書全体ではなく場所の周りを写す');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+/**
+ * ページの上の印（R-PAGE-COMMENT）: c1 を保存してから新しいコメントを書き始めると、c1 の場所には番号が出ず、書きかけの
+ * 場所にだけ番号が出る。要素の道具のまま c1 の印にポインタを乗せると、レビュー画面に c1 の短い名前が出る。c1 のスレッドを
+ * 開くと c1 の場所に番号が出る。番号の札と描き込みはページの中の紫で見る（印の層は閉じた shadow root の中で、別の
+ * オリジンの枠なので要素は読めない）。
+ */
+async function savedCommentsAreQuietMarks(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  // ボタン（左上 (0, 200) の 300×100）の左上の番号の札の辺りと、2 段目の入力欄（左上 (12, 96) 付近）の辺り。
+  const buttonCorner = [0, 185, 40, 230];
+  const fieldCorner = [0, 80, 60, 125];
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await new Promise((done) => setTimeout(done, 500));
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await savePageCommentInThePage('The button label is too long\nsecond line');
+    const [c1] = (await reviewJson(kemi)).comments;
+    await clickInPane(livePane, 40, 105);
+    await waitFor(`${draftNumbers} === '[1]' && document.querySelector('#live-compose .lv-place[data-n="1"]').dataset.selector === '#field'`);
+    await new Promise((done) => setTimeout(done, 500));
+    const drafting = await shot(`${livePane} .lv-frame`, shots, 'saved-and-draft');
+    assert.equal(countPixels(drafting, buttonCorner, isPlaceInk), 0, `the saved comment shows no number: ${join(shots, 'saved-and-draft.png')}`);
+    assert.ok(countPixels(drafting, fieldCorner, isPlaceInk) > 0, `the draft place shows its number: ${join(shots, 'saved-and-draft.png')}`);
+    console.log('PASS c1 を保存してから新しいコメントを書き始めると、c1 の場所に番号が出ず、書きかけの場所にだけ番号が出る');
+
+    // 要素の道具の層にポインタの動きを送る（agent-browser のマウスは層の上の動きを確かに届けられないため）。
+    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame').getBoundingClientRect(); const layer = document.querySelector('${livePane} .lv-capture'); return layer.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, clientX: frame.x + 300 * ${scale}, clientY: frame.y + 200 * ${scale}, bubbles: true })); })()`);
+    await waitFor(`${visible(`${livePane} .lv-saved-tip`)} && document.querySelector('${livePane} .lv-saved-tip').textContent.includes('The button label is too long')`);
+    assert.equal(await evaluate(draftNumbers), '[1]', 'moving the pointer puts no place');
+    console.log('PASS 要素の道具のまま c1 の印にポインタを乗せると、レビュー画面に c1 の短い名前が出る');
+
+    await browser('click', '#cv-rail');
+    await browser('click', `.cv-card[data-id="${c1.id}"]`);
+    await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
+    const opened = await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`);
+    const corner = buttonCorner.map((value) => Math.round(value * Number(opened)));
+    await waitForPixels(`${livePane} .lv-frame`, shots, 'saved-focused', corner, isPlaceInk);
+    console.log('PASS c1 のスレッドを開くと、c1 の場所に番号が出る');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -2396,7 +2538,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await post(kemi.url, 'api/message', { body: 'let me show you' });
-    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 500));
     await chooseTool('element');
@@ -2506,7 +2648,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
     await post(kemi.url, 'api/message', { body: 'let me show you' });
-    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 500));
     await chooseTool('element');
@@ -2726,7 +2868,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await post(kemi.url, 'api/message', { body: 'let me show you' });
-    // 「Hand to agent」は kemi wait が一度呼ばれたレビューにだけ出るので、先に一度渡しておく。
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
@@ -2870,6 +3012,7 @@ try {
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
   await narrowPageViewFitsOneRow(repository);
+  await narrowToolsFloatWithHand(repository);
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
   await changeListFollowsThePage(repository);
   await marksFollowTheChanges(repository);
@@ -2882,7 +3025,8 @@ try {
   await manyElementsAreRecordedAndCompared(repository);
   await pageCommentPlacesArePutAndSaved(repository);
   await penPlacesLeaveOutWhatContainsTheLine(repository);
-  await placesOnTheBackgroundNameThePage(repository);
+  await placesOnTheBackgroundAreAreasOnly(repository);
+  await savedCommentsAreQuietMarks(repository);
   await draftPlacesStayAtTheirWidth(repository);
   await latePlacesKeepTheirWidth(repository);
   await draftsStayWhileSaving(repository);

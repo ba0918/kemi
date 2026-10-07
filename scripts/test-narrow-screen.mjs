@@ -476,7 +476,7 @@ try {
   assert.equal(await isShown('#review-meta'), true);
   assert.ok(await evaluate(`document.querySelectorAll('#review-meta span').length`) > 0);
   assert.equal(await evaluate(`document.querySelector('#review-subtitle').hidden || getComputedStyle(document.querySelector('#review-subtitle')).display !== 'none'`), true);
-  for (const selector of ['#btn-tree', '#btn-title', '#btn-more', '#view-menu', '#title-sheet', '#drawer-scrim']) {
+  for (const selector of ['#btn-tree', '#btn-title', '#btn-more', '#view-menu', '#title-sheet', '#drawer-scrim', '#hand-float']) {
     assert.equal(await isShown(selector), false, `${selector} should be hidden on a wide screen`);
   }
   assert.equal(await isShown('#btn-split'), true);
@@ -636,6 +636,16 @@ await browser('click', '#btn-tree');
 await waitFor(drawerOpen);
 await selectFile('src/dir0/file0.txt');
 await waitFor(`${drawerClosed} && document.querySelectorAll('[data-kemi-row]').length > 0`);
+// 差分の終わりまで送ると、最後の行は画面の下に浮かぶ「Hand to agent」とその案内の上に見える。
+await evaluate(`(() => { const v = document.querySelector('#diff-viewport'); v.scrollTop = v.scrollHeight; return true; })()`);
+await waitFor(`(() => { const v = document.querySelector('#diff-viewport'); return Math.ceil(v.scrollTop + v.clientHeight) >= v.scrollHeight; })()`);
+const lastRowBottom = await evaluate(`Math.max(...Array.from(document.querySelectorAll('#diff-content [data-kemi-row]')).map(r => r.getBoundingClientRect().bottom))`);
+assert.equal(await isShown('#hand-float-bar'), true);
+const handStack = await rect('#hand-float-bar');
+assert.ok(lastRowBottom <= handStack.top, `the last row (bottom ${lastRowBottom}) should be above the floating hand (top ${handStack.top})`);
+await evaluate(`document.querySelector('#diff-viewport').scrollTop = 0; true`);
+await waitFor(`${newNumber(2)} !== undefined`);
+console.log('PASS 390px で差分の終わりまで送ると、最後の行が浮かぶ「Hand to agent」の上に見える');
 await tap(newNumber(2));
 await tap(newNumber(3));
 assert.deepEqual(await selectedNumbers(), ['2', '3']);

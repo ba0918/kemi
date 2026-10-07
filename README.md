@@ -170,7 +170,9 @@ first row of the top bar, whose **…** menu then holds only the theme. The
 controls of the page view fit in one row: Now / Before (the running page or
 what it is compared with, one at a time), the page, its width, the agent's
 state, and a **…** menu with what the page is compared with, **Record now**,
-Fit / 100%, the width, and the mock. Overlay is not offered there. The page
+Fit / 100%, the width, and the mock. Overlay is not offered there. The tools
+(Element, Arrow, Pen, Interact) and **Hand to agent** float together in one
+toolbar at the bottom of the screen instead of sitting above the page. The page
 list is a drawer and the conversation is a sheet.
 
 What the page is compared with is chosen per page (path and query):
@@ -219,20 +221,31 @@ it opens with the first place. Until the first page comment of the review is
 saved, three steps are shown above the page — point at a place, write and
 press Comment, hand to the agent; they do not come back after that, even
 when the comments are deleted or the review is suspended and resumed. An element place is the element you
-click, and clicking it again takes it away; an arrow names the element at its
+click, and clicking it again takes it away (clicking the empty background,
+where only `html` or `body` is, puts no place); an arrow names the element at its
 head; a pen line names up to five elements that overlap the area it
 encloses, even partly, largest overlap first, leaving out elements that contain the whole line (a line drawn inside
-one element names that element). Places are numbered from 1 on the page and
-in the comment box below it, so the comment can refer to them; removing one,
-undoing the last, or pressing Esc while drawing never renumbers the rest. The
+one element names that element). `html` and `body` are never named: an arrow
+pointing at the background, or a line around nothing but background, is an
+area only, shown as such in the comment box, and reaches the agent with
+`elements` `[]`, its points, and the comment's image. Places are numbered from 1 in the order they
+were put, on the page and in the comment box below it; the text refers to a
+place as `#n`, and clicking a place number in the box inserts `#n` where you
+are typing (a number without `#` is not a reference). Removing a place —
+from the list, by undoing the last, or by choosing the same element again —
+renumbers the rest from 1 and rewrites the `#n` in the text to match. A `#n`
+that pointed at the removed place, or a number beyond the places, is shown
+in the box, and the comment cannot be saved until the text is changed. The
 places of a comment being written belong to the URL and width of its first
 place: at another URL or width no place is added, and the comment box says so
 and offers to go back there, where the comment is saved. Saving also makes a PNG
 of the area with the places drawn on it, inside the page and without driving
 the browser, so fonts and some CSS details may differ from the real page. A
 saved comment keeps its places: the conversation panel shows its URL, width,
-and number of places, the page shows its places as quiet numbered marks at
-that URL and width (stronger while its thread is open), and a comment left
+and number of places, the page shows its places at that URL and width as
+small marks without numbers — pointing at one, with any tool, shows which
+comment it belongs to — and numbered only while its thread is open, so they
+are not mistaken for the numbered places of the comment being written; a comment left
 at another width shows that width and switches to it when pressed. Only its
 text can be edited. On a narrow screen, places are drawn with a finger and
 elements chosen by tapping. The agent gets the places and the image path
@@ -285,12 +298,32 @@ the first line of its body and its reply count; pressing it opens the thread
 in the panel. The panel starts folded to a thin rail and opens from the
 comment count in the top bar; the page remembers whether it is open and how
 wide it is (drag its left edge). A new agent reply marks its chip and the
-thread as new, and the folded rail counts what is new; the panel never opens
-by itself, and its list follows new writes only while you are at its bottom.
-The panel, the agent status in its header (not connected, waiting, working,
-not responding), replies, and resolving are there in every review; only the
-**Hand to agent** button waits until `kemi wait` has been called once in that
-review. The agent API listens on
+thread as new, and the folded rail counts what is new, as does the panel's
+header while it is open; while you read one thread, a reply arriving in
+another is announced above it, and pressing the notice opens that thread.
+The panel never opens by itself, and its list follows new writes only while
+you are at its bottom.
+The panel, the agent status in its header, replies, and resolving are there
+in every review. The status is one of not connected (`kemi wait` never
+called), ready (`kemi wait` is waiting, so you can hand), working (it
+returned and you wait for the agent), replied (the agent has answered every
+thread the last returned `kemi wait` carried; it stays so however long it
+takes you), and not responding (working for 10 minutes with neither `kemi
+wait` nor `kemi reply`); the page puts it in `data-kemi-agent-state` as
+`not-connected`, `waiting`, `working`, `replied`, or `no-response`. After a
+hand-over, each thread it carried ends with a line saying the agent has yet
+to pick it up, which turns into "working" when `kemi wait` returns it and
+goes away when the agent replies in that thread (a hand-over of messages
+only puts one line at the end of the list, gone at the agent's next
+message); the line carries `data-kemi-hand-line="pending"` or `"working"`.
+**Hand to agent** is always shown, also on the folded rail, but cannot be
+pressed until `kemi wait` has been called once in that review: next to it the
+page says that comments can be handed once the agent runs `kemi wait <id>`,
+with that command (this review's id) to copy, also on the folded rail. It
+also cannot be pressed, and
+says so, while there is nothing new to hand. In a review the agent cannot
+connect to (no session, so no `kemi: review` line), it stays unpressable
+and says that no agent can connect. The agent API listens on
 `127.0.0.1` whatever `--bind` says, accepts only
 requests without an `Origin` carrying its own token, and the token is kept in
 `<id>.endpoint` next to the session (owner-only; on Windows under
@@ -359,7 +392,10 @@ other than a line number, clears the selection; taps on the top bar or the
 file header do not. While the editor is open the selection stays, and
 cancelling the editor clears it. In the rendered view, tap a block to show its
 `+`. The conversation panel opens as a full-screen sheet from the comment
-count in the top bar, and always starts closed on a narrow screen; tapping a
+count in the top bar, and always starts closed on a narrow screen; **Hand to
+agent** floats at the bottom of the screen in every mode, so you can hand
+without opening the sheet (it can be pressed exactly when the one in the
+panel can); tapping a
 chip opens its thread in the sheet, and jumping to the line from a thread
 closes the sheet. "Comments" behind the "..." button hides the chips; the
 comment count in the top bar and the coloured line beside the line numbers
@@ -568,10 +604,12 @@ The JSON printed at the end:
   `start_line`, `end_line`, and `suggestion` `null`, `quote` `[]`, and
   `outdated` `false`, and its `page` is
   `{ "url": "/products?x=1", "width": 390, "places": [...], "image": null }`.
-  Each place has a number `n` (in order, possibly with gaps), a `kind`
+  Each place has a number `n` (in order, running from 1 without gaps; the
+  body refers to a place as `#n`), a `kind`
   (`element`, `arrow`, or `pen`), `points` (`[]` for an element), and
   `elements` with a `selector`, `text`, and `rect`, in CSS pixels of the
-  page. For an element inside an open shadow root, `selector` is the host's
+  page (`[]` for an arrow or pen on the background: an area only; `html`
+  and `body` are never named). For an element inside an open shadow root, `selector` is the host's
   selector and the selector inside the shadow root joined by ` >>> `, which
   is not CSS: query the host, then its `shadowRoot` with the inner part.
   `image`, the PNG of the area with the places drawn on it, is an

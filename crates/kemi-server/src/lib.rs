@@ -15,6 +15,7 @@ use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, RwLock};
 
+use kemi_core::domain::agent::AgentLink;
 use kemi_core::domain::review::Side;
 use kemi_core::session::SessionError;
 use kemi_core::source::ReviewSource;
@@ -228,6 +229,9 @@ pub struct AgentParams {
     pub listener: TcpListener,
     /// ページのトークンとは別の秘密。`<id>.endpoint` にだけ書く。
     pub token: String,
+    /// レビューの id（`kemi wait <id>` の id）。stderr にも出していて秘密ではない。画面が
+    /// 写すコマンドに使う（R-AGENT-STATE）。
+    pub review: String,
     /// 保留を待っている `kemi wait` に知らせる入口。起動側が持つ。
     pub control: ServeControl,
 }
@@ -252,7 +256,7 @@ impl ServeControl {
         let Some(state) = self.state.get().and_then(std::sync::Weak::upgrade) else {
             return false;
         };
-        if !state.agent.lock().expect("agent poisoned").waiting {
+        if !state.agent.lock().expect("agent poisoned").is_waiting() {
             return false;
         }
         {
@@ -290,15 +294,6 @@ pub(crate) enum Event {
     Snapshots,
 }
 
-/// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
-/// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
-pub(crate) struct AgentRuntime {
-    /// `kemi wait` が待っているか。
-    pub waiting: bool,
-    /// 最後に `kemi wait` が返った（または切れた）か `kemi reply` が来た時刻（ミリ秒）。
-    pub last_activity: u128,
-}
-
 /// submit の同時受理を 1 つに絞るための状態。
 pub(crate) enum SubmitState {
     Open,
@@ -322,9 +317,13 @@ pub(crate) struct AppState {
     /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
     pub persist: Mutex<()>,
     pub events: broadcast::Sender<Event>,
-    pub agent: Mutex<AgentRuntime>,
+    /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
+    /// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
+    pub agent: Mutex<AgentLink>,
     /// エージェント用の API のトークン。無ければその API を立てない。
     pub agent_token: Option<String>,
+    /// エージェント用の API を立てたレビューの id。立てていなければ None（画面はコマンドを写せない）。
+    pub review_id: Option<String>,
     /// 待っている `kemi wait` を起こす（渡したとき）。
     pub wake: tokio::sync::Notify,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
@@ -405,6 +404,10 @@ pub async fn serve(
         None => None,
     };
 
+    let agent = AgentLink::new(
+        kemi_core::session::now_millis(),
+        &initial_state.channel.events,
+    );
     let state = Arc::new(AppState {
         source: params.source,
         highlighter: std::sync::OnceLock::new(),
@@ -419,11 +422,9 @@ pub async fn serve(
         session: Mutex::new(Session::from_state(initial_state)),
         persist: Mutex::new(()),
         events,
-        agent: Mutex::new(AgentRuntime {
-            waiting: false,
-            last_activity: kemi_core::session::now_millis(),
-        }),
+        agent: Mutex::new(agent),
         agent_token: params.agent.as_ref().map(|agent| agent.token.clone()),
+        review_id: params.agent.as_ref().map(|agent| agent.review.clone()),
         wake: tokio::sync::Notify::new(),
         shutdown,
         stop: Mutex::new(None),

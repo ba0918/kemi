@@ -2889,6 +2889,24 @@ fn wait_and_reply_refuse_other_flags_in_english() {
 }
 
 #[tokio::test]
+async fn a_review_where_kemi_wait_is_never_called_gives_the_page_its_id_and_still_submits() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let agent = kemi.review_json().await["agent"].clone();
+    assert_eq!(agent["called"], false, "{agent}");
+    assert_eq!(agent["status"], "not-connected", "{agent}");
+    // 画面は「Hand to agent」を押せないまま出し、この id で kemi wait <id> を写させる（R-AGENT-STATE）。
+    assert_eq!(agent["review"], id.as_str(), "{agent}");
+
+    kemi.submit("approved").await;
+    let (status, stdout) = kemi.wait();
+
+    assert_eq!(status.code(), Some(0));
+    assert!(stdout.contains("\"verdict\":\"approved\""), "{stdout}");
+}
+
+#[tokio::test]
 async fn without_a_state_location_there_is_no_review_line_and_submit_still_works() {
     let dir = TempDir::new();
     worktree_fixture(&dir);

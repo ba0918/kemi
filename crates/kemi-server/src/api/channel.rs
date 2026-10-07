@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use kemi_core::domain::agent::agent_status;
+use kemi_core::domain::agent::{AgentEvent, HandLineAt};
 use kemi_core::domain::review::{Author, Message};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -52,7 +52,12 @@ pub(super) async fn hand_api(
     let handed = {
         let mut session = state.session.lock().expect("session poisoned");
         let session = &mut *session;
-        session.channel.hand(&session.comments, &session.messages)
+        let handed = session.channel.hand(&session.comments, &session.messages);
+        // 渡した 1 回分の行（R-AGENT-HAND）。ロックは session → agent の順。
+        if let (true, Some(AgentEvent::Handed(event))) = (handed, session.channel.events.last()) {
+            state.agent.lock().expect("agent poisoned").handed(event);
+        }
+        handed
     };
     // 渡すものが無くても、書いて消したコメントの記録は片付いているので保存する。
     persist(&state);
@@ -63,28 +68,36 @@ pub(super) async fn hand_api(
     Ok(Json(json!({ "handed": handed })))
 }
 
-/// エージェントの状態と未渡しの件数（R-AGENT-STATE, R-AGENT-HAND）。
+/// エージェントの状態・未渡しの件数・渡した 1 回分の行（R-AGENT-STATE, R-AGENT-HAND）。
+/// 行の形は画面とサーバの間だけのもの（`thread` が null なら発言だけの 1 回分の、並びの末尾の行）。
+/// `review` は画面が写す `kemi wait <id>` の id で、エージェント用の API が無いレビューでは null。
 pub(crate) fn agent_json(state: &AppState) -> Value {
-    let (called, unhanded) = {
-        let session = state.session.lock().expect("session poisoned");
-        (
-            session.channel.called,
-            session
-                .channel
-                .unhanded_count(&session.comments, &session.messages),
-        )
-    };
-    let (waiting, last_activity) = {
-        let agent = state.agent.lock().expect("agent poisoned");
-        (agent.waiting, agent.last_activity)
-    };
-    let status = agent_status(
-        called,
-        waiting,
-        last_activity,
-        kemi_core::session::now_millis(),
-    );
-    json!({ "called": called, "status": status.as_str(), "unhanded": unhanded })
+    // ロックは session → agent の順。行は今あるコメントで絞るので、両方を持って読む。
+    let session = state.session.lock().expect("session poisoned");
+    let called = session.channel.called;
+    let unhanded = session
+        .channel
+        .unhanded_count(&session.comments, &session.messages);
+    let agent = state.agent.lock().expect("agent poisoned");
+    let status = agent.status(called, kemi_core::session::now_millis());
+    let lines: Vec<Value> = agent
+        .lines(&session.comments)
+        .into_iter()
+        .map(|line| {
+            let thread = match &line.at {
+                HandLineAt::Thread(id) => Value::String(id.clone()),
+                HandLineAt::Messages => Value::Null,
+            };
+            json!({ "thread": thread, "state": line.state.as_str() })
+        })
+        .collect();
+    json!({
+        "called": called,
+        "status": status.as_str(),
+        "unhanded": unhanded,
+        "lines": lines,
+        "review": state.review_id,
+    })
 }
 
 /// エージェントの状態か未渡しの件数が変わったかもしれないとき、ページへ知らせる。
