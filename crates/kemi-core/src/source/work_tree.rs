@@ -38,7 +38,7 @@ impl WorkTree {
 
     /// 作業ツリーの根から辿った、見張るディレクトリ（根を含む）。
     pub fn directories(&self, limit: usize) -> Result<WatchDirectories, SourceError> {
-        self.walk(vec![self.root.clone()], limit)
+        self.walk(vec![self.root.clone()], limit, &self.tracked()?)
     }
 
     /// `start` とその下の、見張るディレクトリ。`start` が作業ツリーの外・`.git` の中・
@@ -53,24 +53,50 @@ impl WorkTree {
         if !self.inside(start) || !is_directory {
             return Ok(WatchDirectories::default());
         }
-        if !self.ignored(&[start.to_path_buf()])?.is_empty() {
+        let tracked = self.tracked()?;
+        if !self
+            .ignored_except(&[start.to_path_buf()], &tracked)?
+            .is_empty()
+        {
             return Ok(WatchDirectories {
                 ignored: vec![start.to_path_buf()],
                 ..WatchDirectories::default()
             });
         }
-        self.walk(vec![start.to_path_buf()], limit)
+        self.walk(vec![start.to_path_buf()], limit, &tracked)
     }
 
     /// `paths`（作業ツリーの中の絶対パス）のうち、git が無視するもの。追跡している
     /// ファイルは無視されない。作業ツリーの外と `.git` の中のパスは聞かずに外す。
     pub fn ignored(&self, paths: &[PathBuf]) -> Result<HashSet<PathBuf>, SourceError> {
-        self.ask(paths, Index::Consult)
+        self.ignored_except(paths, &self.tracked()?)
+    }
+
+    /// `paths` のうち git が無視するもので、`tracked`（追跡しているファイルとそれを持つ
+    /// ディレクトリ）に入らないもの。
+    ///
+    /// 索引を読む `check-ignore` は使わない。1 パスごとに索引を舐めるので、追跡ファイル 1 万個・
+    /// ディレクトリ 5 万個で 5 秒かかった（読まなければ 0.3 秒）。また submodule の中のパスを
+    /// 「submodule の中」と断る。索引を読まないと追跡しているものも無視と答えるので、それは
+    /// `ls-files` から求めて外す（索引を読むときの git の答えと同じになる）。
+    fn ignored_except(
+        &self,
+        paths: &[PathBuf],
+        tracked: &HashSet<Vec<u8>>,
+    ) -> Result<HashSet<PathBuf>, SourceError> {
+        Ok(self
+            .ask(paths)?
+            .into_iter()
+            .filter(|path| {
+                path.strip_prefix(&self.root)
+                    .is_ok_and(|relative| !tracked.contains(&git_path(relative)))
+            })
+            .collect())
     }
 
     /// `paths` を `git check-ignore` に聞き、無視されるものを返す。git が判定を断ったパス
     /// （symlink の先など）も見張らないので、無視されるものに含める。
-    fn ask(&self, paths: &[PathBuf], index: Index) -> Result<HashSet<PathBuf>, SourceError> {
+    fn ask(&self, paths: &[PathBuf]) -> Result<HashSet<PathBuf>, SourceError> {
         let asked: Vec<(&PathBuf, Vec<u8>)> = paths
             .iter()
             .filter(|path| self.inside(path))
@@ -88,16 +114,16 @@ impl WorkTree {
             .iter()
             .map(|(_, relative)| relative.as_slice())
             .collect();
-        let matched = match check_ignore(&self.root, &relatives, index)? {
+        let matched = match check_ignore(&self.root, &relatives)? {
             Answer::Matched(matched) => matched,
             Answer::Refused(reason) => {
                 // 何も渡さなくても断るなら、パスではなく git かリポジトリの問題。
-                if let Answer::Refused(_) = check_ignore(&self.root, &[], index)? {
+                if let Answer::Refused(_) = check_ignore(&self.root, &[])? {
                     return Err(SourceError::Git(format!(
                         "git check-ignore failed: {reason}"
                     )));
                 }
-                self.ask_each_half(&relatives, index)?
+                self.ask_each_half(&relatives)?
             }
         };
         Ok(asked
@@ -109,37 +135,35 @@ impl WorkTree {
 
     /// git が 1 つのパスを断ると、まとめて渡した全部が答えをもらえない。半分ずつ聞き直し、
     /// 断られたパスだけを無視されるもの（見張らない）にする。
-    fn ask_each_half(
-        &self,
-        relatives: &[&[u8]],
-        index: Index,
-    ) -> Result<HashSet<Vec<u8>>, SourceError> {
-        match check_ignore(&self.root, relatives, index)? {
+    fn ask_each_half(&self, relatives: &[&[u8]]) -> Result<HashSet<Vec<u8>>, SourceError> {
+        match check_ignore(&self.root, relatives)? {
             Answer::Matched(matched) => Ok(matched),
             Answer::Refused(_) if relatives.len() == 1 => {
                 Ok(HashSet::from([relatives[0].to_vec()]))
             }
             Answer::Refused(_) => {
                 let (left, right) = relatives.split_at(relatives.len() / 2);
-                let mut matched = self.ask_each_half(left, index)?;
-                matched.extend(self.ask_each_half(right, index)?);
+                let mut matched = self.ask_each_half(left)?;
+                matched.extend(self.ask_each_half(right)?);
                 Ok(matched)
             }
         }
     }
 
-    /// 追跡しているファイルを持つディレクトリ（根からの相対、`/` 区切り）。
-    fn tracked_directories(&self) -> Result<HashSet<Vec<u8>>, SourceError> {
-        let listed = git_raw(&self.root, &["ls-files", "-z"])?;
-        let mut directories = HashSet::new();
+    /// 追跡しているファイルと、それを持つディレクトリ（根からの相対、`/` 区切り）。
+    /// submodule の中で追跡しているものも含める。
+    fn tracked(&self) -> Result<HashSet<Vec<u8>>, SourceError> {
+        let listed = git_raw(&self.root, &["ls-files", "-z", "--recurse-submodules"])?;
+        let mut tracked = HashSet::new();
         for file in split_z(&listed) {
             for (position, byte) in file.iter().enumerate() {
                 if *byte == b'/' {
-                    directories.insert(file[..position].to_vec());
+                    tracked.insert(file[..position].to_vec());
                 }
             }
+            tracked.insert(file.to_vec());
         }
-        Ok(directories)
+        Ok(tracked)
     }
 
     /// 作業ツリーの中で、`.git` の中でないパスか。
@@ -153,13 +177,12 @@ impl WorkTree {
 
     /// `starts` から 1 段ずつ辿る。段ごとに子のディレクトリをまとめて git に聞き、無視される
     /// ものの下には潜らない。git を呼ぶ回数は深さの分だけで、ディレクトリの数に比例しない。
-    ///
-    /// 子のディレクトリは索引を読まずに聞く。索引を読む `check-ignore` は 1 パスごとに索引を
-    /// 舐めるので、追跡ファイル 1 万個・ディレクトリ 5 万個で 5 秒かかった（読まなければ 0.3 秒）。
-    /// 索引を読まないと、追跡しているファイルを持つディレクトリも無視と答えるので、それは
-    /// `ls-files` から求めて外す（索引を読むときの git の答えと同じになる）。
-    fn walk(&self, starts: Vec<PathBuf>, limit: usize) -> Result<WatchDirectories, SourceError> {
-        let tracked = self.tracked_directories()?;
+    fn walk(
+        &self,
+        starts: Vec<PathBuf>,
+        limit: usize,
+        tracked: &HashSet<Vec<u8>>,
+    ) -> Result<WatchDirectories, SourceError> {
         let mut found = WatchDirectories::default();
         let mut level = starts;
         found.directories.extend(level.iter().cloned());
@@ -172,13 +195,10 @@ impl WorkTree {
                 .iter()
                 .flat_map(|parent| subdirectories(parent))
                 .collect();
-            let ignored = self.ask(&children, Index::Skip)?;
+            let ignored = self.ignored_except(&children, tracked)?;
             level = Vec::new();
             for child in children {
-                let holds_tracked = child
-                    .strip_prefix(&self.root)
-                    .is_ok_and(|relative| tracked.contains(&git_path(relative)));
-                if ignored.contains(&child) && !holds_tracked {
+                if ignored.contains(&child) {
                     found.ignored.push(child);
                 } else {
                     found.directories.push(child.clone());
@@ -216,13 +236,6 @@ fn subdirectories(parent: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// `check-ignore` が索引を読むか。読むと追跡しているパスを無視と答えない。
-#[derive(Clone, Copy)]
-enum Index {
-    Consult,
-    Skip,
-}
-
 /// `git check-ignore` の答え。
 enum Answer {
     /// 無視されるパス（作業ツリーの根からの相対）。
@@ -235,7 +248,7 @@ enum Answer {
 /// 1 つも無視されないとき git は終了コード 1 を返すので、それは空の結果として扱う。
 ///
 /// パスは `./` を付けて渡す。付けないと `:(glob)x` のような名前を pathspec の指定として読む。
-fn check_ignore(root: &Path, relatives: &[&[u8]], index: Index) -> Result<Answer, SourceError> {
+fn check_ignore(root: &Path, relatives: &[&[u8]]) -> Result<Answer, SourceError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -252,11 +265,7 @@ fn check_ignore(root: &Path, relatives: &[&[u8]], index: Index) -> Result<Answer
     let mut child = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["check-ignore", "-z", "--stdin"])
-        .args(match index {
-            Index::Consult => None,
-            Index::Skip => Some("--no-index"),
-        })
+        .args(["check-ignore", "-z", "--stdin", "--no-index"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -462,6 +471,57 @@ mod tests {
             ignored,
             HashSet::from([repo.path.join("link/x"), repo.path.join("debug.log")])
         );
+    }
+
+    /// `sub` に submodule を持つリポジトリ。submodule は `gen/` を無視し、`lib/a` を追跡する。
+    fn repo_with_submodule() -> (TempRepo, TempRepo) {
+        let module = TempRepo::new();
+        module.write(".gitignore", "gen/\n");
+        module.write("lib/a", "a\n");
+        module.add_and_commit("module");
+        let repo = repo_with_ignored_build();
+        let source = module.path.to_string_lossy().into_owned();
+        repo.git(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            &source,
+            "sub",
+        ]);
+        (repo, module)
+    }
+
+    #[test]
+    fn ignored_inside_a_submodule_follows_the_submodule_rules() {
+        let (repo, _module) = repo_with_submodule();
+        repo.write("sub/gen/f", "f\n");
+        repo.write("sub/new.txt", "n\n");
+        let tree = WorkTree::new(repo.path.clone());
+
+        let ignored = tree
+            .ignored(&[
+                repo.path.join("sub/gen/f"),
+                repo.path.join("sub/new.txt"),
+                repo.path.join("sub/lib/a"),
+            ])
+            .unwrap();
+
+        assert_eq!(ignored, HashSet::from([repo.path.join("sub/gen/f")]));
+    }
+
+    #[test]
+    fn directories_under_a_new_directory_in_a_submodule_list_it() {
+        let (repo, _module) = repo_with_submodule();
+        std::fs::create_dir_all(repo.path.join("sub/fresh")).unwrap();
+        let tree = WorkTree::new(repo.path.clone());
+
+        let found = tree
+            .directories_under(&repo.path.join("sub/fresh"), WATCH_DIRECTORY_LIMIT)
+            .unwrap();
+
+        assert_eq!(found.directories, vec![repo.path.join("sub/fresh")]);
     }
 
     #[test]
