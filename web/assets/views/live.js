@@ -40,6 +40,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   stageName: HTMLElement,
  *   zoomSeg: HTMLElement,
  *   reloadButton: HTMLButtonElement,
+ *   marksButton: HTMLButtonElement,
  *   modeSeg: HTMLElement,
  *   opacity: HTMLInputElement,
  *   mockMenuButton: HTMLButtonElement,
@@ -201,7 +202,7 @@ export function buildShell() {
   refNoticeAction.hidden = true;
   refNotice.append(refNoticeText, refNoticeAction);
 
-  // 舞台の見出し: 見比べ方の名前、倍率の切り替え、比べる相手の選択、読み込み直す操作、見比べ方の切り替え。
+  // 舞台の見出し: 見比べ方の名前、倍率の切り替え、比べる相手の選択、印の切り替え、読み込み直す操作、見比べ方の切り替え。
   const stageHead = el("div", "lv-stage-head");
   const stageName = el("span", "lv-stage-name");
   const zoomSeg = el("div", "lv-seg lv-zoom");
@@ -233,6 +234,10 @@ export function buildShell() {
   reloadButton.title = "Reload page";
   reloadButton.setAttribute("aria-label", "Reload page");
   reloadButton.append(svgIcon(RELOAD_ICON));
+  // 変化の印を出す・隠す（R-PAGE-VIEW）。押した状態が「出す」。title は features が今の状態に合わせて付ける。
+  const marksButton = button("iconbtn lv-marks");
+  marksButton.setAttribute("aria-label", "Change marks");
+  marksButton.append(svgIcon(MARKS_ICON));
   const modeSeg = el("div", "lv-seg lv-mode");
   modeSeg.setAttribute("role", "group");
   modeSeg.setAttribute("aria-label", "How to compare");
@@ -245,7 +250,7 @@ export function buildShell() {
     modeSeg.append(choice);
   }
   const stageLine = el("div", "lv-stage-line");
-  stageLine.append(stageName, zoomSeg, el("span", "lv-spacer"), compareSlot, reloadButton, modeSeg);
+  stageLine.append(stageName, zoomSeg, el("span", "lv-spacer"), compareSlot, marksButton, reloadButton, modeSeg);
   stageHead.append(stageLine);
 
   const sideSeg = el("div", "lv-seg lv-side lv-page-only");
@@ -400,6 +405,7 @@ export function buildShell() {
     stageName,
     zoomSeg,
     reloadButton,
+    marksButton,
     modeSeg,
     opacity,
     mockMenuButton,
@@ -518,6 +524,9 @@ export function renderMockFiles(panel, found, assigned, onPick) {
 /** ページの見方のアイコン（画面モック docs/design/ui-mock-live-v2.html に倣う）。 */
 const RELOAD_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3.3H9.7"/></svg>';
+
+const MARKS_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="1.5" stroke-dasharray="2.4 1.8"/><rect x="5.5" y="5.5" width="5" height="5" rx="0.8" fill="currentColor" fill-opacity=".35"/></svg>';
 
 const RECORD_ICON =
   '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.6" fill="currentColor"/></svg>';

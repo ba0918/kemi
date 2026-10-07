@@ -320,12 +320,14 @@ body[data-live-view="code"] #main > .lv-band {
   padding: 3px 8px;
 }
 
-.lv-reload {
+.lv-reload,
+.lv-marks {
   height: 26px;
   padding: 0 6px;
 }
 
-.lv-reload svg {
+.lv-reload svg,
+.lv-marks svg {
   width: 15px;
   height: 15px;
 }

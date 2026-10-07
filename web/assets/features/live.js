@@ -173,6 +173,8 @@ const live = {
   /** 枠に合わせて縮めるか、等倍で枠の中をスクロールして見るか（R-PAGE-VIEW）。画面を開いている間だけ覚える。 */
   /** @type {"fit" | "full"} */
   zoom: "fit",
+  /** 変化の印を出すか（R-PAGE-VIEW）。隠しても一覧は出す。画面を開いている間だけ覚える。 */
+  marks: true,
   /** 重ねた比べる相手の不透明度（0〜100）。 */
   opacity: 50,
   /** 見る対象のスクロールの位置と中身の高さ（中継したページが知らせる）。 */
@@ -342,6 +344,11 @@ export function startLive(info) {
     }
   });
   shell.reloadButton.addEventListener("click", reloadPage);
+  shell.marksButton.addEventListener("click", () => {
+    live.marks = !live.marks;
+    renderBand();
+    renderMarks();
+  });
   shell.opacity.addEventListener("input", () => {
     if (!shell) {
       return;
@@ -1597,12 +1604,13 @@ function setChanges(changes, from, notice = "") {
 /**
  * 変わったところに印を付ける（R-PAGE-VIEW）。今のページにある変化は動いているページの側に、
  * 差し込んだスクリプトが付ける。消えた要素は比べる相手の側に、スナップショットの中身に足して付ける。
+ * 印を隠しているときは、どちらの側の印も外す。
  */
 function renderMarks() {
   if (!shell) {
     return;
   }
-  const marks = live.changes === null ? { now: [], before: [] } : marksOf(live.changes);
+  const marks = live.changes === null || !live.marks ? { now: [], before: [] } : marksOf(live.changes);
   shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "marks", marks: marks.now }, live.origin);
   if (live.shownSnapshot !== "") {
     void showSnapshot(live.shownSnapshot);
@@ -1616,7 +1624,7 @@ function renderMarks() {
  * @returns {number[]}
  */
 function removedMarksOf(id) {
-  if (live.changes === null || live.changesFrom?.snapshot !== id) {
+  if (live.changes === null || !live.marks || live.changesFrom?.snapshot !== id) {
     return [];
   }
   return marksOf(live.changes)
@@ -1787,6 +1795,8 @@ function renderBand() {
     choice.setAttribute("aria-pressed", String(choice.dataset.zoom === live.zoom));
   }
   shell.reloadButton.disabled = live.saving;
+  shell.marksButton.title = live.marks ? "Hide change marks" : "Show change marks";
+  shell.marksButton.setAttribute("aria-pressed", String(live.marks));
   // 比べる相手の選択は、比べる相手を出している間だけ出す（R-PAGE-REF）。
   shell.compareSlot.hidden = live.compare === "now" && !state.narrow;
   shell.opacity.hidden = live.compare !== "overlay";

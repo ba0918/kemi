@@ -264,7 +264,7 @@
     return { description: { width: innerWidth, height: document.documentElement.scrollHeight, styles, elements }, elements: originals };
   }
 
-  // ---- 印（R-PAGE-VIEW の変わったところに必ず印） ----
+  // ---- 印（R-PAGE-VIEW の変わったところに印） ----
   // 変わった要素に枠を重ねる層。ページの見た目を変えないよう、画面の左上に大きさ 0 で固定し、閉じた
   // shadow root の中に描く。ページや中の箱がスクロールしたら置き直す（固定した要素や箱の中の要素から
   // 印が離れないように）。スクロールで箱の見えている範囲の外に出た要素の印は、その範囲で切る。この層は記述にもスナップショットにも入れず、見張りも反応させない
