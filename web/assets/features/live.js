@@ -1361,8 +1361,7 @@ function renderBand() {
   shell.capture.hidden = live.tool === "interact" || state.submitted;
   shell.hint.hidden = live.pageCommentSaved;
   shell.capture.dataset.tool = live.tool;
-  // 今の倍率はいつも見る対象の見出しに出す（R-PAGE-VIEW）。
-  shell.liveLabel.textContent = `${live.page} · ${live.width} · ×${live.scale.toFixed(2)}`;
+  renderPaneLabels();
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {
     shell.liveNotice.textContent = "Waiting for the page";
@@ -1372,6 +1371,26 @@ function renderBand() {
     shell.liveNotice.dataset.kind = "rewrote";
     shell.liveNotice.title = `kemi changed ${live.rewrote.join(" and ")} so that the page can be shown here`;
   }
+}
+
+/**
+ * 見る対象と比べる相手の枠の見出し。今の倍率はいつも見る対象の見出しに出し、狭い画面で比べる相手の 1 枚を見ている
+ * ときは、その見出しにも出す（R-PAGE-VIEW）。倍率が変わったときにも描き直すよう、比べる相手を出す所とは分けておく。
+ */
+function renderPaneLabels() {
+  if (!shell) {
+    return;
+  }
+  const scale = `×${live.scale.toFixed(2)}`;
+  shell.liveLabel.textContent = `${live.page} · ${live.width} · ${scale}`;
+  const reference = currentReference();
+  const label =
+    reference.type === "mock"
+      ? `Mock · ${reference.path} · ${live.width}`
+      : reference.type === "none"
+        ? `${live.page} · ${live.width}`
+        : `${snapshotLabel(live.snapshots, reference.snapshot)} · ${reference.snapshot.page} · ${reference.snapshot.width}`;
+  shell.refLabel.textContent = state.narrow && live.side === "ref" ? `${label} · ${scale}` : label;
 }
 
 /** 舞台の見出し: 見比べ方の名前。重ねて透かす間は、両方の名前と透かし具合（R-PAGE-REF）。狭い画面では見ている 1 枚の名前。 */
@@ -1454,7 +1473,6 @@ function renderReference() {
   if (reference.type === "mock") {
     shell.refPane.dataset.reference = "mock";
     delete shell.refPane.dataset.snapshot;
-    shell.refLabel.textContent = `Mock · ${reference.path} · ${live.width}`;
     shell.refFrame.hidden = true;
     live.shownSnapshot = "";
     showMock(mock?.url ?? "");
@@ -1470,7 +1488,6 @@ function renderReference() {
   if (reference.type === "none") {
     shell.refPane.dataset.reference = "none";
     delete shell.refPane.dataset.snapshot;
-    shell.refLabel.textContent = `${live.page} · ${live.width}`;
     shell.refFrame.hidden = true;
     shell.refEmpty.hidden = false;
     shell.refEmptyText.textContent = "This page at this width has not been recorded yet.";
@@ -1482,7 +1499,6 @@ function renderReference() {
   const snapshot = reference.snapshot;
   shell.refPane.dataset.reference = "snapshot";
   shell.refPane.dataset.snapshot = snapshot.id;
-  shell.refLabel.textContent = `${snapshotLabel(live.snapshots, snapshot)} · ${snapshot.page} · ${snapshot.width}`;
   shell.refEmpty.hidden = true;
   shell.refFrame.hidden = false;
   if (live.shownSnapshot !== snapshot.id) {
