@@ -175,6 +175,13 @@ pub(super) async fn comment_api(
             // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
             session.comments.remove(index);
             session.channel.note_comment(&id);
+            // 返事を待っていたコメントが消えて残りの行が無くなったら、状態を移す（R-AGENT-STATE）。
+            // ロックはほかと同じくセッション → エージェントの順に取る。
+            state.agent.lock().expect("agent poisoned").comment_deleted(
+                session.channel.called,
+                kemi_core::session::now_millis(),
+                &session.comments,
+            );
             drop(session);
             persist(&state);
             notify_agent_state(&state);

@@ -310,6 +310,9 @@ pub struct AgentLink {
     lines: Vec<HandLine>,
     /// 最後に 1 回分を返した `kemi wait` の応答の行の場所。返さずに終わったら空。
     last_returned: Vec<HandLineAt>,
+    /// 最後に `kemi wait` が返った（または返さずに終わった）後に、書き込みが 1 件以上届いたか。
+    /// コメントを消して残りの行が無くなったときに、返事済みにするかを決める。
+    wrote_since_return: bool,
 }
 
 impl AgentLink {
@@ -322,6 +325,7 @@ impl AgentLink {
             last_activity: now,
             lines: Vec::new(),
             last_returned: Vec::new(),
+            wrote_since_return: false,
         };
         for AgentEvent::Handed(handed) in unreceived {
             link.handed(handed);
@@ -372,6 +376,7 @@ impl AgentLink {
     fn wait_ended(&mut self, now: u128) {
         self.waiting = false;
         self.replied = false;
+        self.wrote_since_return = false;
         self.last_activity = now;
     }
 
@@ -408,7 +413,19 @@ impl AgentLink {
             HandLineAt::Messages => !message,
         });
         self.replied = replied_after_write(before, self.lines_left(comments));
+        self.wrote_since_return = true;
         self.last_activity = now;
+    }
+
+    /// 人間がコメントを消した。`comments` は消した後に今あるコメント。消したスレッドの行は読むときに
+    /// 絞られるので、ここでは状態だけを表のとおりに移す: 作業中か応答なしで残りの行が無くなり、最後に
+    /// 返った後に書き込みが届いていれば返事済み。まだ届いていなければ（返事を 1 つも書いていないので）
+    /// 変えない。応答なしまでの時計は数え直さない（エージェントが動いたわけではない）。
+    pub fn comment_deleted(&mut self, called: bool, now: u128, comments: &[Comment]) {
+        let before = self.status(called, now);
+        if self.wrote_since_return && !self.lines_left(comments) {
+            self.replied = replied_after_write(before, false);
+        }
     }
 
     /// 最後に返った応答の行のうち、まだ作業中で残っているものがあるか。
@@ -1109,6 +1126,81 @@ mod tests {
             lines(&link, &existing()),
             vec![(Some("c1"), HandLineState::Pending)]
         );
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn deleting_the_last_awaited_comment_after_a_write_turns_working_into_replied() {
+        let events = [handed_event(&["c1", "c2"], &[], 0)];
+        let mut link = working_on(&events);
+        link.agent_wrote(true, T0, &["c1".to_string()], false, &existing());
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+
+        let without_c2 = [comment("c1", "body"), comment("c3", "body")];
+        link.comment_deleted(true, T0, &without_c2);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn deleting_the_last_awaited_comment_after_a_write_turns_no_response_into_replied() {
+        let events = [handed_event(&["c1", "c2"], &[], 0)];
+        let mut link = working_on(&events);
+        link.agent_wrote(true, T0, &["c1".to_string()], false, &existing());
+        let later = T0 + UNRESPONSIVE_AFTER_MILLIS;
+        assert_eq!(link.status(true, later), AgentStatus::NoResponse);
+
+        link.comment_deleted(true, later, &[comment("c1", "body")]);
+
+        assert_eq!(link.status(true, later), AgentStatus::Replied);
+    }
+
+    #[test]
+    fn deleting_the_awaited_comments_before_any_write_changes_nothing() {
+        let events = [handed_event(&["c1"], &[], 0)];
+        let mut link = working_on(&events);
+
+        link.comment_deleted(true, T0, &[]);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn deleting_a_comment_while_other_awaited_lines_remain_keeps_working() {
+        let events = [handed_event(&["c1", "c2", "c3"], &[], 0)];
+        let mut link = working_on(&events);
+        link.agent_wrote(true, T0, &["c1".to_string()], false, &existing());
+
+        link.comment_deleted(true, T0, &[comment("c1", "body"), comment("c3", "body")]);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_write_before_a_wait_that_timed_out_does_not_count_for_a_deletion() {
+        let events = [handed_event(&["c1", "c2"], &[], 0)];
+        let mut link = working_on(&events);
+        link.agent_wrote(true, T0, &["c1".to_string()], false, &existing());
+        link.wait_started();
+        link.wait_ended_empty(T0);
+
+        link.comment_deleted(true, T0, &[comment("c1", "body")]);
+
+        assert_eq!(link.status(true, T0), AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_write_before_the_last_return_does_not_count_for_a_deletion() {
+        let events = [handed_event(&["c1"], &[], 0)];
+        let mut link = working_on(&events);
+        link.agent_wrote(true, T0, &["c1".to_string()], false, &existing());
+        let next = [handed_event(&["c2"], &[], 0)];
+        hand(&mut link, &next[0]);
+        link.wait_started();
+        link.wait_returned(T0, &next);
+
+        link.comment_deleted(true, T0, &[comment("c1", "body")]);
+
         assert_eq!(link.status(true, T0), AgentStatus::Working);
     }
 

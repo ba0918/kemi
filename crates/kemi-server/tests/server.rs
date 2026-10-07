@@ -4323,6 +4323,38 @@ async fn a_deleted_handed_comment_leaves_no_line_and_is_not_waited_for() {
 }
 
 #[tokio::test]
+async fn deleting_the_last_awaited_comment_after_a_reply_turns_the_status_to_replied() {
+    let server = AgentServer::start().await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    let c2 = server.page.add_comment_with_body(12, "second").await["id"].clone();
+    server.page.hand().await;
+    server.wait(Some(1000)).await;
+    server.wait_until_status("working").await;
+    server
+        .reply(json!([{ "type": "reply", "comment_id": c1, "body": "done" }]))
+        .await;
+    assert_eq!(server.agent_status().await, "working");
+
+    server.page.comment(json!({"op": "delete", "id": c2})).await;
+
+    assert!(server.hand_lines().await.is_empty());
+    assert_eq!(server.agent_status().await, "replied");
+}
+
+#[tokio::test]
+async fn deleting_the_awaited_comments_before_any_write_keeps_the_status_working() {
+    let server = AgentServer::start().await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    server.page.hand().await;
+    server.wait(Some(1000)).await;
+    server.wait_until_status("working").await;
+
+    server.page.comment(json!({"op": "delete", "id": c1})).await;
+
+    assert_eq!(server.agent_status().await, "working");
+}
+
+#[tokio::test]
 async fn a_comment_handed_then_deleted_before_suspending_leaves_no_line_after_resuming() {
     let server = AgentServer::start().await;
     let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();

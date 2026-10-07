@@ -308,7 +308,9 @@ in every review. The status is one of not connected (`kemi wait` never
 called), ready (`kemi wait` is waiting, so you can hand), working (it
 returned and you wait for the agent), replied (the agent has answered every
 thread the last returned `kemi wait` carried; it stays so however long it
-takes you), and not responding (working for 10 minutes with neither `kemi
+takes you; if you delete a thread the agent was still to answer, it gets
+there once no other carried thread is left unanswered and the agent has
+written something since that return), and not responding (working for 10 minutes with neither `kemi
 wait` nor `kemi reply`); the page puts it in `data-kemi-agent-state` as
 `not-connected`, `waiting`, `working`, `replied`, or `no-response`. After a
 hand-over, each thread it carried ends with a line saying the agent has yet
