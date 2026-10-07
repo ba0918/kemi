@@ -86,9 +86,17 @@ pub(crate) fn start(
             };
             match received {
                 Ok(Ok(event)) => {
-                    let mut changed = changes_a_watched_file(&event, &files);
+                    // 溜まっているイベントをまとめて判定し、git を呼ぶのを 1 回にする。
+                    // ブランチの切り替えやコード生成は数千のイベントを一度に出す。
+                    let mut batch = vec![event];
+                    while let Ok(next) = receiver.try_recv() {
+                        batch.extend(next.ok());
+                    }
+                    let mut changed = batch
+                        .iter()
+                        .any(|event| changes_a_watched_file(event, &files));
                     if let Some(tree) = whole.as_mut() {
-                        match tree.changes(&mut watcher, &event) {
+                        match tree.changes(&mut watcher, &batch, &files) {
                             Ok(tree_changed) => changed |= tree_changed,
                             Err(fallback) => fall_back(
                                 &mut whole,
@@ -392,49 +400,60 @@ impl TreeWatch {
         self.directories.clear();
     }
 
-    /// 作業ツリーを変えるイベントか。作られたディレクトリ（無視されないもの）は見張りに足す。
+    /// 作業ツリーを変えるイベントがあるか。作られたディレクトリ（無視されないもの）は見張りに
+    /// 足す。git に聞くのは、まとめて 1 回だけ。`files`（起動時の差分のファイル、実体の場所）
+    /// は無視されないと分かっているので聞かない。
     fn changes(
         &mut self,
         watcher: &mut impl Watcher,
-        event: &notify::Event,
+        events: &[notify::Event],
+        files: &HashSet<PathBuf>,
     ) -> Result<bool, WatchFallback> {
-        if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
-            return Ok(false);
-        }
-        let paths: Vec<PathBuf> = event
-            .paths
-            .iter()
-            .filter_map(|path| self.inside(path))
-            .collect();
         // 消えたかどうかはイベントで決める。続けて同じ名前に戻されると、処理する時点では
         // ディレクトリがあるように見える。
-        let gone: HashSet<PathBuf> = event
-            .paths
-            .iter()
-            .enumerate()
-            .filter(|(position, _)| moves_away(&event.kind, *position))
-            .filter_map(|(_, path)| self.inside(path))
-            .collect();
-        if paths
-            .iter()
-            .any(|path| path.file_name() == Some(".gitignore".as_ref()))
-            || event.paths.iter().any(|path| self.is_exclude(path))
-        {
-            self.rules_changed = true;
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut gone: HashSet<PathBuf> = HashSet::new();
+        for event in events {
+            if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
+                continue;
+            }
+            for (position, path) in event.paths.iter().enumerate() {
+                if self.is_exclude(path) {
+                    self.rules_changed = true;
+                }
+                let Some(path) = self.inside(path) else {
+                    continue;
+                };
+                if moves_away(&event.kind, position) {
+                    gone.insert(path.clone());
+                }
+                if path.file_name() == Some(".gitignore".as_ref()) {
+                    self.rules_changed = true;
+                }
+                paths.push(path);
+            }
+        }
+        if self.rules_changed {
             self.verdicts.clear();
         }
         if self.verdicts.len() > VERDICT_LIMIT {
             self.verdicts.clear();
         }
+        let known: HashSet<PathBuf> = paths
+            .iter()
+            .filter(|path| files.contains(&self.canonical_of(path)))
+            .cloned()
+            .collect();
         // 無視したディレクトリの下のパスも無視されるので、聞かない。聞くときは祖先も
         // 一緒に聞いて覚え、その下で続く書き込み（ビルドの出力など）は git を呼ばずに捨てる。
         let mut unknown: Vec<PathBuf> = Vec::new();
+        let mut asking: HashSet<PathBuf> = HashSet::new();
         for path in &paths {
-            if self.under_ignored(path) {
+            if known.contains(path) || self.under_ignored(path) {
                 continue;
             }
             for asked in self.unjudged_ancestors(path).chain([path.clone()]) {
-                if !self.verdicts.contains_key(&asked) && !unknown.contains(&asked) {
+                if !self.verdicts.contains_key(&asked) && asking.insert(asked.clone()) {
                     unknown.push(asked);
                 }
             }
@@ -449,7 +468,12 @@ impl TreeWatch {
         }
 
         let mut changed = false;
+        let mut created: Vec<PathBuf> = Vec::new();
         for path in paths {
+            if known.contains(&path) {
+                changed = true;
+                continue;
+            }
             if self.verdicts.get(&path) == Some(&true) || self.under_ignored(&path) {
                 continue;
             }
@@ -465,11 +489,23 @@ impl TreeWatch {
                     .retain(|directory| !directory.starts_with(&path));
                 self.added.retain(|directory| !directory.starts_with(&path));
             }
-            if is_directory && !self.directories.contains(&path) {
-                self.watch_new_directory(watcher, &path)?;
+            if is_directory && !self.directories.contains(&path) && !created.contains(&path) {
+                created.push(path);
             }
         }
+        if !created.is_empty() {
+            self.watch_new_directories(watcher, &created)?;
+        }
         Ok(changed)
+    }
+
+    /// 作業ツリーの根からの表記の `path` を、実体の場所の表記にする。もう無いパスも変えられる
+    /// よう、ファイルシステムには聞かずに根の表記だけを付け替える。
+    fn canonical_of(&self, path: &Path) -> PathBuf {
+        path.strip_prefix(self.tree.root()).map_or_else(
+            |_| path.to_path_buf(),
+            |relative| self.canonical_root.join(relative),
+        )
     }
 
     /// `path` の祖先（根を除く）に、git が無視すると覚えたディレクトリがあるか。
@@ -492,15 +528,15 @@ impl TreeWatch {
             .take_while(|ancestor| *ancestor != self.tree.root())
     }
 
-    fn watch_new_directory(
+    fn watch_new_directories(
         &mut self,
         watcher: &mut impl Watcher,
-        directory: &Path,
+        directories: &[PathBuf],
     ) -> Result<(), WatchFallback> {
         let room = WATCH_DIRECTORY_LIMIT.saturating_sub(self.directories.len());
         let found = self
             .tree
-            .directories_under(directory, room)
+            .directories_under(directories, room)
             .map_err(|error| WatchFallback::Refused(error.to_string()))?;
         for ignored in found.ignored {
             self.verdicts.insert(ignored, true);
@@ -821,8 +857,12 @@ mod tests {
         .unwrap();
         let mut changes = |kind, relative: &str| {
             let path = repo.0.join(relative);
-            tree.changes(&mut watcher, &notify::Event::new(kind).add_path(path))
-                .unwrap()
+            tree.changes(
+                &mut watcher,
+                &[notify::Event::new(kind).add_path(path)],
+                &HashSet::new(),
+            )
+            .unwrap()
         };
 
         assert!(!changes(

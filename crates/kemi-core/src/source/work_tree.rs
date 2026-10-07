@@ -1,8 +1,11 @@
 //! worktree の監視の範囲（R-LIVE）。作業ツリーのうち見張るディレクトリと、あるパスを
 //! git が無視するかを git に聞く。無視したディレクトリの下には潜らない。
 
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::SourceError;
 use super::git::{git_raw, path_bytes, path_from_bytes, split_z};
@@ -11,9 +14,54 @@ use super::git::{git_raw, path_bytes, path_from_bytes, split_z};
 pub const WATCH_DIRECTORY_LIMIT: usize = 10_000;
 
 /// 見張る作業ツリー。根は git の作業ツリーの根。
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// 追跡しているファイルの一覧は、索引のファイルが変わるまで覚えておく。
+#[derive(Clone, Debug)]
 pub struct WorkTree {
     root: PathBuf,
+    /// 索引のファイル（`git rev-parse --git-path index`）。初めて要るときに聞く。
+    index: OnceCell<Option<PathBuf>>,
+    tracked: RefCell<Option<TrackedFiles>>,
+}
+
+impl PartialEq for WorkTree {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+    }
+}
+
+impl Eq for WorkTree {}
+
+/// 追跡しているファイルとそれを持つディレクトリ（根からの相対、`/` 区切り）と、それを
+/// 読んだときの索引のファイルの印。
+#[derive(Clone, Debug)]
+struct TrackedFiles {
+    stamp: Option<IndexStamp>,
+    paths: Arc<HashSet<Vec<u8>>>,
+}
+
+/// 索引のファイルが書き換わったかを見分ける印。git は索引を別のファイルに書いてから
+/// 置き換えるので、書き換わると inode か時刻か大きさが変わる。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IndexStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+    inode: u64,
+}
+
+impl IndexStamp {
+    fn of(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        #[cfg(unix)]
+        let inode = std::os::unix::fs::MetadataExt::ino(&meta);
+        #[cfg(not(unix))]
+        let inode = 0;
+        Some(IndexStamp {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            inode,
+        })
+    }
 }
 
 /// 見張るディレクトリの一覧。
@@ -29,7 +77,11 @@ pub struct WatchDirectories {
 
 impl WorkTree {
     pub fn new(root: PathBuf) -> Self {
-        WorkTree { root }
+        WorkTree {
+            root,
+            index: OnceCell::new(),
+            tracked: RefCell::new(None),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -38,62 +90,68 @@ impl WorkTree {
 
     /// 作業ツリーの根から辿った、見張るディレクトリ（根を含む）。
     pub fn directories(&self, limit: usize) -> Result<WatchDirectories, SourceError> {
-        self.walk(vec![self.root.clone()], limit, &self.tracked()?)
+        self.walk(vec![self.root.clone()], limit)
     }
 
     /// このリポジトリの `info/exclude`（無視の規則のうち `.git` の中にあるもの）。linked
     /// worktree では `.git` がファイルで、`info/exclude` は共通の git ディレクトリにある。
     pub fn exclude_file(&self) -> Result<PathBuf, SourceError> {
-        let output = git_raw(&self.root, &["rev-parse", "--git-path", "info/exclude"])?;
+        self.git_path("info/exclude")
+    }
+
+    fn git_path(&self, name: &str) -> Result<PathBuf, SourceError> {
+        let output = git_raw(&self.root, &["rev-parse", "--git-path", name])?;
         let path = path_from_bytes(output.trim_ascii_end());
         Ok(self.root.join(path))
     }
 
-    /// `start` とその下の、見張るディレクトリ。`start` が作業ツリーの外・`.git` の中・
-    /// git が無視するものなら空。監視中に作られたディレクトリを足すのに使う。
+    /// `starts` とその下の、見張るディレクトリ。作業ツリーの外・`.git` の中・git が無視する
+    /// もの・ディレクトリでないものは辿らない（無視するものは `ignored` に入る）。監視中に
+    /// 作られたディレクトリを足すのに使う。
     pub fn directories_under(
         &self,
-        start: &Path,
+        starts: &[PathBuf],
         limit: usize,
     ) -> Result<WatchDirectories, SourceError> {
         // symlink は辿らない（辿った先は作業ツリーの外かもしれず、git もその下を判定しない）。
-        let is_directory = std::fs::symlink_metadata(start).is_ok_and(|meta| meta.is_dir());
-        if !self.inside(start) || !is_directory {
-            return Ok(WatchDirectories::default());
-        }
-        let tracked = self.tracked()?;
-        if !self
-            .ignored_except(&[start.to_path_buf()], &tracked)?
-            .is_empty()
-        {
-            return Ok(WatchDirectories {
-                ignored: vec![start.to_path_buf()],
-                ..WatchDirectories::default()
-            });
-        }
-        self.walk(vec![start.to_path_buf()], limit, &tracked)
+        let candidates: Vec<PathBuf> = starts
+            .iter()
+            .filter(|start| self.inside(start))
+            .filter(|start| std::fs::symlink_metadata(start).is_ok_and(|meta| meta.is_dir()))
+            .filter(|start| {
+                !starts
+                    .iter()
+                    .any(|other| other != *start && start.starts_with(other))
+            })
+            .cloned()
+            .collect();
+        let ignored = self.ignored(&candidates)?;
+        let (ignored, walked): (Vec<PathBuf>, Vec<PathBuf>) = candidates
+            .into_iter()
+            .partition(|start| ignored.contains(start));
+        let mut found = if walked.is_empty() {
+            WatchDirectories::default()
+        } else {
+            self.walk(walked, limit)?
+        };
+        found.ignored.extend(ignored);
+        Ok(found)
     }
 
     /// `paths`（作業ツリーの中の絶対パス）のうち、git が無視するもの。追跡している
     /// ファイルは無視されない。作業ツリーの外と `.git` の中のパスは聞かずに外す。
-    pub fn ignored(&self, paths: &[PathBuf]) -> Result<HashSet<PathBuf>, SourceError> {
-        self.ignored_except(paths, &self.tracked()?)
-    }
-
-    /// `paths` のうち git が無視するもので、`tracked`（追跡しているファイルとそれを持つ
-    /// ディレクトリ）に入らないもの。
     ///
     /// 索引を読む `check-ignore` は使わない。1 パスごとに索引を舐めるので、追跡ファイル 1 万個・
     /// ディレクトリ 5 万個で 5 秒かかった（読まなければ 0.3 秒）。また submodule の中のパスを
     /// 「submodule の中」と断る。索引を読まないと追跡しているものも無視と答えるので、それは
     /// `ls-files` から求めて外す（索引を読むときの git の答えと同じになる）。
-    fn ignored_except(
-        &self,
-        paths: &[PathBuf],
-        tracked: &HashSet<Vec<u8>>,
-    ) -> Result<HashSet<PathBuf>, SourceError> {
-        Ok(self
-            .ask(paths)?
+    pub fn ignored(&self, paths: &[PathBuf]) -> Result<HashSet<PathBuf>, SourceError> {
+        let matched = self.ask(paths)?;
+        if matched.is_empty() {
+            return Ok(matched);
+        }
+        let tracked = self.tracked()?;
+        Ok(matched
             .into_iter()
             .filter(|path| {
                 path.strip_prefix(&self.root)
@@ -159,8 +217,20 @@ impl WorkTree {
     }
 
     /// 追跡しているファイルと、それを持つディレクトリ（根からの相対、`/` 区切り）。
-    /// submodule の中で追跡しているものも含める。
-    fn tracked(&self) -> Result<HashSet<Vec<u8>>, SourceError> {
+    /// submodule の中で追跡しているものも含める。索引のファイルが前に読んだときのままなら、
+    /// git を呼ばずに覚えたものを返す。
+    fn tracked(&self) -> Result<Arc<HashSet<Vec<u8>>>, SourceError> {
+        let index = self
+            .index
+            .get_or_init(|| self.git_path("index").ok())
+            .as_deref();
+        let stamp = index.and_then(IndexStamp::of);
+        if let Some(cached) = self.tracked.borrow().as_ref()
+            && stamp.is_some()
+            && cached.stamp == stamp
+        {
+            return Ok(Arc::clone(&cached.paths));
+        }
         let listed = git_raw(&self.root, &["ls-files", "-z", "--recurse-submodules"])?;
         let mut tracked = HashSet::new();
         for file in split_z(&listed) {
@@ -171,7 +241,12 @@ impl WorkTree {
             }
             tracked.insert(file.to_vec());
         }
-        Ok(tracked)
+        let paths = Arc::new(tracked);
+        *self.tracked.borrow_mut() = Some(TrackedFiles {
+            stamp,
+            paths: Arc::clone(&paths),
+        });
+        Ok(paths)
     }
 
     /// 作業ツリーの中で、`.git` の中でないパスか。
@@ -185,12 +260,7 @@ impl WorkTree {
 
     /// `starts` から 1 段ずつ辿る。段ごとに子のディレクトリをまとめて git に聞き、無視される
     /// ものの下には潜らない。git を呼ぶ回数は深さの分だけで、ディレクトリの数に比例しない。
-    fn walk(
-        &self,
-        starts: Vec<PathBuf>,
-        limit: usize,
-        tracked: &HashSet<Vec<u8>>,
-    ) -> Result<WatchDirectories, SourceError> {
+    fn walk(&self, starts: Vec<PathBuf>, limit: usize) -> Result<WatchDirectories, SourceError> {
         let mut found = WatchDirectories::default();
         let mut level = starts;
         found.directories.extend(level.iter().cloned());
@@ -203,7 +273,7 @@ impl WorkTree {
                 .iter()
                 .flat_map(|parent| subdirectories(parent))
                 .collect();
-            let ignored = self.ignored_except(&children, tracked)?;
+            let ignored = self.ignored(&children)?;
             level = Vec::new();
             for child in children {
                 if ignored.contains(&child) {
@@ -398,7 +468,7 @@ mod tests {
         let tree = WorkTree::new(repo.path.clone());
 
         let found = tree
-            .directories_under(&repo.path.join("new"), WATCH_DIRECTORY_LIMIT)
+            .directories_under(&[repo.path.join("new")], WATCH_DIRECTORY_LIMIT)
             .unwrap();
 
         assert_eq!(
@@ -413,10 +483,10 @@ mod tests {
         let tree = WorkTree::new(repo.path.clone());
 
         let ignored = tree
-            .directories_under(&repo.path.join("build"), WATCH_DIRECTORY_LIMIT)
+            .directories_under(&[repo.path.join("build")], WATCH_DIRECTORY_LIMIT)
             .unwrap();
         let git = tree
-            .directories_under(&repo.path.join(".git/refs"), WATCH_DIRECTORY_LIMIT)
+            .directories_under(&[repo.path.join(".git/refs")], WATCH_DIRECTORY_LIMIT)
             .unwrap();
 
         assert!(ignored.directories.is_empty());
@@ -453,7 +523,7 @@ mod tests {
         let tree = WorkTree::new(repo.path.clone());
 
         let found = tree
-            .directories_under(&repo.path.join("link"), WATCH_DIRECTORY_LIMIT)
+            .directories_under(&[repo.path.join("link")], WATCH_DIRECTORY_LIMIT)
             .unwrap();
 
         assert_eq!(found, WatchDirectories::default());
@@ -526,7 +596,7 @@ mod tests {
         let tree = WorkTree::new(repo.path.clone());
 
         let found = tree
-            .directories_under(&repo.path.join("sub/fresh"), WATCH_DIRECTORY_LIMIT)
+            .directories_under(&[repo.path.join("sub/fresh")], WATCH_DIRECTORY_LIMIT)
             .unwrap();
 
         assert_eq!(found.directories, vec![repo.path.join("sub/fresh")]);
