@@ -481,6 +481,9 @@ body[data-live-view="code"] #main > .lv-band {
   position: absolute;
   inset: 0;
   z-index: 1;
+  /* 指で引いた分を、ブラウザのスクロールやズームにせず、比べる相手を動かすのに使う。 */
+  touch-action: none;
+  cursor: grab;
 }
 
 .lv-frame {

@@ -353,7 +353,7 @@ export function startLive(info) {
   shell.recordButton.addEventListener("click", () => void capture("manual"));
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void capture("manual"));
-  shell.refWheel.addEventListener("wheel", wheelShiftedReference, { passive: false });
+  startShiftedReferenceMoves(shell.refWheel);
   shell.refNoticeAction.addEventListener("click", () => bandAction?.());
   window.addEventListener("message", receive);
   const resized = new ResizeObserver(() => {
@@ -1932,18 +1932,88 @@ function revealSideways(viewport, left, width) {
 }
 
 /**
- * 比べる相手をずらした形の間、比べる相手の上のホイールで外側のずれを動かす。
- * @param {WheelEvent} event
+ * 比べる相手をずらした形の間、外側のずれを動かす。値は画面のピクセルで、正なら右・下の方を見せる。
+ * @param {number} x
+ * @param {number} y
  */
-function wheelShiftedReference(event) {
+function moveShiftedReference(x, y) {
   if (!shell || live.refShift === null) {
     return;
   }
-  event.preventDefault();
-  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? shell.refViewport.clientHeight : 1;
-  shell.refViewport.scrollLeft += event.deltaX * unit;
-  live.refShift = { ...live.refShift, y: live.refShift.y + (event.deltaY * unit) / live.scale };
+  shell.refViewport.scrollLeft += x;
+  live.refShift = { ...live.refShift, y: live.refShift.y + y / live.scale };
   layoutFrames();
+}
+
+/** 比べる相手をずらした形の間、キーで動かす量（画面のピクセル。矢印のキー）。 */
+const SHIFT_KEY_STEP = 40;
+
+/**
+ * 比べる相手をずらした形の間、比べる相手の上で受ける操作（ホイール・指やマウスで引く・キー）で外側のずれを動かす。
+ * ずらした形の比べる相手は中身の高さで描いていて、枠の中では動かないため（狭い画面では指で引くしかない）。
+ * @param {HTMLElement} layer 比べる相手の上に重ねた層
+ */
+function startShiftedReferenceMoves(layer) {
+  layer.addEventListener(
+    "wheel",
+    (event) => {
+      if (!shell || live.refShift === null) {
+        return;
+      }
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? shell.refViewport.clientHeight : 1;
+      moveShiftedReference(event.deltaX * unit, event.deltaY * unit);
+    },
+    { passive: false },
+  );
+  /** @type {{ pointer: number, x: number, y: number } | null} */
+  let dragging = null;
+  layer.addEventListener("pointerdown", (event) => {
+    dragging = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
+    try {
+      layer.setPointerCapture(event.pointerId);
+    } catch {
+      // 捕まえられなくても、層の上で引いている間は動かせる。
+    }
+  });
+  layer.addEventListener("pointermove", (event) => {
+    if (dragging?.pointer !== event.pointerId) {
+      return;
+    }
+    // 引いた向きと逆に中身が動く（指で紙を引くのと同じ）。
+    moveShiftedReference(dragging.x - event.clientX, dragging.y - event.clientY);
+    dragging = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  const stop = () => {
+    dragging = null;
+  };
+  layer.addEventListener("pointerup", stop);
+  layer.addEventListener("pointercancel", stop);
+  layer.addEventListener("keydown", (event) => {
+    if (!shell || live.refShift === null) {
+      return;
+    }
+    const page = shell.refViewport.clientHeight * 0.9;
+    const moves = /** @type {Record<string, [number, number]>} */ ({
+      ArrowUp: [0, -SHIFT_KEY_STEP],
+      ArrowDown: [0, SHIFT_KEY_STEP],
+      ArrowLeft: [-SHIFT_KEY_STEP, 0],
+      ArrowRight: [SHIFT_KEY_STEP, 0],
+      PageUp: [0, -page],
+      PageDown: [0, page],
+      " ": [0, event.shiftKey ? -page : page],
+      Home: [0, -Infinity],
+      End: [0, Infinity],
+    });
+    const move = moves[event.key];
+    if (!move) {
+      return;
+    }
+    event.preventDefault();
+    // Home と End は端まで（layoutFrames が中身の高さに収める）。
+    const [x, y] = move;
+    moveShiftedReference(x, Number.isFinite(y) ? y : y > 0 ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER);
+  });
 }
 
 /** ページが要素を見せて光らせるまで待つ上限。 */

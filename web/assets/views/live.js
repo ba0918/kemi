@@ -335,12 +335,15 @@ export function buildShell() {
   refMockFrame.hidden = true;
   ref.box.append(refFrame, refMockFrame, refEmpty);
   // 消えた要素の行を押したとき（R-PAGE-DIFF）: 比べる相手の側のその要素の光と、比べる相手を中身の高さで描いて外側で
-  // ずらしている間にホイールを受ける層。スナップショットの枠はスクリプトを止めていて中を動かせないので、レビュー画面の
+  // ずらしている間にホイール・指やマウスで引く操作・キーを受ける層。スナップショットの枠はスクリプトを止めていて中を動かせないので、レビュー画面の
   // 側に置く。光は重ねて透かすときの透かし具合を受けないよう、枠を収める箱の外に置く。
   const refGlow = el("div", "lv-ref-glow");
   refGlow.hidden = true;
   const refWheel = el("div", "lv-ref-wheel");
   refWheel.hidden = true;
+  // ずらした形の間は、比べる相手を動かすのはこの層だけなので、キーボードでも届くようにする。
+  refWheel.tabIndex = 0;
+  refWheel.setAttribute("aria-label", "Snapshot moved to the removed element; scroll, drag, or use the arrow keys to move it");
   ref.viewport.append(refWheel, refGlow);
   const live = pane("live", "Now");
   const liveNotice = el("span", "lv-notice");
