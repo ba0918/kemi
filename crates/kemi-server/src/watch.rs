@@ -146,7 +146,7 @@ fn fall_back(
 ) {
     if let Some(mut tree) = whole.take() {
         tree.stop(watcher);
-        diff.ensure(watcher);
+        diff.watch_again(watcher);
         notices.notify(Notice::WorkTreeNotWatched(fallback));
     }
 }
@@ -168,6 +168,13 @@ impl DiffWatch {
         for directory in &self.directories {
             let _ = watcher.watch(directory, RecursiveMode::NonRecursive);
         }
+    }
+
+    /// 見張っていても、もう一度見張る。消えて作り直されたディレクトリは作業ツリー全体の
+    /// 見張りが足し直していて、それを外すとこちらの見張りも無くなっている。
+    fn watch_again(&mut self, watcher: &mut impl Watcher) {
+        self.watched = false;
+        self.ensure(watcher);
     }
 }
 
@@ -506,6 +513,10 @@ impl TreeWatch {
                 self.directories
                     .retain(|directory| !directory.starts_with(&path));
                 self.added.retain(|directory| !directory.starts_with(&path));
+                // 差分のファイルのための見張りも消えている。残すと、戻ったときに足さない。
+                let canonical = self.canonical_of(&path);
+                self.kept
+                    .retain(|directory| !directory.starts_with(&canonical));
             }
             if is_directory && !self.directories.contains(&path) && !created.contains(&path) {
                 created.push(path);
@@ -771,11 +782,13 @@ mod tests {
         notify::Event::new(kind).add_path(PathBuf::from(path))
     }
 
-    /// 足した見張りと外した見張りを覚える偽の見張り。`refuse` なら足すのを断る。
+    /// 足した見張りと外した見張り、いま効いている見張りを覚える偽の見張り。`refuse` なら
+    /// 足すのを断る。
     #[derive(Default)]
     struct Recorder {
         watched: Vec<(PathBuf, RecursiveMode)>,
         unwatched: Vec<PathBuf>,
+        live: HashSet<PathBuf>,
         refuse: bool,
     }
 
@@ -789,11 +802,13 @@ mod tests {
                 return Err(notify::Error::generic("refused"));
             }
             self.watched.push((path.to_path_buf(), mode));
+            self.live.insert(path.to_path_buf());
             Ok(())
         }
 
         fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
             self.unwatched.push(path.to_path_buf());
+            self.live.remove(path);
             Ok(())
         }
 
@@ -1053,6 +1068,98 @@ mod tests {
                 .watched
                 .iter()
                 .any(|(path, _)| path == &repo.0.join("build"))
+        );
+    }
+
+    #[test]
+    fn a_recreated_directory_that_holds_a_diff_file_is_watched_again() {
+        use notify::event::{CreateKind, RemoveKind};
+        let repo = IgnoringRepo::new("recreated-diff-directory");
+        let src = repo.0.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let mut watcher = Recorder::default();
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::PerDirectory,
+            HashSet::from([canonical(src.clone())]),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&src).unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::Folder),
+            src.clone(),
+        );
+        std::fs::create_dir(&src).unwrap();
+
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Create(CreateKind::Folder),
+            src.clone(),
+        );
+
+        assert!(watcher.live.contains(&src), "{:?}", watcher.live);
+    }
+
+    /// 知らせを捨てる。
+    struct Silent;
+
+    impl NoticeSink for Silent {
+        fn notify(&self, _: Notice) {}
+    }
+
+    #[test]
+    fn a_recreated_diff_directory_stays_watched_after_falling_back() {
+        use notify::event::{CreateKind, RemoveKind};
+        let repo = IgnoringRepo::new("fall-back-recreated");
+        let src = repo.0.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let mut diff = DiffWatch::default();
+        diff.directories.insert(canonical(src.clone()));
+        let mut watcher = Recorder::default();
+        diff.ensure(&mut watcher);
+        let mut tree = TreeWatch::start(
+            &mut watcher,
+            WorkTree::new(repo.0.clone()),
+            Strategy::PerDirectory,
+            diff.directories.clone(),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&src).unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Remove(RemoveKind::Folder),
+            src.clone(),
+        );
+        std::fs::create_dir(&src).unwrap();
+        changes_by(
+            &mut tree,
+            &mut watcher,
+            EventKind::Create(CreateKind::Folder),
+            src.clone(),
+        );
+
+        fall_back(
+            &mut Some(tree),
+            &mut diff,
+            &mut watcher,
+            &Silent,
+            WatchFallback::TooManyDirectories {
+                limit: WATCH_DIRECTORY_LIMIT,
+            },
+        );
+
+        assert!(
+            watcher
+                .live
+                .iter()
+                .any(|path| canonical(path.clone()) == canonical(src.clone())),
+            "{:?}",
+            watcher.live
         );
     }
 
