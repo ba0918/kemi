@@ -229,8 +229,7 @@ export function closeThread() {
 }
 
 /**
- * ページへのコメントの本文の編集を、開いたスレッドの中で始める（null でやめる）。場所は変えない
- * （live.md の R-PAGE-COMMENT。コードへのコメントは差分の中の入力欄で編集する）。
+ * Page・説明コメントの本文編集をスレッド内で始める（null でやめる）。
  * @param {string | null} id
  */
 export function editPageComment(id) {
@@ -240,7 +239,7 @@ export function editPageComment(id) {
 }
 
 /**
- * 編集しているページへのコメントの本文の書きかけを覚える（会話の描き直しで消えないように）。
+ * スレッド内で編集している本文の書きかけを覚える。
  * @param {string} text
  */
 export function keepPageCommentDraft(text) {
@@ -248,7 +247,7 @@ export function keepPageCommentDraft(text) {
 }
 
 /**
- * ページへのコメントの本文を保存する。
+ * スレッド内で編集したコメント本文を保存する。
  * @param {any} comment
  * @param {string} body
  */

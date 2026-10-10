@@ -421,11 +421,13 @@ function renderThread(comment, options) {
   fold.textContent = chip.folded ? "Unfold" : "Fold";
   fold.addEventListener("click", () => actions.setThreadFolded(comment.id, !chip.folded));
   acts.append(fold);
-  if (!state.submitted && !info.vanished && !comment.explanation) {
+  if (!state.submitted && !info.vanished) {
     const edit = button("cv-edit");
     edit.textContent = "Edit";
     edit.addEventListener("click", () =>
-      comment.page ? actions.editPageComment(comment.id) : actions.editFromThread(comment, info.unit),
+      comment.page || comment.explanation
+        ? actions.editPageComment(comment.id)
+        : actions.editFromThread(comment, info.unit),
     );
     acts.append(edit);
   }
@@ -477,7 +479,7 @@ function renderThread(comment, options) {
       dom.cvThreadBody.append(marks);
     }
     const opening =
-      state.conversation.editing === comment.id && comment.page
+      state.conversation.editing === comment.id && (comment.page || comment.explanation)
         ? pageCommentEditor(comment)
         : post("reviewer", comment.body, "cv-comment", comment.id);
     if (comment.suggestion) {
