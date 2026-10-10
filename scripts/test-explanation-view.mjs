@@ -162,7 +162,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await writeFile(join(root, 'a.txt'), 'new\n');
   const ref = {type:'code',unit:null,group_id:'worktree',path:'a.txt',side:'new',start_line:null,end_line:null};
   const sections = [{id:'intro',title:'Reading order',blocks:[{id:'first',part:{type:'text',body:bodyA},references:[]},...Array.from({length:12},(_,i)=>({id:`context-${i}`,part:{type:'text',body:`Context paragraph ${i}\n\n${'Reader context. '.repeat(40)}`},references:[]}))]},
-    {id:'middle',title:'Middle section',blocks:[{id:'code',part:codeB,references:[ref]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]}]}];
+    {id:'middle',title:'Middle section',blocks:[{id:'code',part:codeB,references:[ref]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]},{id:'diagram',part:sequence,references:[]}]}];
   await writeFile(join(root, 'explanation.json'), JSON.stringify({sections}));
   running = await start(['--worktree','--explanation',join(root,'explanation.json')]);
   await browser('set','viewport','1280','900');
@@ -232,6 +232,11 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await evaluate(`document.body.style.zoom='1.25';true`);
   assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
   await evaluate(`document.body.style.zoom='1';true`);
+  await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations')`);
+  await evaluate(`const style=document.createElement('style');style.id='explanation-font-probe';style.textContent='.explanation-diagram {font-size:180px!important;font-family:serif!important}';document.head.append(style);true`);
+  await wait(`Array.from(document.querySelectorAll('pre')).some(e=>{try{return JSON.parse(e.textContent).title==='Sequence operations'}catch{return false}})`);
+  assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && (${moduleState}).explanation.reading.revision===4 && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
+  await evaluate(`document.querySelector('#explanation-font-probe').remove();true`);
   await browser('set','viewport','390','900');
   await browser('find','role','button','click','--name','Code a.txt (new)','--exact');
   await browser('find','role','button','click','--name','Back to explanation');
