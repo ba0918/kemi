@@ -3,6 +3,7 @@
 //
 //   node scripts/test-live.mjs <kemi-bin>
 //   node scripts/test-live.mjs <kemi-bin> --places-glow
+//   node scripts/test-live.mjs <kemi-bin> --pen-places
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -2853,6 +2854,80 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
   }
 }
 
+async function penGlowAndImageStayAroundTheDrawnArea(repository) {
+  const dev = await startDevServer();
+  await writeFile(join(dev.dir, 'rich.html'), `<!doctype html><html><head><style>
+    body { margin:0; background:#161a20; color:#e4e8ee; font:16px sans-serif; }
+    header { height:60px; background:#222731; }
+    #layout { display:flex; height:1000px; }
+    nav { width:260px; flex:none; padding:20px; box-sizing:border-box; background:#222731; }
+    main { flex:1; }
+    button { display:block; width:180px; height:40px; margin:0 0 20px; }
+  </style></head><body><header>Header</header><div id="layout"><nav><button>First</button><button>Second</button></nav><main>Content</main></div></body></html>`);
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  const frame = `${livePane} .lv-frame`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await evaluate(`window.addEventListener('message', (event) => {
+      if (event.data?.kemi !== 'live') return;
+      if (event.data.type === 'placed') window.__boundsPlace = event.data;
+      if (event.data.type === 'glowed') window.__boundsGlow = event.data.rect;
+    }); true`);
+    await keepSavedImage();
+    await chooseTool('pen');
+    // ヘッダーと左の列をまたぐ囲み。拾われる要素には、描線より幅の広い入れ物も含まれる。
+    await dragInPane(livePane, [[20, 40], [220, 40], [220, 260], [20, 260], [20, 42]]);
+    await waitFor(`${draftNumbers} === '[1]' && window.__boundsPlace?.kind === 'pen'`);
+    const pen = await evaluate('window.__boundsPlace');
+    const width = Math.max(...pen.points.map((point) => point.x)) - Math.min(...pen.points.map((point) => point.x));
+    const height = Math.max(...pen.points.map((point) => point.y)) - Math.min(...pen.points.map((point) => point.y));
+    assert.ok(pen.elements.some(({ rect }) => rect.w > width), 'the selected metadata reaches outside the drawn pen area');
+    await browser('click', '#live-compose .lv-place-show');
+    await waitFor('window.__boundsGlow !== undefined');
+    const glow = await evaluate('window.__boundsGlow');
+    assert.ok(Math.abs(glow.w - width) < 0.05, `the pen glow follows the drawn width (${glow.w} vs ${width}), not selected elements`);
+    assert.ok(Math.abs(glow.h - height) < 0.05, `the pen glow follows the drawn height (${glow.h} vs ${height})`);
+    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    await waitForPixels(frame, shots, 'pen-outline', [Math.round((width + 20) * scale), 50, Math.round((width + 30) * scale), 150], isGlow);
+    await savePageCommentInThePage('the drawn pen area');
+    const image = decodePng(Buffer.from(await evaluate('window.__kemiSavedImage'), 'base64'));
+    assert.ok(image.width < 1280, 'the pen image is cropped around the drawing instead of spanning the page');
+    console.log('PASS 大きな要素を拾ったペンでも、光の枠と画像は描いた範囲に収まる');
+
+    await evaluate('window.__boundsGlow = undefined; window.__boundsPlace = undefined; true');
+    await chooseTool('element');
+    await clickInPane(livePane, 110, 100);
+    await waitFor(`${draftNumbers} === '[1]' && window.__boundsPlace?.kind === 'element'`);
+    const element = await evaluate('window.__boundsPlace.elements[0].rect');
+    await browser('click', '#live-compose .lv-place-show');
+    await waitFor('window.__boundsGlow !== undefined');
+    const elementGlow = await evaluate('window.__boundsGlow');
+    assert.equal(elementGlow.w, element.w);
+    assert.equal(elementGlow.h, element.h);
+    await browser('click', '#live-compose .lv-compose-cancel');
+
+    await evaluate('window.__boundsGlow = undefined; window.__boundsPlace = undefined; true');
+    await chooseTool('arrow');
+    await dragInPane(livePane, [[320, 220], [250, 160], [110, 100]]);
+    await waitFor(`${draftNumbers} === '[1]' && window.__boundsPlace?.kind === 'arrow'`);
+    const arrow = await evaluate('window.__boundsPlace');
+    await browser('click', '#live-compose .lv-place-show');
+    await waitFor('window.__boundsGlow !== undefined');
+    const arrowGlow = await evaluate('window.__boundsGlow');
+    const target = arrow.elements[0].rect;
+    assert.ok(Math.abs(arrowGlow.w - (Math.max(arrow.points[0].x, target.x + target.w) - Math.min(arrow.points.at(-1).x, target.x))) < 0.05);
+    assert.ok(Math.abs(arrowGlow.h - (Math.max(arrow.points[0].y, target.y + target.h) - Math.min(arrow.points.at(-1).y, target.y))) < 0.05);
+    console.log('PASS 要素の枠は要素の箱、矢印の枠は線と先端の要素の範囲を維持する');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
 /** 保存の要求に載せた画像を `window.__kemiSavedImage` に控える。 */
 async function keepSavedImage() {
   await evaluate(`(() => {
@@ -3796,6 +3871,7 @@ async function verifyLiveReview(repository) {
   await manyElementsAreRecordedAndCompared(repository);
   await pageCommentPlacesArePutAndSaved(repository);
   await penPlacesLeaveOutWhatContainsTheLine(repository);
+  await penGlowAndImageStayAroundTheDrawnArea(repository);
   await placesOnTheBackgroundAreAreasOnly(repository);
   await savedCommentsAreQuietMarks(repository);
   await draftPlacesStayAtTheirWidth(repository);
@@ -3816,6 +3892,10 @@ const repository = await makeRepository();
 try {
   if (process.argv[3] === '--places-glow') {
     await placesGlowFromTheListAndTheThread(repository);
+  } else if (process.argv[3] === '--pen-places') {
+    await penGlowAndImageStayAroundTheDrawnArea(repository);
+    await penPlacesLeaveOutWhatContainsTheLine(repository);
+    await placesOnTheBackgroundAreAreasOnly(repository);
   } else {
     await verifyLiveReview(repository);
   }

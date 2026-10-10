@@ -1395,7 +1395,7 @@
   }
 
   /**
-   * 場所の点と要素の箱をすべて囲む箱（文書の座標）。何も無ければ null。
+   * 場所の表示・画像の範囲（文書の座標）。何も無ければ null。
    * @param {ImagePlace[]} places
    * @returns {Rect | null}
    */
@@ -1407,6 +1407,8 @@
         xs.push(point.x);
         ys.push(point.y);
       }
+      // ペンが拾う入れ物の箱は描線より広いことがあり、その箱まで広げると囲みの場所を見失う。
+      if (place.kind === 'pen') continue;
       for (const { rect } of place.elements) {
         xs.push(rect.x, rect.x + rect.w);
         ys.push(rect.y, rect.y + rect.h);
