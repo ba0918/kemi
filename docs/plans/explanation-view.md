@@ -29,11 +29,14 @@
 
 | 責務 | 採用または自作の方針と理由 |
 |---|---|
-| Part と構造検証 | shoryo 公開版の型・検証を採用候補にする。仕様と異なる箇所だけ kemi に適合させ、一つの境界検証へ集める。取り込み commit と license は未確認なので step 1 で固定する。 |
+| 公開出典と許諾 | shoryo commit `46c6f764c1d373365a8902ffcc682245079363e6` を固定対象にする。当該 commit の `LICENSE` は MIT、著作権表示は `Copyright (c) 2026 ba0918`。取り込み先に著作権表示と許諾文を保持する。 |
+| Part と構造検証 | 固定公開版の `explanation.rs` / `explanation_validation.rs` を限定取り込みする。任意項目の省略と上限検証を再利用できる。重複キー拒否とcontent互換境界は既存serdeで追加し、検証を一つの境界へ集める。 |
 | 文章の互換性 | kemi の返信・発言を拡張する。`Plain` と `Parts` を区別する小さいドメイン型を自作し、旧 body を Markdown 化する経路をなくす。 |
 | 説明の版・ID・参照・内容一致 | kemi の純粋 domain に追加する。File の hash と改行正規化は用途が異なるため再利用しない。保存・HTTP 型は外側で変換する。 |
 | Markdown | `render/markdown.rs`、`inline.rs`、`url.rs` と既存 ox-content を採用する。parts 専用の画像無効出力を追加し、ファイルの差分整列・画像解決は持ち込まない。 |
-| 図計算・SVG・実寸検証・操作 | shoryo の計算・検証・操作部品を採用候補にする。DOM/SVG とブラウザの文字計測を使う。アプリ全体の framework、i18n、質問・round・保存モデルは不要。 |
+| 図計算・SVG・実寸検証 | 固定公開版の `explanation-{sequence,flow,svg,bounds,layout-validation,collision}.js` を採る。DOMとブラウザの文字計測だけに依存し、新runtime依存は不要。 |
+| 図の操作 | 固定公開版の `pan-zoom.js` とviewport/viewerの操作規則を採る。Component/translatorへの接続はkemiのviews/featuresへ適合させ、framework・i18n・round・保存モデルは取り込まない。 |
+| grid図・コード | 固定公開版の `diagram.js` / `measure.js` をgrid候補とし、省略と全文表示を再利用する。codeはkemiのDOMで読み取り専用表示を作る。 |
 | 保存と復元 | kemi の session DTO、原子的ファイル差し替え、ロック、payload 分離を採用する。世代発行と説明更新の受理に必要な候補保存だけ追加する。 |
 | CLI・HTTP・イベント | kemi の agent 接続保護、writes 全件検証、wait の配達確認、SSE を採用する。explain の会話外通知と context を追加する。 |
 | 画面・会話 | kemi の ESM/JSDoc、共有 state、features、views、actions を採用する。全 View で同じ Part 描画を呼ぶ。新しい framework やビルド工程は不要。 |
@@ -51,16 +54,6 @@
 初回凍結には、起動 D1 のメタデータ、世代、未完成の反対単位を作る入力記述、内容参照計画をメモリ内の一つの作成対象として保持する。現行 `server/session.rs:304-333` は反対単位を待った後の現在 review を読むため、D2 を取り込むと初回写しへ混ぜうる。D1 の反対単位の計算は初回応答後に始め、D1 の作成対象へ完成結果を渡す。D2 用の公開処理は別に世代を検査する。現行 `units.rs:153-189` の「古い完成を捨てて最新で作り直す」処理だけに D1 凍結を従属させない。D1/D2 の参照先の分離はメタデータと既存 SideRef の分離であり、worktree のバイトを新たに固定しない。起動前に本文を読む変更も加えない。凍結用の保持は完成・失敗・終了時に解放し、全世代の索引へ拡張しない。
 
 ### 暫定判断と覆す条件
-
-再利用の固定対象は公開 shoryo commit `46c6f764c1d373365a8902ffcc682245079363e6`。
-当該 commit の `LICENSE` は MIT、著作権表示は `Copyright (c) 2026 ba0918`。
-型と構造検証は `explanation.rs` / `explanation_validation.rs` を限定取り込み候補とする。
-任意項目の省略を保持する型と上限検証を再利用でき、重複JSONキー拒否とcontentの互換境界はkemiで追加する。
-図計算・SVG・計測・衝突検証は `explanation-{sequence,flow,svg,bounds,layout-validation,collision}.js` を採る。
-DOMとブラウザだけに依存するため、新runtime依存は不要。
-操作は `pan-zoom.js` と viewport/viewer の操作規則を採り、Componentとtranslatorへの接続はkemiのviews/featuresへ適合させる。
-gridは `diagram.js` / `measure.js` を候補とし、codeはkemiのDOMによる読み取り専用表示を使う。
-shoryoのアプリ全体・翻訳・round・保存モデルは取り込まない。MIT許諾文と出典表示は実際の取り込み先に保持する。
 
 承認済みの入力形式・数値上限・保存先・エラー契約は選択事項にしない。次の判断は仕様が内部方式または未準備時の扱いまで固定していない部分である。
 
