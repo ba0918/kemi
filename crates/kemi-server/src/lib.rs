@@ -43,6 +43,7 @@ pub enum ServerError {
     Io(std::io::Error),
     Source(kemi_core::source::SourceError),
     Stopped(String),
+    Session(SessionError),
 }
 
 impl std::fmt::Display for ServerError {
@@ -51,6 +52,7 @@ impl std::fmt::Display for ServerError {
             ServerError::Io(error) => write!(formatter, "{error}"),
             ServerError::Source(error) => write!(formatter, "{error}"),
             ServerError::Stopped(message) => formatter.write_str(message),
+            ServerError::Session(error) => error.fmt(formatter),
         }
     }
 }
@@ -168,9 +170,33 @@ pub trait ResultSink: Send + Sync {
     fn location(&self) -> Option<String>;
 }
 
-/// レビューをセッションとして残す先（R-SESSION）。保存の失敗は警告だけで、レビューは
-/// 終わらせず終了コードも変えない。
+/// レビューをセッションとして残す先（R-SESSION）。一般状態の保存失敗は警告だけにし、
+/// 新しい世代は保存が成功するまで公開しない。
 pub trait SessionSink: Send + Sync {
+    fn initial_title(&self) -> Option<String> {
+        None
+    }
+    fn save_frozen_copy(
+        &self,
+        copy: kemi_core::session::PreparedCopy,
+        state: kemi_core::session::SessionState,
+    ) -> Result<bool, SessionError> {
+        self.save_copy(copy.into_copy())?;
+        self.save_issued_state(state)?;
+        Ok(true)
+    }
+    fn review_id(&self) -> Option<String> {
+        None
+    }
+    fn is_resumed(&self) -> bool {
+        false
+    }
+    fn save_issued_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), SessionError> {
+        self.save_state(state)
+    }
     /// 復元のときに、サーバのメモリへ読み戻す状態。新規のセッションでは空。
     fn initial_state(&self) -> kemi_core::session::SessionState {
         kemi_core::session::SessionState::default()
@@ -250,15 +276,14 @@ impl ServeControl {
     }
 
     /// 保留で終わることを、待っている `kemi wait` に知らせてサーバを止め始める。待っている
-    /// ものが無ければ何もせず false を返し、起動側は今までどおりすぐ終わってよい。true の
+    /// ものが無ければ停止だけ知らせて false を返し、起動側はすぐ終わってよい。true の
     /// ときは、serve が返る（理由を返し終えて接続が閉じる）のを待ってから終わる。
     pub fn suspend(&self) -> bool {
         let Some(state) = self.state.get().and_then(std::sync::Weak::upgrade) else {
             return false;
         };
-        if !state.agent.lock().expect("agent poisoned").is_waiting() {
-            return false;
-        }
+        let _gate = state.persist.lock().expect("persist poisoned");
+        let waiting = state.agent.lock().expect("agent poisoned").is_waiting();
         {
             let mut stop = state.stop.lock().expect("stop poisoned");
             if stop.is_none() {
@@ -266,7 +291,12 @@ impl ServeControl {
             }
         }
         let _ = state.shutdown.send(true);
-        true
+        state
+            .initial_review
+            .lock()
+            .expect("initial review poisoned")
+            .take();
+        waiting
     }
 }
 
@@ -301,6 +331,10 @@ pub(crate) enum SubmitState {
 }
 
 pub(crate) struct AppState {
+    pub sources: Arc<kemi_core::source::SourceSlot>,
+    pub initial_review: Mutex<Option<session::FreezeInput>>,
+    pub display_id: String,
+    pub display_ready: std::sync::atomic::AtomicBool,
     pub source: Arc<dyn ReviewSource>,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
@@ -338,6 +372,7 @@ pub(crate) struct AppState {
 
 /// レビュー中の実行時エラーで停止する。stdout に JSON を出さず終了コード 2（R-SUBMIT）。
 pub(crate) fn stop_with_error(state: &AppState, message: impl Into<String>) {
+    let _gate = state.persist.lock().expect("persist poisoned");
     {
         let mut stop = state.stop.lock().expect("stop poisoned");
         if stop.is_none() {
@@ -380,19 +415,123 @@ pub async fn serve(
     };
     let allowed = AllowedHosts::new(bind, params.share_address, address.port());
 
-    let review = params.source.review().map_err(ServerError::Source)?;
+    let resumed = params
+        .session
+        .as_ref()
+        .is_some_and(|sink| sink.is_resumed());
+    let mut code_error = None;
+    let initial_source = match params.source.fork() {
+        Ok(source) => source.unwrap_or_else(|| params.source.clone()),
+        Err(error) if resumed && params.live.is_some() => {
+            code_error = Some(error.to_string());
+            params.source.clone()
+        }
+        Err(error) => return Err(ServerError::Source(error)),
+    };
+    let review = match if code_error.is_some() {
+        None
+    } else {
+        Some(initial_source.review())
+    } {
+        Some(Ok(review)) => review,
+        result if resumed && params.live.is_some() => {
+            if let Some(Err(error)) = result {
+                code_error = Some(error.to_string());
+            }
+            kemi_core::domain::review::ReviewMeta {
+                title: params
+                    .session
+                    .as_ref()
+                    .and_then(|sink| sink.initial_title())
+                    .unwrap_or_else(|| "Live review".into()),
+                subtitle: String::new(),
+                meta: serde_json::Value::Null,
+                groups: vec![],
+                approval: vec![],
+            }
+        }
+        Some(Err(error)) => return Err(ServerError::Source(error)),
+        None => return Err(ServerError::Stopped("source preparation failed".into())),
+    };
     // セッションの情報に、起動時の単位の題と全ファイル数を残す（R-SESSION）。
-    if let Some(sink) = &params.session {
+    if let Some(sink) = &params.session
+        && code_error.is_none()
+    {
         let total_files = review.groups.iter().map(|group| group.files.len()).sum();
         sink.describe_review(&review.title, total_files);
     }
-    let units = params.source.units();
+    let units = initial_source.units();
     // 復元では、セッションの状態から見た・折りたたみ・コメント・解決を読み戻す（R-SESSION）。
-    let initial_state = params
+    let mut initial_state = params
         .session
         .as_ref()
         .map(|sink| sink.initial_state())
         .unwrap_or_default();
+    let display_id = params
+        .agent
+        .as_ref()
+        .map(|agent| agent.review.clone())
+        .or_else(|| params.session.as_ref().and_then(|sink| sink.review_id()))
+        .or_else(|| {
+            initial_state
+                .display
+                .as_ref()
+                .and_then(|display| display.current.split_once(':').map(|(id, _)| id.to_owned()))
+        })
+        .unwrap_or_else(kemi_core::session::new_ulid);
+    let mut display = initial_state.display.clone().unwrap_or(
+        kemi_core::domain::display_version::DisplayVersions::initial(&display_id)
+            .map_err(|e| ServerError::Stopped(e.to_string()))?,
+    );
+    if resumed && params.live.is_some() && code_error.is_none() {
+        display = display
+            .next(&display_id)
+            .map_err(|e| ServerError::Stopped(e.to_string()))?;
+    } else if resumed && let Some(frozen) = &display.frozen {
+        display.current = frozen.clone();
+    }
+    initial_state.display = Some(display);
+    let generation = kemi_core::domain::display_version::known_generation(
+        &initial_state
+            .display
+            .as_ref()
+            .expect("initial display assigned")
+            .current,
+        &display_id,
+        initial_state
+            .display
+            .as_ref()
+            .expect("initial display assigned")
+            .issued,
+    )
+    .map_err(|e| ServerError::Stopped(e.to_string()))?;
+    let mut review_state = units::ReviewState::new(&units, review);
+    review_state.generation = generation;
+    review_state.code_error = code_error;
+    if let Some(other) = &mut review_state.other {
+        other.generation = generation;
+    }
+    let initial_review = params
+        .session
+        .as_ref()
+        .filter(|sink| sink.needs_copy())
+        .map(|_| session::FreezeInput {
+            source: initial_source.clone(),
+            startup_unit: review_state.startup_unit,
+            startup: review_state.startup.clone(),
+            other: review_state.other.clone(),
+            generation,
+            token: initial_state
+                .display
+                .as_ref()
+                .expect("initial display assigned")
+                .current
+                .clone(),
+        });
+    let sources = Arc::new(kemi_core::source::SourceSlot::new(
+        params.source,
+        initial_source,
+    ));
     // エージェントの返信は短い間に続けて届くことがあるので、取りこぼしにくい長さにする。
     let (events, _) = broadcast::channel(256);
     let (shutdown, _) = shutdown_watch::channel(false);
@@ -409,7 +548,11 @@ pub async fn serve(
         &initial_state.channel.events,
     );
     let state = Arc::new(AppState {
-        source: params.source,
+        source: sources.clone(),
+        sources,
+        initial_review: Mutex::new(initial_review),
+        display_id,
+        display_ready: std::sync::atomic::AtomicBool::new(false),
         highlighter: std::sync::OnceLock::new(),
         assets: params.assets,
         results: params.results,
@@ -417,7 +560,7 @@ pub async fn serve(
         notices: params.notices,
         token: params.token,
         allowed,
-        review: RwLock::new(units::ReviewState::new(&units, review)),
+        review: RwLock::new(review_state),
         refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::from_state(initial_state)),
         persist: Mutex::new(()),

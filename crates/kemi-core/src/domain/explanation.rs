@@ -6,6 +6,20 @@ use std::collections::HashSet;
 
 pub const MAX_REVISION: u64 = 9_007_199_254_740_991;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplanationHistory {
+    pub current_revision: u64,
+    pub versions: Vec<ExplanationVersion>,
+}
+impl ExplanationHistory {
+    pub fn current(&self) -> Option<&ExplanationVersion> {
+        self.versions
+            .iter()
+            .find(|v| v.revision == self.current_revision)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExplanationDocument {

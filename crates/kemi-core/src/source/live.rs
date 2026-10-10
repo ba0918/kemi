@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::domain::live::LivePage;
 use crate::domain::review::{ReviewMeta, Side};
@@ -67,6 +67,13 @@ impl LiveSource {
 }
 
 impl ReviewSource for LiveSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(Self {
+            code: self.code.as_ref().map(GitSource::detached).transpose()?,
+            title: self.title.clone(),
+            ids: Mutex::new(HashMap::new()),
+        })))
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let mut review = match &self.code {
             Some(code) => {

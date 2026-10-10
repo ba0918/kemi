@@ -32,7 +32,7 @@ pub(super) async fn message_api(
             id: format!("m{}", session.last_message),
             seq: session.next_seq(),
             author: Author::Reviewer,
-            body: request.body,
+            body: request.body.into(),
         };
         session.channel.note_message(&message.id);
         let value = page_message_json(&message);
@@ -52,6 +52,12 @@ pub(super) async fn hand_api(
     let handed = {
         let mut session = state.session.lock().expect("session poisoned");
         let session = &mut *session;
+        let mut candidate = session.snapshot();
+        candidate
+            .channel
+            .hand(&candidate.comments, &candidate.messages);
+        kemi_core::session::validate_additional(&candidate)
+            .map_err(|e| ApiError::too_large(e.to_string()))?;
         let handed = session.channel.hand(&session.comments, &session.messages);
         // 渡した 1 回分の行（R-AGENT-HAND）。ロックは session → agent の順。
         if let (true, Some(AgentEvent::Handed(event))) = (handed, session.channel.events.last()) {

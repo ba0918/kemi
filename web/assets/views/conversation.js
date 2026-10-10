@@ -21,6 +21,7 @@ import {
   authorLabel,
   commentLabel,
   conversationItems,
+  conversationText,
   describeComment,
   filterConversation,
   firstLine,
@@ -247,13 +248,13 @@ function renderList(options) {
  * @returns {HTMLElement}
  */
 function messageRow(message) {
-  return post(message.author, message.body, "cv-msg", message.id);
+  return post(message.author, message, "cv-msg", message.id);
 }
 
 /**
  * 書き込み 1 つ（発言・コメントの本文・返信）。書いた人で見分ける。
  * @param {string} author
- * @param {string} body
+ * @param {string | {body: string|null, parts?: unknown[]|null}} body
  * @param {string} className
  * @param {string} id
  * @returns {HTMLElement}
@@ -262,7 +263,7 @@ function post(author, body, className, id) {
   const item = el("div", `cv-post ${className}`);
   item.dataset.author = author;
   item.dataset.id = id;
-  item.append(textEl("span", "cv-who", authorLabel(author)), textEl("p", "cv-text", body));
+  item.append(textEl("span", "cv-who", authorLabel(author)), textEl("p", "cv-text", conversationText(body)));
   return item;
 }
 
@@ -280,7 +281,7 @@ function place(comment, info) {
     where.append(textEl("span", "cv-unit", unitLabel(info.unit)));
   }
   where.append(
-    textEl("span", "cv-path", comment.page ? comment.page.url : comment.path),
+    textEl("span", "cv-path", comment.explanation ? comment.explanation.block_id : comment.page ? comment.page.url : comment.path),
     textEl("span", "cv-where", commentLabel(comment)),
   );
   return where;
@@ -346,7 +347,7 @@ function threadCard(comment, context) {
     const last = replies.length > 0 ? replies[replies.length - 1] : { author: "reviewer", body: comment.body };
     const line = el("span", "cv-last");
     line.dataset.author = last.author;
-    line.append(textEl("b", "cv-who", authorLabel(last.author)), textEl("span", "cv-first", firstLine(last.body)));
+    line.append(textEl("b", "cv-who", authorLabel(last.author)), textEl("span", "cv-first", firstLine(last)));
     card.append(line);
   }
   appendHandLine(card, comment.id);
@@ -420,7 +421,7 @@ function renderThread(comment, options) {
   fold.textContent = chip.folded ? "Unfold" : "Fold";
   fold.addEventListener("click", () => actions.setThreadFolded(comment.id, !chip.folded));
   acts.append(fold);
-  if (!state.submitted && !info.vanished) {
+  if (!state.submitted && !info.vanished && !comment.explanation) {
     const edit = button("cv-edit");
     edit.textContent = "Edit";
     edit.addEventListener("click", () =>
@@ -447,6 +448,9 @@ function renderThread(comment, options) {
       : null;
   followScroll(dom.cvThreadBody, options, comment.id, posts, () => {
     dom.cvThreadBody.textContent = "";
+    if (comment.explanation) {
+      dom.cvThreadBody.append(textEl("pre", "cv-context", JSON.stringify(comment.explanation.quote, null, 2)));
+    }
     const lines = targetLines(comment);
     if (lines.length > 0) {
       const box = el("div", "cv-context");
@@ -494,13 +498,13 @@ function renderThread(comment, options) {
         textEl(
           "div",
           "t-outdated",
-          "Outdated comment — the file changed after this comment (line numbers are as of creation)",
+          comment.explanation ? "Outdated explanation block" : "Outdated comment — the file changed after this comment (line numbers are as of creation)",
         ),
       );
     }
     dom.cvThreadBody.append(opening);
     for (const reply of comment.replies || []) {
-      dom.cvThreadBody.append(post(reply.author, reply.body, "cv-reply-post", reply.id));
+      dom.cvThreadBody.append(post(reply.author, reply, "cv-reply-post", reply.id));
     }
     appendHandLine(dom.cvThreadBody, comment.id);
     const editor = /** @type {HTMLTextAreaElement | null} */ (

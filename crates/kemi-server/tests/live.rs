@@ -1323,6 +1323,24 @@ struct StoreSink {
 }
 
 impl SessionSink for StoreSink {
+    fn review_id(&self) -> Option<String> {
+        Some(self.open.lock().unwrap().id().into())
+    }
+    fn initial_state(&self) -> kemi_core::session::SessionState {
+        self.open.lock().unwrap().state().clone()
+    }
+    fn is_resumed(&self) -> bool {
+        self.open.lock().unwrap().state().display.is_some()
+    }
+    fn needs_copy(&self) -> bool {
+        !self.open.lock().unwrap().info().mode.is_live()
+    }
+    fn save_issued_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_issued_state(state)
+    }
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
     fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), SessionError> {
@@ -1360,6 +1378,107 @@ impl SessionSink for StoreSink {
     ) -> FilesWrite {
         self.open.lock().unwrap().save_snapshot(snapshot, comments)
     }
+}
+
+struct ToggleScan {
+    fail: std::sync::atomic::AtomicBool,
+}
+impl ReviewSource for ToggleScan {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(SourceError::Git("scan failed".into()))
+        } else {
+            EmptySource.review()
+        }
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        Err(SourceError::UnknownFileId(id.into()))
+    }
+}
+
+#[tokio::test]
+async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_generation() {
+    let (authority, dev) = start_dev_server().await;
+    let scratch = Scratch::new("failed-scan");
+    let store = kemi_core::session::SessionStore::new(scratch.0.clone());
+    let info = stored_session_info(&authority, &scratch);
+    let id = info.id.clone();
+    let mut open = store.create(info).unwrap();
+    let state = kemi_core::session::SessionState {
+        display:Some(kemi_core::domain::display_version::DisplayVersions::initial(&id).unwrap()),
+        explanation:Some(serde_json::from_value(serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"before"},"references":[]}]}]}]})).unwrap()),
+        ..kemi_core::session::SessionState::default()
+    };
+    open.save_issued_state(state).unwrap();
+    let sink = Arc::new(StoreSink {
+        open: std::sync::Mutex::new(open),
+    });
+    let source = Arc::new(ToggleScan {
+        fail: std::sync::atomic::AtomicBool::new(true),
+    });
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let url = format!(
+        "http://127.0.0.1:{}/s/test-token/",
+        listener.local_addr().unwrap().port()
+    );
+    let relay = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let params = ServeParams {
+        source: source.clone(),
+        assets: Arc::new(PageAssets),
+        token: "test-token".into(),
+        results: None,
+        session: Some(sink.clone()),
+        notices: Arc::new(Quiet),
+        share_address: None,
+        agent: None,
+        live: Some(LiveParams {
+            listener: relay,
+            target: LiveTarget::Url {
+                authority: authority.clone(),
+                start: "/".into(),
+                display: format!("http://{authority}/"),
+            },
+            root: scratch.0.clone(),
+            cookie: RELAY.into(),
+            mock_secret: MOCK_SECRET.into(),
+            code_view: true,
+            snapshots: vec![],
+            last_snapshot_number: 0,
+        }),
+    };
+    let task = tokio::spawn(serve(listener, params));
+    let response = reqwest::get(format!("{url}api/review")).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["diff_display_version"].is_null());
+    assert_eq!(body["live"]["code"], false);
+    assert!(body["code_unavailable"].as_str().is_some());
+    assert_eq!(body["explanation"]["current_revision"], 1);
+    assert_eq!(
+        sink.open
+            .lock()
+            .unwrap()
+            .state()
+            .display
+            .as_ref()
+            .unwrap()
+            .issued,
+        1
+    );
+    source
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let restored: serde_json::Value = reqwest::get(format!("{url}api/review?refresh=1"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(restored["diff_display_version"], format!("{id}:2"));
+    assert_eq!(restored["live"]["code"], true);
+    assert_eq!(restored["explanation"]["current_revision"], 1);
+    task.abort();
+    dev.abort();
 }
 
 /// `start_stored_review` が開くセッションの情報。

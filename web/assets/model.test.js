@@ -72,6 +72,17 @@ import {
   followsNewest,
 } from "./model.js";
 
+test("説明コメントはファイル全体や消えたコミットとして扱わない", () => {
+  const comment={target_type:"explanation",explanation:{revision:1,block_id:"intent"},group_id:null,start_line:null};
+  assert.match(commentLabel(comment),/Explanation/);
+  assert.equal(describeComment(comment,{range:true,commitGroups:new Map()}).vanished,false);
+});
+
+test("会話の旧plain本文は装飾せず最初の行を示す", () => {
+  assert.equal(firstLine({body:"**plain**\nsecond",parts:null}),"**plain**");
+  assert.equal(firstLine({body:"",parts:null}),"");
+});
+
 /** @typedef {import("./model.js").LogicalRow} LogicalRow */
 /** @typedef {import("./model.js").FileEntry} FileEntry */
 

@@ -18,6 +18,39 @@ impl std::fmt::Display for DisplayVersionError {
 }
 impl std::error::Error for DisplayVersionError {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayVersions {
+    pub current: String,
+    pub frozen: Option<String>,
+    pub issued: u128,
+}
+impl DisplayVersions {
+    pub fn initial(review_id: &str) -> Result<Self, DisplayVersionError> {
+        Ok(Self {
+            current: next_token(review_id, 0)?,
+            frozen: None,
+            issued: 1,
+        })
+    }
+    pub fn validate(&self, review_id: &str) -> Result<(), DisplayVersionError> {
+        known_generation(&self.current, review_id, self.issued)?;
+        if let Some(frozen) = &self.frozen {
+            known_generation(frozen, review_id, self.issued)?;
+        }
+        Ok(())
+    }
+    pub fn next(&self, review_id: &str) -> Result<Self, DisplayVersionError> {
+        Ok(Self {
+            current: next_token(review_id, self.issued)?,
+            frozen: self.frozen.clone(),
+            issued: self
+                .issued
+                .checked_add(1)
+                .ok_or(DisplayVersionError::Exhausted)?,
+        })
+    }
+}
+
 pub fn known_generation(
     token: &str,
     review_id: &str,

@@ -100,7 +100,7 @@ An interrupted run (exit `130`) keeps its comments, seen marks, folding, and res
 session. Only a session whose copy completed within the size limit can be listed or resumed;
 one whose copy is unfinished or too large keeps the state alone, and a run with nothing to keep
 leaves no session. A `--live` review keeps no copy: it is kept only when it holds a comment, a
-reply, or a message. Continue it instead of rebuilding the input:
+reply, a message, or an explanation. Continue it instead of rebuilding the input:
 
 ```text
 kemi --resume <id>   # the id is in the `kemi: resume with:` line on stderr
@@ -115,6 +115,13 @@ it takes only `--port`, `--bind`, `--no-open`, `--serve`, and `--live-port`, and
 `--digest` beside it is a usage error (exit `2`). Without an id and without a terminal it prints the resumable
 sessions as tab-separated lines (id, last update, workspace, mode, seen/total, newest first) and
 exits `0`, or exits `2` with nothing on stdout when there are none.
+
+Sessions write format 4 and read formats 2, 3, and 4. Old body strings stay plain text;
+typed parts, original explanation quotes, retained versions, and undelivered events keep
+their content. The original explanation file is not needed for resume. A non-live resume
+uses the frozen startup display version, retaining the highest issued generation and the
+explanation's original base. A live rescan publishes a new display version only after it
+succeeds and is saved; until a failed scan can be retried, Code is unavailable.
 
 ## Writing a manifest
 

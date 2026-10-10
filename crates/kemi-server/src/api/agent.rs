@@ -366,6 +366,7 @@ async fn reply_api(
 
     let (ids, threads, messages) = {
         let mut session = state.session.lock().expect("session poisoned");
+        let previous = session.clone();
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
         if matches!(
@@ -389,7 +390,7 @@ async fn reply_api(
                         id: format!("r{}", session.last_reply),
                         seq: session.next_seq(),
                         author: Author::Agent,
-                        body,
+                        body: body.into(),
                     };
                     ids.push(reply.id.clone());
                     if let Some(comment) = session
@@ -409,7 +410,7 @@ async fn reply_api(
                         id: format!("m{}", session.last_message),
                         seq: session.next_seq(),
                         author: Author::Agent,
-                        body,
+                        body: body.into(),
                     };
                     ids.push(message.id.clone());
                     messages.push(page_message_json(&message));
@@ -422,6 +423,10 @@ async fn reply_api(
             .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
             .map(page_comment_json)
             .collect();
+        if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+            *session = previous;
+            return Err(ApiError::too_large(error.to_string()));
+        }
         // 返信のスレッドと発言の行を消し、状態を表のとおりに移す（R-AGENT-STATE, R-AGENT-HAND）。
         // セッションのロックの中で行う（ロックは session → agent の順）。外で行うと、その間に人間が
         // 同じスレッドを渡し直して受け取り待ちにした行を、この古い返信が消してしまう。

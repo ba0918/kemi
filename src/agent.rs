@@ -173,7 +173,7 @@ fn print_events(id: &str, answer: &serde_json::Value, out: &mut dyn Write) -> st
             .and_then(|event| event["result"]["verdict"].as_str())
             .map(str::to_string)
     });
-    let printed = serde_json::json!({ "kemi": 2, "review": id, "events": events });
+    let printed = serde_json::json!({ "kemi": 3, "review": id, "events": events });
     writeln!(out, "{printed}")?;
     out.flush()?;
     Ok(match verdict.as_deref() {
@@ -307,7 +307,7 @@ mod tests {
         let printed: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(
             printed,
-            serde_json::json!({ "kemi": 2, "review": "01K5", "events": answer["events"] })
+            serde_json::json!({ "kemi": 3, "review": "01K5", "events": answer["events"] })
         );
     }
 

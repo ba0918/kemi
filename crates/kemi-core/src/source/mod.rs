@@ -16,8 +16,8 @@ pub(crate) mod testutil;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::domain::focus::{self, FocusTargets};
 use crate::domain::origin::{BlockOrigin, RangeCommit};
@@ -70,6 +70,10 @@ pub struct FileOrigin {
 
 /// レビューの供給元。`review` はメタデータと統計、`content` は表示時の行内容を返す。
 pub trait ReviewSource: Send + Sync {
+    /// 内容参照を変更するソースは、未公開の作成対象を分ける。参照計画が不変のソースはNone。
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(None)
+    }
     /// 起動時に表示するグループ単位のメタデータ。
     fn review(&self) -> Result<ReviewMeta, SourceError>;
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError>;
@@ -120,6 +124,72 @@ pub trait ReviewSource: Send + Sync {
     ) -> Result<Option<Vec<u8>>, SourceError> {
         let _ = (file_id, side, path, limit);
         Ok(None)
+    }
+}
+
+pub struct SourceSlot {
+    factory: Arc<dyn ReviewSource>,
+    current: RwLock<Arc<dyn ReviewSource>>,
+}
+impl SourceSlot {
+    pub fn new(factory: Arc<dyn ReviewSource>, current: Arc<dyn ReviewSource>) -> Self {
+        Self {
+            factory,
+            current: RwLock::new(current),
+        }
+    }
+    pub fn current(&self) -> Arc<dyn ReviewSource> {
+        self.current.read().expect("source slot poisoned").clone()
+    }
+    pub fn prepare(&self) -> Result<Arc<dyn ReviewSource>, SourceError> {
+        Ok(self.factory.fork()?.unwrap_or_else(|| self.factory.clone()))
+    }
+    pub fn publish(&self, candidate: Arc<dyn ReviewSource>) {
+        *self.current.write().expect("source slot poisoned") = candidate;
+    }
+}
+impl ReviewSource for SourceSlot {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.current().review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.current().content(id)
+    }
+    fn units(&self) -> Vec<GroupBy> {
+        self.current().units()
+    }
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        self.current().review_unit(unit)
+    }
+    fn extra_focus_targets(&self) -> Result<FocusTargets, SourceError> {
+        self.current().extra_focus_targets()
+    }
+    fn origin(&self, id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
+        self.current().origin(id, force)
+    }
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        self.factory
+            .watch_paths()
+            .into_iter()
+            .chain(self.current().watch_paths())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+    fn work_tree(&self) -> Option<work_tree::WorkTree> {
+        self.current().work_tree()
+    }
+    fn reads_repository(&self) -> bool {
+        self.current().reads_repository()
+    }
+    fn repository_file(
+        &self,
+        id: &str,
+        side: Side,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        self.current().repository_file(id, side, path, limit)
     }
 }
 
@@ -282,17 +352,17 @@ impl Default for PlanStore {
 /// `--focus` を後付けする装飾ソース。照合は起動時（最初の `review()`）に 1 回だけ行い、
 /// 取得し直したときは照合せずに後付けだけする。
 pub struct FocusSource {
-    inner: Box<dyn ReviewSource>,
+    inner: Arc<dyn ReviewSource>,
     layer: focus::FocusLayer,
-    validated: AtomicBool,
+    validated: Arc<AtomicBool>,
 }
 
 impl FocusSource {
     pub fn new(inner: Box<dyn ReviewSource>, layer: focus::FocusLayer) -> Self {
         FocusSource {
-            inner,
+            inner: Arc::from(inner),
             layer,
-            validated: AtomicBool::new(false),
+            validated: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -326,6 +396,15 @@ impl FocusSource {
 }
 
 impl ReviewSource for FocusSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(self.inner.fork()?.map(|inner| {
+            Arc::new(FocusSource {
+                inner,
+                layer: self.layer.clone(),
+                validated: self.validated.clone(),
+            }) as Arc<dyn ReviewSource>
+        }))
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let mut meta = self.inner.review()?;
         self.validate_once(&meta)?;

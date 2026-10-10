@@ -434,6 +434,150 @@ fn session_host_uses_the_share_address_only_for_a_wildcard_bind() {
 }
 
 #[tokio::test]
+async fn new_result_without_explanation_has_version_three_and_explicit_content_keys() {
+    let server = TestServer::start().await;
+    let review: Value = server.get("api/review").await.json().await.unwrap();
+    assert!(review["diff_display_version"].as_str().is_some());
+    let response = server
+        .post("api/message", json!({"body":"**plain**"}))
+        .await;
+    assert!(response.status().is_success());
+    let response = server
+        .post("api/submit", json!({"verdict":"approved"}))
+        .await;
+    assert!(response.status().is_success());
+    let result = server.finish().await;
+    assert_eq!(result["kemi"], 3);
+    assert_eq!(
+        result["diff_display_version"],
+        review["diff_display_version"]
+    );
+    assert!(result.get("explanation").unwrap().is_null());
+    assert_eq!(result["messages"][0]["body"], "**plain**");
+    assert!(result["messages"][0].get("parts").unwrap().is_null());
+}
+
+#[tokio::test]
+async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_and_result() {
+    use kemi_core::domain::conversation_content::ConversationContent;
+    use kemi_core::domain::explanation::{
+        ExplanationDocument, ExplanationHistory, ExplanationVersion, quote_block,
+    };
+    use kemi_core::domain::review::{
+        Author, Comment, CommentTarget, ExplanationTarget, Message, Reply,
+    };
+    let document:ExplanationDocument=serde_json::from_value(json!({"sections":[{"id":"s","title":"Original","blocks":[{"id":"b","part":{"type":"code","body":"literal\r\n","language":"pseudocode","role":"example"},"references":[]}]}]})).unwrap();
+    let quote = quote_block(&document, "b").unwrap();
+    let mut changed = document.clone();
+    changed.sections[0].blocks[0].part =
+        serde_json::from_value(json!({"type":"text","body":"changed"})).unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    sink.copy_already_saved.store(true, Ordering::SeqCst);
+    let mut state = SessionState {
+        explanation: Some(ExplanationHistory {
+            current_revision: 2,
+            versions: vec![
+                ExplanationVersion {
+                    revision: 1,
+                    base_display_version: "01TESTREVIEW:1".into(),
+                    sections: document.sections,
+                },
+                ExplanationVersion {
+                    revision: 2,
+                    base_display_version: "01TESTREVIEW:1".into(),
+                    sections: changed.sections,
+                },
+            ],
+        }),
+        ..SessionState::default()
+    };
+    state.comments.push(Comment {
+        id: "c1".into(),
+        seq: 1,
+        group_id: String::new(),
+        group_title: String::new(),
+        body: "question".into(),
+        replies: vec![Reply {
+            id: "r1".into(),
+            seq: 2,
+            author: Author::Agent,
+            body: ConversationContent::Parts(
+                serde_json::from_value(json!([{"type":"text","body":"**parts**"}])).unwrap(),
+            ),
+        }],
+        resolved: false,
+        outdated: false,
+        target: CommentTarget::Explanation(ExplanationTarget {
+            revision: 1,
+            block_id: "b".into(),
+            quote: quote.clone(),
+        }),
+    });
+    state.messages.push(Message {
+        id: "m1".into(),
+        seq: 3,
+        author: Author::Reviewer,
+        body: "**plain**".into(),
+    });
+    state.channel.note_comment("c1");
+    state.channel.note_message("m1");
+    state.explanation.as_mut().unwrap().versions.reverse();
+    *sink.initial.lock().unwrap() = Some(state);
+    let server =
+        AgentServer::start_with_sink(Arc::new(FakeSource::new()), Ipv4Addr::LOCALHOST, sink).await;
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"][0]["outdated"], true);
+    assert!(
+        server
+            .page
+            .post("api/hand", json!({}))
+            .await
+            .status()
+            .is_success()
+    );
+    let (status, answer) = server.wait(Some(1000)).await;
+    assert_eq!(status, 200);
+    let handed = &handed_events(&answer)[0]["comments"][0]["comment"];
+    assert_eq!(handed["explanation"]["quote"], json!(quote));
+    assert_eq!(handed["replies"][0]["body"], Value::Null);
+    assert_eq!(handed["replies"][0]["parts"][0]["body"], "**parts**");
+    assert!(
+        server
+            .page
+            .post("api/submit", json!({"verdict":"approved"}))
+            .await
+            .status()
+            .is_success()
+    );
+    let result = server.page.finish().await;
+    assert_eq!(result["kemi"], 3);
+    assert_eq!(
+        result["explanation"]["versions"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(result["explanation"]["versions"][0]["revision"], 1);
+    assert_eq!(result["explanation"]["versions"][1]["revision"], 2);
+    let comment = &result["comments"][0];
+    assert_eq!(comment["target_type"], "explanation");
+    for key in [
+        "group_id",
+        "group_title",
+        "path",
+        "side",
+        "start_line",
+        "end_line",
+        "page",
+        "suggestion",
+    ] {
+        assert!(comment.get(key).unwrap().is_null(), "{key}");
+    }
+    assert_eq!(comment["quote"], json!([]));
+    assert_eq!(comment["explanation"]["quote"], json!(quote));
+    assert_eq!(result["messages"][0]["body"], "**plain**");
+    assert!(result["messages"][0].get("parts").unwrap().is_null());
+}
+
+#[tokio::test]
 async fn session_url_uses_the_given_host_and_the_listener_port() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -835,7 +979,7 @@ async fn submit_schema_follows_contract() {
     assert_eq!(response.status(), 200);
     let document = server.finish().await;
 
-    assert_eq!(document["kemi"], 2);
+    assert_eq!(document["kemi"], 3);
     assert_eq!(document["title"], "テストのレビュー");
     assert_eq!(document["messages"], json!([]));
     assert_eq!(document["verdict"], "approved");
@@ -857,6 +1001,7 @@ async fn submit_schema_follows_contract() {
             "id": "r1",
             "author": "reviewer",
             "body": "返信1",
+            "parts": null,
             "variants": [],
             "chosen": null,
             "applied": null,
@@ -1445,6 +1590,247 @@ struct GatedSource {
     gate: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
+struct GenerationGate {
+    entered: tokio::sync::Notify,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+struct GenerationSource {
+    inner: Arc<dyn ReviewSource>,
+    gates: Arc<Vec<GenerationGate>>,
+    next: Arc<AtomicUsize>,
+    generation: Option<usize>,
+}
+impl ReviewSource for GenerationSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(Self {
+            inner: self.inner.fork()?.unwrap_or_else(|| self.inner.clone()),
+            gates: self.gates.clone(),
+            next: self.next.clone(),
+            generation: Some(self.next.fetch_add(1, Ordering::SeqCst)),
+        })))
+    }
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(id)
+    }
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == GroupBy::Commit
+            && let Some(index) = self.generation
+            && let Some(gate) = self.gates.get(index)
+        {
+            gate.entered.notify_one();
+            let _ = gate.release.lock().unwrap().recv();
+        }
+        self.inner.review_unit(unit)
+    }
+}
+
+struct UnitFailureSource {
+    inner: Arc<dyn ReviewSource>,
+    fail: Arc<AtomicBool>,
+}
+impl ReviewSource for UnitFailureSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(Self {
+            inner: self.inner.fork()?.unwrap_or_else(|| self.inner.clone()),
+            fail: self.fail.clone(),
+        })))
+    }
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(id)
+    }
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == GroupBy::Commit && self.fail.load(Ordering::SeqCst) {
+            Err(SourceError::Git("cannot compute opposite unit".into()))
+        } else {
+            self.inner.review_unit(unit)
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_copy_stays_at_d1_while_d2_is_published_and_its_opposite_unit_is_pending() {
+    check_initial_copy_order(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn current_d2_opposite_unit_can_finish_before_the_initial_d1_copy_without_rewinding() {
+    check_initial_copy_order(true).await;
+}
+
+async fn check_initial_copy_order(reverse: bool) {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "base\n");
+    let base = repo.commit("base");
+    repo.write("a.txt", "D1\n");
+    repo.commit("D1");
+    let (release1, receiver1) = std::sync::mpsc::channel();
+    let (release2, receiver2) = std::sync::mpsc::channel();
+    let gates = Arc::new(vec![
+        GenerationGate {
+            entered: tokio::sync::Notify::new(),
+            release: Mutex::new(receiver1),
+        },
+        GenerationGate {
+            entered: tokio::sync::Notify::new(),
+            release: Mutex::new(receiver2),
+        },
+    ]);
+    let source = Arc::new(GenerationSource {
+        inner: Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        gates: gates.clone(),
+        next: Arc::new(AtomicUsize::new(0)),
+        generation: None,
+    });
+    let sink = Arc::new(RecordingSink::default());
+    let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink.clone()).await;
+    let d1: Value = server.page.get("api/review").await.json().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), gates[0].entered.notified())
+        .await
+        .unwrap();
+    repo.write("b.txt", "D2\n");
+    repo.commit("D2");
+    let d2: Value = tokio::time::timeout(Duration::from_secs(3), async {
+        server
+            .page
+            .get("api/review?refresh=1")
+            .await
+            .json()
+            .await
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(d2["diff_display_version"], "01TESTREVIEW:2");
+    tokio::time::timeout(Duration::from_secs(3), gates[1].entered.notified())
+        .await
+        .unwrap();
+    if reverse {
+        release2.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if server.page.get("api/review?unit=commit").await.status() == 200 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(sink.copies.lock().unwrap().is_empty());
+    }
+    release1.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if sink
+                .states
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|s| s.display.as_ref().is_some_and(|d| d.frozen.is_some()))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("D1 copy must finish without waiting for D2 opposite unit");
+    let copies = sink.copies.lock().unwrap();
+    let copy = copies.last().unwrap();
+    assert_eq!(copy.units.len(), 2);
+    assert_eq!(copy.units[0].review.groups[0].files.len(), 1);
+    assert_eq!(copy.units[1].review.groups.len(), 1);
+    drop(copies);
+    let saved = sink.last_state();
+    let display = saved.display.unwrap();
+    assert_eq!(
+        display.current,
+        d2["diff_display_version"].as_str().unwrap()
+    );
+    assert_eq!(
+        display.frozen.as_deref(),
+        d1["diff_display_version"].as_str()
+    );
+    assert_eq!(display.issued, 2);
+    if !reverse {
+        release2.send(()).unwrap();
+    }
+    server.page.task.abort();
+}
+
+#[tokio::test]
+async fn a_failed_opposite_unit_candidate_keeps_both_published_lists_and_the_generation() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "base\n");
+    let base = repo.commit("base");
+    repo.write("a.txt", "D1\n");
+    repo.commit("D1");
+    let fail = Arc::new(AtomicBool::new(false));
+    let sink = Arc::new(RecordingSink::default());
+    sink.copy_already_saved.store(true, Ordering::SeqCst);
+    let server = AgentServer::start_with_sink(
+        Arc::new(UnitFailureSource {
+            inner: Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+            fail: fail.clone(),
+        }),
+        Ipv4Addr::LOCALHOST,
+        sink,
+    )
+    .await;
+    let first: Value = server.page.get("api/review").await.json().await.unwrap();
+    let other: Value = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let response = server.page.get("api/review?unit=commit").await;
+            if response.status() == 200 {
+                break response.json().await.unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    repo.write("b.txt", "D2\n");
+    repo.commit("D2");
+    fail.store(true, Ordering::SeqCst);
+    assert_eq!(server.page.get("api/review?refresh=1").await.status(), 500);
+    let unchanged: Value = server.page.get("api/review").await.json().await.unwrap();
+    let unchanged_other: Value = server
+        .page
+        .get("api/review?unit=commit")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unchanged["groups"], first["groups"]);
+    assert_eq!(unchanged_other["groups"], other["groups"]);
+    assert_eq!(
+        unchanged["diff_display_version"],
+        first["diff_display_version"]
+    );
+    fail.store(false, Ordering::SeqCst);
+    let current: Value = server
+        .page
+        .get("api/review?refresh=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(current["diff_display_version"], "01TESTREVIEW:2");
+    server.page.task.abort();
+}
+
 impl ReviewSource for GatedSource {
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         self.inner.review()
@@ -1529,10 +1915,12 @@ async fn unit_background_first_review_does_not_wait_for_the_other_unit() {
 #[tokio::test]
 async fn unit_failure_keeps_review_and_retries() {
     let (repo, base) = range_repo();
-    repo.git(&["branch", "topic"]);
-    let server =
-        LiveServer::start(Arc::new(range_source(&repo, &base, "topic", GroupBy::File))).await;
-    repo.git(&["branch", "-D", "topic"]);
+    let fail = Arc::new(AtomicBool::new(true));
+    let server = LiveServer::start(Arc::new(UnitFailureSource {
+        inner: Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        fail: fail.clone(),
+    }))
+    .await;
 
     let review = server.get_json("api/review").await;
     let failed = server.wait_unit("failed").await;
@@ -1545,7 +1933,7 @@ async fn unit_failure_keeps_review_and_retries() {
         .unwrap();
     assert_eq!(file.status(), 200, "the review must go on");
 
-    repo.git(&["branch", "topic"]);
+    fail.store(false, Ordering::SeqCst);
     let retry = server
         .post("api/unit", json!({"op": "retry", "unit": "commit"}))
         .await;
@@ -2015,6 +2403,7 @@ use kemi_server::SessionSink;
 /// 保存先の呼び出しを記録する sink。`fail` で保存の失敗を再現する。
 #[derive(Default)]
 struct RecordingSink {
+    accepted: Mutex<Vec<SessionState>>,
     title: Mutex<String>,
     total_files: Mutex<usize>,
     states: Mutex<Vec<SessionState>>,
@@ -2050,6 +2439,9 @@ fn keeps_no_files() -> kemi_core::session::FilesWrite {
 }
 
 impl SessionSink for RecordingSink {
+    fn is_resumed(&self) -> bool {
+        self.initial.lock().unwrap().is_some()
+    }
     fn initial_state(&self) -> SessionState {
         self.initial.lock().unwrap().clone().unwrap_or_default()
     }
@@ -2071,6 +2463,10 @@ impl SessionSink for RecordingSink {
                 source: std::io::Error::other("disk is full"),
             })
         } else {
+            self.accepted
+                .lock()
+                .unwrap()
+                .push(self.states.lock().unwrap().last().unwrap().clone());
             Ok(())
         }
     }
@@ -2106,6 +2502,67 @@ impl SessionSink for RecordingSink {
     ) -> kemi_core::session::FilesWrite {
         keeps_no_files()
     }
+}
+
+#[tokio::test]
+async fn refresh_save_failure_keeps_published_generation_metadata_and_content_references() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    repo.write("a.txt", "two\n");
+    let sink = Arc::new(RecordingSink::default());
+    sink.copy_already_saved.store(true, Ordering::SeqCst);
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server =
+        AgentServer::start_with_sink(source.clone(), Ipv4Addr::LOCALHOST, sink.clone()).await;
+    let first: Value = server.page.get("api/review").await.json().await.unwrap();
+    repo.write("b.txt", "new\n");
+    sink.fail.store(true, Ordering::SeqCst);
+    let response = server.page.get("api/review?refresh=1").await;
+    assert_eq!(response.status(), 500);
+    let unchanged: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(unchanged["groups"], first["groups"]);
+    assert_eq!(
+        unchanged["diff_display_version"],
+        first["diff_display_version"]
+    );
+    assert_eq!(
+        sink.accepted
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .display
+            .as_ref()
+            .unwrap()
+            .current,
+        first["diff_display_version"].as_str().unwrap()
+    );
+    let candidate = source.fork().unwrap().unwrap().review().unwrap();
+    let b = candidate.groups[0]
+        .files
+        .iter()
+        .find(|f| f.path == "b.txt")
+        .unwrap();
+    assert_eq!(
+        server
+            .page
+            .get(&format!("api/file/{}", b.id))
+            .await
+            .status(),
+        404
+    );
+    sink.fail.store(false, Ordering::SeqCst);
+    let accepted: Value = server
+        .page
+        .get("api/review?refresh=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(accepted["diff_display_version"], "01TESTREVIEW:2");
+    assert_eq!(accepted["groups"][0]["files"].as_array().unwrap().len(), 2);
+    server.page.task.abort();
 }
 
 /// 最初の状態保存を止める sink。保存が完了した順に状態を記録する。
@@ -2150,6 +2607,10 @@ impl SlowSink {
 }
 
 impl SessionSink for SlowSink {
+    fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.states.lock().unwrap().push(state);
+        Ok(())
+    }
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
     fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
@@ -2193,6 +2654,73 @@ impl SessionSink for SlowSink {
     ) -> kemi_core::session::FilesWrite {
         keeps_no_files()
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generation() {
+    let sink = Arc::new(SlowSink::new());
+    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    let initial: Value = server.get("api/review").await.json().await.unwrap();
+    let message_url = format!("{}api/message", server.url);
+    let origin = server.origin.clone();
+    let message = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(message_url)
+            .header("Origin", origin)
+            .json(&json!({"body":"new"}))
+            .send()
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(3), sink.entered.notified())
+        .await
+        .unwrap();
+    let refresh_url = format!("{}api/review?refresh=1", server.url);
+    let refreshed = tokio::spawn(async move {
+        reqwest::get(refresh_url)
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    });
+    let before: Value = server.get("api/review").await.json().await.unwrap();
+    assert_eq!(
+        before["diff_display_version"],
+        initial["diff_display_version"]
+    );
+    sink.open_first_save();
+    assert_eq!(message.await.unwrap().status(), 200);
+    let current = tokio::time::timeout(Duration::from_secs(3), refreshed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        current["diff_display_version"],
+        initial["diff_display_version"]
+    );
+    let saved = sink.states.lock().unwrap().clone();
+    let generations: Vec<_> = saved
+        .iter()
+        .filter_map(|s| s.display.as_ref())
+        .map(|d| {
+            d.current
+                .rsplit_once(':')
+                .unwrap()
+                .1
+                .parse::<u128>()
+                .unwrap()
+        })
+        .collect();
+    assert!(
+        generations.windows(2).all(|pair| pair[0] <= pair[1]),
+        "{generations:?}"
+    );
+    assert_eq!(
+        saved.last().unwrap().display.as_ref().unwrap().current,
+        current["diff_display_version"].as_str().unwrap()
+    );
+    server.task.abort();
 }
 
 impl TestServer {
@@ -2272,7 +2800,7 @@ async fn session_state_is_saved_on_every_change() {
             id: "r1".to_string(),
             seq: 2,
             author: kemi_core::domain::review::Author::Reviewer,
-            body: "reply".to_string(),
+            body: "reply".into(),
         }]
     );
     assert!(state.comments[0].resolved);
@@ -2511,8 +3039,9 @@ async fn session_is_deleted_on_submit() {
 #[tokio::test]
 async fn session_sink_failure_does_not_stop_the_review() {
     let sink = Arc::new(RecordingSink::default());
-    sink.fail.store(true, Ordering::SeqCst);
     let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    assert_eq!(server.get("api/review").await.status(), 200);
+    sink.fail.store(true, Ordering::SeqCst);
 
     let added = server
         .comment(json!({"op": "add", "file_id": "f1", "side": "new", "start_line": 1, "end_line": 1, "body": "x"}))
@@ -2582,6 +3111,19 @@ struct StoreSink {
 }
 
 impl SessionSink for StoreSink {
+    fn review_id(&self) -> Option<String> {
+        Some(self.open.lock().unwrap().id().into())
+    }
+    fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_issued_state(state)
+    }
+    fn save_frozen_copy(
+        &self,
+        copy: kemi_core::session::PreparedCopy,
+        state: SessionState,
+    ) -> Result<bool, SessionError> {
+        self.open.lock().unwrap().save_frozen_copy(copy, state)
+    }
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
     fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
@@ -2709,7 +3251,7 @@ async fn session_initial_state_is_restored() {
             id: "r1".to_string(),
             seq: 2,
             author: kemi_core::domain::review::Author::Reviewer,
-            body: "返信".to_string(),
+            body: "返信".into(),
         }],
         resolved: true,
         outdated: false,
@@ -2781,14 +3323,14 @@ async fn submit_lists_reviewer_and_agent_replies_in_creation_order_with_messages
         id: "r1".to_string(),
         seq: 2,
         author: Author::Agent,
-        body: "renamed it".to_string(),
+        body: "renamed it".into(),
     });
     saved.last_reply = 1;
     saved.messages.push(Message {
         id: "m1".to_string(),
         seq: 3,
         author: Author::Agent,
-        body: "all comments are addressed".to_string(),
+        body: "all comments are addressed".into(),
     });
     saved.last_message = 1;
     let restored = Arc::new(RecordingSink::default());
@@ -2813,7 +3355,7 @@ async fn submit_lists_reviewer_and_agent_replies_in_creation_order_with_messages
     }
     assert_eq!(
         document["messages"],
-        json!([{"id": "m1", "author": "agent", "body": "all comments are addressed"}])
+        json!([{"id": "m1", "author": "agent", "body": "all comments are addressed", "parts":null}])
     );
 }
 
@@ -3414,8 +3956,8 @@ async fn a_reviewer_reply_and_message_are_handed_with_their_author() {
 
     let handed = &saved_handed(&sink)[0];
     assert_eq!(handed.replies[0].comment_id, "c1");
-    assert_eq!(handed.replies[0].reply.body, "and the caller");
-    assert_eq!(handed.messages[0].body, "start with the tests");
+    assert_eq!(handed.replies[0].reply.body, "and the caller".into());
+    assert_eq!(handed.messages[0].body, "start with the tests".into());
 }
 
 #[tokio::test]
@@ -3494,13 +4036,13 @@ async fn the_first_load_carries_replies_messages_and_the_agent_state() {
         id: "r1".to_string(),
         seq: 2,
         author: Author::Agent,
-        body: "renamed it".to_string(),
+        body: "renamed it".into(),
     });
     saved.messages.push(Message {
         id: "m1".to_string(),
         seq: 3,
         author: Author::Agent,
-        body: "done for now".to_string(),
+        body: "done for now".into(),
     });
     saved.channel.called = true;
     // 復元した画面でも、kemi wait が呼ばれたことと未渡しが分かる。
@@ -3794,7 +4336,7 @@ async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
     let submitted = events.last().unwrap();
     assert_eq!(submitted["type"], "submitted");
     assert_eq!(submitted["result"]["verdict"], "changes_requested");
-    assert_eq!(submitted["result"]["kemi"], 2);
+    assert_eq!(submitted["result"]["kemi"], 3);
     let document = server.page.finish().await;
     assert_eq!(document["verdict"], "changes_requested");
 }
@@ -3834,6 +4376,9 @@ impl ReviewSource for FailingRefreshSource {
     }
 
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(SourceError::Git("disk went away".into()));
+        }
         self.inner.content(file_id)
     }
 }
@@ -3863,7 +4408,7 @@ async fn a_runtime_error_ends_the_waiting_request_with_its_reason_and_serve_retu
     server.wait_until_status("waiting").await;
     source.fail.store(true, Ordering::SeqCst);
 
-    let _ = server.page.get("api/review?refresh=1").await;
+    let _ = server.page.get("api/file/f1").await;
 
     let (status, answer) = tokio::time::timeout(Duration::from_secs(5), waiting)
         .await
@@ -3932,7 +4477,7 @@ async fn reply_writes_replies_and_messages_as_the_agent_and_returns_their_ids() 
     // 書いた順の id が、書いた返信と発言のものになる。
     assert_eq!(answer["ids"][0], state.comments[0].replies[0].id.as_str());
     assert_eq!(answer["ids"][1], state.messages[0].id.as_str());
-    assert_eq!(state.comments[0].replies[0].body, "renamed it");
+    assert_eq!(state.comments[0].replies[0].body, "renamed it".into());
     assert_eq!(
         state.comments[0].replies[0].author,
         kemi_core::domain::review::Author::Agent
@@ -4045,6 +4590,7 @@ async fn submitted_comments_carry_only_the_keys_of_the_contract() {
         [
             "body",
             "end_line",
+            "explanation",
             "group_id",
             "group_title",
             "id",
@@ -4057,6 +4603,7 @@ async fn submitted_comments_carry_only_the_keys_of_the_contract() {
             "side",
             "start_line",
             "suggestion",
+            "target_type",
         ]
     );
 }

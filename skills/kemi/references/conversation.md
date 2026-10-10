@@ -28,7 +28,7 @@ document with everything that happened since the previous `kemi wait` returned:
 
 ```json
 {
-  "kemi": 2,
+  "kemi": 3,
   "review": "<id>",
   "events": [
     {
@@ -38,10 +38,10 @@ document with everything that happened since the previous `kemi wait` returned:
         {"change": "edited", "comment": {"id": "c2", "body": "the new wording", "...": "..."}},
         {"change": "deleted", "comment": {"id": "c3"}}
       ],
-      "replies": [{"comment_id": "c1", "reply": {"id": "r2", "author": "reviewer", "body": "..."}}],
-      "messages": [{"id": "m1", "author": "reviewer", "body": "a note on the whole review"}]
+      "replies": [{"comment_id": "c1", "reply": {"id": "r2", "author": "reviewer", "body": "...", "parts": null, "variants": [], "chosen": null, "applied": null}}],
+      "messages": [{"id": "m1", "author": "reviewer", "body": "a note on the whole review", "parts": null}]
     },
-    {"type": "submitted", "result": {"kemi": 2, "verdict": "approved", "...": "..."}}
+    {"type": "submitted", "result": {"kemi": 3, "verdict": "approved", "...": "..."}}
   ]
 }
 ```
@@ -52,6 +52,9 @@ document with everything that happened since the previous `kemi wait` returned:
   after printing them and before the review learns they were received, the next `kemi wait`
   returns them again. Tell repeats apart by the comment, reply, and message `id`s.
 - A comment, reply, or message has the same shape as in the result (see the result reference).
+  This includes explanation targets and typed parts restored from a session. Old plain
+  undelivered events are emitted in version `3` shape with `parts: null`, without interpreting
+  their bodies as Markdown. Deleted comments still carry only their id.
   The one difference: on a comment left on a running page, `page.image` is the absolute path of
   the PNG with the places drawn on it (or `null` when it could not be made). Read it before the
   submit; the file goes away with the session.

@@ -25,12 +25,14 @@ pub(super) async fn submit_api(
     Path(_token): Path<String>,
     Json(request): Json<SubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    super::ensure_display_persisted(&state)?;
     if request.verdict != "approved" && request.verdict != "changes_requested" {
         return Err(ApiError::bad_request(
             "verdict must be approved or changes_requested",
         ));
     }
     {
+        let _gate = state.persist.lock().expect("persist poisoned");
         let mut submit_state = state.submit_state.lock().expect("submit poisoned");
         match *submit_state {
             SubmitState::Open => *submit_state = SubmitState::Claimed,
@@ -140,7 +142,9 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
     let comments: Vec<Value> = session.comments.iter().map(comment_json).collect();
     let messages: Vec<Value> = session.messages.iter().map(message_json).collect();
     Ok(json!({
-        "kemi": 2,
+        "kemi": 3,
+        "diff_display_version":session.display.as_ref().map(|d|&d.current),
+        "explanation":session.explanation,
         "title": review.title,
         "verdict": verdict,
         "approval": review.approval.iter().map(|approval| json!({

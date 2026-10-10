@@ -75,7 +75,7 @@ seen marks, folding, and resolutions are saved in a session, and stderr prints o
 copy completed within the size limit can be reopened; one whose copy is unfinished or too large
 keeps the state alone and stays out of the list and `--resume`, and a review with nothing to
 keep leaves no session. A `--live` review keeps no copy: it is kept only when it holds a
-comment, a reply, or a message. An empty stdout file while the process runs means no result has
+comment, a reply, a message, or an explanation. An empty stdout file while the process runs means no result has
 arrived yet.
 
 If the user approves in the conversation instead of submitting on the page, record it as a
@@ -112,6 +112,10 @@ read "Cannot determine" if the repository is gone. Live reload and its update ba
 A `--live` review is the exception: resuming it reads the working tree as it is then, keeps live
 reload and the update badge, and connects to the same page again
 ([the input reference](references/inputs.md)).
+Typed parts and complete original explanation quotes survive resume without the original
+explanation input file. A non-live resume uses the frozen startup display version; it does
+not attach an explanation to a different base. A live rescan issues a new display version
+only on success, and leaves Code unavailable after failure until a retry succeeds.
 Resuming continues the same session rather than creating one, and a submit that follows
 writes its result for the workspace the review was started from, with the manifest
 `approval` unchanged.
@@ -125,11 +129,14 @@ error (exit `2`), and `--digest` / `--result` never create sessions.
 
 ## Handle the result
 
-Check the JSON contract version (`kemi: 2`) and that `verdict` agrees with the exit code. Do
-not guess at a version you do not know; a result written before version 2 is printed by
+Check the JSON contract version (`kemi: 3` for new result/wait output) and that `verdict` agrees with the exit code. Do
+not guess at a version you do not know; a stored version 1 or 2 result is printed by
 `kemi --result` exactly as it was stored.
 Read comments on both approval and requests for changes. Before using an approval, compare
 its identities with the current bytes. Before applying a suggestion, compare its `quote`
 with the file; locate outdated comments by their text rather than trusting old line numbers.
 Use the result reference for field details and `kemi --result` recovery if stdout was lost.
+Keep typed `parts` intact when reading replies or messages. An explanation comment refers
+to an original revision and a complete block quote, rather than a file path. The display
+version identifies metadata; it guarantees neither fixed file bytes nor explanation correctness.
 Recovery retrieves a stored result; it does not wait for the current review to finish.

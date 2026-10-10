@@ -35,11 +35,16 @@ use serde_json::Value;
 use crate::domain::agent::{
     AgentEvent, Channel, Handed, HandedComment, HandedReply, ReplyRef, Unhanded,
 };
+use crate::domain::conversation_content::ConversationContent;
+use crate::domain::display_version::{DisplayVersions, known_generation};
+use crate::domain::explanation::{ExplanationHistory, canonical_size, validate_version};
 use crate::domain::live::LivePage;
+use crate::domain::parts::Part;
+use crate::domain::parts_validation::validate_parts;
 use crate::domain::review::{
-    Approval, Author, Comment, CommentTarget, FileEntry, FileTarget, Group, GroupBy, Message,
-    PageTarget, Place, PlaceElement, PlaceKind, Point, Rect, Reply, ReviewMeta, Side, Status,
-    Suggestion,
+    Approval, Author, Comment, CommentTarget, ExplanationTarget, FileEntry, FileTarget, Group,
+    GroupBy, Message, PageTarget, Place, PlaceElement, PlaceKind, Point, Rect, Reply, ReviewMeta,
+    Side, Status, Suggestion,
 };
 use crate::source::FileContent;
 
@@ -116,6 +121,8 @@ impl SessionMode {
 /// セッション状態。折りたたみはファイルごとの畳みの上書き（R-VIEW）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionState {
+    pub display: Option<DisplayVersions>,
+    pub explanation: Option<ExplanationHistory>,
     pub comments: Vec<Comment>,
     pub seen: BTreeSet<String>,
     pub collapsed: BTreeMap<String, bool>,
@@ -140,19 +147,161 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    pub fn refresh_explanation_comments(&mut self) {
+        if let Some(history) = self.explanation.as_mut() {
+            history.versions.sort_by_key(|version| version.revision);
+        }
+        let document = self
+            .explanation
+            .as_ref()
+            .and_then(ExplanationHistory::current)
+            .map(|v| crate::domain::explanation::ExplanationDocument {
+                sections: v.sections.clone(),
+            });
+        for comment in &mut self.comments {
+            if let CommentTarget::Explanation(target) = &comment.target {
+                comment.outdated = document.as_ref().is_none_or(|document| {
+                    crate::domain::explanation::block_outdated(&target.quote.block, document)
+                });
+            }
+        }
+    }
     pub fn is_empty(&self) -> bool {
         self.comments.is_empty()
             && self.seen.is_empty()
             && self.collapsed.is_empty()
             && self.messages.is_empty()
             && self.channel == Channel::default()
+            && self.explanation.is_none()
     }
 
-    /// コメント（返信を含む）か発言が 1 つでもあるか。`--live` のセッションはこれが
+    /// コメント（返信を含む）・発言・説明が 1 つでもあるか。`--live` のセッションはこれが
     /// 無ければ保留しても残さない（R-PAGE-SESSION）。
     pub fn has_conversation(&self) -> bool {
-        !self.comments.is_empty() || !self.messages.is_empty()
+        !self.comments.is_empty() || !self.messages.is_empty() || self.explanation.is_some()
     }
+}
+
+pub fn additional_saved_size(state: &SessionState) -> usize {
+    let value =
+        serde_json::to_value(StateDto::from(state)).expect("session DTO contains JSON values");
+    fn parts(value: &Value) -> bool {
+        value["parts"].is_array()
+    }
+    fn new_comment(value: &Value) -> bool {
+        value["explanation"].is_object()
+            || value["replies"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(parts))
+    }
+    fn comment_bytes(value: &Value) -> usize {
+        if value["explanation"].is_object() {
+            canonical_size(value)
+        } else {
+            value["replies"].as_array().map_or(0, |r| {
+                r.iter().filter(|r| parts(r)).map(canonical_size).sum()
+            })
+        }
+    }
+    let mut bytes = state
+        .explanation
+        .as_ref()
+        .map_or(0, |_| canonical_size(&value["explanation"]));
+    for comment in value["comments"].as_array().expect("comments array") {
+        bytes = bytes.saturating_add(comment_bytes(comment));
+    }
+    for message in value["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .filter(|m| parts(m))
+    {
+        bytes = bytes.saturating_add(canonical_size(message));
+    }
+    for event in value["channel"]["events"].as_array().expect("events array") {
+        let new = event["comments"]
+            .as_array()
+            .is_some_and(|c| c.iter().any(|c| new_comment(&c["comment"])))
+            || event["replies"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|r| parts(&r["reply"])))
+            || event["messages"]
+                .as_array()
+                .is_some_and(|m| m.iter().any(parts));
+        if new {
+            bytes = bytes.saturating_add(canonical_size(event));
+        }
+    }
+    bytes
+}
+
+pub fn validate_additional(state: &SessionState) -> Result<(), SessionError> {
+    let check = |content: &ConversationContent| match content {
+        ConversationContent::Plain(_) => Ok(()),
+        ConversationContent::Parts(parts) => {
+            validate_parts(parts).map_err(|e| SessionError::Encode {
+                reason: e.to_string(),
+            })
+        }
+    };
+    for reply in state.comments.iter().flat_map(|c| &c.replies) {
+        check(&reply.body)?;
+    }
+    for message in &state.messages {
+        check(&message.body)?;
+    }
+    for AgentEvent::Handed(event) in &state.channel.events {
+        for change in &event.comments {
+            match change {
+                HandedComment::Added(comment) | HandedComment::Edited(comment) => {
+                    for reply in &comment.replies {
+                        check(&reply.body)?;
+                    }
+                }
+                HandedComment::Deleted(_) => {}
+            }
+        }
+        for reply in &event.replies {
+            check(&reply.reply.body)?;
+        }
+        for message in &event.messages {
+            check(&message.body)?;
+        }
+    }
+    if let Some(history) = &state.explanation {
+        crate::domain::parts_validation::bound(
+            "explanation.versions",
+            history.versions.len(),
+            1,
+            128,
+        )
+        .map_err(|e| SessionError::Encode {
+            reason: e.to_string(),
+        })?;
+        let bytes = history
+            .versions
+            .iter()
+            .map(|v| canonical_size(&serde_json::to_value(v).expect("explanation is JSON")))
+            .sum::<usize>();
+        crate::domain::parts_validation::bound(
+            "explanation history canonical JSON bytes",
+            bytes,
+            0,
+            8_388_608,
+        )
+        .map_err(|e| SessionError::Encode {
+            reason: e.to_string(),
+        })?;
+    }
+    crate::domain::parts_validation::bound(
+        "additional saved content canonical JSON bytes",
+        additional_saved_size(state),
+        0,
+        16_777_216,
+    )
+    .map_err(|e| SessionError::Encode {
+        reason: e.to_string(),
+    })
 }
 
 /// 凍結した 1 グループ単位分のレビュー。
@@ -169,6 +318,23 @@ pub struct SessionCopy {
     pub startup_unit: Option<GroupBy>,
     pub units: Vec<FrozenUnit>,
     pub contents: BTreeMap<String, FileContent>,
+}
+
+pub struct PreparedCopy {
+    pub(crate) copy: SessionCopy,
+    pub(crate) compressed: Vec<u8>,
+}
+impl PreparedCopy {
+    pub fn into_copy(self) -> SessionCopy {
+        self.copy
+    }
+}
+pub fn prepare_copy(copy: SessionCopy) -> Result<PreparedCopy, SessionError> {
+    let body = encode_copy(&copy).map_err(|reason| SessionError::Encode { reason })?;
+    Ok(PreparedCopy {
+        copy,
+        compressed: encoding::gzip(&body),
+    })
 }
 
 /// 写しの状態。未完成・失敗・上限超過のセッションは一覧と復元の対象にしない。
@@ -250,6 +416,14 @@ enum PageDto {
 /// 版 2 に無い項目は `default` で空として読む。
 #[derive(Serialize, Deserialize)]
 struct StateDto {
+    #[serde(default)]
+    diff_display_version: Option<String>,
+    #[serde(default)]
+    frozen_display_version: Option<String>,
+    #[serde(default)]
+    issued_display_generation: Option<String>,
+    #[serde(default)]
+    explanation: Option<ExplanationHistory>,
     comments: Vec<CommentDto>,
     seen: BTreeSet<String>,
     collapsed: BTreeMap<String, bool>,
@@ -280,7 +454,10 @@ struct ReplyDto {
     #[serde(default)]
     seq: Option<u32>,
     author: String,
-    body: String,
+    #[serde(deserialize_with = "saved_nullable")]
+    body: Option<String>,
+    #[serde(deserialize_with = "saved_nullable")]
+    parts: Option<Vec<Part>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -289,7 +466,10 @@ struct MessageDto {
     #[serde(default)]
     seq: Option<u32>,
     author: String,
-    body: String,
+    #[serde(deserialize_with = "saved_nullable")]
+    body: Option<String>,
+    #[serde(deserialize_with = "saved_nullable")]
+    parts: Option<Vec<Part>>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -405,6 +585,8 @@ struct ApprovalDto {
 /// `page` を持つ（ファイルへのコメントの形は今までと同じ）。
 #[derive(Serialize, Deserialize)]
 struct CommentDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    explanation: Option<ExplanationTarget>,
     id: String,
     #[serde(default)]
     seq: Option<u32>,
@@ -515,7 +697,28 @@ impl MetaDto {
             title: self.info.title,
             total_files: self.info.total_files as usize,
         };
-        let state = self.state.into_parts()?;
+        let mut state = self.state.into_parts()?;
+        if let Some(display) = &state.display {
+            display.validate(&info.id).map_err(|e| e.to_string())?;
+        }
+        if let Some(history) = &state.explanation {
+            if history.current().is_none() {
+                return Err("explanation.current_revision: current version not retained".into());
+            }
+            let mut revisions = BTreeSet::new();
+            for version in &history.versions {
+                validate_version(version).map_err(|e| e.to_string())?;
+                if !revisions.insert(version.revision) {
+                    return Err("explanation.versions: duplicate revision".into());
+                }
+                if let Some(display) = &state.display {
+                    known_generation(&version.base_display_version, &info.id, display.issued)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        validate_additional(&state).map_err(|e| e.to_string())?;
+        state.refresh_explanation_comments();
         let copy = match self.copy {
             CopyMetaDto::Pending => CopyMeta::Pending,
             CopyMetaDto::Unusable { reason } => CopyMeta::Unusable(reason),
@@ -584,6 +787,10 @@ impl From<ModeDto> for SessionMode {
 impl From<&SessionState> for StateDto {
     fn from(state: &SessionState) -> Self {
         StateDto {
+            diff_display_version: state.display.as_ref().map(|d| d.current.clone()),
+            frozen_display_version: state.display.as_ref().and_then(|d| d.frozen.clone()),
+            issued_display_generation: state.display.as_ref().map(|d| d.issued.to_string()),
+            explanation: state.explanation.clone(),
             comments: state.comments.iter().map(CommentDto::from).collect(),
             seen: state.seen.clone(),
             collapsed: state.collapsed.clone(),
@@ -605,6 +812,23 @@ impl StateDto {
             comment.seq.is_none() || comment.replies.iter().any(|reply| reply.seq.is_none())
         }) || self.messages.iter().any(|message| message.seq.is_none());
         let mut state = SessionState {
+            display: match (self.diff_display_version, self.issued_display_generation) {
+                (Some(current), Some(issued)) => {
+                    if issued.starts_with('0') || !issued.bytes().all(|b| b.is_ascii_digit()) {
+                        return Err("issued_display_generation: invalid decimal generation".into());
+                    }
+                    Some(DisplayVersions {
+                        current,
+                        frozen: self.frozen_display_version,
+                        issued: issued
+                            .parse()
+                            .map_err(|_| "issued_display_generation: outside u128")?,
+                    })
+                }
+                (None, None) => None,
+                _ => return Err("diff_display_version: incomplete generation state".into()),
+            },
+            explanation: self.explanation,
             comments: self
                 .comments
                 .into_iter()
@@ -665,13 +889,34 @@ fn parse_author(author: &str) -> Result<Author, String> {
     }
 }
 
+fn stored_content(
+    body: Option<String>,
+    parts: Option<Vec<Part>>,
+) -> Result<ConversationContent, String> {
+    match (body, parts) {
+        (Some(body), None) => Ok(ConversationContent::Plain(body)),
+        (None, Some(parts)) => {
+            validate_parts(&parts).map_err(|e| e.to_string())?;
+            Ok(ConversationContent::Parts(parts))
+        }
+        _ => Err("body/parts: stored content must contain exactly one non-null value".into()),
+    }
+}
+
+fn saved_nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(d)
+}
+
 impl From<&Reply> for ReplyDto {
     fn from(reply: &Reply) -> Self {
         ReplyDto {
             id: reply.id.clone(),
             seq: Some(reply.seq),
             author: author_dto(reply.author),
-            body: reply.body.clone(),
+            body: reply.body.plain().map(str::to_owned),
+            parts: reply.body.parts().map(<[Part]>::to_vec),
         }
     }
 }
@@ -682,7 +927,7 @@ impl ReplyDto {
             id: self.id,
             seq: self.seq.unwrap_or_default(),
             author: parse_author(&self.author)?,
-            body: self.body,
+            body: stored_content(self.body, self.parts)?,
         })
     }
 }
@@ -693,7 +938,8 @@ impl From<&Message> for MessageDto {
             id: message.id.clone(),
             seq: Some(message.seq),
             author: author_dto(message.author),
-            body: message.body.clone(),
+            body: message.body.plain().map(str::to_owned),
+            parts: message.body.parts().map(<[Part]>::to_vec),
         }
     }
 }
@@ -704,7 +950,7 @@ impl MessageDto {
             id: self.id,
             seq: self.seq.unwrap_or_default(),
             author: parse_author(&self.author)?,
-            body: self.body,
+            body: stored_content(self.body, self.parts)?,
         })
     }
 }
@@ -833,6 +1079,7 @@ impl EventDto {
 impl From<&Comment> for CommentDto {
     fn from(comment: &Comment) -> Self {
         let mut dto = CommentDto {
+            explanation: None,
             id: comment.id.clone(),
             seq: Some(comment.seq),
             file_id: None,
@@ -866,6 +1113,7 @@ impl From<&Comment> for CommentDto {
                     .map(|suggestion| suggestion.replacement.clone());
             }
             CommentTarget::Page(page) => dto.page = Some(CommentPageDto::from(page)),
+            CommentTarget::Explanation(target) => dto.explanation = Some(target.clone()),
         }
         dto
     }
@@ -873,27 +1121,49 @@ impl From<&Comment> for CommentDto {
 
 impl CommentDto {
     fn into_comment(self) -> Result<Comment, String> {
-        let target = match self.page {
-            Some(page) => CommentTarget::Page(page.into_target()?),
-            None => {
-                let side = match self.side.as_deref() {
-                    Some("new") => Side::New,
-                    Some("old") => Side::Old,
-                    Some(other) => return Err(format!("unknown side: {other}")),
-                    None => return Err("a comment has neither a file nor a page".to_string()),
-                };
-                CommentTarget::File(FileTarget {
-                    file_id: self.file_id.unwrap_or_default(),
-                    path: self.path.unwrap_or_default(),
-                    side,
-                    start_line: self.start_line,
-                    end_line: self.end_line,
-                    quote: self.quote,
-                    content_hash: self.content_hash.unwrap_or_default(),
-                    suggestion: self
-                        .suggestion
-                        .map(|replacement| Suggestion { replacement }),
-                })
+        let target = if let Some(target) = self.explanation {
+            crate::domain::parts_validation::id("explanation.block_id", &target.block_id)
+                .map_err(|e| e.to_string())?;
+            if target.revision == 0
+                || target.revision > crate::domain::explanation::MAX_REVISION
+                || target.quote.block.id != target.block_id
+            {
+                return Err("explanation: invalid original target".into());
+            }
+            crate::domain::explanation::validate_document(
+                &crate::domain::explanation::ExplanationDocument {
+                    sections: vec![crate::domain::explanation::ExplanationSection {
+                        id: "quote".into(),
+                        title: target.quote.section_title.clone(),
+                        blocks: vec![target.quote.block.clone()],
+                    }],
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            CommentTarget::Explanation(target)
+        } else {
+            match self.page {
+                Some(page) => CommentTarget::Page(page.into_target()?),
+                None => {
+                    let side = match self.side.as_deref() {
+                        Some("new") => Side::New,
+                        Some("old") => Side::Old,
+                        Some(other) => return Err(format!("unknown side: {other}")),
+                        None => return Err("a comment has neither a file nor a page".to_string()),
+                    };
+                    CommentTarget::File(FileTarget {
+                        file_id: self.file_id.unwrap_or_default(),
+                        path: self.path.unwrap_or_default(),
+                        side,
+                        start_line: self.start_line,
+                        end_line: self.end_line,
+                        quote: self.quote,
+                        content_hash: self.content_hash.unwrap_or_default(),
+                        suggestion: self
+                            .suggestion
+                            .map(|replacement| Suggestion { replacement }),
+                    })
+                }
             }
         };
         Ok(Comment {
@@ -1164,10 +1434,84 @@ impl MetaDto {
     /// `<id>.session` の meta を、セッション形式の版に合わせて読む。読み手のある版は
     /// `encoding::is_readable` が決め、ここに来るのはその版だけ。
     pub(crate) fn decode(version: u8, meta: &[u8]) -> Result<Self, String> {
-        if version == 2 {
+        if version == 2 || version == 3 {
             let mut value: Value =
                 serde_json::from_slice(meta).map_err(|error| error.to_string())?;
-            upgrade_version_2(&mut value)?;
+            if version == 2 {
+                upgrade_version_2(&mut value)?;
+            }
+            fn legacy_post(value: &mut Value) -> Result<(), String> {
+                if !value["body"].is_string() {
+                    return Err("legacy body must be a string".into());
+                }
+                value["parts"] = Value::Null;
+                Ok(())
+            }
+            fn legacy_posts(value: &mut Value) -> Result<(), String> {
+                if let Some(values) = value.as_array_mut() {
+                    for value in values {
+                        legacy_post(value)?;
+                    }
+                }
+                Ok(())
+            }
+            fn legacy_comment(value: &mut Value) -> Result<(), String> {
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("explanation");
+                }
+                if let Some(replies) = value.get_mut("replies") {
+                    legacy_posts(replies)?;
+                }
+                Ok(())
+            }
+            if let Some(comments) = value["state"]["comments"].as_array_mut() {
+                for comment in comments {
+                    legacy_comment(comment)?;
+                }
+            }
+            if let Some(messages) = value["state"].get_mut("messages") {
+                legacy_posts(messages)?;
+            }
+            if let Some(events) = value
+                .get_mut("state")
+                .and_then(|state| state.get_mut("channel"))
+                .and_then(|channel| channel.get_mut("events"))
+                .and_then(Value::as_array_mut)
+            {
+                for event in events {
+                    if let Some(changes) = event["comments"].as_array_mut() {
+                        for change in changes {
+                            if let Some(comment) = change.get_mut("comment") {
+                                legacy_comment(comment)?;
+                            }
+                        }
+                    }
+                    if let Some(replies) = event["replies"].as_array_mut() {
+                        for reply in replies {
+                            if let Some(post) = reply.get_mut("reply") {
+                                legacy_post(post)?;
+                            }
+                        }
+                    }
+                    if let Some(messages) = event.get_mut("messages") {
+                        legacy_posts(messages)?;
+                    }
+                }
+            }
+            let id = value["info"]["id"]
+                .as_str()
+                .ok_or("legacy session has no id")?
+                .to_string();
+            let live = value["info"]["mode"]["kind"] == "live";
+            let frozen = !live && value["copy"]["state"] == "ready";
+            value["state"]["diff_display_version"] = Value::String(format!("{id}:1"));
+            value["state"]["issued_display_generation"] = Value::String("1".into());
+            value["state"]["frozen_display_version"] = if frozen {
+                Value::String(format!("{id}:1"))
+            } else {
+                Value::Null
+            };
+            value["state"]["explanation"] = Value::Null;
             return serde_json::from_value(value).map_err(|error| error.to_string());
         }
         serde_json::from_slice(meta).map_err(|error| error.to_string())

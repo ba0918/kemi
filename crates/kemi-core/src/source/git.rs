@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::domain::content;
 use crate::domain::focus::FocusTargets;
@@ -50,7 +50,8 @@ pub struct GitSource {
     repo: PathBuf,
     mode: GitMode,
     store: PlanStore,
-    ids: Mutex<FileIds>,
+    ids: Arc<Mutex<FileIds>>,
+    labels: Option<(String, String)>,
     final_origin: Mutex<Option<FinalOrigin>>,
 }
 
@@ -87,7 +88,8 @@ impl GitSource {
             repo,
             mode,
             store: PlanStore::new(),
-            ids: Mutex::new(FileIds::default()),
+            ids: Arc::new(Mutex::new(FileIds::default())),
+            labels: None,
             final_origin: Mutex::new(None),
         }
     }
@@ -107,6 +109,29 @@ impl GitSource {
     pub fn open(mode: GitMode) -> Result<Self, SourceError> {
         let repo = repo_root(Path::new("."))?;
         Ok(GitSource::new(repo, mode))
+    }
+
+    pub(crate) fn detached(&self) -> Result<Self, SourceError> {
+        let (mode, labels) = match &self.mode {
+            GitMode::Range { from, to, group_by } => (
+                GitMode::Range {
+                    from: resolve_ref(&self.repo, from)?,
+                    to: resolve_ref(&self.repo, to)?,
+                    group_by: *group_by,
+                },
+                Some(
+                    self.labels
+                        .clone()
+                        .unwrap_or_else(|| (from.clone(), to.clone())),
+                ),
+            ),
+            GitMode::Worktree => (GitMode::Worktree, None),
+            GitMode::Staged => (GitMode::Staged, None),
+        };
+        let mut candidate = Self::new(self.repo.clone(), mode);
+        candidate.ids = self.ids.clone();
+        candidate.labels = labels;
+        Ok(candidate)
     }
 
     fn review_worktree(&self) -> Result<(ReviewMeta, Plan), SourceError> {
@@ -408,7 +433,69 @@ impl GitSource {
     }
 }
 
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+    use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn unaccepted_candidate_cannot_replace_published_content_references() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+        repo.write("a.txt", "two\n");
+        let factory = GitSource::new(repo.path.clone(), GitMode::Worktree);
+        let published = factory.fork().unwrap().unwrap();
+        published.review().unwrap();
+        repo.write("b.txt", "new\n");
+        let candidate = factory.fork().unwrap().unwrap();
+        let meta = candidate.review().unwrap();
+        let added = meta.groups[0]
+            .files
+            .iter()
+            .find(|f| f.path == "b.txt")
+            .unwrap();
+        assert!(matches!(
+            published.content(&added.id),
+            Err(SourceError::UnknownFileId(_))
+        ));
+        assert_eq!(candidate.content(&added.id).unwrap().new.unwrap(), b"new\n");
+    }
+
+    #[test]
+    fn deferred_opposite_unit_uses_the_range_captured_for_its_display_generation() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+        let base = git_text(&repo.path, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        repo.write("a.txt", "two\n");
+        repo.add_and_commit("D1");
+        let factory = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: base,
+                to: "HEAD".into(),
+                group_by: GroupBy::File,
+            },
+        );
+        let d1 = factory.fork().unwrap().unwrap();
+        d1.review().unwrap();
+        repo.write("b.txt", "three\n");
+        repo.add_and_commit("D2");
+        let d2 = factory.fork().unwrap().unwrap();
+        d2.review().unwrap();
+        assert_eq!(d1.review_unit(GroupBy::Commit).unwrap().groups.len(), 1);
+        assert_eq!(d2.review_unit(GroupBy::Commit).unwrap().groups.len(), 2);
+    }
+}
+
 impl ReviewSource for GitSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(self.detached()?)))
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let (review, plan) = match &self.mode {
             GitMode::Worktree => self.review_worktree()?,
@@ -430,11 +517,19 @@ impl ReviewSource for GitSource {
         let GitMode::Range { from, to, .. } = &self.mode else {
             return self.review();
         };
-        let (review, plan) = match unit {
+        let (mut review, plan) = match unit {
             GroupBy::File => self.review_final(from, to)?,
             GroupBy::Commit => self.review_per_commit(from, to)?,
         };
         self.store.update_unit(Some(unit), plan);
+        if let Some((from, to)) = &self.labels {
+            review.title = format!("{from}..{to}");
+            if unit == GroupBy::File
+                && let Some(group) = review.groups.first_mut()
+            {
+                group.title = format!("{from}...{to}");
+            }
+        }
         Ok(review)
     }
 

@@ -16,12 +16,14 @@ use crate::local_time;
 /// プロセス 1 つ分の開いているセッション。
 pub struct StoredSession {
     open: Mutex<OpenSession>,
+    resumed: bool,
 }
 
 impl StoredSession {
     /// 新しいセッションを始める。ロックを取り、id を決める。
     pub fn start(store: &SessionStore, info: SessionInfo) -> Result<Self, SessionError> {
         Ok(StoredSession {
+            resumed: false,
             open: Mutex::new(store.create(info)?),
         })
     }
@@ -29,6 +31,7 @@ impl StoredSession {
     /// 復元できるセッションを開く。ロック中のセッションは `Locked` になる。
     pub fn resume(store: &SessionStore, id: &str) -> Result<Self, SessionError> {
         Ok(StoredSession {
+            resumed: true,
             open: Mutex::new(store.open(id)?),
         })
     }
@@ -79,6 +82,38 @@ impl StoredSession {
 }
 
 impl SessionSink for StoredSession {
+    fn initial_title(&self) -> Option<String> {
+        Some(
+            self.open
+                .lock()
+                .expect("session poisoned")
+                .info()
+                .title
+                .clone(),
+        )
+    }
+    fn save_frozen_copy(
+        &self,
+        copy: kemi_core::session::PreparedCopy,
+        state: SessionState,
+    ) -> Result<bool, SessionError> {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .save_frozen_copy(copy, state)
+    }
+    fn review_id(&self) -> Option<String> {
+        Some(self.open.lock().expect("session poisoned").id().into())
+    }
+    fn is_resumed(&self) -> bool {
+        self.resumed
+    }
+    fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.open
+            .lock()
+            .expect("session poisoned")
+            .save_issued_state(state)
+    }
     fn initial_state(&self) -> SessionState {
         self.open.lock().expect("session poisoned").state().clone()
     }

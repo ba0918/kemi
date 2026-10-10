@@ -133,6 +133,7 @@ pub(super) async fn comment_api(
             suggestion,
         } => {
             let mut session = state.session.lock().expect("session poisoned");
+            let previous = session.clone();
             let comment = session
                 .comments
                 .iter_mut()
@@ -160,6 +161,10 @@ pub(super) async fn comment_api(
             comment.body = body;
             let value = page_comment_json(comment);
             session.channel.note_comment(&id);
+            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+                *session = previous;
+                return Err(ApiError::too_large(error.to_string()));
+            }
             drop(session);
             persist(&state);
             notify_agent_state(&state);
@@ -189,6 +194,7 @@ pub(super) async fn comment_api(
         }
         CommentRequest::Reply { id, body } => {
             let mut session = state.session.lock().expect("session poisoned");
+            let previous = session.clone();
             let index = session
                 .comments
                 .iter()
@@ -199,12 +205,16 @@ pub(super) async fn comment_api(
                 id: format!("r{}", session.last_reply),
                 seq: session.next_seq(),
                 author: Author::Reviewer,
-                body,
+                body: body.into(),
             };
             session.channel.note_reply(&id, &reply.id);
             let comment = &mut session.comments[index];
             comment.replies.push(reply);
             let value = page_comment_json(comment);
+            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+                *session = previous;
+                return Err(ApiError::too_large(error.to_string()));
+            }
             drop(session);
             persist(&state);
             let _ = state.events.send(Event::Thread(value.clone()));
@@ -213,6 +223,7 @@ pub(super) async fn comment_api(
         }
         CommentRequest::Resolve { id, resolved } => {
             let mut session = state.session.lock().expect("session poisoned");
+            let previous = session.clone();
             let comment = session
                 .comments
                 .iter_mut()
@@ -220,6 +231,10 @@ pub(super) async fn comment_api(
                 .ok_or_else(comment_not_found)?;
             comment.resolved = resolved;
             let value = page_comment_json(comment);
+            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+                *session = previous;
+                return Err(ApiError::too_large(error.to_string()));
+            }
             drop(session);
             persist(&state);
             Ok(Json(value))

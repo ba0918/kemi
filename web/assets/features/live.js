@@ -59,7 +59,7 @@ import { refreshCommentBadges } from "../views/tree.js";
 
 /**
  * `page_comment_saved` は、このレビューでページへのコメントを一度でも保存したか（始め方の案内を出すかを決める）。
- * @typedef {{ port: number, start: string, page: string, code: boolean, page_comment_saved?: boolean }} LiveInfo
+ * @typedef {{ port: number, start: string, page: string, code: boolean, code_unavailable?: string|null, page_comment_saved?: boolean }} LiveInfo
  * @typedef {import("../live-model.js").SnapshotSummary} SnapshotSummary
  * @typedef {import("../live-diff.js").Description} Description
  * @typedef {import("../live-diff.js").Change} Change
@@ -277,6 +277,21 @@ export function startLive(info) {
   document.head.append(stylesheet);
 
   shell = buildShell();
+  if (info.code_unavailable) {
+    shell.noCode.textContent = `Code unavailable: ${info.code_unavailable}`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.textContent = "Retry code";
+    retry.addEventListener("click", async () => {
+      await refresh();
+      const updated = state.review?.live;
+      if (updated?.code) {
+        live.info = updated;
+        setView("code");
+      }
+    });
+    shell.noCode.append(retry);
+  }
   const main = dom.viewport.closest("main");
   main?.prepend(shell.band);
   main?.append(shell.stage, shell.noCode);

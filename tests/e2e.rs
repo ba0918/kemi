@@ -509,7 +509,7 @@ async fn exit_code_approved_is_0_and_stdout_json() {
     let (status, stdout) = kemi.wait();
     assert_eq!(status.code(), Some(0));
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(document["kemi"], 2);
+    assert_eq!(document["kemi"], 3);
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["comments"][0]["body"], "ここ直して");
     assert_eq!(document["comments"][0]["page"], serde_json::Value::Null);
@@ -1055,7 +1055,7 @@ async fn result_flag_returns_the_same_json_and_the_original_exit_code() {
 }
 
 #[tokio::test]
-async fn result_flag_prints_a_contract_version_1_result_unchanged() {
+async fn result_flag_prints_past_contract_versions_without_reserializing() {
     let dir = TempDir::new();
     let state = TempDir::new();
     let (_, _, code) = submit_manifest(&dir.path, &state.path, "approved", "版 1").await;
@@ -1069,6 +1069,11 @@ async fn result_flag_prints_a_contract_version_1_result_unchanged() {
 
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(String::from_utf8(output.stdout).unwrap(), version_1);
+    let version_2 = "{ \"verdict\" : \"approved\", \"kemi\" : 2, \"title\" : \"old\", \"approval\" : [], \"comments\" : [], \"messages\" : [] }\n";
+    std::fs::write(&result_files(&state.path)[0], version_2).unwrap();
+    let output = run_with_state(&dir.path, &["--result"], &state.path);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), version_2);
 }
 
 #[test]
@@ -1258,7 +1263,23 @@ async fn result_unwritable_location_keeps_stdout_and_exit_code() {
     let (answer, status, stdout, stderr) = approve_manifest_review(&unwritable.path).await;
 
     assert_eq!(status.code(), Some(0));
-    assert_eq!(stdout, writable_stdout);
+    let mut actual: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let mut expected: serde_json::Value = serde_json::from_str(&writable_stdout).unwrap();
+    assert!(actual["diff_display_version"].is_string());
+    assert!(expected["diff_display_version"].is_string());
+    assert_ne!(
+        actual["diff_display_version"],
+        expected["diff_display_version"]
+    );
+    actual
+        .as_object_mut()
+        .unwrap()
+        .remove("diff_display_version");
+    expected
+        .as_object_mut()
+        .unwrap()
+        .remove("diff_display_version");
+    assert_eq!(actual, expected);
     assert!(answer["saved"]["error"].is_string());
     // 文言は契約でないので、書ける場合より stderr の行が増えたことで警告を確かめる。
     // 状態の置き場所に書けないとセッションを作れず、review の行も出ないので、比べる前に
@@ -1763,6 +1784,22 @@ async fn wait_for_session(state: &Path) -> PathBuf {
     panic!("no session file appeared");
 }
 
+async fn wait_for_frozen_session(state: &Path) -> PathBuf {
+    let store = SessionStore::new(sessions_dir(state));
+    for _ in 0..500 {
+        for path in session_files(state) {
+            if store
+                .read(&session_id(&path))
+                .is_ok_and(|saved| matches!(saved.copy, kemi_core::session::CopyState::Ready(_)))
+            {
+                return path;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("no frozen session appeared");
+}
+
 fn session_id(path: &Path) -> String {
     path.file_stem().unwrap().to_string_lossy().into_owned()
 }
@@ -1876,6 +1913,213 @@ fn session_copy() -> SessionCopy {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_parts_and_undelivered_hand()
+ {
+    use kemi_core::domain::conversation_content::ConversationContent;
+    use kemi_core::domain::display_version::DisplayVersions;
+    use kemi_core::domain::explanation::{
+        ExplanationDocument, ExplanationHistory, ExplanationVersion, quote_block,
+    };
+    use kemi_core::domain::review::{Author, CommentTarget, ExplanationTarget, Reply};
+    let workspace = TempDir::new();
+    let state = TempDir::new();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    workspace.write("explanation.json", "temporary input");
+    let original:ExplanationDocument=serde_json::from_value(serde_json::json!({"sections":[{"id":"s","title":"Original","blocks":[{"id":"b","part":{"type":"code","body":"literal\r\n","language":"pseudocode","role":"example"},"references":[]}]}]})).unwrap();
+    let quote = quote_block(&original, "b").unwrap();
+    let mut current = original.clone();
+    current.sections[0].blocks[0].part =
+        serde_json::from_value(serde_json::json!({"type":"text","body":"current"})).unwrap();
+    let mut saved = SessionState {
+        display: Some(DisplayVersions {
+            current: format!("{id}:2"),
+            frozen: Some(format!("{id}:1")),
+            issued: 2,
+        }),
+        explanation: Some(ExplanationHistory {
+            current_revision: 2,
+            versions: vec![
+                ExplanationVersion {
+                    revision: 1,
+                    base_display_version: format!("{id}:1"),
+                    sections: original.sections,
+                },
+                ExplanationVersion {
+                    revision: 2,
+                    base_display_version: format!("{id}:2"),
+                    sections: current.sections,
+                },
+            ],
+        }),
+        ..SessionState::default()
+    };
+    let mut comment = session_comment();
+    comment.group_id.clear();
+    comment.group_title.clear();
+    comment.target = CommentTarget::Explanation(ExplanationTarget {
+        revision: 1,
+        block_id: "b".into(),
+        quote: quote.clone(),
+    });
+    comment.replies.push(Reply {
+        id: "r1".into(),
+        seq: 2,
+        author: Author::Agent,
+        body: ConversationContent::Parts(
+            serde_json::from_value(serde_json::json!([{"type":"text","body":"**parts**"}]))
+                .unwrap(),
+        ),
+    });
+    saved.comments.push(comment);
+    saved.channel.note_comment("c1");
+    saved.channel.hand(&saved.comments, &saved.messages);
+    let store = SessionStore::new(sessions_dir(&state.path));
+    let mut open = store
+        .create(session_info(
+            id,
+            SessionMode::Worktree,
+            "Working tree changes",
+            &workspace.path,
+        ))
+        .unwrap();
+    open.save_frozen_copy(
+        kemi_core::session::prepare_copy(session_copy()).unwrap(),
+        saved,
+    )
+    .unwrap();
+    drop(open);
+    let payload = sessions_dir(&state.path).join(format!("{id}.payload"));
+    let before = std::fs::read(&payload).unwrap();
+    std::fs::remove_file(workspace.path.join("explanation.json")).unwrap();
+    workspace.write("a.txt", "AFTER\n");
+    let kemi = Kemi::spawn_with_state(
+        &workspace.path,
+        &["--resume", id, "--no-open", "--port", "0"],
+        &state.path,
+    );
+    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(review["diff_display_version"], format!("{id}:1"));
+    assert_eq!(review["explanation"]["current_revision"], 2);
+    assert_eq!(
+        review["explanation"]["versions"][1]["base_display_version"],
+        format!("{id}:2")
+    );
+    assert_eq!(std::fs::read(&payload).unwrap(), before);
+    assert_eq!(store.read(id).unwrap().state.display.unwrap().issued, 2);
+    let file: serde_json::Value = reqwest::get(format!("{}api/file/f1", kemi.url))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(file["rows"][0]["new"]["text"], "ONE");
+    let wait = run_with_state(
+        &workspace.path,
+        &["wait", id, "--timeout", "3"],
+        &state.path,
+    );
+    assert!(
+        wait.status.success(),
+        "{}",
+        String::from_utf8_lossy(&wait.stderr)
+    );
+    let handed: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
+    assert_eq!(handed["kemi"], 3);
+    assert_eq!(
+        handed["events"][0]["comments"][0]["comment"]["explanation"]["quote"],
+        serde_json::json!(quote)
+    );
+    assert_eq!(
+        handed["events"][0]["comments"][0]["comment"]["replies"][0]["parts"][0]["body"],
+        "**parts**"
+    );
+    assert_eq!(
+        kemi.post("api/submit", serde_json::json!({"verdict":"approved"}))
+            .await
+            .status(),
+        200
+    );
+    let (status, text) = kemi.wait();
+    assert!(status.success());
+    let result: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(result["kemi"], 3);
+    assert_eq!(result["diff_display_version"], format!("{id}:1"));
+    assert_eq!(
+        result["comments"][0]["explanation"]["quote"],
+        serde_json::json!(quote)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_explanation_only_session_survives_process_resume_and_suspend_without_its_input() {
+    let workspace = TempDir::new();
+    worktree_fixture(&workspace);
+    workspace.write("index.html", "<!doctype html><title>Page</title>");
+    workspace.write("explanation.json", "input");
+    let state = TempDir::new();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let store = SessionStore::new(sessions_dir(&state.path));
+    let mode = SessionMode::Live {
+        page: kemi_core::domain::live::LivePage::File("index.html".into()),
+        root: workspace.path.clone(),
+    };
+    let mut open = store
+        .create(session_info(
+            id,
+            mode,
+            "Live review of /index.html",
+            &workspace.path,
+        ))
+        .unwrap();
+    let saved=SessionState{display:Some(kemi_core::domain::display_version::DisplayVersions::initial(id).unwrap()),explanation:Some(serde_json::from_value(serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"explanation only"},"references":[]}]}]}]})).unwrap()),..SessionState::default()};
+    open.save_issued_state(saved).unwrap();
+    open.close_suspended().unwrap();
+    drop(open);
+    std::fs::remove_file(workspace.path.join("explanation.json")).unwrap();
+    let kemi = Kemi::spawn_with_state(
+        &workspace.path,
+        &["--resume", id, "--no-open", "--port", "0"],
+        &state.path,
+    );
+    let review = kemi.get_json("api/review").await;
+    assert_eq!(review["diff_display_version"], format!("{id}:2"));
+    assert_eq!(review["explanation"]["current_revision"], 1);
+    assert_eq!(
+        review["explanation"]["versions"][0]["base_display_version"],
+        format!("{id}:1")
+    );
+    assert_eq!(review["comments"], serde_json::json!([]));
+    assert_eq!(review["messages"], serde_json::json!([]));
+    signal(&kemi.child, "-INT");
+    let (status, stdout, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert_eq!(store.list().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .read(id)
+            .unwrap()
+            .state
+            .explanation
+            .unwrap()
+            .current_revision,
+        1
+    );
+    assert!(
+        !sessions_dir(&state.path)
+            .join(format!("{id}.payload"))
+            .exists()
+    );
+}
+
 /// 復元できるセッションを 1 つ作る。タイトルは一覧の検証に使う。
 fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> SessionStore {
     let store = SessionStore::new(sessions_dir(state));
@@ -1930,7 +2174,7 @@ async fn interrupt_leaves_a_session_and_prints_the_resume_line() {
     let state = TempDir::new();
     let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     kemi.wait_serving().await;
-    let session = wait_for_session(&state.path).await;
+    let session = wait_for_frozen_session(&state.path).await;
     let id = session_id(&session);
 
     signal(&kemi.child, "-INT");
@@ -1953,7 +2197,7 @@ async fn sigterm_leaves_a_session_and_prints_the_resume_line() {
     let state = TempDir::new();
     let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     kemi.wait_serving().await;
-    let session = wait_for_session(&state.path).await;
+    let session = wait_for_frozen_session(&state.path).await;
     let id = session_id(&session);
 
     signal(&kemi.child, "-TERM");
@@ -2474,7 +2718,7 @@ async fn resume_without_the_repository_keeps_origin_unknown() {
         &state.path,
     );
     kemi.wait_serving().await;
-    let id = session_id(&wait_for_session(&state.path).await);
+    let id = session_id(&wait_for_frozen_session(&state.path).await);
     let review = kemi.get_json("api/review").await;
     let file_id = review["groups"][0]["files"][0]["id"]
         .as_str()
@@ -2698,7 +2942,7 @@ async fn wait_returns_the_comment_handed_while_it_waited() {
     let (code, stdout, _) = finish_agent(waiting).await;
     assert_eq!(code, Some(0));
     let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(answer["kemi"], 2);
+    assert_eq!(answer["kemi"], 3);
     assert_eq!(answer["review"], id.as_str());
     assert_eq!(answer["events"][0]["type"], "handed");
     assert_eq!(
@@ -3060,7 +3304,7 @@ async fn a_handed_comment_has_the_same_keys_as_in_the_submit() {
     let (_, stdout) = kemi.wait();
 
     let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(answer["kemi"], 2);
+    assert_eq!(answer["kemi"], 3);
     assert_eq!(answer["review"], id.as_str());
     let handed = &answer["events"][0]["comments"][0]["comment"];
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();

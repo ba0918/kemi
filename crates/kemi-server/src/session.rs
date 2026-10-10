@@ -8,6 +8,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use kemi_core::domain::agent::{AgentEvent, Channel, HandedComment};
+use kemi_core::domain::display_version::DisplayVersions;
+use kemi_core::domain::explanation::ExplanationHistory;
 use kemi_core::domain::review::{Comment, CommentTarget, Message, PageTarget, Reply};
 use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
@@ -15,8 +17,19 @@ use serde_json::json;
 
 use crate::{AppState, Notice};
 
-#[derive(Default)]
+pub(crate) struct FreezeInput {
+    pub source: Arc<dyn kemi_core::source::ReviewSource>,
+    pub startup_unit: Option<kemi_core::domain::review::GroupBy>,
+    pub startup: Arc<kemi_core::domain::review::ReviewMeta>,
+    pub other: Option<crate::units::OtherUnit>,
+    pub generation: u128,
+    pub token: String,
+}
+
+#[derive(Default, Clone)]
 pub struct Session {
+    pub display: Option<DisplayVersions>,
+    pub explanation: Option<ExplanationHistory>,
     pub comments: Vec<Comment>,
     pub seen: BTreeSet<String>,
     pub collapsed: BTreeMap<String, bool>,
@@ -41,7 +54,8 @@ pub struct Session {
 impl Session {
     /// 保存された状態から読み戻す。コメント・返信・発言の id は再利用しないので、採番は
     /// 保存した最終番号と、残っているものの番号の大きい方から続ける。
-    pub fn from_state(state: SessionState) -> Self {
+    pub fn from_state(mut state: SessionState) -> Self {
+        state.refresh_explanation_comments();
         let from_comments = highest_number(state.comments.iter().map(|comment| &comment.id), 'c');
         let from_replies = highest_number(
             state
@@ -61,6 +75,8 @@ impl Session {
             .max()
             .unwrap_or(0);
         Session {
+            display: state.display,
+            explanation: state.explanation,
             comments: state.comments,
             seen: state.seen,
             collapsed: state.collapsed,
@@ -85,6 +101,8 @@ impl Session {
     /// 保存する状態の写し。
     pub(crate) fn snapshot(&self) -> SessionState {
         SessionState {
+            display: self.display.clone(),
+            explanation: self.explanation.clone(),
             comments: self.comments.clone(),
             seen: self.seen.clone(),
             collapsed: self.collapsed.clone(),
@@ -131,6 +149,8 @@ fn comment_json_with(comment: &Comment, with_image: bool) -> serde_json::Value {
         "quote": [],
         "body": comment.body,
         "page": null,
+        "target_type":match &comment.target {CommentTarget::File(_)=>"file",CommentTarget::Page(_)=>"page",CommentTarget::Explanation(_)=>"explanation"},
+        "explanation":null,
         "replies": comment.replies.iter().map(reply_json).collect::<Vec<_>>(),
         "resolved": comment.resolved,
         "outdated": comment.outdated,
@@ -141,6 +161,11 @@ fn comment_json_with(comment: &Comment, with_image: bool) -> serde_json::Value {
         if with_image {
             value["page"]["image"] = json!(page.image);
         }
+    }
+    if let CommentTarget::Explanation(target) = &comment.target {
+        value["group_id"] = json!(null);
+        value["group_title"] = json!(null);
+        value["explanation"] = json!(target);
     }
     if let Some(file) = comment.file() {
         value["path"] = json!(file.path);
@@ -188,7 +213,8 @@ pub fn reply_json(reply: &Reply) -> serde_json::Value {
     json!({
         "id": reply.id,
         "author": reply.author.as_str(),
-        "body": reply.body,
+        "body": reply.body.plain(),
+        "parts":reply.body.parts(),
         "variants": [],
         "chosen": null,
         "applied": null,
@@ -200,7 +226,8 @@ pub fn message_json(message: &Message) -> serde_json::Value {
     json!({
         "id": message.id,
         "author": message.author.as_str(),
-        "body": message.body,
+        "body": message.body.plain(),
+        "parts":message.body.parts(),
     })
 }
 
@@ -289,6 +316,7 @@ pub(crate) fn start_freeze(state: &Arc<AppState>) {
     if state.freeze_started.swap(true, Ordering::SeqCst) {
         return;
     }
+    crate::units::start_initial_if_waiting(state);
     let state = state.clone();
     tokio::spawn(async move { freeze(state).await });
 }
@@ -297,32 +325,71 @@ pub(crate) fn start_freeze(state: &Arc<AppState>) {
 /// 読み取りに失敗したら数回試してから復元不可の印を付ける。
 async fn freeze(state: Arc<AppState>) {
     let mut shutdown = state.shutdown.subscribe();
-    loop {
+    let input = loop {
         if *shutdown.borrow() {
+            state
+                .initial_review
+                .lock()
+                .expect("initial review poisoned")
+                .take();
             return;
         }
-        let ready = state
-            .review
-            .read()
-            .expect("review lock poisoned")
-            .all_units_ready();
-        if ready {
-            break;
+        let (ready, failed) = {
+            let initial = state
+                .initial_review
+                .lock()
+                .expect("initial review poisoned");
+            let Some(initial) = initial.as_ref() else {
+                return;
+            };
+            (
+                initial
+                    .other
+                    .as_ref()
+                    .is_none_or(|other| other.state == crate::units::BuildState::Ready),
+                initial.other.as_ref().and_then(|other| match &other.state {
+                    crate::units::BuildState::Failed(reason) => Some(reason.clone()),
+                    crate::units::BuildState::Waiting
+                    | crate::units::BuildState::Building
+                    | crate::units::BuildState::Ready => None,
+                }),
+            )
+        };
+        if let Some(reason) = failed {
+            state
+                .initial_review
+                .lock()
+                .expect("initial review poisoned")
+                .take();
+            let _gate = state.persist.lock().expect("persist poisoned");
+            if let Some(sink) = &state.session_sink
+                && let Err(error) = sink.mark_unresumable(&reason)
+            {
+                state.notices.notify(Notice::SessionNotSaved(error));
+            }
+            return;
         }
-        // 失敗した単位は retry で作り直されることがあるので、待ち続ける。
+        if ready {
+            break state
+                .initial_review
+                .lock()
+                .expect("initial review poisoned")
+                .take()
+                .expect("freeze target present");
+        }
+        // 現在版の他方の単位を待つと、更新後のメタデータを初回写しに混ぜることになる。
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-            _ = shutdown.changed() => return,
+            _ = shutdown.changed() => {state.initial_review.lock().expect("initial review poisoned").take();return;},
         }
-    }
+    };
 
     let (startup_unit, units) = {
-        let review = state.review.read().expect("review lock poisoned");
         let mut units = vec![FrozenUnit {
-            unit: review.startup_unit,
-            review: review.startup.as_ref().clone(),
+            unit: input.startup_unit,
+            review: input.startup.as_ref().clone(),
         }];
-        if let Some(other) = &review.other
+        if let Some(other) = &input.other
             && let Some(meta) = &other.meta
         {
             units.push(FrozenUnit {
@@ -330,7 +397,7 @@ async fn freeze(state: Arc<AppState>) {
                 review: meta.as_ref().clone(),
             });
         }
-        (review.startup_unit, units)
+        (input.startup_unit, units)
     };
     let mut ids = BTreeSet::new();
     for unit in &units {
@@ -343,7 +410,7 @@ async fn freeze(state: Arc<AppState>) {
 
     let mut last_error = String::new();
     for attempt in 0..3 {
-        match read_contents(&state, ids.clone()).await {
+        match read_contents(input.source.clone(), ids.clone()).await {
             Ok(contents) => {
                 // 読み取りの間に submit の停止が始まっていたら、消したセッションを
                 // 作り直さない（R-SESSION）。
@@ -356,8 +423,46 @@ async fn freeze(state: Arc<AppState>) {
                         units,
                         contents,
                     };
-                    if let Err(error) = sink.save_copy(copy) {
-                        state.notices.notify(Notice::SessionNotSaved(error));
+                    let prepared = match tokio::task::spawn_blocking(move || {
+                        kemi_core::session::prepare_copy(copy)
+                    })
+                    .await
+                    {
+                        Ok(Ok(copy)) => copy,
+                        Ok(Err(error)) => {
+                            state.notices.notify(Notice::SessionNotSaved(error));
+                            return;
+                        }
+                        Err(error) => {
+                            state.notices.notify(Notice::SessionNotSaved(
+                                kemi_core::session::SessionError::Encode {
+                                    reason: error.to_string(),
+                                },
+                            ));
+                            return;
+                        }
+                    };
+                    let _gate = state.persist.lock().expect("persist poisoned");
+                    if *shutdown.borrow() {
+                        return;
+                    }
+                    let mut session = state.session.lock().expect("session poisoned");
+                    let mut snapshot = session.snapshot();
+                    snapshot
+                        .display
+                        .as_mut()
+                        .expect("initial display assigned")
+                        .frozen = Some(input.token.clone());
+                    match sink.save_frozen_copy(prepared, snapshot) {
+                        Ok(true) => {
+                            session
+                                .display
+                                .as_mut()
+                                .expect("initial display assigned")
+                                .frozen = Some(input.token.clone())
+                        }
+                        Ok(false) => {}
+                        Err(error) => state.notices.notify(Notice::SessionNotSaved(error)),
                     }
                 }
                 return;
@@ -378,6 +483,7 @@ async fn freeze(state: Arc<AppState>) {
         return;
     }
     if let Some(sink) = &state.session_sink {
+        let _gate = state.persist.lock().expect("persist poisoned");
         let reason = format!("cannot read the review contents: {last_error}");
         if let Err(error) = sink.mark_unresumable(&reason) {
             state.notices.notify(Notice::SessionNotSaved(error));
@@ -386,10 +492,9 @@ async fn freeze(state: Arc<AppState>) {
 }
 
 async fn read_contents(
-    state: &Arc<AppState>,
+    source: Arc<dyn kemi_core::source::ReviewSource>,
     ids: BTreeSet<String>,
 ) -> Result<BTreeMap<String, FileContent>, String> {
-    let source = state.source.clone();
     let result = tokio::task::spawn_blocking(move || {
         let mut contents = BTreeMap::new();
         for id in ids {

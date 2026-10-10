@@ -315,7 +315,7 @@ open:
 
 - `kemi wait <id> [--timeout <seconds>]` waits until you press **Hand to
   agent** (or submit) and prints everything handed over since its previous
-  call as one JSON document: `{"kemi": 2, "review": "<id>", "events": [...]}`.
+  call as one JSON document: `{"kemi": 3, "review": "<id>", "events": [...]}`.
   A `handed` event lists comments as `added`, `edited`, or `deleted` (id
   only), new replies, and new messages; a `submitted` event carries the
   result JSON. Exit codes: 0 (events; an approval if submitted), 1 (submitted
@@ -491,6 +491,10 @@ session under the same state root as results:
 `XDG_STATE_HOME` is unset or relative (unix); on Windows it is
 `%LOCALAPPDATA%\kemi\sessions\`. A session holds the review as it was when it
 started, together with the comments, seen marks, folding, and resolutions.
+Session format 4 preserves typed reply/message parts, complete explanation
+quotes, retained explanation versions, and undelivered conversation events.
+Formats 2 and 3 remain readable; their old `body` strings stay plain text.
+Reading an old session does not rewrite it. Its next state save writes format 4.
 Only a session whose copy completed within the size limit can be resumed; one
 whose copy is unfinished or too large keeps the state alone and stays out of
 the list and `--resume` (its id exits with 2), and a review with neither state
@@ -518,7 +522,7 @@ kemi --resume <id>     # continue a known session, from any directory
   it is now and keeps watching it. Its snapshots, including the one taken at
   the start, and its mock assignments come back, so the default comparison
   stays the same; a mock whose file is gone by then says it cannot be read.
-  It is kept only when it holds a comment, a reply, or a message; seen marks,
+  It is kept only when it holds a comment, a reply, a message, or an explanation; seen marks,
   folding, snapshots, and mock assignments alone are not kept. Its mode
   column reads `live <url>`.
 - A `--live` session keeps its snapshots and comment images in `<id>.files/`
@@ -535,6 +539,14 @@ kemi --resume <id>     # continue a known session, from any directory
 - `--resume` accepts only `--port`, `--bind`, `--no-open`, `--serve`, and
   `--live-port`.
   `--digest` and `--result` do not create sessions.
+
+Each accepted diff-metadata import has a `diff_display_version` of
+`<review-id>:<generation>`, separate from the URL token. It identifies metadata,
+not fixed file bytes or proof that an explanation is correct. A failed refresh
+keeps the previously published metadata and version. A non-live resume uses the
+frozen startup version, even if the previous process later imported another
+version, and leaves explanation bases unchanged. A successful live rescan
+issues a new version; a failed rescan leaves Code unavailable until retry succeeds.
 
 The `kemi: resume with: kemi --resume <id>` line on stderr is how a script
 finds the id after an interruption.
@@ -594,13 +606,17 @@ The JSON printed at the end:
 
 ```json
 {
-  "kemi": 2,
+  "kemi": 3,
   "title": "Review",
   "verdict": "approved",
   "approval": [{ "path": "src/a.rs", "identity": "sha256:…" }],
+  "diff_display_version": "01K00000000000000000000000:1",
+  "explanation": null,
   "comments": [
     {
       "id": "c1",
+      "target_type": "file",
+      "explanation": null,
       "group_id": "g1",
       "group_title": "First change",
       "path": "src/a.rs",
@@ -615,6 +631,7 @@ The JSON printed at the end:
           "id": "r1",
           "author": "reviewer",
           "body": "a reply in the thread",
+          "parts": null,
           "variants": [],
           "chosen": null,
           "applied": null
@@ -625,12 +642,13 @@ The JSON printed at the end:
       "suggestion": { "replacement": "the replacement text" }
     }
   ],
-  "messages": [{ "id": "m1", "author": "reviewer", "body": "a note on the whole review" }]
+  "messages": [{ "id": "m1", "author": "reviewer", "body": "a note on the whole review", "parts": null }]
 }
 ```
 
-- `kemi` is the contract version, `2`. Version `1` results (from kemi before
-  replies and messages) are printed unchanged by `kemi --result`; do not read
+- `kemi` is the contract version, `3` for every newly generated result and wait
+  response, including a resumed old session. Stored version `1` and `2` results
+  are printed unchanged by `kemi --result`; do not read
   a version you do not know by guessing.
 - `side` is `new` or `old`. File-wide comments are `new` with `start_line` and
   `end_line` `null`, and `quote` `[]`.
@@ -659,6 +677,20 @@ The JSON printed at the end:
   absolute path only in what `kemi wait` returns, and `null` in the result.
 - `messages` are notes on the whole review, in creation order.
 - `comments` are in creation order.
+- Replies and messages always carry both `body` and `parts`. Plain content has
+  a string `body` and `parts: null`; typed content has `body: null` and a nonempty
+  `parts` array. Preserve its types and order instead of flattening it into text.
+  An empty plain body stays an empty string.
+- `target_type` is `file`, `page`, or `explanation`. An explanation target has
+  `explanation: {revision, block_id, quote}`; its quote keeps the original
+  `section_title` and complete `block`, including its part and references.
+  Its file/group/page/suggestion fields are null and its line `quote` is `[]`.
+  Its `outdated` compares the current block with the original typed content;
+  moving a block or renaming its section does not alter the original quote.
+- Top-level `explanation` is null or `{current_revision, versions}`. Versions
+  are ordered by revision and include retained originals needed to read the result.
+  `diff_display_version` is the server's metadata version at submit, not a claim
+  that every open screen displayed that version.
 
 ## Digest
 

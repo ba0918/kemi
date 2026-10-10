@@ -1,6 +1,8 @@
 //! レビューのドメイン型。入力モード（manifest / コミット範囲 / worktree / staged）に
 //! よらず共通で使う。
 
+use super::conversation_content::ConversationContent;
+use super::explanation::ExplanationQuote;
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,7 +160,7 @@ pub struct Reply {
     /// 書いた順をレビュー全体で比べる通し番号（R-SESSION）。
     pub seq: u32,
     pub author: Author,
-    pub body: String,
+    pub body: ConversationContent,
 }
 
 /// どのコメントにも属さない、レビュー全体への書き込み。
@@ -168,7 +170,7 @@ pub struct Message {
     /// 書いた順をレビュー全体で比べる通し番号（R-SESSION）。
     pub seq: u32,
     pub author: Author,
-    pub body: String,
+    pub body: ConversationContent,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -192,14 +194,14 @@ impl Comment {
     pub fn file(&self) -> Option<&FileTarget> {
         match &self.target {
             CommentTarget::File(file) => Some(file),
-            CommentTarget::Page(_) => None,
+            CommentTarget::Page(_) | CommentTarget::Explanation(_) => None,
         }
     }
 
     pub fn file_mut(&mut self) -> Option<&mut FileTarget> {
         match &mut self.target {
             CommentTarget::File(file) => Some(file),
-            CommentTarget::Page(_) => None,
+            CommentTarget::Page(_) | CommentTarget::Explanation(_) => None,
         }
     }
 }
@@ -209,6 +211,15 @@ impl Comment {
 pub enum CommentTarget {
     File(FileTarget),
     Page(PageTarget),
+    Explanation(ExplanationTarget),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplanationTarget {
+    pub revision: u64,
+    pub block_id: String,
+    pub quote: ExplanationQuote,
 }
 
 /// ファイルへのコメントの位置（R-COMMENT）。
