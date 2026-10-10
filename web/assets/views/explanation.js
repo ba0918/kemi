@@ -1,7 +1,7 @@
 // @ts-check
 import { actions } from '../actions.js';
 import { button, dom, el, textEl } from '../dom.js';
-import { state } from '../state.js';
+import { state, unitLabel } from '../state.js';
 import { commentsForBlock, freshness } from '../explanation-model.js';
 import { partView } from './parts.js';
 
@@ -77,6 +77,7 @@ export function renderExplanationDocument() {
       for (const reference of block.references) {
         const link = button('btn explanation-reference');
         link.textContent = reference.type === 'page' ? `Page ${reference.url}` : `Code ${reference.path}${reference.start_line === null ? '' : `:${reference.start_line}–${reference.end_line}`} (${reference.side})`;
+        if (reference.type==='code' && reference.unit) link.textContent+=` · ${unitLabel(reference.unit)} / ${reference.group_id}`;
         link.addEventListener('click',()=>actions.followExplanationReference(reference));
         article.append(link);
       }

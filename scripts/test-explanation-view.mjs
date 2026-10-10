@@ -1,7 +1,7 @@
 // 形式4の復元会話を実バイナリと実フォントで読む。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -19,8 +19,7 @@ const browser = async (...args) => {
 };
 const evaluate = async code => {
   if (code.includes('await import')) {
-    const end=code.lastIndexOf(';');
-    code=`(async()=>{${code.slice(0,end+1)}return (${code.slice(end+1)});})()`;
+    code=`(async()=>{${/;\s*true\s*$/.test(code) ? code.replace(/;\s*true\s*$/, ';return true;') : `return (${code});`}})()`;
   }
   return (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
 };
@@ -51,7 +50,7 @@ const framed = {...sequence,title:'Alt and loop',events:[{type:'alt',branches:[{
 const decision = {type:'flow',title:'Decision and return',role:'confirmed',nodes:[{id:'a',kind:'start',label:'Begin',position:{x:160,y:100}},{id:'b',kind:'decision',label:'Ready?',position:{x:160,y:300}},{id:'c',kind:'end',label:'End',position:{x:160,y:520}}],edges:[{from:'a',to:'b'},{from:'b',to:'c',label:{text:'yes'}},{from:'b',to:'a',from_port:'east',to_port:'east',via:[{x:400,y:300},{x:400,y:100}],label:{text:'retry',position:{x:440,y:200}}}]};
 const touching = {type:'flow',title:'Allowed contact and crossing',role:'example',nodes:[{id:'a',kind:'process',label:'A',position:{x:160,y:100},width:180,height:64},{id:'b',kind:'process',label:'B',position:{x:340,y:100},width:180,height:64},{id:'c',kind:'process',label:'C',position:{x:160,y:400}},{id:'d',kind:'process',label:'D',position:{x:500,y:400}}],edges:[{from:'a',to:'d',from_port:'south',to_port:'north',via:[]},{from:'b',to:'c',from_port:'south',to_port:'north',via:[]}]};
 let running;
-if (!process.argv.includes('--navigation') && !process.argv.includes('--live-navigation')) try {
+if (!process.argv.includes('--navigation') && !process.argv.includes('--live-navigation') && !process.argv.includes('--range-navigation')) try {
   await writeFile(join(root, 'a.txt'), 'old\n');
   await run('git', ['init', '-q', root]);
   await run('git', ['-C', root, 'add', 'a.txt']);
@@ -154,7 +153,7 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   if (running && running.child.exitCode === null) { running.child.kill('SIGINT'); await running.exited; }
 }
 
-if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-navigation')) try {
+if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-navigation') && !process.argv.includes('--range-navigation')) try {
   root = await mkdtemp(join(tmpdir(), 'kemi-explanation-'));
   await writeFile(join(root, 'a.txt'), 'old\n');
   await run('git', ['init', '-q', root]);
@@ -255,13 +254,41 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Open explanation revision 6');
   await wait(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`);
   assert.equal(await evaluate(`(${moduleState}).allComments[0].outdated`),false);
+  await unlink(join(root,'explanation.json'));
+  running.child.kill('SIGINT');await running.exited;
+  running=await start(['--resume',id]);await browser('open',running.url);
+  await wait(`document.querySelector('[aria-label="Explanation"][role="region"]')?.checkVisibility()`);
+  const frozen=await context();
+  assert.equal(frozen.diff_display_version,review.diff_display_version);
+  assert.equal(frozen.explanation.base_display_version,d2);
+  assert.equal(frozen.explanation_revision,6);
+  await wait(`document.body.textContent.includes('Explanation for a different display version')`);
+  assert.equal(await evaluate(`(${moduleState}).allComments[0].explanation.revision===1 && (${moduleState}).allComments[0].explanation.quote.block.part.body===${JSON.stringify(bodyA)}`),true);
+  // 既知の旧基点で受理した未知対象・未知行数・消えた行は画面の一覧で理由を出す。
+  await update([{id:'unavailable',title:'Unavailable targets',blocks:[{id:'targets',part:{type:'text',body:'Unavailable links'},references:[
+    {...ref,path:'missing.txt'}, {...ref,start_line:2,end_line:3}, {...ref,path:'unloaded.txt',start_line:1,end_line:1}
+  ]}]}],d2);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 7'))`);
+  await browser('find','role','button','click','--name','Open explanation revision 7');
+  await browser('find','role','button','click','--name','Code missing.txt (new)','--exact');
+  await wait(`document.body.textContent.includes('Reference unavailable for this display version')`);
+  await browser('find','role','button','click','--name','Close','--exact');
+  await browser('find','role','button','click','--name','Code a.txt:2–3 (new)','--exact');
+  await wait(`document.body.textContent.includes('line count is unknown')`);
+  await browser('find','role','button','click','--name','Close','--exact');
+  await browser('find','role','button','click','--name','Code','--exact');
+  await browser('find','role','button','click','--name','EXPLANATION','--exact');
+  await browser('find','role','button','click','--name','Code a.txt:2–3 (new)','--exact');
+  await wait(`document.body.textContent.includes('requested lines are no longer present')`);
+  assert.equal(await evaluate(`(${moduleState}).view==='explanation' && (${moduleState}).codeToken===${JSON.stringify(review.diff_display_version)}`),true);
   console.log('PASS: initial Explanation, base details, old reading position, unchanged comments, isolated Part fallback, two-screen Code tokens, missed notification recovery and 390px reference return');
+  console.log('PASS: non-live process resume without the explanation input restores frozen Code, unchanged full quote and explanation base; unavailable/unknown/out-of-range references stay on the explanation with a reason');
 } finally {
   await browser('close').catch(()=>{});
   if (running && running.child.exitCode===null) {running.child.kill('SIGINT');await running.exited;}
 }
 
-if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigation')) {
+if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigation') && !process.argv.includes('--range-navigation')) {
   root=await mkdtemp(join(tmpdir(),'kemi-explanation-live-'));
   const dev=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(`<html><body><h1>${req.url}</h1><a href="/other?one=1">Other page</a></body></html>`)});
   await new Promise(resolve=>dev.listen(0,'127.0.0.1',resolve));
@@ -314,5 +341,42 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     await browser('close').catch(()=>{});
     if(running && running.child.exitCode===null){running.child.kill('SIGINT');await running.exited;}
     await new Promise(resolve=>dev.close(resolve));
+  }
+}
+
+if (process.argv.includes('--range-navigation') || process.argv.length===3) {
+  root=await mkdtemp(join(tmpdir(),'kemi-explanation-range-'));
+  await writeFile(join(root,'a.txt'),'old\n');await run('git',['init','-q',root]);await run('git',['-C',root,'add','a.txt']);
+  const commit=()=>run('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qam','fixture']);
+  await commit();const base=(await run('git',['-C',root,'rev-parse','HEAD'])).stdout.trim();
+  await writeFile(join(root,'a.txt'),'new\n');await commit();const sha=(await run('git',['-C',root,'rev-parse','HEAD'])).stdout.trim();
+  const ref=unit=>({type:'code',unit,group_id:unit==='file'?'all':sha,path:'a.txt',side:'new',start_line:null,end_line:null});
+  const refs=[ref('file'),ref('commit')];
+  await writeFile(join(root,'explanation.json'),JSON.stringify({sections:[{id:'range',title:'Range overview',blocks:[{id:'entry',part:{type:'text',body:'Both group units'},references:refs}]}]}));
+  for(const unit of ['file','commit']) try {
+    running=await start(['--from',base,'--group-by',unit]);await browser('set','viewport','1280','900');await browser('open',running.url);
+    await wait(`document.querySelector('[aria-label="Review view"]')?.querySelector('[aria-pressed="true"]')?.textContent==='Code'`);
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='EXPLANATION').disabled`),true);
+    running.child.kill('SIGINT');await running.exited;
+    running=await start(['--from',base,'--group-by',unit,'--explanation',join(root,'explanation.json')]);await browser('open',running.url);
+    await wait(`document.body.textContent.includes('Both group units')`);
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Group unit"]').checkVisibility()`),false);
+    const current=`Code a.txt (new) · ${unit==='file'?'Final state / all':`Per commit / ${sha}`}`;
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent===${JSON.stringify(current)})`),true);
+    const other=unit==='file'?'commit':'file';
+    const otherName=`Code a.txt (new) · ${other==='file'?'Final state / all':`Per commit / ${sha}`}`;
+    await browser('find','role','button','click','--name',otherName,'--exact');
+    await wait(`document.body.textContent.includes('Reference unavailable for this display version')`);
+    await browser('find','role','button','click','--name','Close','--exact');
+    await browser('set','viewport','390','900');
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).filter(e=>e.textContent.startsWith('Code a.txt')).every(e=>e.getBoundingClientRect().right<=innerWidth && e.getBoundingClientRect().left>=0)`),true);
+    await browser('find','role','button','click','--name',current,'--exact');
+    await wait(`document.querySelector('[aria-label="Group unit"]').checkVisibility()`);
+    await browser('find','role','button','click','--name','Back to explanation');
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Group unit"]').checkVisibility()`),false);
+    console.log(`PASS: range ${unit} starts on Code without explanation and Explanation with one, distinguishes reference group units, refuses an unloaded unit and returns without changing the reading revision`);
+  } finally {
+    await browser('close').catch(()=>{});
+    if(running && running.child.exitCode===null){running.child.kill('SIGINT');await running.exited;}
   }
 }
