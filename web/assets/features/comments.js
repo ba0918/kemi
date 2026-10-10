@@ -2,6 +2,7 @@
 // 行の選択、コメントの入力欄の開閉、コメントの追加・編集・削除。
 
 import * as api from "../api.js";
+import { actions } from '../actions.js';
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
 import { commentLabel, draftKey, firstLine, shownLineNumbers, tapSelection } from "../model.js";
@@ -223,6 +224,7 @@ export function closeEditor() {
 export function updateComments(change) {
   const before = state.allComments;
   state.allComments = change(state.allComments);
+  actions.explanationChanged?.();
   for (const [id, comments] of state.commentStore) {
     state.commentStore.set(id, change(comments));
   }

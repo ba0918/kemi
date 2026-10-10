@@ -5,10 +5,11 @@ import { mkdtemp, readFile, writeFile, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
+import { createServer } from 'node:http';
 
 const run = promisify(execFile);
 const binary = resolve(process.argv[2]);
-const root = await mkdtemp(join(tmpdir(), 'kemi-parts-'));
+let root = await mkdtemp(join(tmpdir(), 'kemi-parts-'));
 const session = `kemi-parts-${process.pid}`;
 const browser = async (...args) => {
   const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 8 * 1024 * 1024 });
@@ -16,7 +17,13 @@ const browser = async (...args) => {
   assert.equal(result.success, true, JSON.stringify(result));
   return result.data;
 };
-const evaluate = async code => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
+const evaluate = async code => {
+  if (code.includes('await import')) {
+    const end=code.lastIndexOf(';');
+    code=`(async()=>{${code.slice(0,end+1)}return (${code.slice(end+1)});})()`;
+  }
+  return (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
+};
 const wait = code => browser('wait', '--fn', code);
 async function start(args) {
   const child = spawn(binary, [...args, '--port', '0', '--no-open'], {
@@ -44,7 +51,7 @@ const framed = {...sequence,title:'Alt and loop',events:[{type:'alt',branches:[{
 const decision = {type:'flow',title:'Decision and return',role:'confirmed',nodes:[{id:'a',kind:'start',label:'Begin',position:{x:160,y:100}},{id:'b',kind:'decision',label:'Ready?',position:{x:160,y:300}},{id:'c',kind:'end',label:'End',position:{x:160,y:520}}],edges:[{from:'a',to:'b'},{from:'b',to:'c',label:{text:'yes'}},{from:'b',to:'a',from_port:'east',to_port:'east',via:[{x:400,y:300},{x:400,y:100}],label:{text:'retry',position:{x:440,y:200}}}]};
 const touching = {type:'flow',title:'Allowed contact and crossing',role:'example',nodes:[{id:'a',kind:'process',label:'A',position:{x:160,y:100},width:180,height:64},{id:'b',kind:'process',label:'B',position:{x:340,y:100},width:180,height:64},{id:'c',kind:'process',label:'C',position:{x:160,y:400}},{id:'d',kind:'process',label:'D',position:{x:500,y:400}}],edges:[{from:'a',to:'d',from_port:'south',to_port:'north',via:[]},{from:'b',to:'c',from_port:'south',to_port:'north',via:[]}]};
 let running;
-try {
+if (!process.argv.includes('--navigation') && !process.argv.includes('--live-navigation')) try {
   await writeFile(join(root, 'a.txt'), 'old\n');
   await run('git', ['init', '-q', root]);
   await run('git', ['-C', root, 'add', 'a.txt']);
@@ -145,4 +152,167 @@ try {
 } finally {
   await browser('close').catch(() => {});
   if (running && running.child.exitCode === null) { running.child.kill('SIGINT'); await running.exited; }
+}
+
+if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-navigation')) try {
+  root = await mkdtemp(join(tmpdir(), 'kemi-explanation-'));
+  await writeFile(join(root, 'a.txt'), 'old\n');
+  await run('git', ['init', '-q', root]);
+  await run('git', ['-C', root, 'add', 'a.txt']);
+  await run('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']);
+  await writeFile(join(root, 'a.txt'), 'new\n');
+  const ref = {type:'code',unit:null,group_id:'worktree',path:'a.txt',side:'new',start_line:null,end_line:null};
+  const sections = [{id:'intro',title:'Reading order',blocks:[{id:'first',part:{type:'text',body:bodyA},references:[]},...Array.from({length:12},(_,i)=>({id:`context-${i}`,part:{type:'text',body:`Context paragraph ${i}\n\n${'Reader context. '.repeat(40)}`},references:[]}))]},
+    {id:'middle',title:'Middle section',blocks:[{id:'code',part:codeB,references:[ref]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]}]}];
+  await writeFile(join(root, 'explanation.json'), JSON.stringify({sections}));
+  running = await start(['--worktree','--explanation',join(root,'explanation.json')]);
+  await browser('set','viewport','1280','900');
+  await browser('open','about:blank');await browser('network','har','start');
+  await browser('open',running.url);
+  await wait(`document.body.textContent.includes('C survives')`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='EXPLANATION' && e.getAttribute('aria-pressed')==='true')`),true);
+  const initialHar=join(root,'initial.har');await browser('network','har','stop',initialHar);
+  const initialRequests=JSON.parse(await readFile(initialHar,'utf8')).log.entries;
+  assert.equal(initialRequests.filter(e=>e.request.url.includes('/api/file/')).length,0,'opening Explanation does not precompute Code content');
+  const review = await (await fetch(`${running.url}api/review`)).json();
+  const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
+  const cli = async (...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
+  const context=async()=>JSON.parse(await cli('explain',id,'--context'));
+  const update=async(sections,base=review.diff_display_version)=>{
+    const current=await context();
+    await writeFile(join(root,'update.json'),JSON.stringify({expected_revision:current.explanation_revision,base_display_version:base,sections}));
+    return JSON.parse(await cli('explain',id,'--file',join(root,'update.json')));
+  };
+  const moduleState=`(await import(new URL('assets/state.js',location.href))).state`;
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /fixed file contents|proof/.test(e.textContent))`),false);
+  await browser('find','text','About the explanation base','click');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /not fixed file contents/.test(e.textContent) && /proof/.test(e.textContent))`),true);
+  await browser('find','role','button','click','--name','Go to Middle section','--exact');
+  await browser('find','text','Comment on this block','click');
+  await browser('find','label','Comment on first','fill','Question remains');
+  await browser('find','role','button','click','--name','Add comment');
+  await wait(`document.body.textContent.includes('Question remains')`);
+  await browser('find','role','button','click','--name','Go to Middle section','--exact');
+  await evaluate(`window.readingDocument=document.querySelector('[aria-label="Explanation"][role="region"]');window.originalTop=readingDocument.scrollTop;window.originalCode=(${moduleState}).codeToken;window.originalCache=(${moduleState}).cache;true`);
+  assert.ok(await evaluate('originalTop>0'));
+  await browser('find','role','button','click','--name','Code a.txt (new)','--exact');
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Code' && e.getAttribute('aria-pressed')==='true')`);
+  await update([{...sections[0],title:'Renamed heading'},sections[1]]);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 2'))`);
+  assert.equal(await evaluate(`(${moduleState}).explanation.reading.revision===1 && (${moduleState}).codeToken===window.originalCode && (${moduleState}).cache===window.originalCache`),true);
+  await browser('find','role','button','click','--name','Back to explanation');
+  assert.equal(await evaluate(`readingDocument.scrollTop===window.originalTop && (${moduleState}).explanation.reading.revision===1`),true);
+  await browser('find','role','button','click','--name','Open explanation revision 2');
+  await wait(`document.body.textContent.includes('Renamed heading')`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`),true);
+  await evaluate(`const original=window.fetch; window.fetch=(input,init)=>{let part;try{part=JSON.parse(init?.body)}catch{};if(part?.type==='text' && part.body===${JSON.stringify(bodyA)}) return Promise.reject(new TypeError('Network connection lost'));return original(input,init)};true`);
+  await update(sections);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 3'))`);
+  await browser('find','role','button','click','--name','Open explanation revision 3');
+  await wait(`document.body.textContent.includes('Network connection lost')`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('pre')).some(e=>e.textContent===${JSON.stringify(bodyA)}) && document.body.textContent.includes('Question remains') && document.body.textContent.includes('literal B') && Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='C survives')`),true);
+  // AだけがCodeをD2へ取り込む。別tab BはD1の一覧を持ち続ける。
+  await browser('tab','new',running.url);
+  await wait(`document.body.textContent.includes('C survives')`);
+  await evaluate(`window.bToken=(${moduleState}).codeToken;window.bCache=(${moduleState}).cache;true`);
+  await browser('tab','t1');
+  await browser('find','role','button','click','--name','Code','--exact');
+  await evaluate(`const files=await import(new URL('assets/features/files.js',location.href));await files.refresh();true`);
+  const d2=(await context()).diff_display_version;
+  assert.notEqual(d2,review.diff_display_version);
+  await update(sections,d2);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 4'))`);
+  assert.equal(await evaluate(`(${moduleState}).codeToken===${JSON.stringify(d2)}`),true);
+  await browser('tab','t2');
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 4') && e.textContent.includes('different display version'))`);
+  assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && (${moduleState}).cache===window.bCache && (${moduleState}).explanation.reading.revision===3`),true);
+  await browser('find','role','button','click','--name','Open explanation revision 4');
+  await evaluate(`window.fetchCount=0;const original=window.fetch;window.fetch=(...args)=>{if(String(args[0]).includes('api/review'))fetchCount++;return original(...args)};const app=await import(new URL('assets/features/explanation.js',location.href));await app.receiveExplanation(null);const agent=await import(new URL('assets/features/agent.js',location.href));agent.receiveMissed();true`);
+  await wait(`window.fetchCount>0`);
+  assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && (${moduleState}).cache===window.bCache`),true);
+  await evaluate(`document.body.style.zoom='1.25';true`);
+  assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
+  await evaluate(`document.body.style.zoom='1';true`);
+  await browser('set','viewport','390','900');
+  await browser('find','role','button','click','--name','Code a.txt (new)','--exact');
+  await browser('find','role','button','click','--name','Back to explanation');
+  assert.equal(await evaluate(`(${moduleState}).explanation.reading.revision===4 && (${moduleState}).view==='explanation'`),true);
+  await browser('find','role','button','click','--name','Open file tree');
+  await wait(`document.querySelector('[aria-label="Explanation contents"]').getBoundingClientRect().left>=-1`);
+  await browser('find','role','button','click','--name','Go to Middle section','--exact');
+  // Conversationの下書きと旧引用は、説明更新と見方の変更をまたいで保持する。
+  await browser('find','role','button','click','--name','Conversation (1 comment)');
+  await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Question remains')).click();true`);
+  await browser('find','placeholder','Reply (Cmd/Ctrl+Enter to send)','fill','Draft across views');
+  await update([sections[1]],d2);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 5'))`);
+  await wait(`document.body.textContent.includes('Outdated explanation block')`);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('textarea')).some(e=>e.value==='Draft across views') && (${moduleState}).allComments[0].explanation.revision===1 && (${moduleState}).entries.every(e=>!e.file.seen)`),true);
+  await browser('find','role','button','click','--name','Close','--exact');
+  await browser('find','role','button','click','--name','Open explanation revision 5');
+  await update(sections,d2);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 6'))`);
+  await browser('find','role','button','click','--name','Open explanation revision 6');
+  await wait(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`);
+  assert.equal(await evaluate(`(${moduleState}).allComments[0].outdated`),false);
+  console.log('PASS: initial Explanation, base details, old reading position, unchanged comments, isolated Part fallback, two-screen Code tokens, missed notification recovery and 390px reference return');
+} finally {
+  await browser('close').catch(()=>{});
+  if (running && running.child.exitCode===null) {running.child.kill('SIGINT');await running.exited;}
+}
+
+if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigation')) {
+  root=await mkdtemp(join(tmpdir(),'kemi-explanation-live-'));
+  const dev=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(`<html><body><h1>${req.url}</h1><a href="/other?one=1">Other page</a></body></html>`)});
+  await new Promise(resolve=>dev.listen(0,'127.0.0.1',resolve));
+  const url=`http://127.0.0.1:${dev.address().port}/`;
+  try {
+    await writeFile(join(root,'a.txt'),'old\n');
+    await run('git',['init','-q',root]);await run('git',['-C',root,'add','a.txt']);
+    await run('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture']);
+    await writeFile(join(root,'a.txt'),'new\n');
+    running=await start(['--live',url]);
+    await browser('set','viewport','1280','900');await browser('open',running.url);
+    await wait(`document.querySelector('#live-stage')?.checkVisibility()`);
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='EXPLANATION').disabled`),true);
+    const id=(await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
+    const cli=async(...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
+    const context=async()=>JSON.parse(await cli('explain',id,'--context'));
+    const initial=await context();
+    // 通常のPage操作で辿ったページを登録し、Code世代は変えない。
+    await evaluate(`const live=await import(new URL('assets/features/live.js',location.href));live.setLiveView('page','/other?one=1');true`);
+    await wait(`document.querySelector('#live-stage')?.textContent.includes('/other?one=1')`);
+    let map;
+    for(let attempt=0;attempt<50;attempt++) {map=await context();if(map.references.pages.some(p=>p.url==='/other?one=1'))break;await new Promise(r=>setTimeout(r,50));}
+    assert.ok(map.references.pages.some(p=>p.url==='/other?one=1'));assert.equal(map.diff_display_version,initial.diff_display_version);
+    const sections=[{id:'live',title:'Page explanation',blocks:[{id:'page',part:{type:'text',body:'Page link'},references:[{type:'page',url:'/other?one=1'}]}]}];
+    await writeFile(join(root,'update.json'),JSON.stringify({expected_revision:0,base_display_version:initial.diff_display_version,sections}));
+    await cli('explain',id,'--file',join(root,'update.json'));
+    await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 1'))`);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').checkVisibility()`),true);
+    await browser('find','role','button','click','--name','Open explanation revision 1');
+    await wait(`document.querySelector('[aria-label="Explanation"][role="region"]').checkVisibility()`);
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Review view"]').querySelectorAll('[aria-pressed="true"]').length`),1);
+    await browser('find','role','button','click','--name','Page /other?one=1','--exact');
+    await wait(`document.querySelector('#live-stage').checkVisibility()`);
+    await browser('find','role','button','click','--name','Back to explanation');
+    await browser('set','viewport','390','900');
+    await browser('find','role','button','click','--name','Page /other?one=1','--exact');
+    await browser('find','role','button','click','--name','Back to explanation');
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Explanation"][role="region"]').checkVisibility()`),true);
+    console.log('PASS: live starts on Page without explanation, mid-review addition does not steal the view, Page registration keeps the Code generation and reference return works at 1280/390px');
+    running.child.kill('SIGINT');await running.exited;
+    // liveの保留は説明だけでも残り、新しいscan後も旧基点を保持する。
+    running=await start(['--resume',id]);await browser('open',running.url);
+    await wait(`document.querySelector('[aria-label="Explanation"][role="region"]')?.checkVisibility()`);
+    const restored=await context();
+    assert.equal(restored.explanation_revision,1);assert.notEqual(restored.diff_display_version,initial.diff_display_version);
+    assert.equal(restored.explanation.base_display_version,initial.diff_display_version);
+    await wait(`document.body.textContent.includes('Explanation for a different display version')`);
+    console.log('PASS: actual live process suspend/resume keeps explanation revision/base and displays the new scan mismatch');
+  } finally {
+    await browser('close').catch(()=>{});
+    if(running && running.child.exitCode===null){running.child.kill('SIGINT');await running.exited;}
+    await new Promise(resolve=>dev.close(resolve));
+  }
 }

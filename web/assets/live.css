@@ -80,7 +80,7 @@ body:not([data-live-view="page"]) .lv-top-agent {
 }
 
 /* ---- ページとコードの見方の切り替え ---- */
-body[data-live-view="page"] #main > :not(.lv-band):not(.lv-stage) {
+body[data-review-view="page"] #main > :not(.lv-band):not(.lv-stage):not(#explanation-return):not(#explanation-update) {
   display: none !important;
 }
 
@@ -90,7 +90,7 @@ body[data-live-code="true"] #live-no-code {
   display: none;
 }
 
-body[data-live-view="code"][data-live-code="false"] #main > :not(.lv-band):not(#live-no-code) {
+body[data-review-view="code"][data-live-code="false"] #main > :not(.lv-band):not(#live-no-code):not(#explanation-return):not(#explanation-update) {
   display: none !important;
 }
 

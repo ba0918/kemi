@@ -186,6 +186,7 @@ export function submit(verdict) {
  *   onMessage: (message: any) => void,
  *   onAgent: (agent: any) => void,
  *   onMissed: () => void,
+ *   onExplanation: (notice: any) => void,
  * }} AgentHandlers
  */
 
@@ -276,6 +277,7 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
   json("thread", agent.onThread);
   json("message", agent.onMessage);
   json("agent", agent.onAgent);
+  json('explanation', agent.onExplanation);
   // どの通知を取りこぼしたかは分からない。更新があったものとして扱い、往復の中身も取り直す。
   events.addEventListener("lagged", () => {
     onUpdate();

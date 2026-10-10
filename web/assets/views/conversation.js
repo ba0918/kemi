@@ -406,7 +406,7 @@ function renderThread(comment, options) {
     acts.append(go);
   } else if (!info.vanished) {
     const go = button("cv-go");
-    go.textContent = "Go to line";
+    go.textContent = comment.explanation ? 'Show original explanation' : "Go to line";
     go.addEventListener("click", () => actions.goToComment(comment, info.unit));
     acts.append(go);
   }

@@ -1,4 +1,5 @@
 // @ts-check
+import { actions } from '../actions.js';
 // 会話パネル（R-VIEW）の開閉と幅、一覧とスレッドの行き来、絞り込み、畳み、スレッドから
 // その行へ移る処理と、書く欄（全体への発言と返信）の受け付け。広い画面では右の列、狭い画面
 // では画面いっぱいのシート（R-NARROW）。
@@ -300,7 +301,7 @@ export async function loadCommitGroups() {
   const reviews = state.reviews;
   try {
     const review = await api.getReview(false, "commit");
-    if (!reviews.has("commit")) {
+    if (review.diff_display_version === state.codeToken && !reviews.has("commit")) {
       reviews.set("commit", review);
     }
   } catch {
@@ -324,6 +325,11 @@ export async function loadCommitGroups() {
  * @param {string | null} unit
  */
 export async function goToComment(comment, unit) {
+  if (comment.target_type === 'explanation') {
+    if (state.narrow) closeSheet();
+    actions.showExplanationComment(comment);return;
+  }
+  actions.selectView('code');
   const line =
     comment.start_line === null || comment.start_line === undefined
       ? null

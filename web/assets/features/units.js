@@ -48,6 +48,10 @@ export async function switchUnit(unit, jump) {
   if (!review) {
     try {
       review = await api.getReview(false, unit);
+      if (review.diff_display_version !== state.codeToken) {
+        showToast('This unit belongs to a different display version. Refresh Code explicitly first.');
+        return;
+      }
     } catch (error) {
       showOverlay("could not switch the unit", String(error));
       return;

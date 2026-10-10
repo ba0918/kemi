@@ -472,7 +472,7 @@ try {
   await browser('set', 'viewport', ...WIDE);
   await waitFor(wideApplied);
   const labelled = await evaluate(`Array.from(document.querySelectorAll('.topbar button')).filter(b => b.textContent.trim() !== '' && getComputedStyle(b).display !== 'none' && b.getClientRects().length > 0).map(b => b.id || b.className)`);
-  assert.deepEqual([...new Set(labelled)].sort(), ['btn-approve', 'btn-changes', 'btn-comments', 'unit-button']);
+  assert.deepEqual([...new Set(labelled)].sort(), ['btn-approve', 'btn-changes', 'btn-comments', 'review-view-button', 'unit-button']);
   assert.equal(await isShown('#review-meta'), true);
   assert.ok(await evaluate(`document.querySelectorAll('#review-meta span').length`) > 0);
   assert.equal(await evaluate(`document.querySelector('#review-subtitle').hidden || getComputedStyle(document.querySelector('#review-subtitle')).display !== 'none'`), true);

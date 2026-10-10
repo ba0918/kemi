@@ -52,6 +52,9 @@ export const THEME_LABELS = {
 
 /** @type {{
  *   review: any,
+ *   view: 'explanation'|'code'|'page',
+ *   codeToken: string|null,
+ *   explanation: {latest: any, reading: any, notification: any, screen: string, returnTo: boolean, scrollTop: number},
  *   messages: any[],
  *   agent: import("./model.js").AgentState,
  *   conversation: {
@@ -151,6 +154,9 @@ export const THEME_LABELS = {
  * }} */
 export const state = {
   review: null,
+  view: 'code',
+  codeToken: null,
+  explanation: {latest:null,reading:null,notification:null,screen:crypto.randomUUID(),returnTo:false,scrollTop:0},
   // エージェントとの往復（agent-channel.md）。発言、状態と未渡しの件数（サーバが数える）、
   // 書きかけの返信（描き直しで消さないため。ページの間だけ）。
   messages: [],

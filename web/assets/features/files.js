@@ -48,6 +48,9 @@ import { renderTree, updateGroupHead } from "../views/tree.js";
  * @param {boolean} fresh
  */
 export function applyReview(review, fresh) {
+  const token = review.diff_display_version ?? null;
+  if (state.codeToken !== token) state.reviews = new Map();
+  state.codeToken = token;
   state.review = review;
   state.unit = review.unit ?? null;
   if (Array.isArray(review.units)) {
@@ -67,6 +70,7 @@ export function applyReview(review, fresh) {
   state.treeItems = new Map();
   state.treeVersion += 1;
   rebuildVisible();
+  actions.explanationCodeChanged?.();
 }
 
 /**

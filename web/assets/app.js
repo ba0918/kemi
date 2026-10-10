@@ -96,6 +96,7 @@ import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayMode, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
+import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, commentOnExplanation } from './features/explanation.js';
 
 /**
  * @param {KeyboardEvent} event
@@ -129,6 +130,7 @@ function handleKey(event) {
     }
   }
   const target = /** @type {HTMLElement} */ (event.target);
+  if (state.view !== 'code') return;
   if (
     target.tagName === "INPUT" ||
     target.tagName === "TEXTAREA" ||
@@ -212,7 +214,8 @@ async function boot() {
       onThread: afterBoot(receiveThread),
       onMessage: afterBoot(receiveMessage),
       onAgent: afterBoot(receiveAgent),
-      onMissed: afterBoot(receiveMissed),
+      onMissed: afterBoot(()=>{receiveMissed();void receiveExplanation(null);}),
+      onExplanation: afterBoot(notice=>{void receiveExplanation(notice);receiveMissed();}),
     },
   );
   try {
@@ -222,21 +225,23 @@ async function boot() {
     renderConversation({ toEnd: true });
     void loadCommitGroups();
     renderTree();
-    if (state.visible.length > 0) {
+    if (state.visible.length > 0 && !state.review?.explanation) {
       await selectIndex(0, { scrollTop: true });
     } else {
       renderNotice();
     }
     // ページの見方は `--live` のレビューでだけ読み込む（R-VERIFY）。modulepreload にも載せない。
     if (state.review?.live) {
-      const { startLive, captureBeforeHand, showPageComment, refreshPageComments, refreshFromBadge } = await import(
+      const { startLive, setLiveView, captureBeforeHand, showPageComment, refreshPageComments, refreshFromBadge } = await import(
         "./features/live.js"
       );
       startLive(state.review.live);
+      bindLiveView(setLiveView);
       beforeHand = captureBeforeHand;
       onUpdateBadge = refreshFromBadge;
       pageComments = { show: showPageComment, changed: refreshPageComments };
     }
+    await startExplanation(state.review);
   } catch (error) {
     failed = true;
     held = null;
@@ -258,6 +263,12 @@ document.addEventListener("keydown", handleKey);
 document.addEventListener("compositionstart", startComposition);
 document.addEventListener("compositionend", endComposition);
 dom.btnTree.addEventListener("click", toggleDrawer);
+dom.viewSwitch.addEventListener('click',event=>{
+  const view=/** @type {HTMLElement} */(event.target).closest('button')?.dataset.reviewView;
+  if(view==='code'||view==='page'||view==='explanation') void selectView(view);
+});
+dom.explanationUpdate.addEventListener('click',()=>void openLatestExplanation());
+dom.explanationReturn.addEventListener('click',()=>void selectView('explanation'));
 dom.drawerScrim.addEventListener("click", closeDrawer);
 dom.menuWrap.addEventListener("click", () => setWrap(!displayWrap()));
 dom.menuFocus.addEventListener("click", toggleFocusOnly);
@@ -307,6 +318,13 @@ window
   .addEventListener("change", onSystemThemeChange);
 
 bindActions({
+  selectView: view=>void selectView(view),
+  syncReviewView,
+  explanationChanged,
+  explanationCodeChanged,
+  showExplanationComment: comment=>void showExplanationComment(comment),
+  followExplanationReference: reference=>void followExplanationReference(reference),
+  commentOnExplanation,
   renderPartMarkdown,
   addComment,
   closeThread,
