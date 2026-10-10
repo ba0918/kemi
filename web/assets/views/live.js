@@ -648,6 +648,18 @@ function buildCompose() {
 
 const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
 
+/** @type {WeakMap<HTMLElement, { row: HTMLElement, end: () => void }>} */
+const placeHovers = new WeakMap();
+
+/** @param {HTMLElement} list */
+function endPlaceHover(list) {
+  const hover = placeHovers.get(list);
+  if (hover) {
+    placeHovers.delete(list);
+    hover.end();
+  }
+}
+
 /**
  * 書いているコメントの場所の一覧。番号（押すと本文に `#n` を入れる）・種類・指している要素と、一覧から外す ×。
  * 行に乗せている間はページのその場所を光らせ、種類と要素を押すとその場所までスクロールして光らせる（R-PAGE-COMMENT）。
@@ -661,6 +673,8 @@ const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
  * @param {boolean} locked 保存している間は外せない
  */
 export function renderPlaces(compose, places, handlers, locked) {
+  // DOMから行を外してもmouseleaveは届かないため、置き換える前にホバーを終える。
+  endPlaceHover(compose.list);
   compose.list.textContent = "";
   for (const place of places) {
     const row = el("li", "lv-place");
@@ -686,8 +700,16 @@ export function renderPlaces(compose, places, handlers, locked) {
     show.title = `Show place ${place.n} on the page`;
     show.append(textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what));
     show.addEventListener("click", () => handlers.glow(place.n, "flash"));
-    row.addEventListener("mouseenter", () => handlers.glow(place.n, "on"));
-    row.addEventListener("mouseleave", () => handlers.glow(place.n, "off"));
+    row.addEventListener("mouseenter", () => {
+      endPlaceHover(compose.list);
+      placeHovers.set(compose.list, { row, end: () => handlers.glow(place.n, "off") });
+      handlers.glow(place.n, "on");
+    });
+    row.addEventListener("mouseleave", () => {
+      if (placeHovers.get(compose.list)?.row === row) {
+        endPlaceHover(compose.list);
+      }
+    });
     row.append(number, show, remove);
     compose.list.append(row);
   }

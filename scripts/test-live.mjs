@@ -2,6 +2,7 @@
 // scripts/live-dev-server.mjs の試験用の開発サーバを相手に起動し、画面を agent-browser で確かめる。
 //
 //   node scripts/test-live.mjs <kemi-bin>
+//   node scripts/test-live.mjs <kemi-bin> --places-glow
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -3512,6 +3513,45 @@ async function placesGlowFromTheListAndTheThread(repository) {
     await waitForPixels(frame, shots, 'draft-left', right, isGlow, false);
     console.log('PASS 書きかけの場所の一覧の行に乗せるとその場所が光り、離れると光が消える');
 
+    await browser('focus', '#live-compose .lv-compose-body');
+    await pointAt(row);
+    await waitForPixels(frame, shots, 'draft-before-redraw', right, isGlow);
+    // 本文に入力すると場所の一覧も描き直す。ポインタは、描き直される行の上に残す。
+    await browser('press', 'a');
+    await pointAt('#live-compose .lv-compose-head');
+    await waitForPixels(frame, shots, 'draft-after-redraw', await rightOf(300), isGlow, false);
+    console.log('PASS ホバー中に本文を入力して一覧が描き直されても、離れた後に光が残らない');
+
+    await pointAt(row);
+    await waitForPixels(frame, shots, 'draft-before-remove', await rightOf(300), isGlow);
+    await browser('focus', `${row} .lv-place-remove`);
+    await browser('press', 'Enter');
+    await waitFor(`${draftNumbers} === '[]'`);
+    await waitForPixels(frame, shots, 'draft-after-remove', await rightOf(300), isGlow, false);
+    console.log('PASS ホバー中の場所を一覧から外すと、mouseleaveを待たずに光が消える');
+
+    await clickInPane(livePane, 600, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await pointAt(row);
+    await waitForPixels(frame, shots, 'draft-before-hiding', await rightOf(300), isGlow);
+    await browser('focus', '.lv-modetab[data-view="code"]');
+    await browser('press', 'Enter');
+    await waitFor(`document.body.dataset.liveView === 'code'`);
+    await browser('focus', '.lv-modetab[data-view="page"]');
+    await browser('press', 'Enter');
+    await waitFor(`document.body.dataset.liveView === 'page'`);
+    await pointAt('#live-compose .lv-compose-head');
+    await waitForPixels(frame, shots, 'draft-after-hiding', await rightOf(300), isGlow, false);
+    console.log('PASS ホバー中にコードの見方へ切り替えて戻っても、光が残らない');
+
+    await pointAt(row);
+    await browser('click', `${row} .lv-place-show`);
+    await pointAt('#live-compose .lv-compose-head');
+    await browser('fill', '#live-compose .lv-compose-body', 'flash survives redraw');
+    await waitForPixels(frame, shots, 'draft-click-survives-leaving-and-redraw', await rightOf(300), isGlow);
+    await waitForPixels(frame, shots, 'draft-click-finishes', await rightOf(300), isGlow, false);
+    console.log('PASS クリックで始まった光は、ホバー終了や一覧の描き直しでは消えず、点滅後に消える');
+
     await wheel(-6000);
     await waitForPixels(frame, shots, 'draft-top', right, isPlaceInk, false);
     await browser('click', `${row} .lv-place-what`);
@@ -3713,8 +3753,7 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   }
 }
 
-const repository = await makeRepository();
-try {
+async function verifyLiveReview(repository) {
   await relayCarriesHmrAndHidesTheCookie(repository);
   await waitsForTheDevServer(repository);
   await fileReloadsWhenItsCssIsSaved(repository);
@@ -3771,6 +3810,15 @@ try {
   await placesGlowFromTheListAndTheThread(repository);
   await handedPageCommentsReachWaitAndSubmit(repository);
   await snapshotsAndMocksComeBackAfterResuming(repository);
+}
+
+const repository = await makeRepository();
+try {
+  if (process.argv[3] === '--places-glow') {
+    await placesGlowFromTheListAndTheThread(repository);
+  } else {
+    await verifyLiveReview(repository);
+  }
 } finally {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
