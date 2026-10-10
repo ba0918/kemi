@@ -2247,7 +2247,7 @@ ul.files ul {
 .rail-hand-note {
   position: absolute;
   right: calc(100% + 18px);
-  bottom: 64px;
+  bottom: max(64px, var(--lv-compose-clearance, 0px));
   z-index: 7;
   width: max-content;
   max-width: 220px;

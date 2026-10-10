@@ -15,6 +15,9 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   shiftedOpen: boolean,
  *   listed: { main: number, shifted: number },
  *   unmarked: boolean,
+ *   fromStart: boolean,
+ *   canRecord: boolean,
+ *   recording: boolean,
  * }} ChangeListState
  * 比べられないときに一覧の代わりに出す知らせ。
  * @typedef {{ notice: string }} ChangeNotice
@@ -173,7 +176,7 @@ export function buildShell() {
   // 広い画面の帯ではアイコンだけ、狭い画面のメニューでは名前も出す。
   const recordButton = button("lv-record lv-record-now");
   recordButton.append(svgIcon(RECORD_ICON), textEl("span", "lv-record-label", "Record now"));
-  recordButton.title = "Record now: take a snapshot of the page as it is now";
+  recordButton.title = "Record now: save this view and compare from it";
   recordButton.setAttribute("aria-label", "Record now");
   // モックの入口は、比べる相手の選択肢の最後の「Mock file…」と、狭い画面の帯のメニュー。割り当てている間の読み直す・
   // 外す操作は、選択の横と変化の一覧の見出しの「…」から開くメニューに置く（R-PAGE-MOCK、R-PAGE-VIEW）。
@@ -648,6 +651,18 @@ function buildCompose() {
 
 const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
 
+/** @type {WeakMap<HTMLElement, { row: HTMLElement, end: () => void }>} */
+const placeHovers = new WeakMap();
+
+/** @param {HTMLElement} list */
+function endPlaceHover(list) {
+  const hover = placeHovers.get(list);
+  if (hover) {
+    placeHovers.delete(list);
+    hover.end();
+  }
+}
+
 /**
  * 書いているコメントの場所の一覧。番号（押すと本文に `#n` を入れる）・種類・指している要素と、一覧から外す ×。
  * 行に乗せている間はページのその場所を光らせ、種類と要素を押すとその場所までスクロールして光らせる（R-PAGE-COMMENT）。
@@ -661,6 +676,8 @@ const PLACE_KINDS = { element: "Element", arrow: "Arrow", pen: "Pen" };
  * @param {boolean} locked 保存している間は外せない
  */
 export function renderPlaces(compose, places, handlers, locked) {
+  // DOMから行を外してもmouseleaveは届かないため、置き換える前にホバーを終える。
+  endPlaceHover(compose.list);
   compose.list.textContent = "";
   for (const place of places) {
     const row = el("li", "lv-place");
@@ -686,8 +703,16 @@ export function renderPlaces(compose, places, handlers, locked) {
     show.title = `Show place ${place.n} on the page`;
     show.append(textEl("span", "lv-place-kind", PLACE_KINDS[place.kind]), textEl("span", "lv-place-what", what));
     show.addEventListener("click", () => handlers.glow(place.n, "flash"));
-    row.addEventListener("mouseenter", () => handlers.glow(place.n, "on"));
-    row.addEventListener("mouseleave", () => handlers.glow(place.n, "off"));
+    row.addEventListener("mouseenter", () => {
+      endPlaceHover(compose.list);
+      placeHovers.set(compose.list, { row, end: () => handlers.glow(place.n, "off") });
+      handlers.glow(place.n, "on");
+    });
+    row.addEventListener("mouseleave", () => {
+      if (placeHovers.get(compose.list)?.row === row) {
+        endPlaceHover(compose.list);
+      }
+    });
     row.append(number, show, remove);
     compose.list.append(row);
   }
@@ -775,9 +800,9 @@ export function renderCompareOptions(select, options, chosen, rule) {
  */
 export function renderPageTree(container, items, handlers, changes, locked) {
   // 変化の一覧の中の操作にフォーカスがあれば、描き直した一覧の同じ操作に戻す（行を押して描き直したときも）。
-  const focused = focusInChanges(container.querySelector('.lv-page[data-current="true"] > .lv-changes'), container.ownerDocument);
-  container.textContent = "";
-  container.append(textEl("div", "lv-tree-head", `Pages ${items.length}`));
+  const previous = container.querySelector('.lv-page[data-current="true"] > .lv-changes');
+  const focused = focusInChanges(previous, container.ownerDocument);
+  const head = textEl("div", "lv-tree-head", `Pages ${items.length}`);
   const list = el("ul", "lv-pages");
   for (const item of items) {
     const row = el("li", "lv-page");
@@ -815,7 +840,21 @@ export function renderPageTree(container, items, handlers, changes, locked) {
     }
     list.append(row);
   }
-  container.append(list);
+  const fragment = document.createDocumentFragment();
+  fragment.append(head, list);
+  const previousRow = previous?.parentElement;
+  const previousList = previousRow?.parentElement;
+  const nextRow = list.querySelector('.lv-page[data-current="true"]');
+  const nextBox = nextRow?.querySelector(":scope > .lv-changes");
+  if (previous && previousRow && previousList && nextRow && nextBox
+      && previousRow.dataset.page === nextRow.getAttribute("data-page")
+      && updateStartGuide(previous, nextBox)) {
+    replaceAround(previousRow, nextRow, previous, nextBox);
+    replaceAround(previousList, list, previousRow, nextRow);
+    replaceAround(container, fragment, previousList, list);
+  } else {
+    container.replaceChildren(fragment);
+  }
   // 文書に入ってからでないとフォーカスできない。
   const box = container.querySelector('.lv-page[data-current="true"] > .lv-changes');
   if (box instanceof HTMLElement) {
@@ -831,6 +870,7 @@ export function renderPageTree(container, items, handlers, changes, locked) {
  *   onListed: (group: "main" | "shifted", count: number) => void,
  *   onShow: (element: import("../live-diff.js").ElementChanges) => void,
  *   onMockMenu: (anchor: HTMLElement) => void,
+ *   onRecord: () => void,
  * }} ChangeHandlers
  */
 
@@ -842,6 +882,7 @@ const FOCUSABLE_IN_CHANGES = [
   ".lv-change-main .lv-change-show",
   ".lv-change-shifted .lv-change-show",
   ".lv-changes-mock .lv-mock-menu-button",
+  ".lv-use-current",
 ];
 
 /**
@@ -863,12 +904,53 @@ function focusInChanges(box, document) {
 
 /**
  * 描き直した一覧の、前にフォーカスのあった操作にフォーカスを戻す。
- * @param {HTMLElement} box
+ * @param {Element} box
  * @param {string | undefined} selector focusInChanges の返り値
  */
 function refocus(box, selector) {
   if (selector) {
     /** @type {HTMLElement | null} */ (box.querySelector(selector))?.focus();
+  }
+}
+
+/**
+ * @param {Element | null} previous
+ * @param {Element} box
+ */
+function updateStartGuide(previous, box) {
+  const guide = previous?.querySelector(".lv-start-comparison");
+  const next = box.querySelector(".lv-start-comparison");
+  const record = guide?.querySelector("button");
+  const nextRecord = next?.querySelector("button");
+  if (previous && guide && next && record instanceof HTMLButtonElement && nextRecord instanceof HTMLButtonElement) {
+    // 初期化中に一覧が変わっても、押しているボタンを入れ替えるとpointerupのクリックが失われる。
+    record.disabled = nextRecord.disabled;
+    record.textContent = nextRecord.textContent;
+    replaceAround(previous, box, guide, next);
+    previous.setAttribute("data-main", box.getAttribute("data-main") ?? "0");
+    previous.setAttribute("data-shifted", box.getAttribute("data-shifted") ?? "0");
+    return true;
+  }
+  return false;
+}
+
+/**
+ * @param {Element} parent
+ * @param {Node} replacement
+ * @param {Node} kept
+ * @param {Node} slot
+ */
+function replaceAround(parent, replacement, kept, slot) {
+  // ボタンだけを別の木へ移しても押下は途切れるため、その祖先も文書につないだまま周りを替える。
+  const children = [...replacement.childNodes];
+  for (const child of [...parent.childNodes]) {
+    if (child !== kept) parent.removeChild(child);
+  }
+  let before = true;
+  for (const child of children) {
+    if (child === slot) before = false;
+    else if (before) parent.insertBefore(child, kept);
+    else parent.appendChild(child);
   }
 }
 
@@ -893,6 +975,10 @@ export function renderChanges(container, handlers, changes) {
     return;
   }
   const box = changeList(changes, handlers);
+  if (old && updateStartGuide(old, box)) {
+    refocus(old, focused);
+    return;
+  }
   if (old) {
     old.replaceWith(box);
   } else {
@@ -944,6 +1030,17 @@ function changeList(state, handlers) {
   vs.title = `Compared with ${state.reference}`;
   head.append(textEl("span", "", `Changes ${main.length}`), vs);
   box.append(head);
+  if (state.fromStart && changes.length > 0) {
+    const guide = el("div", "lv-start-comparison");
+    guide.setAttribute("role", "note");
+    guide.append(textEl("p", "", "Compared with the page at load time. Changes during initialization are included."));
+    const record = button("lv-record lv-use-current");
+    record.textContent = state.recording ? "Recording…" : "Use current as baseline";
+    record.disabled = !state.canRecord;
+    record.addEventListener("click", handlers.onRecord);
+    guide.append(record);
+    box.append(guide);
+  }
   if (state.unmarked) {
     box.append(textEl("p", "lv-changes-unmarked", "Not marked: removed elements cannot be located in the snapshot"));
   }

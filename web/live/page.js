@@ -832,18 +832,23 @@
   const GLOW_GAP = 4;
   /** @type {ReturnType<typeof setTimeout> | null} */
   let glowTimer = null;
+  /** @type {'on' | 'flash' | null} */
+  let glowMode = null;
 
   /**
-   * 文書の座標の箱を光らせる。前の光は消す（箱が無いか `off` なら消すだけ）。`scroll` なら、箱が画面の真ん中に来るようにページをスクロールする。
+   * 文書の座標の箱を光らせる。`scroll` なら、箱が画面の真ん中に来るようにページをスクロールする。
    * 光らせた後の箱を画面の座標で返す（レビュー画面が、等倍で枠より広いページの外側を合わせるため）。
    * @param {Rect | null} rect 文書の座標
-   * @param {string} mode `on`（消すまで）・`flash`（明滅して消える）・`off`（消す）
+   * @param {string} mode `on`（消すまで）・`flash`（明滅して消える）・`off`（ホバーの光を消す）
    * @param {boolean} scroll
    * @returns {Rect | null}
    */
   function glow(rect, mode, scroll) {
+    // ホバーの終了は、後からクリックや「ページで見る」で始まった点滅の終了ではない。
+    if (mode === 'off' && glowMode === 'flash') return null;
     if (glowTimer !== null) clearTimeout(glowTimer);
     glowTimer = null;
+    glowMode = null;
     glowLayer?.replaceChildren();
     if (rect === null || (mode !== 'on' && mode !== 'flash')) {
       releaseLayers();
@@ -863,6 +868,7 @@
       'border-radius': '4px', 'box-shadow': GLOW_STRONG, margin: '0', padding: '0', 'pointer-events': 'none',
     });
     layers().glow.replaceChildren(ring);
+    glowMode = mode;
     placePlaces();
     if (mode === 'flash') {
       if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -870,6 +876,7 @@
       }
       glowTimer = setTimeout(() => {
         glowTimer = null;
+        glowMode = null;
         ring.remove();
         releaseLayers();
       }, GLOW_FLASH);
@@ -1388,7 +1395,7 @@
   }
 
   /**
-   * 場所の点と要素の箱をすべて囲む箱（文書の座標）。何も無ければ null。
+   * 場所の表示・画像の範囲（文書の座標）。何も無ければ null。
    * @param {ImagePlace[]} places
    * @returns {Rect | null}
    */
@@ -1400,6 +1407,8 @@
         xs.push(point.x);
         ys.push(point.y);
       }
+      // ペンが拾う入れ物の箱は描線より広いことがあり、その箱まで広げると囲みの場所を見失う。
+      if (place.kind === 'pen') continue;
       for (const { rect } of place.elements) {
         xs.push(rect.x, rect.x + rect.w);
         ys.push(rect.y, rect.y + rect.h);
