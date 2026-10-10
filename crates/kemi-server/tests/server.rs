@@ -5509,6 +5509,18 @@ async fn held_explanation_versions_are_not_discarded_to_accept_an_over_capacity_
         413
     );
     assert_eq!(server.sink.last_state(), before);
+    let refreshed: Value = server
+        .page
+        .get("api/review?refresh=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(
+        refreshed["diff_display_version"],
+        context["diff_display_version"]
+    );
+    assert_eq!(server.sink.last_state().explanation, before.explanation);
     assert_eq!(
         server.page.get("api/explanation?revision=1").await.status(),
         200
@@ -5529,6 +5541,24 @@ async fn held_explanation_versions_are_not_discarded_to_accept_an_over_capacity_
         server.page.get("api/explanation?revision=1").await.status(),
         404
     );
+}
+
+#[tokio::test]
+async fn code_imports_without_explanation_continue_past_4096_generations() {
+    let server = AgentServer::start().await;
+    for generation in 2..=4098 {
+        let response = server.page.get("api/review?refresh=1").await;
+        assert_eq!(response.status(), 200);
+        let review: Value = response.json().await.unwrap();
+        assert_eq!(
+            review["diff_display_version"],
+            format!("01TESTREVIEW:{generation}")
+        );
+        assert!(review["explanation"].is_null());
+    }
+    let saved = server.sink.last_state();
+    assert_eq!(saved.display.unwrap().issued, 4098);
+    assert!(saved.explanation.is_none());
 }
 
 #[tokio::test]
