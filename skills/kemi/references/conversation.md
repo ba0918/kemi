@@ -190,6 +190,9 @@ separately with the screen's Code token. Matching bases offer an information
 detail about the lack of byte and correctness guarantees; different bases
 show a separate notice with both versions. Context always describes the
 server's current metadata, not any particular reader's Code display.
+The screen uses known side presence and total lines for a Code reference;
+status labels alone do not establish them. A failed target load or changed
+line range gives a reason rather than silently shortening the range.
 
 The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
 is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your

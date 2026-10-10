@@ -103,29 +103,39 @@ pub(crate) fn reference_map(
         .iter()
         .flat_map(|group| {
             group.files.iter().map(move |file| {
-                let known = source.reference_metadata(&file.id);
+                let known = entry_reference_metadata(file, source);
                 CodeReferenceEntry {
                     unit,
                     group_id: group.id.clone(),
                     path: file.path.clone(),
-                    old_present: known
-                        .as_ref()
-                        .map_or(file.status != Status::Add, |known| known.old_present),
-                    new_present: known
-                        .as_ref()
-                        .map_or(file.status != Status::Delete, |known| known.new_present),
-                    old_lines: known
-                        .as_ref()
-                        .filter(|_| !file.binary && !file.content_skipped)
-                        .and_then(|known| known.old_lines),
-                    new_lines: known
-                        .as_ref()
-                        .filter(|_| !file.binary && !file.content_skipped)
-                        .and_then(|known| known.new_lines),
+                    old_present: known.old_present,
+                    new_present: known.new_present,
+                    old_lines: known.old_lines,
+                    new_lines: known.new_lines,
                 }
             })
         })
         .collect()
+}
+
+pub(crate) fn entry_reference_metadata(
+    file: &kemi_core::domain::review::FileEntry,
+    source: &dyn kemi_core::source::ReviewSource,
+) -> kemi_core::source::ReferenceMetadata {
+    let mut known =
+        source
+            .reference_metadata(&file.id)
+            .unwrap_or(kemi_core::source::ReferenceMetadata {
+                old_present: file.status != Status::Add,
+                new_present: file.status != Status::Delete,
+                old_lines: None,
+                new_lines: None,
+            });
+    if file.binary || file.content_skipped {
+        known.old_lines = None;
+        known.new_lines = None;
+    }
+    known
 }
 
 fn current_map(state: &AppState) -> Result<Vec<CodeReferenceEntry>, ApiError> {

@@ -161,8 +161,10 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await run('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']);
   await writeFile(join(root, 'a.txt'), 'new\n');
   const ref = {type:'code',unit:null,group_id:'worktree',path:'a.txt',side:'new',start_line:null,end_line:null};
+  await writeFile(join(root,'b.txt'),'another file\n');
+  await writeFile(join(root,'skip.txt'),'x'.repeat(1_048_577));
   const sections = [{id:'intro',title:'Reading order',blocks:[{id:'first',part:{type:'text',body:bodyA},references:[]},...Array.from({length:12},(_,i)=>({id:`context-${i}`,part:{type:'text',body:`Context paragraph ${i}\n\n${'Reader context. '.repeat(40)}`},references:[]}))]},
-    {id:'middle',title:'Middle section',blocks:[{id:'code',part:codeB,references:[ref]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]},{id:'diagram',part:sequence,references:[]}]}];
+    {id:'middle',title:'Middle section',blocks:[{id:'code',part:codeB,references:[ref,{...ref,path:'b.txt'}]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]},{id:'diagram',part:sequence,references:[]}]}];
   await writeFile(join(root, 'explanation.json'), JSON.stringify({sections}));
   running = await start(['--worktree','--explanation',join(root,'explanation.json')]);
   await browser('set','viewport','1280','900');
@@ -259,6 +261,11 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Open explanation revision 6');
   await wait(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`);
   assert.equal(await evaluate(`(${moduleState}).allComments[0].outdated`),false);
+  await unlink(join(root,'b.txt'));
+  await browser('find','role','button','click','--name','Code b.txt (new)','--exact');
+  await wait(`document.querySelector('#overlay-card')?.textContent.includes('Reference unavailable for this display version')`);
+  await browser('find','role','button','click','--name','Close','--exact');
+  await browser('find','role','button','click','--name','Back to explanation');
   await unlink(join(root,'explanation.json'));
   running.child.kill('SIGINT');await running.exited;
   running=await start(['--resume',id]);await browser('open',running.url);
@@ -271,14 +278,14 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.equal(await evaluate(`(${moduleState}).allComments[0].explanation.revision===1 && (${moduleState}).allComments[0].explanation.quote.block.part.body===${JSON.stringify(bodyA)}`),true);
   // 既知の旧基点で受理した未知対象・未知行数・消えた行は画面の一覧で理由を出す。
   await update([{id:'unavailable',title:'Unavailable targets',blocks:[{id:'targets',part:{type:'text',body:'Unavailable links'},references:[
-    {...ref,path:'missing.txt'}, {...ref,start_line:2,end_line:3}, {...ref,path:'unloaded.txt',start_line:1,end_line:1}
+    {...ref,path:'missing.txt'}, {...ref,start_line:2,end_line:3}, {...ref,path:'skip.txt',start_line:1,end_line:1}
   ]}]}],d2);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 7'))`);
   await browser('find','role','button','click','--name','Open explanation revision 7');
   await browser('find','role','button','click','--name','Code missing.txt (new)','--exact');
   await wait(`document.body.textContent.includes('Reference unavailable for this display version')`);
   await browser('find','role','button','click','--name','Close','--exact');
-  await browser('find','role','button','click','--name','Code a.txt:2–3 (new)','--exact');
+  await browser('find','role','button','click','--name','Code skip.txt:1–1 (new)','--exact');
   await wait(`document.body.textContent.includes('line count is unknown')`);
   await browser('find','role','button','click','--name','Close','--exact');
   await browser('find','role','button','click','--name','Code','--exact');

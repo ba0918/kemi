@@ -15,9 +15,10 @@ export function resolveCodeReference(reference, review, token, data) {
     .map((/** @type {any} */ file) => ({group,file})));
   if (entries.length !== 1) return unavailable(entries.length ? 'The target is ambiguous.' : 'The target is absent from this list.');
   const entry = entries[0];
-  if ((reference.side === 'old' && entry.file.status === 'add') || (reference.side === 'new' && entry.file.status === 'delete')) return unavailable('The requested side is absent.');
+  const present=entry.file[`${reference.side}_present`] ?? (reference.side==='old' ? entry.file.status!=='add' : entry.file.status!=='delete');
+  if (!present) return unavailable('The requested side is absent.');
   if (reference.start_line !== null) {
-    const total = data?.[`${reference.side}_total`];
+    const total = data?.[`${reference.side}_total`] ?? entry.file[`${reference.side}_lines`];
     if (!Number.isInteger(total) || data?.binary || data?.content_skipped) return unavailable('The line count is unknown or this content cannot be loaded.');
     if (reference.end_line > total) return unavailable('The requested lines are no longer present.');
   }

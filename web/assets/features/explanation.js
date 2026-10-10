@@ -109,7 +109,7 @@ export async function followExplanationReference(reference) {
       liveView('page',reference.url);state.view='page';showView();return;
     }
     const review=reference.unit===state.unit ? state.review : state.reviews.get(reference.unit);
-    // 行参照は既に読んだ内容の総行数が必要。未知の一覧を自動取得しない。
+    // 最新一覧の取得は、参照移動だけで読者が選んだCodeの世代を変えてしまう。
     const whole=resolveCodeReference({...reference,start_line:null,end_line:null},review,state.codeToken);
     if (whole.reason) {unavailable(whole.reason);return;}
     const entry=whole.entry;
@@ -119,6 +119,7 @@ export async function followExplanationReference(reference) {
     if (review!==state.review) applyReview(review,false);
     await selectView('code');
     await jumpToEntry(entry);
+    if (!state.cache.has(fileCacheKey(entry))) {unavailable('The target content could not be loaded.');return;}
     if (reference.start_line!==null) {
       const after=resolveCodeReference(reference,review,state.codeToken,state.cache.get(fileCacheKey(entry)));
       if (after.reason) {unavailable(after.reason);return;}

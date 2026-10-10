@@ -21,6 +21,12 @@ test('line references never infer unknown totals or shorten a requested range', 
   assert.ok(resolveCodeReference(line, review, 'r:1', {new_total:2}).reason);
   assert.equal(resolveCodeReference(line, review, 'r:1', {new_total:3}).reason, null);
 });
+
+test('an explicitly absent side is unavailable even when the entry is labelled modified', () => {
+  const withoutOld={...review,groups:[{id:'all',files:[{id:'f',path:'a',status:'modify',old_present:false,new_present:true}]}]};
+  assert.ok(resolveCodeReference({...reference,side:'old'},withoutOld,'r:1').reason);
+  assert.equal(resolveCodeReference(reference,withoutOld,'r:1').reason,null);
+});
 test('a block shows its original comments and unchanged comments from earlier revisions', () => {
   const block = {id:'b',part:{type:'text',body:'exact\r\n'},references:[]};
   const comment = {id:'c',target_type:'explanation',explanation:{revision:1,block_id:'b',quote:{section_title:'Old',block}}};

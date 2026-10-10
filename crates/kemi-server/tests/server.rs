@@ -5198,7 +5198,7 @@ async fn parts_reply_accepts_typed_content_and_refuses_an_entire_batch_with_a_ba
 }
 #[tokio::test]
 async fn context_uses_known_source_lines_and_real_sides_without_reading_content_again() {
-    let source = kemi_core::source::manifest::ManifestSource::from_json(&json!({"title":"Manifest","groups":[{"id":"g","title":"G","diffs":[{"path":"a.txt","status":"add","old":"one\ntwo\n","new":"ONE\ntwo\nthree\n"}]}]}).to_string(),std::path::Path::new(".")).unwrap();
+    let source = kemi_core::source::manifest::ManifestSource::from_json(&json!({"title":"Manifest","groups":[{"id":"g","title":"G","diffs":[{"path":"a.txt","status":"add","old":"one\ntwo\n","new":"ONE\ntwo\nthree\n"},{"path":"b.txt","status":"modify","new":"present\n"}]}]}).to_string(),std::path::Path::new(".")).unwrap();
     let server = AgentServer::start_with(Arc::new(source), Ipv4Addr::LOCALHOST).await;
     let context: Value = server
         .agent_post("context", json!({}))
@@ -5209,6 +5209,12 @@ async fn context_uses_known_source_lines_and_real_sides_without_reading_content_
     assert_eq!(context["references"]["code"][0]["old_present"], true);
     assert_eq!(context["references"]["code"][0]["old_lines"], 2);
     assert_eq!(context["references"]["code"][0]["new_lines"], 3);
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["groups"][0]["files"][0]["old_present"], true);
+    assert_eq!(review["groups"][0]["files"][0]["old_lines"], 2);
+    assert_eq!(review["groups"][0]["files"][1]["old_present"], false);
+    assert_eq!(review["groups"][0]["files"][1]["new_present"], true);
+    assert!(review["groups"][0]["files"][1]["old_lines"].is_null());
     let mut sections = explanation_sections();
     sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":null,"group_id":"g","path":"a.txt","side":"old","start_line":1,"end_line":2}]);
     let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":sections});

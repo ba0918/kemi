@@ -344,6 +344,24 @@ async fn review(
         })?;
         let session = state.session.lock().expect("session poisoned");
         let mut body = review_json(meta.as_ref(), &session);
+        let source = state.sources.current();
+        for (group, output) in meta.groups.iter().zip(
+            body["groups"]
+                .as_array_mut()
+                .expect("review groups are arrays"),
+        ) {
+            for (file, output) in group.files.iter().zip(
+                output["files"]
+                    .as_array_mut()
+                    .expect("review files are arrays"),
+            ) {
+                let known = explanation::entry_reference_metadata(file, source.as_ref());
+                output["old_present"] = json!(known.old_present);
+                output["new_present"] = json!(known.new_present);
+                output["old_lines"] = json!(known.old_lines);
+                output["new_lines"] = json!(known.new_lines);
+            }
+        }
         body["unit"] = json!(shown.map(GroupBy::as_str));
         body["units"] = review.units_json();
         body["diff_display_version"] = if review.code_error.is_some() {

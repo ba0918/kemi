@@ -524,6 +524,9 @@ explains that a metadata generation guarantees neither fixed file bytes nor
 the explanation's correctness. Font and zoom changes do not change this
 comparison. References unavailable in the screen's list give a reason, rather
 than fetching the newest list or substituting another target.
+Code references use the known presence of each side and known total lines,
+not the file's Add/Modified/Delete label. A target that disappears or has fewer
+lines when loaded gives a reason; a requested range is never silently shortened.
 
 `--explanation <file>` accepts a UTF-8 JSON object with `sections` in every normal
 input mode, including `kemi -` with a manifest on stdin. Each section has `id`,
