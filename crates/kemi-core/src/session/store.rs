@@ -2210,6 +2210,63 @@ mod tests {
         assert_eq!(std::fs::read(&payload).unwrap(), b"not a gzip");
     }
 
+    #[test]
+    fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let mut states = Vec::new();
+        for (files, generation) in [(2, 1), (10_000, 4098)] {
+            let scratch = Scratch::new();
+            let store = SessionStore::new(scratch.dir());
+            let mut metadata = info(id, 100);
+            metadata.total_files = files;
+            let mut open = store.create(metadata).unwrap();
+            let mut frozen = copy();
+            let template = frozen.units[0].review.groups[0].files[0].clone();
+            for index in 2..files {
+                let mut file = template.clone();
+                file.id = format!("extra-{index}");
+                file.path = format!("extra-{index}.txt");
+                frozen
+                    .contents
+                    .insert(file.id.clone(), content(None, Some(b"one\n")));
+                frozen.units[0].review.groups[0].files.push(file);
+            }
+            open.save_copy_with_limit(frozen, 200, COPY_LIMIT).unwrap();
+            let payload = payload_path(&scratch.dir(), id);
+            std::fs::remove_file(&payload).unwrap();
+            std::fs::create_dir(&payload).unwrap();
+            let mut state = state_with_comment();
+            state.display = Some(crate::domain::display_version::DisplayVersions {
+                current: format!("{id}:{generation}"),
+                frozen: Some(format!("{id}:1")),
+                issued: generation,
+            });
+            for updated in [300, 400, 500] {
+                open.save_state_at(state.clone(), updated).unwrap();
+            }
+            assert!(payload.is_dir());
+            let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
+            let envelope: serde_json::Value = serde_json::from_slice(&bytes[18..]).unwrap();
+            let mut saved = envelope["state"].clone();
+            for key in [
+                "diff_display_version",
+                "frozen_display_version",
+                "issued_display_generation",
+            ] {
+                assert!(
+                    saved
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(key)
+                        .unwrap()
+                        .is_string()
+                );
+            }
+            states.push(saved);
+        }
+        assert_eq!(states[0], states[1]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn session_copy_that_cannot_be_written_does_not_become_resumable() {
