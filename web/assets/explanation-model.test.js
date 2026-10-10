@@ -28,3 +28,20 @@ test('a block shows its original comments and unchanged comments from earlier re
   assert.deepEqual(commentsForBlock([comment], 2, {...block,part:{type:'text',body:'exact\n'}}), []);
   assert.deepEqual(commentsForBlock([comment], 1, block), [comment]);
 });
+
+test('an HTTP screen initializes its version hold identity without secure-context-only APIs', async () => {
+  const cryptoDescriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+  assert.ok(cryptoDescriptor);
+  const storageDescriptor=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  const random=globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+  Object.defineProperty(globalThis,'crypto',{configurable:true,value:{getRandomValues:random}});
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>null}});
+  try {
+    const {state}=await import(new URL('./state.js?http-screen',import.meta.url).href);
+    assert.match(state.explanation.screen,/^[0-9a-f]{32}$/);
+  } finally {
+    Object.defineProperty(globalThis,'crypto',cryptoDescriptor);
+    if(storageDescriptor)Object.defineProperty(globalThis,'localStorage',storageDescriptor);
+    else Reflect.deleteProperty(globalThis,'localStorage');
+  }
+});
