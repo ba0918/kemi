@@ -1116,9 +1116,9 @@ fn range_messages(repo: &Path, range: &str) -> Result<Vec<CommitMessage>, Source
 /// 1 秒未満で作りつつ、表示中の api/file を遅らせない値として選んだ。
 fn commit_diff_workers() -> usize {
     std::thread::available_parallelism()
-        .map(|count| count.get())
+        .map(|count| count.get().saturating_mul(2))
         .unwrap_or(4)
-        .clamp(2, 8)
+        .clamp(2, 16)
 }
 
 /// 各コミットの差分（状態と増減数）。コミットを分けて `git diff-tree --stdin` を並列に呼ぶ。
