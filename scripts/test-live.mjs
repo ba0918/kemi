@@ -4,6 +4,7 @@
 //   node scripts/test-live.mjs <kemi-bin>
 //   node scripts/test-live.mjs <kemi-bin> --places-glow
 //   node scripts/test-live.mjs <kemi-bin> --pen-places
+//   node scripts/test-live.mjs <kemi-bin> --compose-layout
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -1460,6 +1461,40 @@ async function closingTheComposeBoxRestoresTheFrame(repository) {
       assert.ok(await evaluate(sameHeight(before)), `after ${close}, the frame is as high as before the box opened: ${await evaluate(liveFrameHeight)} for ${before}`);
     }
     console.log('PASS 書く欄を開いて保存しても取り消しても、見る対象の枠の高さは欄を開く前と同じ');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]' && !document.querySelector('#rail-hand-note').hidden`);
+    const layout = await evaluate(`(() => {
+      const note = document.querySelector('#rail-hand-note').getBoundingClientRect();
+      const compose = document.querySelector('#live-compose').getBoundingClientRect();
+      const remove = document.querySelector('#live-compose .lv-place-remove');
+      const r = remove.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return { noteBottom: note.bottom, composeTop: compose.top, removeUncovered: hit === remove || remove.contains(hit) };
+    })()`);
+    assert.ok(layout.noteBottom <= layout.composeTop, `the folded hand note must stay above the compose box: ${JSON.stringify(layout)}`);
+    assert.ok(layout.removeUncovered, 'the remove control can receive pointer input');
+    await browser('click', '#rail-hand-note .hand-copy');
+    await waitFor(`document.querySelector('#rail-hand-note .hand-copy').textContent === 'Copied'`);
+    await browser('click', '#live-compose .lv-place-remove');
+    await waitFor(`${draftNumbers} === '[]' && document.querySelector('#live-compose').hidden`);
+    const after = await evaluate(`document.querySelector('#rail-hand-note').getBoundingClientRect().bottom`);
+    assert.ok(after > layout.noteBottom, 'the note returns to the folded rail position when the compose box closes');
+    console.log('PASS 会話を畳んだ案内はコメント欄を覆わず、コマンドを写せ、場所の×も押せる');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -3852,6 +3887,7 @@ async function verifyLiveReview(repository) {
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
   await closingTheComposeBoxRestoresTheFrame(repository);
+  await foldedHandNoteLeavesTheComposeControlsClickable(repository);
   await narrowPageViewFitsOneRow(repository);
   await narrowToolsFloatWithHand(repository);
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
@@ -3896,6 +3932,9 @@ try {
     await penGlowAndImageStayAroundTheDrawnArea(repository);
     await penPlacesLeaveOutWhatContainsTheLine(repository);
     await placesOnTheBackgroundAreAreasOnly(repository);
+  } else if (process.argv[3] === '--compose-layout') {
+    await foldedHandNoteLeavesTheComposeControlsClickable(repository);
+    await closingTheComposeBoxRestoresTheFrame(repository);
   } else {
     await verifyLiveReview(repository);
   }

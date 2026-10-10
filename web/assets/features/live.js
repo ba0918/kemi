@@ -2368,7 +2368,16 @@ function endOverscroll() {
 
 /** 選んだ表示幅で描き、枠に収まらなければ両方に同じ倍率をかけて縮める（R-PAGE-VIEW）。 */
 function layoutFrames() {
-  if (!shell || live.view !== "page") {
+  if (!shell) {
+    return;
+  }
+  const compose = shell.compose.box.getBoundingClientRect();
+  const composeClearance = live.view === "page" && !state.narrow && compose.height > 0
+    ? Math.max(0, dom.conversation.getBoundingClientRect().bottom - compose.top + 12)
+    : 0;
+  // 畳んだ帯の案内は画面の上に浮かぶため、コメント欄が開いたらその操作を覆わない高さへ逃がす。
+  dom.railHandNote.style.setProperty("--lv-compose-clearance", `${composeClearance}px`);
+  if (live.view !== "page") {
     return;
   }
   // 狭い画面では片方が隠れているので、見えている方の枠で測る。どちらも同じ大きさ。
