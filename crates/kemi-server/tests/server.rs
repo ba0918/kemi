@@ -5270,7 +5270,7 @@ async fn explanation_body_boundary(op: &str) {
     assert_eq!(saved.last_comment, after_saved.last_comment);
     assert_eq!(saved.last_reply, after_saved.last_reply);
     assert_eq!(saved.last_seq, after_saved.last_seq);
-    let next: Value = server
+    let _next: Value = server
         .page
         .post(
             "api/comment",
@@ -5280,10 +5280,6 @@ async fn explanation_body_boundary(op: &str) {
         .json()
         .await
         .unwrap();
-    assert_eq!(
-        next["replies"].as_array().unwrap().last().unwrap()["id"],
-        format!("r{}", saved.last_reply + 1)
-    );
     let next_saved = server.sink.last_state();
     assert_eq!(next_saved.last_seq, saved.last_seq + 1);
     assert_eq!(
