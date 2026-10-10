@@ -761,6 +761,11 @@ async fn run_review(
         Ok(url) => url,
         Err(error) => fail(&error.to_string()),
     };
+    // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
+    let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
+        Ok(url) => url,
+        Err(error) => fail(&error.to_string()),
+    };
     if cli.explanation.is_none() {
         eprintln!("kemi: {url}");
     }
@@ -807,11 +812,6 @@ async fn run_review(
         }
     };
     if !cli.no_open && cli.explanation.is_none() {
-        // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
-        let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
-            Ok(url) => url,
-            Err(error) => fail(&error.to_string()),
-        };
         open_browser(&browser_url);
     }
 
@@ -836,7 +836,7 @@ async fn run_review(
             () = control.ready() => {
                 if let Some(endpoint) = &endpoint && let Err(error) = endpoint.publish() { serving.abort(); fail(&error); }
                 eprintln!("kemi: {url}");
-                if !cli.no_open { open_browser(&url); }
+                if !cli.no_open { open_browser(&browser_url); }
             }
             outcome = &mut serving => {
                 remove_endpoint();
