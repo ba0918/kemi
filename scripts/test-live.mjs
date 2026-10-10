@@ -5,6 +5,7 @@
 //   node scripts/test-live.mjs <kemi-bin> --places-glow
 //   node scripts/test-live.mjs <kemi-bin> --pen-places
 //   node scripts/test-live.mjs <kemi-bin> --compose-layout
+//   node scripts/test-live.mjs <kemi-bin> --page-surrounding
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -1495,6 +1496,36 @@ async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
     const after = await evaluate(`document.querySelector('#rail-hand-note').getBoundingClientRect().bottom`);
     assert.ok(after > layout.noteBottom, 'the note returns to the folded rail position when the compose box closes');
     console.log('PASS 会話を畳んだ案内はコメント欄を覆わず、コマンドを写せ、場所の×も押せる');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
+  try {
+    await browser('set', 'viewport', '1920', '1000');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    for (let count = 0; count < 3 && await evaluate('document.documentElement.dataset.theme') !== 'dark'; count++) {
+      await browser('click', '#btn-theme');
+    }
+    const layout = await evaluate(`(() => {
+      const pane = document.querySelector('${livePane}');
+      const viewport = pane.querySelector('.lv-viewport');
+      const page = pane.querySelector('.lv-frame');
+      return { viewportWidth: viewport.clientWidth, pageWidth: page.getBoundingClientRect().width, reviewBackground: getComputedStyle(pane).backgroundColor };
+    })()`);
+    assert.ok(layout.viewportWidth > layout.pageWidth + 100, 'the viewport has visible space beyond the chosen page width');
+    const image = await shot(`${livePane} .lv-viewport`, shots, 'page-surrounding');
+    const reviewColor = layout.reviewBackground.match(/\d+/g).slice(0, 3).map(Number);
+    assert.deepEqual(pixelAt(image, image.width - 12, 120).slice(0, 3), reviewColor, 'outside the page uses the review background instead of white');
+    assert.deepEqual(pixelAt(image, Math.floor(layout.pageWidth - 20), 120).slice(0, 3), [255, 255, 255], 'the actual white page remains white');
+    console.log('PASS 選択したページ幅の外はレビュー画面の背景になり、ページ自身の白い背景は変わらない');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -3888,6 +3919,7 @@ async function verifyLiveReview(repository) {
   await toolsAndTheHintStartTheFirstComment(repository);
   await closingTheComposeBoxRestoresTheFrame(repository);
   await foldedHandNoteLeavesTheComposeControlsClickable(repository);
+  await pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository);
   await narrowPageViewFitsOneRow(repository);
   await narrowToolsFloatWithHand(repository);
   await crossingTheNarrowWidthFollowsTheShownPage(repository);
@@ -3935,6 +3967,8 @@ try {
   } else if (process.argv[3] === '--compose-layout') {
     await foldedHandNoteLeavesTheComposeControlsClickable(repository);
     await closingTheComposeBoxRestoresTheFrame(repository);
+  } else if (process.argv[3] === '--page-surrounding') {
+    await pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository);
   } else {
     await verifyLiveReview(repository);
   }
