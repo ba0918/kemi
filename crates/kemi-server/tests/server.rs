@@ -5227,6 +5227,87 @@ async fn context_uses_known_source_lines_and_real_sides_without_reading_content_
     bad["sections"][0]["blocks"][0]["references"][0]["end_line"] = json!(3);
     assert_eq!(server.agent_post("explain", bad).await.status(), 400);
 }
+async fn explanation_body_boundary(op: &str) {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(server.agent_post("explain", json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(), 200);
+    let comment: Value = server.page.post("api/comment", json!({"op":"add_explanation","explanation_revision":1,"block_id":"intent","body":"question"})).await.json().await.unwrap();
+    let boundary = "あ".repeat(21_845) + "x";
+    assert_eq!(boundary.len(), 65_536);
+    assert_eq!(
+        server
+            .page
+            .post(
+                "api/comment",
+                json!({"op":op,"id":comment["id"],"body":boundary})
+            )
+            .await
+            .status(),
+        200
+    );
+    let before: Value = server.page.get("api/review").await.json().await.unwrap();
+    let saved = server.sink.last_state();
+    let rejected = server
+        .page
+        .post(
+            "api/comment",
+            json!({"op":op,"id":comment["id"],"body":boundary.clone()+"x"}),
+        )
+        .await;
+    assert_eq!(rejected.status(), 413);
+    let reason: Value = rejected.json().await.unwrap();
+    assert!(reason.to_string().contains("body"));
+    let after: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(before["comments"], after["comments"]);
+    let after_saved = server.sink.last_state();
+    assert_eq!(saved.comments, after_saved.comments);
+    assert_eq!(saved.channel, after_saved.channel);
+    assert_eq!(saved.last_comment, after_saved.last_comment);
+    assert_eq!(saved.last_reply, after_saved.last_reply);
+    assert_eq!(saved.last_seq, after_saved.last_seq);
+    let next: Value = server
+        .page
+        .post(
+            "api/comment",
+            json!({"op":"reply","id":comment["id"],"body":"next reply"}),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        next["replies"].as_array().unwrap().last().unwrap()["id"],
+        format!("r{}", saved.last_reply + 1)
+    );
+    let next_saved = server.sink.last_state();
+    assert_eq!(next_saved.last_seq, saved.last_seq + 1);
+    assert_eq!(
+        next_saved.channel.unhanded.comments,
+        saved.channel.unhanded.comments
+    );
+    assert_eq!(
+        next_saved.channel.unhanded.replies.len(),
+        saved.channel.unhanded.replies.len() + 1
+    );
+    assert_eq!(next_saved.channel.events, saved.channel.events);
+}
+
+#[tokio::test]
+async fn explanation_comment_edits_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    explanation_body_boundary("edit").await;
+}
+
+#[tokio::test]
+async fn explanation_comment_replies_accept_the_utf8_boundary_and_reject_overflow_without_changes()
+{
+    explanation_body_boundary("reply").await;
+}
+
 #[tokio::test]
 async fn explanation_comments_keep_the_original_block_and_old_versions_can_be_held_and_released() {
     let server = AgentServer::start().await;
