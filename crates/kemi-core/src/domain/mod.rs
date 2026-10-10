@@ -1,10 +1,13 @@
 pub mod agent;
 pub mod comment;
 pub mod content;
+pub mod conversation_content;
 pub mod diff;
 pub mod digest;
 pub mod focus;
 pub mod live;
 pub mod noise;
 pub mod origin;
+pub mod parts;
+pub mod parts_validation;
 pub mod review;
