@@ -6,7 +6,7 @@ process still prints the result JSON and exits as usual.
 
 ## The review id
 
-Right after the URL line (and the line naming where results are saved), stderr carries:
+When the agent endpoint is ready, stderr carries:
 
 ```text
 kemi: review <id>
@@ -97,6 +97,22 @@ A `reply` goes into the thread of that comment; a `message` is a note on the who
 success stdout is `{"ids": ["r3", "m1"]}`, in the order of `writes`, and the exit code is `0`.
 The writes appear in the page at once, marked as written by the agent.
 
+Each reply or message accepts exactly one of `body` or `parts`, never both,
+even when one is null. Old bodies remain plain. Parts preserve reading order
+and type in File, Page, and explanation threads. For example:
+
+```json
+{"writes":[{"type":"reply","comment_id":"c1","parts":[{"type":"text","body":"An **example** follows."},{"type":"code","body":"read_premise()","language":"pseudocode","role":"example"}]}]}
+```
+
+Text uses safe Markdown with images disabled. Code is literal, read-only and
+copyable. Diagrams may fail browser layout despite structurally valid input;
+the page then shows the reason and complete original JSON. Role labels express
+the author's intent, not a correctness verdict. Part fields and inclusive
+limits are in the [content contract](https://github.com/ba0918/kemi/blob/main/docs/spec/content-parts.md).
+One malformed part in a later write refuses the whole batch. Explanation
+comments cannot receive suggestions or Page variants.
+
 Either every write is stored or none is. A write to a comment that does not exist, a body over
 64 KB (UTF-8 bytes), more than 50 agent replies on one comment, more than 200 agent messages,
 or JSON of the wrong shape exits `2` with the reason on stderr and writes nothing. You cannot
@@ -113,6 +129,46 @@ open a comment or resolve one; only the person does that.
    `kemi wait` exits `2` because the review is no longer running (the person submitted while
    you were working, or the main `kemi` process exited). Then handle the result as usual: take
    it from the main process's stdout, or from `kemi --result`.
+
+## Updating the explanation
+
+```text
+kemi explain <id> --context
+kemi explain <id> --file update.json
+kemi explain <id> < update.json
+```
+
+Context reads no stdin. It returns one version-3 JSON object with `review`,
+`diff_display_version`, `explanation_revision`, the current saved `explanation`
+or null, and `references:{code,pages}`. Code entries carry `unit`, `group_id`,
+`path`, side-presence booleans `old_present`/`new_present`, and nullable total
+line counts `old_lines`/`new_lines`. Pages are registered live `{url}` values.
+Context is one consistent server metadata read. It neither provides all file
+contents nor updates a reader's Code display; it is refused with a reason
+while a required grouping is not ready.
+
+An update is `{expected_revision,base_display_version,sections}`. Use 0 for
+an absent explanation, otherwise the revision from context. Success prints
+`{revision,base_display_version}` and exits 0. `--file` excludes `--context`.
+Invalid JSON, duplicate keys, references, limits, revision conflicts, or save
+failures print no success JSON, report a reason on stderr, and exit 2.
+Concurrent requests with the same expected revision accept only one. Submit
+and explanation updates are ordered; after submit claims the review, an
+update is refused. Successful updates are saved atomically before notifying
+readers.
+
+Current-base Code references must match an exact group/path/unit and existing
+side; line references need known total lines. A known older base accepts Code
+reference shapes without claiming historical existence. Page references must
+already be registered, even for an older base. Context and explain share the
+local same-user endpoint protection of wait/reply. They do not answer a hand,
+clear its working line, reset the response clock, or add conversation events.
+Reply to the question separately when a reply is needed.
+Code references use `unit: "file"` or `"commit"` in a commit range, and null
+otherwise, for old bases too. A known base can still be used to update an
+explanation while resumed Code is unavailable; context is refused until a
+successful scan provides metadata again. The first argument `explain` selects
+the subcommand; a manifest of that name is `./explain`.
 
 The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
 is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your

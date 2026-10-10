@@ -173,6 +173,15 @@ pub trait ResultSink: Send + Sync {
 /// レビューをセッションとして残す先（R-SESSION）。一般状態の保存失敗は警告だけにし、
 /// 新しい世代は保存が成功するまで公開しない。
 pub trait SessionSink: Send + Sync {
+    fn save_explanation_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), SessionError> {
+        self.save_issued_state(state)
+    }
+    fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
+        None
+    }
     fn initial_title(&self) -> Option<String> {
         None
     }
@@ -267,10 +276,22 @@ pub struct AgentParams {
 /// `kemi wait` に理由を返すにはここから知らせる（R-AGENT-CLI）。
 #[derive(Clone, Default)]
 pub struct ServeControl {
+    ready: Arc<tokio::sync::Notify>,
     state: Arc<std::sync::OnceLock<std::sync::Weak<AppState>>>,
 }
 
 impl ServeControl {
+    pub async fn ready(&self) {
+        loop {
+            let notified = self.ready.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.state.get().is_some() {
+                return;
+            }
+            notified.await;
+        }
+    }
     pub fn new() -> Self {
         ServeControl::default()
     }
@@ -310,6 +331,7 @@ pub async fn bind_agent_listener() -> std::io::Result<TcpListener> {
 /// SSE でページへ知らせること。
 #[derive(Clone, Debug)]
 pub(crate) enum Event {
+    Explanation(serde_json::Value),
     /// 新側の供給元が変わった（R-LIVE の更新バッジ）。
     Update,
     /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。
@@ -331,6 +353,9 @@ pub(crate) enum SubmitState {
 }
 
 pub(crate) struct AppState {
+    pub registered_pages: Mutex<std::collections::BTreeSet<String>>,
+    pub explanation_holds:
+        Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>>,
     pub sources: Arc<kemi_core::source::SourceSlot>,
     pub initial_review: Mutex<Option<session::FreezeInput>>,
     pub display_id: String,
@@ -491,6 +516,46 @@ pub async fn serve(
         display.current = frozen.clone();
     }
     initial_state.display = Some(display);
+    if let Some(document) = params
+        .session
+        .as_ref()
+        .and_then(|sink| sink.initial_explanation())
+    {
+        if params.agent.is_none() {
+            return Err(ServerError::Stopped(
+                "initial explanation requires an agent endpoint".into(),
+            ));
+        }
+        let display = initial_state
+            .display
+            .as_ref()
+            .expect("initial display assigned");
+        let pages: Vec<_> = params
+            .live
+            .as_ref()
+            .map_or_else(Vec::new, |live| match &live.target {
+                LiveTarget::Url { start, .. } => vec![start.clone()],
+                LiveTarget::File { path } => {
+                    vec![format!("/{}", kemi_core::domain::live::url_path(path))]
+                }
+            });
+        initial_state.explanation = Some(api::explanation::initial_history(
+            document,
+            initial_source.as_ref(),
+            &review,
+            &units,
+            display,
+            &display_id,
+            &pages,
+        )?);
+        kemi_core::session::validate_additional(&initial_state).map_err(ServerError::Session)?;
+        params
+            .session
+            .as_ref()
+            .expect("initial explanation has a sink")
+            .save_explanation_state(initial_state.clone())
+            .map_err(ServerError::Session)?;
+    }
     let generation = kemi_core::domain::display_version::known_generation(
         &initial_state
             .display
@@ -548,6 +613,8 @@ pub async fn serve(
         &initial_state.channel.events,
     );
     let state = Arc::new(AppState {
+        registered_pages: Mutex::new(std::collections::BTreeSet::new()),
+        explanation_holds: Mutex::new(std::collections::BTreeMap::new()),
         source: sources.clone(),
         sources,
         initial_review: Mutex::new(initial_review),
@@ -578,6 +645,7 @@ pub async fn serve(
 
     if let Some(agent) = &params.agent {
         let _ = agent.control.state.set(Arc::downgrade(&state));
+        agent.control.ready.notify_waiters();
     }
     watch::start(
         state.source.watch_paths(),

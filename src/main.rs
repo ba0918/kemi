@@ -38,9 +38,11 @@ kemi: usage:
   kemi --result [--any | --workspace <path>]  print the JSON of the latest submitted result
   kemi wait <id> [--timeout <seconds>]    wait for what the reviewer hands over (agent)
   kemi reply <id>                          write replies and messages from stdin JSON (agent)
+  kemi explain <id> [--file <file> | --context]  replace an explanation or print its reference map
 
 common flags:
   --focus <path>     focus layer JSON (relative to --base)
+  --explanation <file>  initial explanation JSON (never reads stdin)
   --base <dir>       base for manifest and --focus relative paths (default .)
   --group-by <mode>  group unit at startup: file (final form) | commit (per commit). default file
   --port <n>         listen port (default 0 = pick a free one)
@@ -56,6 +58,7 @@ flags used with --result:
   --workspace <path> print the result for this place instead of the launch directory";
 
 struct Cli {
+    explanation: Option<String>,
     manifest: Option<String>,
     from: Option<String>,
     to: Option<String>,
@@ -87,6 +90,7 @@ struct Cli {
 
 fn parse_args(args: Vec<String>) -> Result<Cli, String> {
     let mut cli = Cli {
+        explanation: None,
         manifest: None,
         from: None,
         to: None,
@@ -125,6 +129,12 @@ fn parse_args(args: Vec<String>) -> Result<Cli, String> {
             cli.flags.push(arg.to_string());
         }
         match arg {
+            "--explanation" => {
+                if cli.explanation.is_some() {
+                    return Err("--explanation may be given only once".into());
+                }
+                cli.explanation = Some(value(&mut index)?);
+            }
             "--version" => cli.version = true,
             "--help" | "-h" => cli.help = true,
             "--from" => cli.from = Some(value(&mut index)?),
@@ -248,6 +258,7 @@ fn validate_live_flags(cli: &Cli) -> Result<(), String> {
     }
     let allowed = [
         "--live",
+        "--explanation",
         "--port",
         "--bind",
         "--no-open",
@@ -261,7 +272,7 @@ fn validate_live_flags(cli: &Cli) -> Result<(), String> {
         .any(|flag| !allowed.contains(&flag.as_str()));
     if others || cli.manifest.is_some() {
         return Err(
-            "--live accepts only --port, --bind, --no-open, --live-port, --focus and --serve"
+            "--live accepts only --port, --bind, --no-open, --live-port, --focus, --explanation and --serve"
                 .to_string(),
         );
     }
@@ -326,11 +337,18 @@ fn endpoints_dir() -> Option<PathBuf> {
 /// 書いた `<id>.endpoint`。submit・保留・実行時エラーのどれで終わるときも消す
 /// （R-AGENT-LINK）。終わり方はどれも `process::exit` で Drop が走らないので、明示して消す。
 struct EndpointFile {
+    endpoint: kemi_core::session::Endpoint,
     dir: PathBuf,
     id: String,
 }
 
 impl EndpointFile {
+    fn publish(&self) -> Result<(), String> {
+        kemi_core::session::write_endpoint(&self.dir, &self.id, &self.endpoint)
+            .map_err(|error| format!("cannot write the agent endpoint: {error}"))?;
+        eprintln!("kemi: review {}", self.id);
+        Ok(())
+    }
     fn remove(&self) {
         if let Err(error) = kemi_core::session::remove_endpoint(&self.dir, &self.id) {
             eprintln!("kemi: cannot remove the agent endpoint: {error}");
@@ -344,6 +362,7 @@ impl EndpointFile {
 async fn start_agent_channel(
     stored_session: Option<&session::StoredSession>,
     control: &ServeControl,
+    defer: bool,
 ) -> Option<(AgentParams, EndpointFile)> {
     let id = stored_session?.info().id;
     let listener = match bind_agent_listener().await {
@@ -372,11 +391,13 @@ async fn start_agent_channel(
         port,
         token: token.clone(),
     };
-    if let Err(error) = kemi_core::session::write_endpoint(&dir, &id, &endpoint) {
-        eprintln!("kemi: cannot write the agent endpoint: {error}");
-        return None;
+    if !defer {
+        if let Err(error) = kemi_core::session::write_endpoint(&dir, &id, &endpoint) {
+            eprintln!("kemi: cannot write the agent endpoint: {error}");
+            return None;
+        }
+        eprintln!("kemi: review {id}");
     }
-    eprintln!("kemi: review {id}");
     Some((
         AgentParams {
             listener,
@@ -384,7 +405,7 @@ async fn start_agent_channel(
             review: id.clone(),
             control: control.clone(),
         },
-        EndpointFile { dir, id },
+        EndpointFile { dir, id, endpoint },
     ))
 }
 
@@ -740,7 +761,9 @@ async fn run_review(
         Ok(url) => url,
         Err(error) => fail(&error.to_string()),
     };
-    eprintln!("kemi: {url}");
+    if cli.explanation.is_none() {
+        eprintln!("kemi: {url}");
+    }
     let warning = if live.is_some() {
         live_exposure_warning(cli.bind, share_address)
     } else {
@@ -761,10 +784,19 @@ async fn run_review(
         ),
     }
     let control = ServeControl::new();
-    let (agent, endpoint) = match start_agent_channel(stored_session.as_deref(), &control).await {
+    let (agent, endpoint) = match start_agent_channel(
+        stored_session.as_deref(),
+        &control,
+        cli.explanation.is_some(),
+    )
+    .await
+    {
         Some((agent, endpoint)) => (Some(agent), Some(endpoint)),
         None => (None, None),
     };
+    if cli.explanation.is_some() && agent.is_none() {
+        fail("initial explanation requires a persistent session and agent endpoint");
+    }
     let live = match &live {
         Some(live) => start_live(cli, live, session_host(cli.bind, share_address)).await,
         None => None,
@@ -774,7 +806,7 @@ async fn run_review(
             endpoint.remove();
         }
     };
-    if !cli.no_open {
+    if !cli.no_open && cli.explanation.is_none() {
         // ブラウザは手元の loopback で開く（`0.0.0.0` の表示 URL は LAN アドレス）。
         let browser_url = match session_url(&listener, &token, session_host(cli.bind, None)) {
             Ok(url) => url,
@@ -799,6 +831,19 @@ async fn run_review(
     // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
     // シグナルを受けても捨てない。
     let mut serving = tokio::spawn(serve(listener, params));
+    if cli.explanation.is_some() {
+        tokio::select! {
+            () = control.ready() => {
+                if let Some(endpoint) = &endpoint && let Err(error) = endpoint.publish() { serving.abort(); fail(&error); }
+                eprintln!("kemi: {url}");
+                if !cli.no_open { open_browser(&url); }
+            }
+            outcome = &mut serving => {
+                remove_endpoint();
+                match outcome { Ok(Err(error)) => fail(&error.to_string()), _ => fail("initial explanation could not start the review") }
+            }
+        }
+    }
     #[cfg(unix)]
     let outcome = tokio::select! {
         outcome = &mut serving => Some(outcome),
@@ -992,9 +1037,9 @@ fn list_sessions(store: &SessionStore, sessions: &[SessionSummary]) -> ! {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // 最初の引数が wait / reply ならサブコマンド。その名前の manifest は ./wait と書く
+    // 最初の引数が wait / reply / explain ならサブコマンド。その名前の manifest は ./explain と書く
     // （R-AGENT-CLI）。
-    if let Some(name @ ("wait" | "reply")) = args.first().map(String::as_str) {
+    if let Some(name @ ("wait" | "reply" | "explain")) = args.first().map(String::as_str) {
         let command = match agent::parse(name, &args[1..]) {
             Ok(command) => command,
             Err(message) => {
@@ -1034,6 +1079,9 @@ async fn main() {
     }
     if let Err(message) = validate_live_flags(&cli) {
         fail(&message);
+    }
+    if cli.explanation.is_some() && cli.digest {
+        fail("--explanation cannot be used with --digest");
     }
 
     if let Some(out) = &cli.out {
@@ -1098,6 +1146,19 @@ async fn main() {
     }
 
     let stored_session = open_session(&cli, live.as_ref());
+    if let Some(file) = &cli.explanation {
+        let text = std::fs::read_to_string(file)
+            .unwrap_or_else(|error| fail(&format!("cannot read the explanation: {error}")));
+        let document =
+            serde_json::from_str::<kemi_core::domain::explanation::ExplanationDocument>(&text)
+                .unwrap_or_else(|error| fail(&format!("invalid explanation: {error}")));
+        kemi_core::domain::explanation::validate_document(&document)
+            .unwrap_or_else(|error| fail(&error.to_string()));
+        let stored = stored_session
+            .as_ref()
+            .unwrap_or_else(|| fail("initial explanation requires persistent session storage"));
+        stored.set_initial_explanation(document);
+    }
     let results_key = result::workspace_key(&workspace_root(Path::new(".")));
     let live = live.map(|(page, root)| LiveRun {
         page,

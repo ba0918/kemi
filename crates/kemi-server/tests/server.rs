@@ -1832,6 +1832,19 @@ async fn a_failed_opposite_unit_candidate_keeps_both_published_lists_and_the_gen
 }
 
 impl ReviewSource for GatedSource {
+    fn select_references(
+        &self,
+        requested: &[(
+            kemi_core::domain::explanation::ReferenceUnit,
+            String,
+            String,
+        )],
+    ) -> Result<Vec<kemi_core::domain::explanation::CodeReferenceEntry>, SourceError> {
+        self.inner.select_references(requested)
+    }
+    fn reference_metadata(&self, id: &str) -> Option<kemi_core::source::ReferenceMetadata> {
+        self.inner.reference_metadata(id)
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         self.inner.review()
     }
@@ -1859,6 +1872,19 @@ struct CountingSource {
 }
 
 impl ReviewSource for CountingSource {
+    fn select_references(
+        &self,
+        requested: &[(
+            kemi_core::domain::explanation::ReferenceUnit,
+            String,
+            String,
+        )],
+    ) -> Result<Vec<kemi_core::domain::explanation::CodeReferenceEntry>, SourceError> {
+        self.inner.select_references(requested)
+    }
+    fn reference_metadata(&self, id: &str) -> Option<kemi_core::source::ReferenceMetadata> {
+        self.inner.reference_metadata(id)
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         self.inner.review()
     }
@@ -2403,6 +2429,8 @@ use kemi_server::SessionSink;
 /// 保存先の呼び出しを記録する sink。`fail` で保存の失敗を再現する。
 #[derive(Default)]
 struct RecordingSink {
+    explanation_gate: Mutex<Option<Arc<GenerationGate>>>,
+    explanation: Mutex<Option<kemi_core::domain::explanation::ExplanationDocument>>,
     accepted: Mutex<Vec<SessionState>>,
     title: Mutex<String>,
     total_files: Mutex<usize>,
@@ -2439,6 +2467,9 @@ fn keeps_no_files() -> kemi_core::session::FilesWrite {
 }
 
 impl SessionSink for RecordingSink {
+    fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
+        self.explanation.lock().unwrap().clone()
+    }
     fn is_resumed(&self) -> bool {
         self.initial.lock().unwrap().is_some()
     }
@@ -2456,6 +2487,12 @@ impl SessionSink for RecordingSink {
     }
 
     fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
+        if state.explanation.is_some()
+            && let Some(gate) = self.explanation_gate.lock().unwrap().take()
+        {
+            gate.entered.notify_one();
+            let _ = gate.release.lock().unwrap().recv();
+        }
         self.states.lock().unwrap().push(state);
         if self.fail.load(Ordering::SeqCst) {
             Err(SessionError::Io {
@@ -5078,4 +5115,657 @@ async fn conversation_markdown_renders_without_image_requests_and_does_not_read_
             .contains("<strong>hello</strong>")
     );
     assert!(!value["html"].as_str().unwrap().contains("<img"));
+}
+fn explanation_sections() -> Value {
+    json!([{"id":"overview","title":"Overview","blocks":[{"id":"intent","part":{"type":"text","body":"**Intent**"},"references":[]}]}])
+}
+
+#[tokio::test]
+async fn initial_explanation_is_saved_before_the_first_response_without_a_conversation_event() {
+    let sink = Arc::new(RecordingSink::default());
+    *sink.explanation.lock().unwrap() =
+        Some(serde_json::from_value(json!({"sections":explanation_sections()})).unwrap());
+    let server = AgentServer::start_with_sink(
+        Arc::new(FakeSource::new()),
+        Ipv4Addr::LOCALHOST,
+        sink.clone(),
+    )
+    .await;
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["explanation"]["current_revision"], 1);
+    let saved = sink.accepted.lock().unwrap().first().unwrap().clone();
+    assert_eq!(saved.explanation.unwrap().current_revision, 1);
+    assert!(saved.channel.events.is_empty());
+}
+
+#[tokio::test]
+async fn explanation_context_and_updates_are_separate_from_conversation_and_reject_conflicts() {
+    let server = AgentServer::start().await;
+    let context = server.agent_post("context", json!({})).await;
+    assert_eq!(context.status(), 200);
+    let context: Value = context.json().await.unwrap();
+    assert_eq!(context["kemi"], 3);
+    assert_eq!(context["explanation_revision"], 0);
+    assert!(context["explanation"].is_null());
+    let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
+    let first = server.agent_post("explain", update.clone()).await;
+    assert_eq!(first.status(), 200);
+    assert_eq!(first.json::<Value>().await.unwrap()["revision"], 1);
+    assert_eq!(server.agent_post("explain", update).await.status(), 409);
+    let after: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after["explanation_revision"], 1);
+    assert_eq!(after["explanation"]["sections"], explanation_sections());
+    assert_eq!(server.agent_status().await, "not-connected");
+    let saved = server.sink.states.lock().unwrap().last().unwrap().clone();
+    assert!(
+        saved.comments.is_empty() && saved.messages.is_empty() && saved.channel.events.is_empty()
+    );
+}
+#[tokio::test]
+async fn parts_reply_accepts_typed_content_and_refuses_an_entire_batch_with_a_bad_later_write() {
+    let server = AgentServer::start().await;
+    let comment = server.page.add_comment_with_body(11, "question").await;
+    let parts = json!([{"type":"text","body":"**reply**"},{"type":"code","body":"literal","language":"pseudocode","role":"example"}]);
+    let (status,_) = server.reply(json!([{"type":"reply","comment_id":comment["id"],"parts":parts},{"type":"message","parts":parts}])).await;
+    assert_eq!(status, 200);
+    let before: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(before["comments"][0]["replies"][0]["parts"], parts);
+    for invalid in [
+        json!({"body":null,"parts":parts}),
+        json!({"body":"plain","parts":parts}),
+        json!({"parts":null}),
+        json!({"parts":[]}),
+        json!({"parts":[{"type":"code","body":"x","language":"rust","role":"wrong"}]}),
+    ] {
+        let mut bad = invalid;
+        bad["type"] = json!("message");
+        assert_eq!(
+            server
+                .reply(json!([{"type":"message","parts":parts},bad]))
+                .await
+                .0,
+            400
+        );
+    }
+    let after: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(before["messages"], after["messages"]);
+    assert_eq!(before["comments"], after["comments"]);
+}
+#[tokio::test]
+async fn context_uses_known_source_lines_and_real_sides_without_reading_content_again() {
+    let source = kemi_core::source::manifest::ManifestSource::from_json(&json!({"title":"Manifest","groups":[{"id":"g","title":"G","diffs":[{"path":"a.txt","status":"add","old":"one\ntwo\n","new":"ONE\ntwo\nthree\n"}]}]}).to_string(),std::path::Path::new(".")).unwrap();
+    let server = AgentServer::start_with(Arc::new(source), Ipv4Addr::LOCALHOST).await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(context["references"]["code"][0]["old_present"], true);
+    assert_eq!(context["references"]["code"][0]["old_lines"], 2);
+    assert_eq!(context["references"]["code"][0]["new_lines"], 3);
+    let mut sections = explanation_sections();
+    sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":null,"group_id":"g","path":"a.txt","side":"old","start_line":1,"end_line":2}]);
+    let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":sections});
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        200
+    );
+    let mut bad = update;
+    bad["expected_revision"] = json!(1);
+    bad["sections"][0]["blocks"][0]["references"][0]["end_line"] = json!(3);
+    assert_eq!(server.agent_post("explain", bad).await.status(), 400);
+}
+#[tokio::test]
+async fn explanation_comments_keep_the_original_block_and_old_versions_can_be_held_and_released() {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let mut update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        200
+    );
+    assert_eq!(
+        server
+            .page
+            .post(
+                "api/explanation",
+                json!({"op":"hold","screen":"reader","revision":1})
+            )
+            .await
+            .status(),
+        200
+    );
+    let response = server.page.post("api/comment",json!({"op":"add_explanation","explanation_revision":1,"block_id":"intent","body":"question"})).await;
+    assert_eq!(response.status(), 200);
+    let comment: Value = response.json().await.unwrap();
+    assert_eq!(comment["target_type"], "explanation");
+    assert!(comment["path"].is_null());
+    update["expected_revision"] = json!(1);
+    update["sections"][0]["blocks"][0]["part"]["body"] = json!("changed");
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        200
+    );
+    let old: Value = server
+        .page
+        .get("api/explanation?revision=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(old["sections"], explanation_sections());
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"][0]["explanation"], comment["explanation"]);
+    assert_eq!(review["comments"][0]["outdated"], true);
+    assert_eq!(
+        server
+            .page
+            .post(
+                "api/explanation",
+                json!({"op":"release","screen":"reader","revision":1})
+            )
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(server.page.post("api/comment",json!({"op":"add_explanation","explanation_revision":1,"block_id":"missing","body":"question"})).await.status(),404);
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn initial_explanation_accepts_opposite_units_while_the_full_build_is_gated() {
+    for startup in [GroupBy::File, GroupBy::Commit] {
+        let (repo, base) = range_repo();
+        let group = if startup == GroupBy::File {
+            repo.git(&["rev-parse", "HEAD~1"]).trim().to_string()
+        } else {
+            "all".into()
+        };
+        let unit = if startup == GroupBy::File {
+            "commit"
+        } else {
+            "file"
+        };
+        let mut sections = explanation_sections();
+        sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":unit,"group_id":group,"path":"b.txt","side":"new","start_line":null,"end_line":null}]);
+        let sink = Arc::new(RecordingSink::default());
+        *sink.explanation.lock().unwrap() =
+            Some(serde_json::from_value(json!({"sections":sections})).unwrap());
+        let reads = Arc::new(AtomicUsize::new(0));
+        let (release, gate) = std::sync::mpsc::channel();
+        let source = Arc::new(GatedSource {
+            inner: Box::new(CountingSource {
+                inner: Box::new(range_source(&repo, &base, "HEAD", startup)),
+                reads: reads.clone(),
+            }),
+            gated: startup.other(),
+            gate: Mutex::new(gate),
+        });
+        let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
+        let first = tokio::time::timeout(Duration::from_secs(2), server.page.get("api/review"))
+            .await
+            .expect("initial response waited for all opposite metadata");
+        assert_eq!(first.status(), 200);
+        let first: Value = first.json().await.unwrap();
+        assert_eq!(first["explanation"]["current_revision"], 1);
+        assert_eq!(first["units"][1]["state"], "building");
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(server.agent_post("context", json!({})).await.status(), 409);
+        let update = json!({"expected_revision":1,"base_display_version":first["diff_display_version"],"sections":sections});
+        assert_eq!(server.agent_post("explain", update).await.status(), 200);
+        release.send(()).unwrap();
+        server.page.task.abort();
+    }
+}
+#[tokio::test]
+async fn explanation_update_keeps_hand_receipts_agent_lines_and_unreceived_events() {
+    let server = AgentServer::start().await;
+    server.wait(Some(0)).await;
+    server.page.add_comment_with_body(11, "first").await;
+    assert_eq!(server.page.post("api/hand", json!({})).await.status(), 200);
+    let (_, first) = server.wait(Some(0)).await;
+    let through = first["through"].clone();
+    let before: Value = server.page.get("api/review").await.json().await.unwrap();
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(server.agent_post("explain",json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(),200);
+    let after: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(before["agent"], after["agent"]);
+    server.page.add_comment_with_body(12, "second").await;
+    assert_eq!(server.page.post("api/hand", json!({})).await.status(), 200);
+    assert_eq!(
+        server
+            .agent_post("received", json!({"through":through}))
+            .await
+            .status(),
+        200
+    );
+    let (_, pending) = server.wait(Some(0)).await;
+    assert_eq!(
+        handed_events(&pending)[0]["comments"][0]["comment"]["body"],
+        "second"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn explanation_updates_are_atomic_under_concurrency_and_storage_failure() {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
+    let (a, b) = tokio::join!(
+        server.agent_post("explain", update.clone()),
+        server.agent_post("explain", update)
+    );
+    let mut status = [a.status().as_u16(), b.status().as_u16()];
+    status.sort();
+    assert_eq!(status, [200, 409]);
+    let before: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let accepted_before = server.sink.accepted.lock().unwrap().last().unwrap().clone();
+    server.sink.fail.store(true, Ordering::SeqCst);
+    assert_eq!(server.agent_post("explain",json!({"expected_revision":1,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(),500);
+    let after: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(
+        server.sink.accepted.lock().unwrap().last().unwrap(),
+        &accepted_before
+    );
+}
+
+#[tokio::test]
+async fn new_agent_explanation_endpoints_keep_origin_token_and_loopback_protection() {
+    let server = AgentServer::start().await;
+    for action in ["context", "explain"] {
+        let browser = reqwest::Client::new()
+            .post(server.agent_url(&server.agent_token, action))
+            .header("Origin", &server.page.origin)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(browser.status(), 403);
+        let wrong = reqwest::Client::new()
+            .post(server.agent_url("page-token", action))
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), 403);
+        let wrong_page = reqwest::Client::new()
+            .post(format!(
+                "{}api/explanation",
+                server.page.url.replace("test-token", "wrong")
+            ))
+            .header("Origin", &server.page.origin)
+            .json(&json!({"op":"hold","screen":"reader","revision":1}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong_page.status(), 404);
+    }
+}
+#[tokio::test]
+async fn explanation_accepts_known_old_code_bases_but_not_unknown_tokens_or_current_unknown_targets()
+ {
+    let server = AgentServer::start().await;
+    let before: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let current: Value = server
+        .page
+        .get("api/review?refresh=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let mut sections = explanation_sections();
+    sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":null,"group_id":"missing","path":"not-present.txt","side":"new","start_line":null,"end_line":null}]);
+    let mut update = json!({"expected_revision":0,"base_display_version":before["diff_display_version"],"sections":sections});
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        200
+    );
+    update["expected_revision"] = json!(1);
+    update["base_display_version"] = current["diff_display_version"].clone();
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        400
+    );
+    for token in ["another-review:1", "01TESTREVIEW:999", "01TESTREVIEW:0"] {
+        update["base_display_version"] = json!(token);
+        assert_eq!(
+            server.agent_post("explain", update.clone()).await.status(),
+            400
+        );
+    }
+    assert_eq!(
+        server
+            .agent_post("context", json!({}))
+            .await
+            .json::<Value>()
+            .await
+            .unwrap()["explanation_revision"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn held_explanation_versions_are_not_discarded_to_accept_an_over_capacity_update() {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    for expected in 0..128 {
+        assert_eq!(server.agent_post("explain",json!({"expected_revision":expected,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(),200);
+        assert_eq!(
+            server
+                .page
+                .post(
+                    "api/explanation",
+                    json!({"op":"hold","screen":"reader","revision":expected+1})
+                )
+                .await
+                .status(),
+            200
+        );
+    }
+    let before = server.sink.last_state();
+    let update = json!({"expected_revision":128,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        413
+    );
+    assert_eq!(server.sink.last_state(), before);
+    assert_eq!(
+        server.page.get("api/explanation?revision=1").await.status(),
+        200
+    );
+    assert_eq!(
+        server
+            .page
+            .post(
+                "api/explanation",
+                json!({"op":"release","screen":"reader","revision":1})
+            )
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(server.agent_post("explain", update).await.status(), 200);
+    assert_eq!(
+        server.page.get("api/explanation?revision=1").await.status(),
+        404
+    );
+}
+
+#[tokio::test]
+async fn explanation_and_parts_inputs_refuse_duplicate_keys_before_mutating_state() {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let explanation = format!(
+        "{{\"expected_revision\":0,\"expected_revision\":0,\"base_display_version\":{},\"sections\":{}}}",
+        context["diff_display_version"],
+        explanation_sections()
+    );
+    for (action, body) in [
+        ("explain", explanation.as_str()),
+        (
+            "reply",
+            r#"{"writes":[{"type":"message","body":"first","body":"second"}]}"#,
+        ),
+        (
+            "reply",
+            r#"{"writes":[{"type":"message","parts":[{"type":"text","body":"one","body":"two"}]}]}"#,
+        ),
+    ] {
+        let response = reqwest::Client::new()
+            .post(server.agent_url(&server.agent_token, action))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+    }
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert!(review["explanation"].is_null());
+    assert!(review["messages"].as_array().unwrap().is_empty());
+}
+struct GatedContentSource {
+    inner: Arc<FakeSource>,
+    gate: Arc<GenerationGate>,
+    blocked: AtomicBool,
+}
+impl ReviewSource for GatedContentSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        if self.blocked.load(Ordering::SeqCst) {
+            self.gate.entered.notify_one();
+            let _ = self.gate.release.lock().unwrap().recv();
+        }
+        self.inner.content(id)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn submit_claiming_first_refuses_the_explanation_while_result_content_is_gated() {
+    let (release, wait) = std::sync::mpsc::channel();
+    let gate = Arc::new(GenerationGate {
+        entered: tokio::sync::Notify::new(),
+        release: Mutex::new(wait),
+    });
+    let source = Arc::new(GatedContentSource {
+        inner: Arc::new(FakeSource::new()),
+        gate: gate.clone(),
+        blocked: AtomicBool::new(false),
+    });
+    let server = AgentServer::start_with(source.clone(), Ipv4Addr::LOCALHOST).await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    server.page.add_comment_with_body(11, "question").await;
+    source.blocked.store(true, Ordering::SeqCst);
+    let url = server.page.url.clone();
+    let origin = server.page.origin.clone();
+    let submit = tokio::spawn(async move {
+        post_json(&url, &origin, "api/submit", json!({"verdict":"approved"})).await
+    });
+    gate.entered.notified().await;
+    assert_eq!(server.agent_post("explain",json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(),409);
+    release.send(()).unwrap();
+    let response = submit.await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.json::<Value>().await.unwrap()["result"]["explanation"].is_null());
+    server.page.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn explanation_saving_first_is_included_in_submit_started_while_the_save_is_gated() {
+    let sink = Arc::new(RecordingSink::default());
+    let server = AgentServer::start_with_sink(
+        Arc::new(FakeSource::new()),
+        Ipv4Addr::LOCALHOST,
+        sink.clone(),
+    )
+    .await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let (release, wait) = std::sync::mpsc::channel();
+    let gate = Arc::new(GenerationGate {
+        entered: tokio::sync::Notify::new(),
+        release: Mutex::new(wait),
+    });
+    *sink.explanation_gate.lock().unwrap() = Some(gate.clone());
+    let url = server.agent_url(&server.agent_token, "explain");
+    let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
+    let explain = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(url)
+            .json(&update)
+            .send()
+            .await
+            .unwrap()
+    });
+    gate.entered.notified().await;
+    let url = server.page.url.clone();
+    let origin = server.page.origin.clone();
+    let submit = tokio::spawn(async move {
+        post_json(&url, &origin, "api/submit", json!({"verdict":"approved"})).await
+    });
+    release.send(()).unwrap();
+    assert_eq!(explain.await.unwrap().status(), 200);
+    let result: Value = submit.await.unwrap().json().await.unwrap();
+    assert_eq!(result["result"]["explanation"]["current_revision"], 1);
+    server.page.finish().await;
+}
+#[tokio::test]
+async fn explanation_notifications_do_not_emit_code_updates_or_conversation_events() {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let mut sse = server.page.get("api/events").await;
+    assert_eq!(server.agent_post("explain",json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(),200);
+    let notification = next_sse_event(&mut sse, "explanation").await;
+    assert_eq!(notification["revision"], 1);
+    assert_eq!(
+        notification["base_display_version"],
+        context["diff_display_version"]
+    );
+    server.agent_post("context", json!({})).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), sse.chunk())
+            .await
+            .is_err()
+    );
+    assert!(server.sink.last_state().channel.events.is_empty());
+}
+
+#[tokio::test]
+async fn a_hand_over_capacity_keeps_all_typed_messages_unhanded_and_stores_no_partial_event() {
+    use kemi_core::domain::conversation_content::ConversationContent;
+    use kemi_core::domain::review::{Author, Message};
+    let parts:Vec<kemi_core::domain::parts::Part>=serde_json::from_value(json!((0..16).map(|_|json!({"type":"code","body":"x".repeat(32000),"language":"pseudocode","role":"example"})).collect::<Vec<_>>())).unwrap();
+    let mut saved = SessionState::default();
+    saved.channel.called = true;
+    for n in 1..=20 {
+        let id = format!("m{n}");
+        saved.messages.push(Message {
+            id: id.clone(),
+            seq: n,
+            author: Author::Reviewer,
+            body: ConversationContent::Parts(parts.clone()),
+        });
+        saved.channel.note_message(&id);
+    }
+    kemi_core::session::validate_additional(&saved).unwrap();
+    let server = AgentServer::resume(saved.clone()).await;
+    assert_eq!(server.page.post("api/hand", json!({})).await.status(), 413);
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(context["explanation_revision"], 0);
+    let after = server.sink.last_state();
+    assert_eq!(after.messages, saved.messages);
+    assert_eq!(after.channel, saved.channel);
+    let (_, waiting) = server.wait(Some(0)).await;
+    assert_eq!(waiting["timeout"], true);
+}
+#[tokio::test]
+async fn plain_writes_keep_legacy_container_extensions_without_relaxing_part_fields_or_mixed_content()
+ {
+    let server = AgentServer::start().await;
+    assert_eq!(
+        server
+            .reply(json!([{"type":"message","body":"**plain**","extension":{"opaque":true}}]))
+            .await
+            .0,
+        200
+    );
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["messages"][0]["body"], "**plain**");
+    assert!(review["messages"][0]["parts"].is_null());
+    assert_eq!(
+        server
+            .reply(json!([{"type":"message","body":"plain","parts":null,"extension":true}]))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        server
+            .reply(
+                json!([{"type":"message","parts":[{"type":"text","body":"part","extension":true}]}])
+            )
+            .await
+            .0,
+        400
+    );
+}
+#[tokio::test]
+async fn old_code_bases_still_require_the_reference_unit_shape_of_this_review() {
+    let server = AgentServer::start().await;
+    let old: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    server.page.get("api/review?refresh=1").await;
+    let mut sections = explanation_sections();
+    sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":"file","group_id":"all","path":"old.txt","side":"new","start_line":null,"end_line":null}]);
+    assert_eq!(server.agent_post("explain",json!({"expected_revision":0,"base_display_version":old["diff_display_version"],"sections":sections})).await.status(),400);
 }

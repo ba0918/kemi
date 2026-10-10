@@ -67,6 +67,10 @@ impl LiveSource {
 }
 
 impl ReviewSource for LiveSource {
+    fn reference_metadata(&self, file_id: &str) -> Option<super::ReferenceMetadata> {
+        let (source, inner) = self.inner(file_id).ok()?;
+        source.reference_metadata(&inner)
+    }
     fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
         Ok(Some(Arc::new(Self {
             code: self.code.as_ref().map(GitSource::detached).transpose()?,
@@ -144,6 +148,20 @@ mod tests {
     fn a_file_id_is_decided_by_the_path_alone() {
         assert_eq!(stable_id(b"a.txt"), stable_id(b"a.txt"));
         assert_ne!(stable_id(b"a.txt"), stable_id(b"b.txt"));
+    }
+
+    #[test]
+    fn live_reference_metadata_keeps_the_line_count_already_read_for_untracked_files() {
+        let repo = crate::source::testutil::TempRepo::new();
+        repo.write("page.html", "page\n");
+        repo.add_and_commit("base");
+        repo.write("new.txt", "one\ntwo\n");
+        let source = LiveSource::new(&LivePage::File("page.html".into()), &repo.path);
+        let review = source.review().unwrap();
+        let file = &review.groups[0].files[0];
+        let metadata = source.reference_metadata(&file.id).unwrap();
+        assert!(!metadata.old_present);
+        assert_eq!(metadata.new_lines, Some(2));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 mod agent;
 mod channel;
 mod comments;
+pub(crate) mod explanation;
 mod file;
 mod mock;
 mod parts;
@@ -55,6 +56,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/origin/{id}", get(origin))
         .route("/s/{token}/api/render/{id}", get(render_file))
         .route("/s/{token}/api/parts", post(parts::render_part))
+        .route(
+            "/s/{token}/api/explanation",
+            get(explanation::get_version).post(explanation::hold_version),
+        )
         .route("/s/{token}/api/image/review/{id}/{side}", get(review_image))
         .route(
             "/s/{token}/api/image/repo/{id}/{side}/{*path}",
@@ -628,6 +633,7 @@ async fn events(
                 Ok(Event::Message(message)) => ("message", message.to_string()),
                 Ok(Event::Agent(agent)) => ("agent", agent.to_string()),
                 Ok(Event::Snapshots) => ("snapshots", "{}".to_string()),
+                Ok(Event::Explanation(value)) => ("explanation", value.to_string()),
                 // 取りこぼした通知は、どれだったか分からない。ページは更新があったもの
                 // として扱い、スレッドと発言とエージェントの状態を取り直す。
                 Err(_) => ("lagged", "{}".to_string()),

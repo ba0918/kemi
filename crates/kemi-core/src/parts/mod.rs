@@ -23,45 +23,75 @@ impl std::fmt::Display for ContentError {
 
 impl std::error::Error for ContentError {}
 
-pub fn decode_content(input: &str) -> Result<ConversationContent, ContentError> {
-    struct Input(ConversationContent);
-    impl<'de> Deserialize<'de> for Input {
-        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            struct ContentVisitor;
-            impl<'de> Visitor<'de> for ContentVisitor {
-                type Value = Input;
-                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    f.write_str("an object with exactly one of body or parts")
-                }
-                fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Input, M::Error> {
-                    let mut content = None;
-                    while let Some(key) = map.next_key::<String>()? {
-                        if content.is_some() {
-                            return Err(serde::de::Error::custom(format!(
-                                "{key}: duplicate or mixed content field"
-                            )));
+#[derive(Debug)]
+pub struct InputContent(pub ConversationContent);
+impl<'de> Deserialize<'de> for InputContent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_content(deserializer, ContainerFields::OnlyContent).map(Self)
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteContent(pub ConversationContent);
+impl<'de> Deserialize<'de> for WriteContent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_content(deserializer, ContainerFields::LegacyWrite).map(Self)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ContainerFields {
+    OnlyContent,
+    LegacyWrite,
+}
+
+fn deserialize_content<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    fields: ContainerFields,
+) -> Result<ConversationContent, D::Error> {
+    struct ContentVisitor(ContainerFields);
+    impl<'de> Visitor<'de> for ContentVisitor {
+        type Value = ConversationContent;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("an object with exactly one of body or parts")
+        }
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<ConversationContent, M::Error> {
+            let mut content = None;
+            while let Some(key) = map.next_key::<String>()? {
+                if !matches!(key.as_str(), "body" | "parts") {
+                    match self.0 {
+                        ContainerFields::OnlyContent => {
+                            return Err(serde::de::Error::unknown_field(&key, &["body", "parts"]));
                         }
-                        content = Some(match key.as_str() {
-                            "body" => ConversationContent::Plain(map.next_value()?),
-                            "parts" => ConversationContent::Parts(map.next_value()?),
-                            _ => {
-                                return Err(serde::de::Error::unknown_field(
-                                    &key,
-                                    &["body", "parts"],
-                                ));
-                            }
-                        });
+                        ContainerFields::LegacyWrite => {
+                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                            continue;
+                        }
                     }
-                    content.map(Input).ok_or_else(|| {
-                        serde::de::Error::custom("body/parts: missing content field")
-                    })
                 }
+                if content.is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "{key}: duplicate or mixed content field"
+                    )));
+                }
+                content = Some(if key == "body" {
+                    ConversationContent::Plain(map.next_value()?)
+                } else {
+                    ConversationContent::Parts(map.next_value()?)
+                });
             }
-            deserializer.deserialize_map(ContentVisitor)
+            content.ok_or_else(|| serde::de::Error::custom("body/parts: missing content field"))
         }
     }
-    let value: Input = serde_json::from_str(input).map_err(ContentError::Json)?;
-    Ok(match value.0 {
+    deserializer.deserialize_map(ContentVisitor(fields))
+}
+pub fn decode_content(input: &str) -> Result<ConversationContent, ContentError> {
+    let value: InputContent = serde_json::from_str(input).map_err(ContentError::Json)?;
+    validate_content(value.0)
+}
+
+pub fn validate_content(content: ConversationContent) -> Result<ConversationContent, ContentError> {
+    Ok(match content {
         ConversationContent::Plain(body) => {
             bound("body UTF-8 bytes", body.len(), 0, 65_536).map_err(ContentError::Structure)?;
             ConversationContent::Plain(body)

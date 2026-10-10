@@ -173,6 +173,16 @@ fn build_diff(
         content_skipped: false,
     };
     let planned = PlannedFile {
+        old_lines: if binary {
+            None
+        } else {
+            super::known_lines(old_bytes.as_deref())
+        },
+        new_lines: if binary {
+            None
+        } else {
+            super::known_lines(new_bytes.as_deref())
+        },
         id: file_id.to_string(),
         old: old_ref,
         new: new_ref,
@@ -273,6 +283,9 @@ impl ManifestSource {
 }
 
 impl ReviewSource for ManifestSource {
+    fn reference_metadata(&self, file_id: &str) -> Option<super::ReferenceMetadata> {
+        self.store.reference_metadata(file_id)
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let (review, plan) = build_review(&self.manifest, &self.base)?;
         self.store.update(plan);
@@ -300,6 +313,29 @@ impl ReviewSource for ManifestSource {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reference_total_lines_follow_display_newlines_and_keep_present_empty_files() {
+        for (body, expected) in [
+            ("", 0),
+            ("a", 1),
+            ("a\n", 1),
+            ("\n", 1),
+            ("\r\n", 1),
+            ("a\r\nb\rc\n", 3),
+            ("あ\nい\n\n", 3),
+        ] {
+            let source=ManifestSource::from_json(&json!({"title":"Lines","groups":[{"id":"g","title":"G","diffs":[{"path":"a.txt","new":body}]}]}).to_string(),std::path::Path::new(".")).unwrap();
+            let review = source.review().unwrap();
+            let metadata = source
+                .reference_metadata(&review.groups[0].files[0].id)
+                .unwrap();
+            assert!(metadata.new_present);
+            assert_eq!(metadata.new_lines, Some(expected));
+            assert!(!metadata.old_present);
+            assert_eq!(metadata.old_lines, None);
+        }
+    }
 
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")

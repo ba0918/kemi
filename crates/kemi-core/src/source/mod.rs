@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::domain::explanation::{CodeReferenceEntry, ReferenceUnit};
 use crate::domain::focus::{self, FocusTargets};
 use crate::domain::origin::{BlockOrigin, RangeCommit};
 use crate::domain::review::{GroupBy, ReviewMeta, Side};
@@ -58,6 +59,33 @@ pub struct FileContent {
     pub new: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ReferenceMetadata {
+    pub old_present: bool,
+    pub new_present: bool,
+    pub old_lines: Option<u32>,
+    pub new_lines: Option<u32>,
+}
+
+pub(crate) fn known_lines(bytes: Option<&[u8]>) -> Option<u32> {
+    let bytes = bytes?;
+    if crate::domain::content::is_binary(bytes) {
+        return None;
+    }
+    if bytes.is_empty() {
+        return Some(0);
+    }
+    let separators = bytes
+        .iter()
+        .enumerate()
+        .filter(|(index, byte)| {
+            **byte == b'\r' || (**byte == b'\n' && (*index == 0 || bytes[*index - 1] != b'\r'))
+        })
+        .count();
+    let unterminated = usize::from(!matches!(bytes.last(), Some(b'\r' | b'\n')));
+    u32::try_from(separators + unterminated).ok()
+}
+
 /// 最終形の 1 ファイルの由来（R-ORIGIN）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileOrigin {
@@ -70,6 +98,17 @@ pub struct FileOrigin {
 
 /// レビューの供給元。`review` はメタデータと統計、`content` は表示時の行内容を返す。
 pub trait ReviewSource: Send + Sync {
+    fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        let _ = file_id;
+        None
+    }
+    fn select_references(
+        &self,
+        requested: &[(ReferenceUnit, String, String)],
+    ) -> Result<Vec<CodeReferenceEntry>, SourceError> {
+        let _ = requested;
+        Ok(Vec::new())
+    }
     /// 内容参照を変更するソースは、未公開の作成対象を分ける。参照計画が不変のソースはNone。
     fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
         Ok(None)
@@ -149,6 +188,15 @@ impl SourceSlot {
     }
 }
 impl ReviewSource for SourceSlot {
+    fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        self.current().reference_metadata(file_id)
+    }
+    fn select_references(
+        &self,
+        requested: &[(ReferenceUnit, String, String)],
+    ) -> Result<Vec<CodeReferenceEntry>, SourceError> {
+        self.current().select_references(requested)
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         self.current().review()
     }
@@ -209,6 +257,8 @@ pub(crate) enum SideRef {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlannedFile {
+    pub old_lines: Option<u32>,
+    pub new_lines: Option<u32>,
     pub id: String,
     pub old: SideRef,
     pub new: SideRef,
@@ -282,12 +332,21 @@ pub(crate) fn text_stats(
 /// 片方を差し替えても、もう片方のファイル id は引けるままにする。
 pub(crate) struct PlanStore {
     state: Mutex<HashMap<Option<GroupBy>, Plan>>,
+    metadata: Mutex<HashMap<String, ReferenceMetadata>>,
 }
 
 impl PlanStore {
+    pub fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        self.metadata
+            .lock()
+            .expect("reference metadata poisoned")
+            .get(file_id)
+            .cloned()
+    }
     pub fn new() -> Self {
         PlanStore {
             state: Mutex::new(HashMap::new()),
+            metadata: Mutex::new(HashMap::new()),
         }
     }
 
@@ -296,10 +355,25 @@ impl PlanStore {
     }
 
     pub fn update_unit(&self, unit: Option<GroupBy>, plan: Plan) {
-        self.state
-            .lock()
-            .expect("plan store poisoned")
-            .insert(unit, plan);
+        let mut state = self.state.lock().expect("plan store poisoned");
+        let mut metadata = self.metadata.lock().expect("reference metadata poisoned");
+        if let Some(old) = state.get(&unit) {
+            for file in &old.files {
+                metadata.remove(&file.id);
+            }
+        }
+        for file in &plan.files {
+            metadata.insert(
+                file.id.clone(),
+                ReferenceMetadata {
+                    old_present: !matches!(file.old, SideRef::Absent),
+                    new_present: !matches!(file.new, SideRef::Absent),
+                    old_lines: file.old_lines,
+                    new_lines: file.new_lines,
+                },
+            );
+        }
+        state.insert(unit, plan);
     }
 
     pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
@@ -396,6 +470,15 @@ impl FocusSource {
 }
 
 impl ReviewSource for FocusSource {
+    fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        self.inner.reference_metadata(file_id)
+    }
+    fn select_references(
+        &self,
+        requested: &[(ReferenceUnit, String, String)],
+    ) -> Result<Vec<CodeReferenceEntry>, SourceError> {
+        self.inner.select_references(requested)
+    }
     fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
         Ok(self.inner.fork()?.map(|inner| {
             Arc::new(FocusSource {

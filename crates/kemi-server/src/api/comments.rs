@@ -22,6 +22,14 @@ use crate::{AppState, Event, Notice};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub(super) enum CommentRequest {
+    #[serde(rename = "add_explanation")]
+    AddExplanation {
+        explanation_revision: u64,
+        block_id: String,
+        body: String,
+        #[serde(default)]
+        suggestion: Option<String>,
+    },
     Add {
         file_id: String,
         side: String,
@@ -111,6 +119,19 @@ pub(super) async fn comment_api(
     Json(request): Json<CommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
     match request {
+        CommentRequest::AddExplanation {
+            explanation_revision,
+            block_id,
+            body,
+            suggestion,
+        } => {
+            if suggestion.is_some() {
+                return Err(ApiError::bad_request(
+                    "explanation comments cannot have suggestions",
+                ));
+            }
+            add_explanation_comment(&state, explanation_revision, &block_id, body)
+        }
         CommentRequest::Add {
             file_id,
             side,
@@ -393,6 +414,70 @@ fn add_page_comment(
         answer["image_unsaved"] = json!(true);
     }
     Ok(Json(answer))
+}
+
+fn add_explanation_comment(
+    state: &AppState,
+    revision: u64,
+    block_id: &str,
+    body: String,
+) -> Result<Json<Value>, ApiError> {
+    let gate = state.persist.lock().expect("persist poisoned");
+    if *state.shutdown.borrow()
+        || matches!(
+            *state.submit_state.lock().expect("submit poisoned"),
+            crate::SubmitState::Claimed
+        )
+    {
+        return Err(ApiError::conflict("the review is being submitted"));
+    }
+    if body.len() > kemi_core::domain::agent::MAX_BODY_BYTES {
+        return Err(ApiError::too_large("body exceeds 65536 UTF-8 bytes"));
+    }
+    let mut session = state.session.lock().expect("session poisoned");
+    let version = session
+        .explanation
+        .as_ref()
+        .and_then(|history| history.versions.iter().find(|v| v.revision == revision))
+        .ok_or_else(|| ApiError::not_found("explanation revision is no longer available"))?;
+    let document = kemi_core::domain::explanation::ExplanationDocument {
+        sections: version.sections.clone(),
+    };
+    let quote = kemi_core::domain::explanation::quote_block(&document, block_id)
+        .map_err(|error| ApiError::not_found(error.to_string()))?;
+    let mut candidate = session.snapshot();
+    candidate.last_comment += 1;
+    candidate.last_seq += 1;
+    let comment = Comment {
+        id: format!("c{}", candidate.last_comment),
+        seq: candidate.last_seq,
+        group_id: String::new(),
+        group_title: String::new(),
+        body,
+        replies: vec![],
+        resolved: false,
+        outdated: false,
+        target: CommentTarget::Explanation(kemi_core::domain::review::ExplanationTarget {
+            revision,
+            block_id: block_id.into(),
+            quote,
+        }),
+    };
+    candidate.channel.note_comment(&comment.id);
+    candidate.comments.push(comment);
+    candidate.refresh_explanation_comments();
+    kemi_core::session::validate_additional(&candidate)
+        .map_err(|error| ApiError::too_large(error.to_string()))?;
+    let value = page_comment_json(candidate.comments.last().expect("new comment appended"));
+    session.last_comment = candidate.last_comment;
+    session.last_seq = candidate.last_seq;
+    session.comments = candidate.comments;
+    session.channel = candidate.channel;
+    drop(session);
+    drop(gate);
+    persist(state);
+    notify_agent_state(state);
+    Ok(Json(value))
 }
 
 /// コメントの画像を保存した結果。

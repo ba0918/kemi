@@ -1,4 +1,4 @@
-//! `kemi wait` と `kemi reply`（agent-channel.md の R-AGENT-CLI）。
+//! `kemi wait` / `reply` / `explain`（R-AGENT-CLI、R-EXPLANATION-CLI）。
 //!
 //! 動いているレビューの `<id>.endpoint` からエージェント用の API のポートとトークンを読み、
 //! ループバックへ平文の HTTP/1.1 の要求を送る（`kemi wait` は待つ要求と受け取りの知らせの 2 つ）。
@@ -14,22 +14,51 @@ pub const USAGE: &str = "\
 kemi: usage:
   kemi wait <id> [--timeout <seconds>]   wait for what the reviewer hands over, then print it
   kemi reply <id>                        write replies and messages read as JSON from stdin
-  (to open a manifest named wait or reply, write it as a path: kemi ./wait)";
+  kemi explain <id> [--file <file>]     replace the explanation from JSON
+  kemi explain <id> --context           print the current reference map without reading stdin
+  (to open a manifest named wait, reply or explain, write it as a path: kemi ./explain)";
 
 /// 最初の引数で選ぶサブコマンド。
 pub enum Command {
-    Wait { id: String, timeout: Option<u64> },
-    Reply { id: String },
+    Explain {
+        id: String,
+        file: Option<PathBuf>,
+        context: bool,
+    },
+    Wait {
+        id: String,
+        timeout: Option<u64>,
+    },
+    Reply {
+        id: String,
+    },
 }
 
 /// `wait` / `reply` の後ろの引数を読む。ほかのフラグや入力モードとは組まない。
 pub fn parse(name: &str, rest: &[String]) -> Result<Command, String> {
     let mut id = None;
     let mut timeout = None;
+    let mut file = None;
+    let mut context = false;
     let mut index = 0;
     while index < rest.len() {
         let arg = rest[index].as_str();
         match arg {
+            "--file" if name == "explain" => {
+                if file.is_some() {
+                    return Err("--file may be given only once".into());
+                }
+                index += 1;
+                file = Some(PathBuf::from(
+                    rest.get(index).ok_or("--file requires a path")?,
+                ));
+            }
+            "--context" if name == "explain" => {
+                if context {
+                    return Err("--context may be given only once".into());
+                }
+                context = true;
+            }
             "--timeout" if name == "wait" => {
                 index += 1;
                 let value = rest
@@ -54,8 +83,12 @@ pub fn parse(name: &str, rest: &[String]) -> Result<Command, String> {
         index += 1;
     }
     let id = id.ok_or_else(|| format!("kemi {name} requires a review id"))?;
+    if context && file.is_some() {
+        return Err("--context and --file cannot be used together".into());
+    }
     Ok(match name {
         "wait" => Command::Wait { id, timeout },
+        "explain" => Command::Explain { id, file, context },
         _ => Command::Reply { id },
     })
 }
@@ -63,6 +96,38 @@ pub fn parse(name: &str, rest: &[String]) -> Result<Command, String> {
 /// 走らせて終了コードを返す。stdout には契約の JSON だけを出す。
 pub fn run(command: Command, sessions: Option<PathBuf>, endpoints: Option<PathBuf>) -> i32 {
     match command {
+        Command::Explain { id, file, context } => {
+            let endpoint = match find(&id, sessions, endpoints) {
+                Ok(endpoint) => endpoint,
+                Err(code) => return code,
+            };
+            let input = if context {
+                b"{}".to_vec()
+            } else if let Some(file) = file {
+                match std::fs::read(file) {
+                    Ok(bytes) => bytes,
+                    Err(error) => return failed(&format!("cannot read the explanation: {error}")),
+                }
+            } else {
+                let mut bytes = Vec::new();
+                if let Err(error) = std::io::stdin().read_to_end(&mut bytes) {
+                    return failed(&format!("cannot read the explanation from stdin: {error}"));
+                }
+                bytes
+            };
+            match post(
+                &endpoint,
+                if context { "context" } else { "explain" },
+                &input,
+            ) {
+                Ok((200, answer)) => {
+                    print_json(&answer);
+                    0
+                }
+                Ok((_, answer)) => refused(&answer),
+                Err(message) => failed(&message),
+            }
+        }
         Command::Wait { id, timeout } => {
             let endpoint = match find(&id, sessions, endpoints) {
                 Ok(endpoint) => endpoint,

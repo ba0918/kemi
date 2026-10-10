@@ -413,6 +413,19 @@ impl OpenSession {
     }
 
     pub fn save_issued_state(&mut self, state: SessionState) -> Result<(), SessionError> {
+        self.save_atomic_state(state, self.info.updated)
+    }
+
+    pub fn save_explanation_state(&mut self, state: SessionState) -> Result<(), SessionError> {
+        super::validate_additional(&state)?;
+        self.save_atomic_state(state, super::now_millis())
+    }
+
+    fn save_atomic_state(
+        &mut self,
+        state: SessionState,
+        updated: u128,
+    ) -> Result<(), SessionError> {
         if self.deleted || self.suspended {
             return Err(SessionError::Unusable {
                 id: self.info.id.clone(),
@@ -427,7 +440,9 @@ impl OpenSession {
             .map_err(|e| SessionError::Encode {
                 reason: e.to_string(),
             })?;
-        let meta = MetaDto::from_parts(&self.info, &state, &self.copy);
+        let mut info = self.info.clone();
+        info.updated = updated;
+        let meta = MetaDto::from_parts(&info, &state, &self.copy);
         let bytes = serde_json::to_vec(&meta).map_err(|e| SessionError::Encode {
             reason: e.to_string(),
         })?;
@@ -437,6 +452,7 @@ impl OpenSession {
             &encoding::encode_session(encoding::VERSION, &bytes),
         )?;
         self.state = state;
+        self.info = info;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
     }
@@ -1447,6 +1463,41 @@ mod tests {
         assert!(open.save_issued_state(second).is_err());
         assert_eq!(open.state(), &first);
         assert_eq!(open.info().updated, 100);
+        assert_eq!(
+            std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn explanation_state_saving_advances_updated_time_only_after_atomic_success_without_payload_io()
+    {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        let mut open = store.create(info(id, 100)).unwrap();
+        let document:crate::domain::explanation::ExplanationDocument=serde_json::from_value(serde_json::json!({"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"Body"},"references":[]}]}]})).unwrap();
+        let state = SessionState {
+            display: Some(crate::domain::display_version::DisplayVersions::initial(id).unwrap()),
+            explanation: Some(crate::domain::explanation::ExplanationHistory {
+                current_revision: 1,
+                versions: vec![crate::domain::explanation::ExplanationVersion {
+                    revision: 1,
+                    base_display_version: format!("{id}:1"),
+                    sections: document.sections,
+                }],
+            }),
+            ..SessionState::default()
+        };
+        open.save_explanation_state(state.clone()).unwrap();
+        assert!(open.info().updated > 100);
+        let updated = open.info().updated;
+        assert!(!payload_path(&scratch.dir(), id).exists());
+        let bytes = std::fs::read(session_path(&scratch.dir(), id)).unwrap();
+        std::fs::create_dir(scratch.dir().join(format!(".{id}.session.tmp"))).unwrap();
+        assert!(open.save_explanation_state(state.clone()).is_err());
+        assert_eq!(open.state(), &state);
+        assert_eq!(open.info().updated, updated);
         assert_eq!(
             std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
             bytes

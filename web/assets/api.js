@@ -142,6 +142,24 @@ export function renderPart(part) {
   return postJson('api/parts', part);
 }
 
+/** @param {number|null} [revision] */
+export function getExplanation(revision = null) {
+  return getJson(`api/explanation${revision === null ? '' : `?revision=${revision}`}`);
+}
+/** @param {string} screen @param {number} revision */
+export function holdExplanation(screen, revision) {
+  return postJson('api/explanation', { op: 'hold', screen, revision });
+}
+/** @param {string} screen @param {number} revision */
+export function releaseExplanation(screen, revision) {
+  return postJson('api/explanation', { op: 'release', screen, revision });
+}
+
+/** @param {string} url */
+export function registerExplanationPage(url) {
+  return postJson('api/explanation', { op: 'register_page', url });
+}
+
 /**
  * レビュー全体への発言を書く。
  * @param {string} body

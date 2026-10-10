@@ -182,8 +182,9 @@ pub struct CodeReferenceEntry {
 }
 
 pub struct ReferenceContext<'a> {
+    pub range: bool,
     pub review_id: &'a str,
-    pub current_token: &'a str,
+    pub current_token: Option<&'a str>,
     pub issued_generation: u128,
     pub code: &'a [CodeReferenceEntry],
     pub pages: &'a [String],
@@ -207,6 +208,7 @@ pub enum ExplanationError {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReferenceFailure {
+    UnitShape,
     RangeShape,
     MissingOrAmbiguous,
     SideAbsent,
@@ -230,6 +232,8 @@ impl std::fmt::Display for ExplanationError {
                 match reason {
                     ReferenceFailure::RangeShape =>
                         "line range must have both ends null or increasing positive integers",
+                    ReferenceFailure::UnitShape =>
+                        "unit must be file or commit for a commit range, and null otherwise",
                     ReferenceFailure::MissingOrAmbiguous =>
                         "reference target is missing or ambiguous for this display version",
                     ReferenceFailure::SideAbsent => "referenced side is absent",
@@ -371,7 +375,10 @@ pub fn validate_references(
                     start_line: _,
                     end_line,
                 } => {
-                    if base != context.current_token {
+                    if unit.is_some() != context.range {
+                        return Err(reference_failure(&path, ReferenceFailure::UnitShape));
+                    }
+                    if Some(base) != context.current_token {
                         continue;
                     }
                     let mut matching = context.code.iter().filter(|e| {
@@ -619,7 +626,8 @@ mod tests {
         }];
         let context = super::ReferenceContext {
             review_id: "review",
-            current_token: "review:2",
+            current_token: Some("review:2"),
+            range: false,
             issued_generation: 2,
             code: &entries,
             pages: &[],
@@ -646,7 +654,8 @@ mod tests {
         }];
         let context = super::ReferenceContext {
             review_id: "review",
-            current_token: "review:1",
+            current_token: Some("review:1"),
+            range: false,
             issued_generation: 1,
             code: &entries,
             pages: &[],
@@ -673,7 +682,8 @@ mod tests {
             serde_json::from_value(serde_json::json!([{"type":"page","url":"/page?x=1"}])).unwrap();
         let context = super::ReferenceContext {
             review_id: "review",
-            current_token: "review:2",
+            current_token: Some("review:2"),
+            range: false,
             issued_generation: 2,
             code: &[],
             pages: &[],
@@ -691,7 +701,8 @@ mod tests {
     fn duplicate_sections_or_blocks_and_empty_sections_are_refused() {
         let context = super::ReferenceContext {
             review_id: "review",
-            current_token: "review:1",
+            current_token: Some("review:1"),
+            range: false,
             issued_generation: 1,
             code: &[],
             pages: &[],
@@ -745,7 +756,8 @@ mod tests {
         let input = document("text");
         let context = super::ReferenceContext {
             review_id: "review",
-            current_token: "review:2",
+            current_token: Some("review:2"),
+            range: false,
             issued_generation: 2,
             code: &[],
             pages: &[],

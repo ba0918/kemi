@@ -1398,6 +1398,15 @@ impl ReviewSource for ToggleScan {
 
 #[tokio::test]
 async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_generation() {
+    resumed_code_failure_case(false).await;
+}
+
+#[tokio::test]
+async fn a_known_base_explanation_can_be_updated_while_resumed_code_is_unavailable() {
+    resumed_code_failure_case(true).await;
+}
+
+async fn resumed_code_failure_case(update_explanation: bool) {
     let (authority, dev) = start_dev_server().await;
     let scratch = Scratch::new("failed-scan");
     let store = kemi_core::session::SessionStore::new(scratch.0.clone());
@@ -1422,6 +1431,8 @@ async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_genera
         listener.local_addr().unwrap().port()
     );
     let relay = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let agent_listener = kemi_server::bind_agent_listener().await.unwrap();
+    let agent_port = agent_listener.local_addr().unwrap().port();
     let params = ServeParams {
         source: source.clone(),
         assets: Arc::new(PageAssets),
@@ -1430,7 +1441,12 @@ async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_genera
         session: Some(sink.clone()),
         notices: Arc::new(Quiet),
         share_address: None,
-        agent: None,
+        agent: update_explanation.then_some(kemi_server::AgentParams {
+            listener: agent_listener,
+            token: "agent-token".into(),
+            review: id.clone(),
+            control: kemi_server::ServeControl::new(),
+        }),
         live: Some(LiveParams {
             listener: relay,
             target: LiveTarget::Url {
@@ -1454,6 +1470,10 @@ async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_genera
     assert_eq!(body["live"]["code"], false);
     assert!(body["code_unavailable"].as_str().is_some());
     assert_eq!(body["explanation"]["current_revision"], 1);
+    if update_explanation {
+        let response=reqwest::Client::new().post(format!("http://127.0.0.1:{agent_port}/a/agent-token/explain")).json(&serde_json::json!({"expected_revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"updated"},"references":[{"type":"code","unit":null,"group_id":"old","path":"old.txt","side":"new","start_line":1,"end_line":2}]}]}]})).send().await.unwrap();
+        assert_eq!(response.status(), 200);
+    }
     assert_eq!(
         sink.open
             .lock()
@@ -1476,7 +1496,10 @@ async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_genera
         .unwrap();
     assert_eq!(restored["diff_display_version"], format!("{id}:2"));
     assert_eq!(restored["live"]["code"], true);
-    assert_eq!(restored["explanation"]["current_revision"], 1);
+    assert_eq!(
+        restored["explanation"]["current_revision"],
+        if update_explanation { 2 } else { 1 }
+    );
     task.abort();
     dev.abort();
 }

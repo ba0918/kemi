@@ -32,6 +32,7 @@ Other flags worth knowing:
 | `--port <n>` | listen on a fixed port; the default `0` picks a free one |
 | `--bind <addr>` | listen address as an IPv4 literal; the default `127.0.0.1` keeps the page local, while `0.0.0.0` listens on every IPv4 interface and exposes it to the network |
 | `--focus <path>` | a JSON file that adds focus marks and watch points to any input mode |
+| `--explanation <file>` | initial UTF-8 explanation JSON, read from a file rather than stdin |
 | `--base <dir>` | where relative paths in a manifest and in `--focus` resolve from; default `.` |
 
 The `--focus` file looks like this:
@@ -55,7 +56,7 @@ must be a `.html` or `.htm` inside the git working tree kemi starts in, or insid
 directory outside git; a symlink counts where it points, and nothing in `.git/` is served.
 Anything else is a usage error (exit `2`). The code view is the same as `--worktree`; outside
 a git repository there is none. `--live` combines only with `--port`, `--bind`, `--no-open`,
-`--live-port <n>`, `--focus`, and `--serve`. The review title is `Live review of <url>`, and
+`--live-port <n>`, `--focus`, `--explanation`, and `--serve`. The review title is `Live review of <url>`, and
 for a file the URL is its path from that directory, such as `/docs/mock.html`.
 
 kemi prints `kemi: live <url>` after the review line: the page relayed through a second port
@@ -81,7 +82,7 @@ and, from `kemi wait`, the path of a PNG of the area with the places drawn on it
 the body refers to a place as `#n`, the place whose `n` is that number.
 
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
-connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
+connects to the same URL again, and it is kept only when it holds a comment, a reply, a message, or an explanation.
 Its snapshots and mock assignments come back on resume too.
 
 ## Surveying a large change first
@@ -127,6 +128,19 @@ succeeds and is saved; until a failed scan can be retried, Code is unavailable.
 
 A manifest is for everything git cannot group for you: drafts, prose, a set of changes whose
 reasons live only in your head. The groups and their reasons are your work, not the tool's.
+
+An initial explanation is a separate file with `{sections:[...]}`, so it can
+accompany a manifest on stdin. Sections have `id`, plain `title`, and nonempty
+`blocks`. Each block has `id`, one typed `part`, and `references`. Section IDs
+are unique within the document; block IDs are unique across all sections.
+Use the [explanation contract](https://github.com/ba0918/kemi/blob/main/docs/spec/explanation.md) and
+[part fields and limits](https://github.com/ba0918/kemi/blob/main/docs/spec/content-parts.md) when creating
+these values. The server sets revision 1 and the initial metadata base. Valid
+whole-file references to the opposite range grouping are accepted before its
+full list is built; do not guess unknown total line counts from diff statistics.
+Invalid JSON/references or unavailable persistent storage exits 2 before the
+review is published. `--explanation` does not combine with `--digest`,
+`--result`, `--resume`, wait, reply, or explain.
 
 ```json
 {

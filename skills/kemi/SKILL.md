@@ -33,6 +33,9 @@ presentation, adding focus marks, reviewing a running page with `--live`, or sur
 change with `--digest`. It also covers
 `--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
 reviewed work.
+Add an initial explanation with `--explanation <file>`; it reads a separate
+JSON file even when the manifest comes from stdin. Read the input reference
+for its section/block structure and exclusions.
 For approval, identify the exact bytes being approved; the manifest's `approval` field is
 returned unchanged, not checked by kemi.
 
@@ -94,6 +97,13 @@ the main `kemi` process as well: its exit code and stdout stay the result of the
 [the conversation reference](references/conversation.md) for the commands, the JSON, the exit
 codes, and the limits. Without the review line, or if you never call `kemi wait`, the review
 is submit-only as before.
+
+Use `kemi explain <id> --context` for the server's current metadata reference
+map, then `kemi explain <id> --file <file>` or stdin JSON to replace the whole
+explanation with an expected revision and known display base. These operations
+do not answer a handed thread or create wait events. `kemi reply` accepts old
+plain `body` or ordered typed `parts`, exactly one key. Read the conversation
+reference for the input rules, conflicts, and failure behavior.
 
 ## Resume an interrupted review
 
