@@ -124,10 +124,7 @@ uses the frozen startup display version, retaining the highest issued generation
 explanation's original base. A live rescan publishes a new display version only after it
 succeeds and is saved; until a failed scan can be retried, Code is unavailable.
 
-## Writing a manifest
-
-A manifest is for everything git cannot group for you: drafts, prose, a set of changes whose
-reasons live only in your head. The groups and their reasons are your work, not the tool's.
+## Adding an explanation
 
 An initial explanation is a separate file with `{sections:[...]}`, so it can
 accompany a manifest on stdin. Sections have `id`, plain `title`, and nonempty
@@ -141,6 +138,23 @@ full list is built; do not guess unknown total line counts from diff statistics.
 Invalid JSON/references or unavailable persistent storage exits 2 before the
 review is published. `--explanation` does not combine with `--digest`,
 `--result`, `--resume`, wait, reply, or explain.
+
+An initial document opens EXPLANATION instead of the mode's usual Code or
+Page start. Its left column is a contents list, and Conversation stays shared
+with the other views. Without a document the explanation switch is disabled
+until a later update adds one; that update offers a notice without changing
+the reader's view. Final state / Per commit is a Code-only switch.
+
+For example, a complete initial file can be:
+
+```json
+{"sections":[{"id":"overview","title":"Review purpose","blocks":[{"id":"intent","part":{"type":"text","body":"Read the **reason** before the implementation."},"references":[]}]}]}
+```
+
+## Writing a manifest
+
+A manifest is for everything git cannot group for you: drafts, prose, a set of changes whose
+reasons live only in your head. The groups and their reasons are your work, not the tool's.
 
 ```json
 {

@@ -105,6 +105,12 @@ and type in File, Page, and explanation threads. For example:
 {"writes":[{"type":"reply","comment_id":"c1","parts":[{"type":"text","body":"An **example** follows."},{"type":"code","body":"read_premise()","language":"pseudocode","role":"example"}]}]}
 ```
 
+A diagram is another ordered part, for example:
+
+```json
+{"writes":[{"type":"reply","comment_id":"c1","parts":[{"type":"text","body":"The request and answer are separate steps."},{"type":"sequence","title":"Request example","role":"example","participants":[{"id":"reader","label":"Reader"},{"id":"server","label":"Server"}],"events":[{"type":"message","from":"reader","to":"server","label":"Request","kind":"call"},{"type":"message","from":"server","to":"reader","label":"Answer","kind":"return"}]}]}]}
+```
+
 Text uses safe Markdown with images disabled. Code is literal, read-only and
 copyable. Diagrams may fail browser layout despite structurally valid input;
 the page then shows the reason and complete original JSON. Role labels express
@@ -131,6 +137,10 @@ open a comment or resolve one; only the person does that.
    it from the main process's stdout, or from `kemi --result`.
 
 ## Updating the explanation
+
+Use reply for an ordinary question or additional information in a thread. Use
+explain for a correction or an agreed change to the document itself. Updating
+the document does not resolve its threads; only the person resolves them.
 
 ```text
 kemi explain <id> --context
@@ -169,6 +179,17 @@ otherwise, for old bases too. A known base can still be used to update an
 explanation while resumed Code is unavailable; context is refused until a
 successful scan provides metadata again. The first argument `explain` selects
 the subcommand; a manifest of that name is `./explain`.
+
+An explanation update sends a notice. A reader's open revision and reading
+position stay put until they open the notice. References use that screen's
+imported Code list or an already registered live Page; unavailable targets
+show a reason without automatically importing a newer Code list. Returning
+from a reference keeps the original explanation revision and position.
+The open revision's freshness and the new notice's freshness are compared
+separately with the screen's Code token. Matching bases offer an information
+detail about the lack of byte and correctness guarantees; different bases
+show a separate notice with both versions. Context always describes the
+server's current metadata, not any particular reader's Code display.
 
 The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
 is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your

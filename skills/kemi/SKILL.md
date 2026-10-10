@@ -104,6 +104,10 @@ explanation with an expected revision and known display base. These operations
 do not answer a handed thread or create wait events. `kemi reply` accepts old
 plain `body` or ordered typed `parts`, exactly one key. Read the conversation
 reference for the input rules, conflicts, and failure behavior.
+Answer ordinary questions with reply. Use explain for a correction or agreed
+change to the document itself; send a thread reply as well when one is needed.
+Readers keep their current revision until they open the update notice, and
+their Code lists do not refresh just because an explanation changed.
 
 ## Resume an interrupted review
 

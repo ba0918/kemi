@@ -146,8 +146,10 @@ reloads it, and a link to another HTML file there moves to that page. Paths
 outside the directory, symlinks pointing outside, and `.git/` return 404. If
 the file is gone, the page says so and waits for it.
 
-The review has two views, switched by the two tabs at the left of the top
-bar:
+The top bar switches between EXPLANATION, Code, and Page. EXPLANATION is
+available when a document has been supplied; Page is available only in a live
+review. Without an initial explanation, a live review starts on Page.
+The existing live views are:
 
 - **Live page**: the running page at a width of 390, 768, 1280, or any width
   from 320 to 3840 (type it and press Enter or leave the field; the field
@@ -168,8 +170,9 @@ bar:
   shows in both views; pressing it in the page view switches to the code
   view and reloads it.
 
-On a narrow screen the tabs are shortened to **Page** and **Code** in the
-first row of the top bar, whose **…** menu then holds only the theme. The
+On a narrow screen the live tabs are shortened to **Page** and **Code**;
+EXPLANATION remains available in the top bar. In the Page view, the **…** menu
+holds only the theme. The
 controls of the page view fit in one row: Now / Before (the running page or
 what it is compared with, one at a time), the page, its width, the agent's
 state, and a **…** menu with what the page is compared with, **Record now**,
@@ -499,6 +502,29 @@ quotes, retained explanation versions, and undelivered conversation events.
 
 ### Explanations and typed conversation content
 
+An initial explanation opens EXPLANATION, with section headings in the left
+column and comments attached to individual blocks. Without one, EXPLANATION
+is disabled until an explanation is added. Conversation is shared by all
+views; changing views keeps its open thread, drafts, and open or closed state.
+Final state / Per commit belongs to Code in commit-range reviews, not to the
+explanation.
+
+An explanation update shows a notice without replacing the revision or reading
+position you have open. Open the notice to read the new revision. A block's
+Code or registered Page link offers a return to the original explanation,
+including its revision, expanded sections, and reading position. These
+operations work on narrow screens too. Reading an explanation does not mark
+files as Seen.
+
+Each screen compares the explanation's base with its own imported Code list.
+An explanation notice or conversation recovery never refreshes that list or
+its cache. A different base is shown with both display versions; a matching
+base has an information detail instead of a permanent warning. The detail
+explains that a metadata generation guarantees neither fixed file bytes nor
+the explanation's correctness. Font and zoom changes do not change this
+comparison. References unavailable in the screen's list give a reason, rather
+than fetching the newest list or substituting another target.
+
 `--explanation <file>` accepts a UTF-8 JSON object with `sections` in every normal
 input mode, including `kemi -` with a manifest on stdin. Each section has `id`,
 plain `title`, and nonempty `blocks`; each block has `id`, one `part`, and
@@ -528,8 +554,11 @@ Code reference `unit` is `file` or `commit` for a commit range and null
 otherwise, including when the base is older. If a resumed live Code scan is
 unavailable, known bases remain usable for explanation updates; context stays
 unavailable until the scan recovers.
-Explanations do not answer threads, clear hand-over lines, reset the response
-clock, or create `wait` conversation events. Use `kemi reply` for an answer.
+Use `kemi reply` for ordinary questions and additional explanation in a
+thread. Use `kemi explain` when the explanation document itself needs a
+correction or an agreed change. Explain does not answer threads, clear
+hand-over lines, reset the response clock, or create `wait` conversation
+events; send any needed thread reply separately.
 
 Reply/message input accepts exactly one of `body` or `parts`. Both keys are
 refused even if one is null. Plain bodies keep their literal text. Parts are
