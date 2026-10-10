@@ -218,7 +218,10 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await evaluate(`window.bToken=(${moduleState}).codeToken;window.bCache=(${moduleState}).cache;true`);
   await browser('tab','t1');
   await browser('find','role','button','click','--name','Code','--exact');
-  await evaluate(`const files=await import(new URL('assets/features/files.js',location.href));await files.refresh();true`);
+  await writeFile(join(root,'a.txt'),'new\nfrom the agent\n');
+  await wait(`document.querySelector('#update-badge')?.checkVisibility()`);
+  await browser('find','role','button','click','--name','Update available','--exact');
+  await wait(`Array.from(document.querySelectorAll('[data-kemi-row]')).some(e=>e.textContent.includes('from the agent'))`);
   const d2=(await context()).diff_display_version;
   assert.notEqual(d2,review.diff_display_version);
   await update(sections,d2);
