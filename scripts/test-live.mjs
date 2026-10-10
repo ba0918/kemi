@@ -6,6 +6,7 @@
 //   node scripts/test-live.mjs <kemi-bin> --pen-places
 //   node scripts/test-live.mjs <kemi-bin> --compose-layout
 //   node scripts/test-live.mjs <kemi-bin> --page-surrounding
+//   node scripts/test-live.mjs <kemi-bin> --baseline-guide
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -101,7 +102,7 @@ const waitFor = async (code, timeout = 15000) => {
   try {
     await browser('wait', '--timeout', String(timeout), '--fn', code);
   } catch (error) {
-    const snapshot = await evaluate(`JSON.stringify({ url: location.href, view: document.body?.dataset.liveView, side: document.querySelector('#live-stage')?.dataset.side, compare: document.querySelector('#live-stage')?.dataset.compare, text: document.body?.innerText.slice(0, 400) })`).catch(() => 'no snapshot');
+    const snapshot = await evaluate(`JSON.stringify({ url: location.href, view: document.body?.dataset.liveView, side: document.querySelector('#live-stage')?.dataset.side, compare: document.querySelector('#live-stage')?.dataset.compare, notice: document.querySelector('.lv-band-notice')?.textContent, text: document.body?.innerText.slice(0, 400) })`).catch(() => 'no snapshot');
     throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
   }
 };
@@ -1134,6 +1135,84 @@ async function recordingNowSwitchesTheReference(repository) {
     await browser('click', bandNoticeAction);
     await waitFor(`document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)} && ${showsSnapshot('Recorded 2')}`);
     console.log('PASS 幅 390px で手で取ると知らせが出て、その操作で比べる相手の 1 枚に切り替わり、取ったものが出る');
+  } finally {
+    await stop(kemi);
+    await dev.close();
+  }
+}
+
+async function changesFromStartExplainHowToCompareFromNow(repository) {
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
+  const guide = '#page-tree .lv-start-comparison';
+  const useCurrent = `${guide} button`;
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && document.querySelector('#page-tree .lv-changes')?.dataset.main === '0'`);
+    assert.equal(await evaluate(visible(guide)), false, 'an unchanged page needs no initialization guidance');
+    const start = (await getJson(kemi.url, 'api/snapshots')).snapshots.find((item) => item.kind === 'start');
+    await writeFile(join(dev.dir, 'changing.css'), `${changingCss()}.buy { transform: translateX(30px); }`);
+    await waitFor(`${visible(guide)} && document.querySelector('#page-tree .lv-changes').dataset.main === '0' && Number(document.querySelector('#page-tree .lv-changes').dataset.shifted) > 0`);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss());
+    await waitFor(`!${visible(guide)} && document.querySelector('#page-tree .lv-changes').dataset.shifted === '0'`);
+    await addPageComment(kemi, '/changing.html', 1280, 'keep this comment');
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)'));
+    await waitFor(`${visible(guide)} && !document.querySelector('${useCurrent}').disabled`);
+    const target = await evaluate(`(() => { const r = document.querySelector('${useCurrent}').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await browser('mouse', 'move', String(Math.round(target.x)), String(Math.round(target.y)));
+    await browser('mouse', 'down');
+    await writeFile(join(dev.dir, 'changing.css'), `${changingCss('rgb(214, 69, 69)')}.buy { border: 4px solid rgb(0, 150, 0); }`);
+    await waitFor(`document.querySelector('#page-tree .lv-change-main').textContent.includes('border')`);
+    await holdRequests('capture');
+    await browser('mouse', 'up');
+    await waitFor(`document.querySelector('${useCurrent}')?.disabled && document.querySelector('.lv-band .lv-record-now').disabled`);
+    await releaseRequests();
+    await waitFor(`${showsSnapshot('Recorded 1')} && !${visible(guide)}`);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now', 'choosing a new baseline keeps the comparison mode');
+    const recorded = (await getJson(kemi.url, 'api/snapshots')).snapshots;
+    assert.ok(recorded.some((item) => item.id === start.id), 'the original Start remains recorded');
+    assert.equal(recorded.filter((item) => item.kind === 'manual').length, 1, 'one action creates one new record');
+    assert.equal((await reviewJson(kemi)).comments.length, 1, 'changing the baseline keeps existing comments');
+    assert.equal(await evaluate(`document.querySelector('${bandNotice}').dataset.kind`), 'done', 'the record in use is confirmed');
+    console.log('PASS 開始時からの変化に案内と比較基準を取り直す操作が出て、記録中は重ねて押せず、記録とコメントを残して比較相手を切り替える');
+
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
+    await waitFor(`Number(document.querySelector('#page-tree .lv-changes')?.dataset.main) > 0`);
+    assert.equal(await evaluate(visible(guide)), false, 'later changes against a manual record are not presented as initialization changes');
+    await post(kemi.url, 'api/message', { body: 'compare after this hand-over' });
+    await handInThePage(kemi, repository, state);
+    await chooseAuto();
+    await waitFor(showsSnapshot('Handed 1'));
+    await writeFile(join(dev.dir, 'changing.css'), changingCss());
+    await waitFor(`Number(document.querySelector('#page-tree .lv-changes')?.dataset.main) > 0`);
+    assert.equal(await evaluate(visible(guide)), false, 'changes against a handed record are not presented as initialization changes');
+
+    await chooseCompare('side');
+    await browser('select', '.lv-compare-select', start.id);
+    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)'));
+    await waitFor(visible(guide));
+    await browser('set', 'viewport', '390', '844');
+    await waitFor(`document.body.dataset.liveView === 'page'`);
+    await browser('click', '#btn-tree');
+    await waitFor(`${visible(useCurrent)} && document.querySelector('#page-tree').getBoundingClientRect().left >= 0`);
+    await browser('click', useCurrent);
+    await waitFor(`${showsSnapshot('Recorded 2')} && !${visible(guide)}`);
+    assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.side`), 'live', 'recording from the narrow tree does not switch the shown side');
+    console.log('PASS 手で取った時点や渡した時点との変化には開始時の案内を出さず、狭い画面の一覧からも比較基準を取り直せる');
+
+    await browser('set', 'viewport', '1280', '900');
+    await chooseCompare('side');
+    await browser('select', '.lv-compare-select', start.id);
+    await writeFile(join(dev.dir, 'changing.html'), `<!doctype html><p style="overflow-wrap:anywhere">${'x'.repeat(2_200_000)}</p>`);
+    await waitFor(`${visible(useCurrent)} && !document.querySelector('${useCurrent}').disabled`);
+    await browser('click', useCurrent);
+    await waitFor(`document.querySelector('${bandNotice}').textContent.includes('larger than 2 MB')`);
+    assert.equal(await evaluate(`document.querySelector('.lv-compare-select').value`), start.id, 'failed recording keeps the prior reference');
+    assert.equal(await evaluate(`document.querySelector('${useCurrent}').disabled`), false, 'failed recording releases the recording state');
+    assert.equal((await getJson(kemi.url, 'api/snapshots')).snapshots.filter((item) => item.kind === 'manual').length, 2, 'a failed record does not create a new baseline');
+    console.log('PASS 記録に失敗した場合は理由を出し、比較相手を変えず、再操作できる');
   } finally {
     await stop(kemi);
     await dev.close();
@@ -3914,6 +3993,7 @@ async function verifyLiveReview(repository) {
   await compareModesScaleAndReload(repository);
   await referenceNamesHeadingsAndNotices(repository);
   await recordingNowSwitchesTheReference(repository);
+  await changesFromStartExplainHowToCompareFromNow(repository);
   await sideBySidePagesShareTheirTop(repository);
   await changesShowWithThePageAlone(repository);
   await toolsAndTheHintStartTheFirstComment(repository);
@@ -3969,6 +4049,9 @@ try {
     await closingTheComposeBoxRestoresTheFrame(repository);
   } else if (process.argv[3] === '--page-surrounding') {
     await pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository);
+  } else if (process.argv[3] === '--baseline-guide') {
+    await changesFromStartExplainHowToCompareFromNow(repository);
+    await recordingNowSwitchesTheReference(repository);
   } else {
     await verifyLiveReview(repository);
   }

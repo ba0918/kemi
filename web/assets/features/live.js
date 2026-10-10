@@ -134,6 +134,8 @@ const live = {
   snapshotsListed: false,
   /** 取れなかったときの知らせ。次に描くまで出す。 */
   refNotice: "",
+  /** 手で取る操作の完了を待っている間、別の手で取る操作を重ねない。 */
+  recording: false,
   /**
    * 手で取って比べる相手を切り替えたスナップショット。取れたことを知らせる（live-compare.md の R-PAGE-REF）。次に撮るか、
    * ページを移るか、比べる相手を選び直すまで知らせておく。
@@ -365,9 +367,9 @@ export function startLive(info) {
   });
   shell.stage.style.setProperty("--lv-opacity", String(live.opacity / 100));
   startMockControls(shell);
-  shell.recordButton.addEventListener("click", () => void capture("manual"));
+  shell.recordButton.addEventListener("click", () => void recordCurrent());
   startComposing(shell);
-  shell.refRecordButton.addEventListener("click", () => void capture("manual"));
+  shell.refRecordButton.addEventListener("click", () => void recordCurrent());
   startShiftedReferenceMoves(shell.refWheel);
   shell.refNoticeAction.addEventListener("click", () => bandAction?.());
   window.addEventListener("message", receive);
@@ -1450,6 +1452,29 @@ async function capture(kind) {
   render();
 }
 
+async function recordCurrent() {
+  if (!live.reachable || live.recording) {
+    return;
+  }
+  const fromGuide = document.activeElement instanceof HTMLElement && document.activeElement.matches(".lv-use-current");
+  live.recording = true;
+  try {
+    render();
+    await capture("manual");
+  } finally {
+    const restoreFocus = fromGuide && document.activeElement === document.body;
+    live.recording = false;
+    render();
+    if (restoreFocus && shell) {
+      const target = shell.pageTree.querySelector(".lv-use-current")
+        ?? shell.pageTree.querySelector('.lv-page[data-current="true"] button');
+      if (target instanceof HTMLElement) {
+        target.focus();
+      }
+    }
+  }
+}
+
 function render() {
   live.renderedNarrow = state.narrow;
   const shown = live.view === "page" ? { page: live.page, width: live.width } : null;
@@ -1813,7 +1838,7 @@ function renderBand() {
   if (mock === null && shell.mockMenu.matches(":popover-open")) {
     shell.mockMenu.hidePopover();
   }
-  shell.recordButton.disabled = !live.reachable;
+  shell.recordButton.disabled = !live.reachable || live.recording;
   for (const choice of shell.toolSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.tool === live.tool));
     choice.disabled = state.submitted && choice.dataset.tool !== "interact";
@@ -1885,6 +1910,7 @@ const changeHandlers = {
     }
   },
   onMockMenu: (anchor) => openMockMenu(anchor),
+  onRecord: () => void recordCurrent(),
 };
 
 /** 比べる相手の側の光を出しておく長さ（ミリ秒。ページの中の光と同じ）。 */
@@ -2104,7 +2130,10 @@ function changesToList() {
   // 見出しには、見比べ方によらず比べている実物の名前を出す（自動のときも、自動が選んだ実物。R-PAGE-VIEW）。
   const compared = live.snapshots.find((item) => item.id === snapshot);
   const reference = compared ? referenceName(live.snapshots, { type: "snapshot", snapshot: compared }) : "";
-  return { list: changesByElement(live.changes), reference, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked };
+  return {
+    list: changesByElement(live.changes), reference, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked,
+    fromStart: compared?.kind === "start", canRecord: live.reachable && !live.recording, recording: live.recording,
+  };
 }
 
 function renderTree() {
@@ -2166,7 +2195,7 @@ function renderReference() {
     shell.refEmpty.hidden = false;
     shell.refEmptyText.textContent = "This page at this width has not been recorded yet.";
     shell.refRecordButton.hidden = false;
-    shell.refRecordButton.disabled = !live.reachable;
+    shell.refRecordButton.disabled = !live.reachable || live.recording;
     live.shownSnapshot = "";
     return;
   }
@@ -2213,7 +2242,7 @@ function renderBandNotice(reference) {
     title = `Assign ${removed.path} again`;
     bandAction = undoRemovedMock;
   } else if (text === "" && recorded !== null) {
-    text = `${snapshotLabel(live.snapshots, recorded)} · now compared with it`;
+    text = `Comparing from ${snapshotLabel(live.snapshots, recorded)}`;
     kind = "done";
     // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
     if (state.narrow ? live.side === "live" : live.compare === "now") {

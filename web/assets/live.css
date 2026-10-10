@@ -1030,6 +1030,27 @@ body[data-live-view="page"] #menu-comments {
   font-size: 12.5px;
 }
 
+.lv-start-comparison {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.lv-start-comparison p {
+  margin: 0 0 8px;
+}
+
+.lv-start-comparison .lv-use-current {
+  width: 100%;
+  justify-content: center;
+  white-space: normal;
+}
+
 .lv-changes-head {
   display: flex;
   justify-content: space-between;
