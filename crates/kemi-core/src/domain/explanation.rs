@@ -20,6 +20,32 @@ pub struct ExplanationVersion {
     pub sections: Vec<ExplanationSection>,
 }
 
+pub fn validate_version(version: &ExplanationVersion) -> Result<(), ExplanationError> {
+    if version.revision == 0 || version.revision > MAX_REVISION {
+        return Err(ExplanationError::RevisionLimit);
+    }
+    let review = version
+        .base_display_version
+        .split_once(':')
+        .map(|(review, _)| review)
+        .unwrap_or("");
+    known_generation(&version.base_display_version, review, u128::MAX)
+        .map_err(ExplanationError::DisplayVersion)?;
+    validate_document(&ExplanationDocument {
+        sections: version.sections.clone(),
+    })?;
+    let value =
+        serde_json::to_value(version).expect("ExplanationVersion contains only JSON values");
+    bound("explanation UTF-8 bytes", string_bytes(&value), 0, 524_288)?;
+    bound(
+        "explanation canonical JSON bytes",
+        canonical_size(&value),
+        0,
+        1_048_576,
+    )?;
+    Ok(())
+}
+
 pub struct RetainedVersions<'a> {
     pub comments: &'a [u64],
     pub events: &'a [u64],
@@ -261,6 +287,9 @@ pub fn validate_document(document: &ExplanationDocument) -> Result<(), Explanati
             }
             validate_part(&block.part, &format!("{path}.part"))?;
             bound(&format!("{path}.references"), block.references.len(), 0, 32)?;
+            for (k, reference) in block.references.iter().enumerate() {
+                validate_reference_shape(reference, &format!("{path}.references[{k}]"))?;
+            }
         }
     }
     bound("blocks", blocks.len(), 1, 512)?;
@@ -281,6 +310,30 @@ fn reference_failure(path: &str, reason: ReferenceFailure) -> ExplanationError {
         reason,
     }
 }
+fn validate_reference_shape(
+    reference: &ExplanationReference,
+    path: &str,
+) -> Result<(), ExplanationError> {
+    match reference {
+        ExplanationReference::Page { url } => text(&format!("{path}.url"), url, 1, 4096, true)?,
+        ExplanationReference::Code {
+            group_id,
+            path: target,
+            start_line,
+            end_line,
+            ..
+        } => {
+            text(&format!("{path}.group_id"), group_id, 1, 64, true)?;
+            text(&format!("{path}.path"), target, 1, 4096, true)?;
+            if !matches!((start_line, end_line), (None, None))
+                && !matches!((start_line,end_line),(Some(a),Some(b)) if *a>0 && b>=a)
+            {
+                return Err(reference_failure(path, ReferenceFailure::RangeShape));
+            }
+        }
+    }
+    Ok(())
+}
 pub fn validate_references(
     document: &ExplanationDocument,
     base: &str,
@@ -289,9 +342,9 @@ pub fn validate_references(
     for (i, block) in document.sections.iter().flat_map(|s| &s.blocks).enumerate() {
         for (j, reference) in block.references.iter().enumerate() {
             let path = format!("blocks[{i}].references[{j}]");
+            validate_reference_shape(reference, &path)?;
             match reference {
                 ExplanationReference::Page { url } => {
-                    text(&format!("{path}.url"), url, 1, 4096, true)?;
                     if !context.pages.contains(url) {
                         return Err(reference_failure(&path, ReferenceFailure::PageUnregistered));
                     }
@@ -301,16 +354,9 @@ pub fn validate_references(
                     group_id,
                     path: target,
                     side,
-                    start_line,
+                    start_line: _,
                     end_line,
                 } => {
-                    text(&format!("{path}.group_id"), group_id, 1, 64, true)?;
-                    text(&format!("{path}.path"), target, 1, 4096, true)?;
-                    if !matches!((start_line, end_line), (None, None))
-                        && !matches!((start_line,end_line),(Some(a),Some(b)) if *a>0 && b>=a)
-                    {
-                        return Err(reference_failure(&path, ReferenceFailure::RangeShape));
-                    }
                     if base != context.current_token {
                         continue;
                     }
@@ -369,6 +415,106 @@ pub fn validate_update(
 
 #[cfg(test)]
 mod tests {
+    fn sized_version(revision: u64, size: usize) -> super::ExplanationVersion {
+        let mut sections = document("").sections;
+        sections[0].blocks = (0..32)
+            .map(|i| super::ExplanationBlock {
+                id: format!("b{i}"),
+                part: super::Part::Code {
+                    body: String::new(),
+                    language: "x".into(),
+                    role: super::super::parts::Role::Example,
+                    title: None,
+                },
+                references: vec![],
+            })
+            .collect();
+        let mut version = super::ExplanationVersion {
+            revision,
+            base_display_version: "review:1".into(),
+            sections,
+        };
+        let baseline = super::canonical_size(&serde_json::to_value(&version).unwrap());
+        let mut remaining = size - baseline;
+        for block in &mut version.sections[0].blocks {
+            let count = remaining.min(32_768);
+            if let super::Part::Code { body, .. } = &mut block.part {
+                *body = "x".repeat(count);
+            }
+            remaining -= count;
+        }
+        assert_eq!(remaining, 0);
+        assert_eq!(
+            super::canonical_size(&serde_json::to_value(&version).unwrap()),
+            size
+        );
+        version
+    }
+
+    #[test]
+    fn history_and_saved_content_accept_exact_byte_limits_and_refuse_one_more() {
+        let versions: Vec<_> = (1..=16).map(|r| sized_version(r, 500_000)).collect();
+        let current = sized_version(17, 388_608);
+        let protected: Vec<_> = (1..=16).collect();
+        let held = super::RetainedVersions {
+            comments: &protected,
+            events: &[],
+            screens: &[],
+            other_saved_bytes: 8_388_608,
+        };
+        assert!(super::history_candidate(&versions, current.clone(), &held).is_ok());
+        assert!(super::history_candidate(&versions, sized_version(17, 388_609), &held).is_err());
+        let held = super::RetainedVersions {
+            other_saved_bytes: 8_388_609,
+            ..held
+        };
+        assert!(super::history_candidate(&versions, current, &held).is_err());
+        assert_eq!(versions.len(), 16);
+    }
+
+    #[test]
+    fn stored_version_budget_includes_the_base_token_and_rejects_malformed_references() {
+        let mut version = sized_version(1, 400_000);
+        version.base_display_version = "review:1".into();
+        assert!(super::validate_version(&version).is_ok());
+        version.sections[0].blocks[0].references=serde_json::from_value(serde_json::json!([{"type":"code","unit":null,"group_id":"g","path":"a","side":"new","start_line":null,"end_line":1}])).unwrap();
+        assert!(super::validate_version(&version).is_err());
+        version.sections[0].blocks[0].references.clear();
+        version.base_display_version = "review:01".into();
+        assert!(super::validate_version(&version).is_err());
+        version.base_display_version = "review:1".into();
+        let mut remaining = 524_288 - super::string_bytes(&serde_json::to_value(&version).unwrap());
+        for block in &mut version.sections[0].blocks {
+            if let super::Part::Code { body, .. } = &mut block.part {
+                let count = remaining.min(32_768 - body.len());
+                body.push_str(&"x".repeat(count));
+                remaining -= count;
+            }
+        }
+        assert_eq!(remaining, 0);
+        assert!(super::validate_version(&version).is_ok());
+        version.base_display_version = "reviewx:1".into();
+        assert!(super::validate_version(&version).is_err());
+    }
+
+    #[test]
+    fn required_reference_fields_unknown_fields_null_parts_and_duplicate_keys_are_refused() {
+        for reference in [
+            r#"{"type":"code","group_id":"g","path":"a","side":"new","start_line":null,"end_line":null}"#,
+            r#"{"type":"page","url":"/","url":"/two"}"#,
+            r#"{"type":"page","url":"/","extra":1}"#,
+        ] {
+            assert!(serde_json::from_str::<super::ExplanationReference>(reference).is_err());
+        }
+        for document in [
+            r#"{"sections":[],"sections":[]}"#,
+            r#"{"sections":null}"#,
+            r#"{"sections":[{"id":"s","title":"t","blocks":[{"id":"b","part":null,"references":[]}]}]}"#,
+        ] {
+            assert!(serde_json::from_str::<super::ExplanationDocument>(document).is_err());
+        }
+    }
+
     #[test]
     fn role_position_and_reference_changes_make_the_original_block_outdated() {
         let mut input = document("text");
