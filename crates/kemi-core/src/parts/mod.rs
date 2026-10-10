@@ -76,6 +76,13 @@ pub fn decode_content(input: &str) -> Result<ConversationContent, ContentError> 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn grid_accepts_crlf_line_delimiters_without_changing_source() {
+        roundtrip(
+            serde_json::json!({"type":"diagram","source":"a = A\r\n| a |\r\n","title":"Grid","role":"example"}),
+        );
+    }
+
+    #[test]
     fn invalid_part_field_reports_its_name() {
         let error =
             super::decode_content(r#"{"parts":[{"type":"text","body":"a","title":"extra"}]}"#)

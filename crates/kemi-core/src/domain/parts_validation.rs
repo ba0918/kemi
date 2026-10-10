@@ -362,7 +362,10 @@ fn grid(source: &str, path: &str) -> Checked {
     let mut edges = 0;
     let mut rows = 0;
     let mut columns = None;
-    for (i, raw) in source.split('\n').enumerate() {
+    for (i, raw) in source.split_inclusive('\n').enumerate() {
+        let raw = raw
+            .strip_suffix('\n')
+            .map_or(raw, |line| line.strip_suffix('\r').unwrap_or(line));
         // trimで消えるCRやUnicode行区切りも元ラベルの一部として拒否する。
         if raw.contains(['\r', '\u{2028}', '\u{2029}']) {
             return Err(fail(path, PartRule::GridSyntax));
