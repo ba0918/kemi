@@ -132,6 +132,16 @@ try {
   await wait(`document.body.textContent.includes('Network connection lost')`);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('pre')).some(e=>e.textContent===${JSON.stringify(bodyA)}) && document.body.textContent.includes('Comment stays') && Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='C survives')`),true);
   console.log('PASS: the same Part fallback preserves reply content and its comment');
+  await browser('find', 'role', 'button', 'click', '--name', '‹ Conversation');
+  await evaluate(`document.body.style.zoom='1';true`);
+  await browser('set', 'viewport', '390', '900');
+  await browser('find', 'role', 'button', 'click', '--name', 'Conversation (1 comment)');
+  await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations' && e.getClientRects().length)`);
+  await evaluate(`Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelectorAll('button').forEach(e=>{if(e.textContent==='Open diagram separately')e.click()});true`);
+  await wait(`document.querySelector('dialog')?.open`);
+  await browser('press', 'Escape');
+  assert.equal(await evaluate(`!document.querySelector('dialog') && document.activeElement.textContent==='Open diagram separately' && document.activeElement.getClientRects().length>0`), true);
+  console.log('PASS: Escape closes the separate diagram and returns to its source at 390px');
 } finally {
   await browser('close').catch(() => {});
   if (running && running.child.exitCode === null) { running.child.kill('SIGINT'); await running.exited; }

@@ -36,6 +36,7 @@ export function diagramViewport(part, modal = false) {
     const enlarge = control('Open diagram separately', () => {
       const dialog = document.createElement('dialog'); dialog.className = 'part-diagram-dialog';
       dialog.setAttribute('aria-label', part.title);
+      dialog.addEventListener('keydown', event => event.stopPropagation());
       const close = button(''); close.textContent = 'Close diagram';
       const finish = () => { dialog.close(); dialog.remove(); enlarge.focus(); host.scrollIntoView({ block: 'nearest' }); };
       close.addEventListener('click', finish); dialog.addEventListener('cancel', event => { event.preventDefault(); finish(); });
