@@ -137,6 +137,11 @@ export function postComment(body) {
   return postJson("api/comment", body);
 }
 
+/** @param {{type: 'text', body: string}} part */
+export function renderPart(part) {
+  return postJson('api/parts', part);
+}
+
 /**
  * レビュー全体への発言を書く。
  * @param {string} body

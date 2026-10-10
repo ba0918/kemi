@@ -4,6 +4,7 @@
 import { onHorizontalScroll, onCodeWheel, onHorizontalKey } from "./features/horizontal-scroll.js";
 import * as api from "./api.js";
 import { bindActions } from "./actions.js";
+import { renderPartMarkdown } from './features/parts.js';
 import {
   collapseAll,
   expandAll,
@@ -306,6 +307,7 @@ window
   .addEventListener("change", onSystemThemeChange);
 
 bindActions({
+  renderPartMarkdown,
   addComment,
   closeThread,
   loadCommitGroups: () => void loadCommitGroups(),

@@ -1,0 +1,22 @@
+.content-parts { min-width: 0; }
+.content-part { margin: .75rem 0; min-width: 0; }
+.part-original, .part-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.part-metadata { font-weight: 600; }
+.part-markdown { overflow-wrap: anywhere; }
+.part-markdown table { border-collapse: collapse; }
+.part-markdown td, .part-markdown th { border: 1px solid currentColor; padding: .3rem; }
+.part-markdown .kb-img-frame { display: inline-flex; flex-direction: column; padding: .4rem; border: 1px dashed currentColor; }
+.part-markdown pre { white-space: pre-wrap; }
+.part-diagram-surface { overflow: hidden; position: relative; min-height: 64px; border: 1px solid currentColor; touch-action: pan-y; }
+.part-diagram-surface.failed { overflow: auto; }
+.part-diagram-surface svg { transform-origin: 0 0; display: block; font: 14px sans-serif; color: inherit; }
+.part-diagram-surface svg rect, .part-diagram-surface svg polygon { fill: var(--bg, white); stroke: currentColor; stroke-width: 1.5; }
+.part-diagram-surface svg path, .part-diagram-surface svg line { stroke: currentColor; }
+.part-diagram-surface svg text, .part-diagram-surface svg .explanation-arrowhead { fill: currentColor; }
+.part-diagram-controls { display: flex; flex-wrap: wrap; gap: .3rem; }
+.part-diagram-controls[hidden] { display: none; }
+.part-diagram-dialog { width: 90vw; max-width: 90vw; height: 85vh; background: var(--bg, white); color: var(--fg, black); }
+.part-grid svg { display: block; max-width: 100%; height: auto; font: 14px sans-serif; }
+.part-grid svg rect { fill: var(--bg, white); stroke: currentColor; }
+.part-grid svg line { stroke: currentColor; }
+.part-grid svg text, .part-grid svg polygon { fill: currentColor; }

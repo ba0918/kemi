@@ -148,6 +148,7 @@ pub(super) fn render(
                 prepared,
                 document,
                 ImageContext {
+                    disabled: false,
                     side: Side::Old,
                     markdown_path: input.old_path,
                     review_paths: &input.review_paths.old,
@@ -164,6 +165,7 @@ pub(super) fn render(
                 prepared,
                 document,
                 ImageContext {
+                    disabled: false,
                     side: Side::New,
                     markdown_path: input.new_path,
                     review_paths: &input.review_paths.new,
@@ -181,6 +183,7 @@ pub(super) fn render(
         in_table: false,
         deferred: Vec::new(),
         before_written: false,
+        part: false,
     };
     match (&old_side, &new_side) {
         (Some(old), None) => {
@@ -337,6 +340,7 @@ fn has_paragraph(item: &ListItem<'_>) -> bool {
 }
 
 struct Writer<'w> {
+    part: bool,
     out: String,
     blocks: Vec<Block>,
     highlight: Option<Highlight<'w>>,
@@ -533,6 +537,13 @@ impl<'w> Writer<'w> {
         mark: Mark,
         class: &str,
     ) -> String {
+        if self.part {
+            return if class.is_empty() {
+                String::new()
+            } else {
+                format!(" class=\"{class}\"")
+            };
+        }
         if self.plain > 0 {
             return if class.is_empty() {
                 String::new()
@@ -789,4 +800,39 @@ fn write_checkbox(out: &mut String, item: &ListItem<'_>) {
         Some(false) => out.push_str("<input type=\"checkbox\" disabled> "),
         None => {}
     }
+}
+
+pub(super) fn render_part(body: &str) -> Result<String, Unrenderable> {
+    let prepared = prepare(body);
+    let allocator = Allocator::new();
+    let document = parse(&allocator, &prepared.body)?;
+    let doc = collect_side(
+        Side::New,
+        &prepared,
+        &document,
+        ImageContext {
+            disabled: true,
+            side: Side::New,
+            markdown_path: None,
+            review_paths: &[],
+            repo_readable: false,
+        },
+    );
+    let mut writer = Writer {
+        part: true,
+        out: String::new(),
+        blocks: Vec::new(),
+        highlight: None,
+        image_url: &|_| String::new(),
+        plain: 0,
+        in_table: false,
+        deferred: Vec::new(),
+        before_written: false,
+    };
+    writer.write_document(
+        &doc,
+        &Plan::uniform(doc.blocks.len(), Mark::Unchanged),
+        None,
+    );
+    Ok(writer.out)
 }

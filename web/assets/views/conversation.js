@@ -5,6 +5,7 @@
 // 通知で描き直しても、書きかけ・カーソル・変換中の文字が残る。
 
 import { actions } from "../actions.js";
+import { contentView, partView } from './parts.js';
 import { button, dom, el, textEl } from "../dom.js";
 import {
   commitGroups,
@@ -21,7 +22,6 @@ import {
   authorLabel,
   commentLabel,
   conversationItems,
-  conversationText,
   describeComment,
   filterConversation,
   firstLine,
@@ -254,7 +254,7 @@ function messageRow(message) {
 /**
  * 書き込み 1 つ（発言・コメントの本文・返信）。書いた人で見分ける。
  * @param {string} author
- * @param {string | {body: string|null, parts?: unknown[]|null}} body
+ * @param {string | {body: string|null, parts?: import('../diagrams/types.js').Part[]|null}} body
  * @param {string} className
  * @param {string} id
  * @returns {HTMLElement}
@@ -263,7 +263,7 @@ function post(author, body, className, id) {
   const item = el("div", `cv-post ${className}`);
   item.dataset.author = author;
   item.dataset.id = id;
-  item.append(textEl("span", "cv-who", authorLabel(author)), textEl("p", "cv-text", conversationText(body)));
+  item.append(textEl("span", "cv-who", authorLabel(author)), contentView(body));
   return item;
 }
 
@@ -449,7 +449,10 @@ function renderThread(comment, options) {
   followScroll(dom.cvThreadBody, options, comment.id, posts, () => {
     dom.cvThreadBody.textContent = "";
     if (comment.explanation) {
-      dom.cvThreadBody.append(textEl("pre", "cv-context", JSON.stringify(comment.explanation.quote, null, 2)));
+      const quote = comment.explanation.quote;
+      const context = el('div', 'cv-context');
+      context.append(textEl('h3', '', quote.section_title), partView(quote.block.part));
+      dom.cvThreadBody.append(context);
     }
     const lines = targetLines(comment);
     if (lines.length > 0) {

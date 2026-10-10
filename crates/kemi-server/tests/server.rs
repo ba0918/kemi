@@ -5060,3 +5060,22 @@ async fn events_answered_to_a_wait_that_never_finished_are_returned_by_the_next_
     assert_eq!(status, 200);
     assert_eq!(handed_events(&answer).len(), 1, "{answer}");
 }
+#[tokio::test]
+async fn conversation_markdown_renders_without_image_requests_and_does_not_read_files() {
+    let server = TestServer::start().await;
+    let response = server
+        .post(
+            "api/parts",
+            json!({"type":"text","body":"**hello** ![shot](https://example.com/a.png)"}),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let value: Value = response.json().await.unwrap();
+    assert!(
+        value["html"]
+            .as_str()
+            .unwrap()
+            .contains("<strong>hello</strong>")
+    );
+    assert!(!value["html"].as_str().unwrap().contains("<img"));
+}

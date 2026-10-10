@@ -7,6 +7,7 @@ mod channel;
 mod comments;
 mod file;
 mod mock;
+mod parts;
 mod rendered;
 mod snapshot;
 mod submit;
@@ -53,6 +54,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/file/{id}", get(file_api))
         .route("/s/{token}/api/origin/{id}", get(origin))
         .route("/s/{token}/api/render/{id}", get(render_file))
+        .route("/s/{token}/api/parts", post(parts::render_part))
         .route("/s/{token}/api/image/review/{id}/{side}", get(review_image))
         .route(
             "/s/{token}/api/image/repo/{id}/{side}/{*path}",

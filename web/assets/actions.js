@@ -20,6 +20,7 @@
 /**
  * @typedef {{
  *   addComment: (payload: any) => void,
+ *   renderPartMarkdown: (body: string, host: HTMLElement) => Promise<void>,
  *   closeThread: () => void,
  *   loadCommitGroups: () => void,
  *   reloadThreadLines: () => void,
