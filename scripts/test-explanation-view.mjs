@@ -83,6 +83,13 @@ try {
   assert.equal(await evaluate(`document.body.textContent.includes('**old plain stays**')`), true);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='old plain stays')`), false);
   assert.equal(await evaluate(`document.body.textContent.includes('Image not loaded') && document.body.textContent.includes('https://example.invalid/ref.png')`), true);
+  await browser('find', 'role', 'button', 'click', '--name', 'Copy code');
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Copied')`);
+  const compose = 'Write to the agent about the whole review (Cmd/Ctrl+Enter to post)';
+  await browser('find', 'placeholder', compose, 'click');
+  await browser('clipboard', 'paste');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('textarea')).find(e=>e.placeholder===${JSON.stringify(compose)}).value`), codeB.body);
+  await browser('find', 'placeholder', compose, 'fill', '');
   const har = join(root, 'images.har'); await browser('network', 'har', 'stop', har);
   const traffic = JSON.parse(await readFile(har, 'utf8'));
   assert.equal(traffic.log.entries.filter(e => /example\.invalid|\/a\.png|\/html\.png|\/api\/image\//.test(e.request.url)).length, 0);
