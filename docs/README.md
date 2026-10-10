@@ -9,3 +9,8 @@ kemi の文書の入口。各ディレクトリの役割と、いま正しい文
 
 用語の読みの正典はルートの [`CONTEXT.md`](../CONTEXT.md)、残課題はルートの
 [`TODO.md`](../TODO.md)、版ごとの変更はルートの [`CHANGELOG.md`](../CHANGELOG.md) にある。
+
+説明の承認済み契約は [`spec/explanation.md`](spec/explanation.md)、
+[`spec/content-parts.md`](spec/content-parts.md)、
+[`spec/explanation-contracts.md`](spec/explanation-contracts.md)。実装作業の手順は
+[`plans/explanation-view.md`](plans/explanation-view.md) にある。

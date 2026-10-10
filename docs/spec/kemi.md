@@ -315,6 +315,8 @@ focus と note を後付けする。パスは `--base` 相対。
 
 ### R-INPUT-6 その他の入出力
 
+説明の初期入力と排他は [R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cli-初期投入と全体更新) を適用する。
+
 | フラグ | 意味 |
 |---|---|
 | `--base <dir>` | manifest と `--focus` の相対パス解決の基準（既定 `.`） |
@@ -376,6 +378,8 @@ focus と note を後付けする。パスは `--base` 相対。
 ---
 
 ## R-SERVE 配信モデル
+
+差分表示版の発行と保存は [R-EXPLANATION-BASE](explanation.md#r-explanation-base-差分表示版と鮮度) と [R-EXPLANATION-SESSION](explanation-contracts.md#r-explanation-session-保存と復元) を適用する。
 
 **要件**
 
@@ -494,6 +498,8 @@ focus と note を後付けする。パスは `--base` 相対。
 ---
 
 ## R-VIEW 差分の表示
+
+説明の入口と見方の切り替えは [R-EXPLANATION-VIEW](explanation.md#r-explanation-view-入口と移動) を適用する。
 
 見た目は diffs.com（OSS ライブラリ `@pierre/diffs`、Apache-2.0）を参照するが、
 コードはコピーしない。
@@ -1226,6 +1232,8 @@ Markdown の描画
 
 ## R-COMMENT コメントと suggestion
 
+説明対象と引用・outdatedは [R-EXPLANATION-COMMENT](explanation.md#r-explanation-comment-対象と更新後の会話) を適用する。
+
 **要件**
 
 - コメントは行レンジ（左右どちらかの連続した行）またはファイル全体に付けられる。
@@ -1305,6 +1313,8 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
 ---
 
 ## R-SUBMIT 送信と契約
+
+新result/waitの版3と追加キーは [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。以下の版2の形に優先する。
 
 **要件**
 
@@ -1439,6 +1449,8 @@ kemi は重要度を推定しない。重要の印は実装したエージェン
 
 ## R-RESULT 結果ファイル
 
+新結果と過去結果の区別は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。
+
 submit の結果を、エージェントが受け取り損ねても後から読めるように残す。
 
 **要件**
@@ -1495,6 +1507,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 ---
 
 ## R-SESSION セッションの保存と復元
+
+形式4・世代・説明の保存と復元は [R-EXPLANATION-SESSION](explanation-contracts.md#r-explanation-session-保存と復元) を適用する。以下の形式2/3の記述に優先する。
 
 未 submit のレビューをセッションとしてディスクに残し、あとから当時の差分のまま復元する。
 
@@ -1754,6 +1768,8 @@ submit の結果を、エージェントが受け取り損ねても後から読�
 ---
 
 ## R-LIVE ライブリロード
+
+差分取り込みの世代と説明通知の分離は [R-EXPLANATION-BASE](explanation.md#r-explanation-base-差分表示版と鮮度) を適用する。
 
 **要件**
 

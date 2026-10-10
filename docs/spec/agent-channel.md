@@ -48,6 +48,8 @@
 
 ## R-AGENT-HAND 渡す
 
+新contentの保存容量と全体拒否は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。
+
 **要件**
 
 - コメント・返信・発言は、書いた時点ではエージェントに届けない。「エージェントに渡す」を
@@ -116,6 +118,8 @@
 
 ## R-AGENT-CLI kemi wait と kemi reply
 
+explain/contextは [R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cli-初期投入と全体更新) を適用する。
+
 **要件**
 
 - 起動したレビューは stderr に `kemi: review <id>` の 1 行を出す。`<id>` はセッションの
@@ -180,6 +184,8 @@
 
 ## R-AGENT-EVENTS wait が返す JSON
 
+新waitの版3とcontent出力は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。以下の版2の形に優先する。
+
 **要件**
 
 - `kemi wait` が出す JSON の契約:
@@ -222,6 +228,8 @@
 ---
 
 ## R-AGENT-WRITE reply の入力と上限
+
+bodyかpartsの互換入力と新上限は [R-CONTENT-INPUT](content-parts.md#r-content-input-入力と互換性) と [R-CONTENT-LIMIT](content-parts.md#r-content-limit-上限) を適用する。
 
 **要件**
 
@@ -374,6 +382,8 @@
 ---
 
 ## R-AGENT-LINK つなぎ先と安全
+
+explain/contextにも同じ保護を適用する。[R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cli-初期投入と全体更新) を参照する。
 
 **要件**
 

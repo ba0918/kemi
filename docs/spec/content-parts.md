@@ -1,6 +1,6 @@
-# 本文・返信・発言の共通パーツ 仕様草稿
+# 本文・返信・発言の共通パーツ 仕様
 
-- Status: 承認前の草稿。[EXPLANATION](explanation.md) と [既存契約の改訂候補](explanation-contracts.md) と同じ承認対象。
+- Status: 承認済み。`55ba772` の [EXPLANATION](explanation.md) と [既存契約の改訂](explanation-contracts.md) と同じ承認対象。
 - 変更対象: `Reply` / `Message` の文章のみの契約、説明本文の新規契約。コメント本文は従来plainのまま。
 
 ## R-CONTENT-INPUT 入力と互換性

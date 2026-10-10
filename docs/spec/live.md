@@ -155,6 +155,8 @@
 
 ## R-PAGE-VIEW ページの見方
 
+EXPLANATIONの追加と参照移動は [R-EXPLANATION-VIEW](explanation.md#r-explanation-view-入口と移動) を適用する。
+
 **要件**
 
 - 動いているページを見る対象として出し、比べる相手（[R-PAGE-REF](live-compare.md#r-page-ref-比べる相手)）
@@ -470,6 +472,8 @@
 ---
 
 ## R-PAGE-SESSION 保留と復元
+
+説明だけの保持と新しい差分表示版の発行は [R-EXPLANATION-SESSION](explanation-contracts.md#r-explanation-session-保存と復元) を適用する。以下の会話なし削除条件に優先する。
 
 **要件**
 

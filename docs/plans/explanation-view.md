@@ -52,6 +52,16 @@
 
 ### 暫定判断と覆す条件
 
+再利用の固定対象は公開 shoryo commit `46c6f764c1d373365a8902ffcc682245079363e6`。
+当該 commit の `LICENSE` は MIT、著作権表示は `Copyright (c) 2026 ba0918`。
+型と構造検証は `explanation.rs` / `explanation_validation.rs` を限定取り込み候補とする。
+任意項目の省略を保持する型と上限検証を再利用でき、重複JSONキー拒否とcontentの互換境界はkemiで追加する。
+図計算・SVG・計測・衝突検証は `explanation-{sequence,flow,svg,bounds,layout-validation,collision}.js` を採る。
+DOMとブラウザだけに依存するため、新runtime依存は不要。
+操作は `pan-zoom.js` と viewport/viewer の操作規則を採り、Componentとtranslatorへの接続はkemiのviews/featuresへ適合させる。
+gridは `diagram.js` / `measure.js` を候補とし、codeはkemiのDOMによる読み取り専用表示を使う。
+shoryoのアプリ全体・翻訳・round・保存モデルは取り込まない。MIT許諾文と出典表示は実際の取り込み先に保持する。
+
 承認済みの入力形式・数値上限・保存先・エラー契約は選択事項にしない。次の判断は仕様が内部方式または未準備時の扱いまで固定していない部分である。
 
 1. **図の取り込み方法**。新しい runtime 依存を増やさず、公開 shoryo の必要モジュールを固定 commit から限定取り込みする案を採る。著作権表示と MIT 許諾文を同梱し、採用元と差を履歴に記録する。仕様互換の配布パッケージがあり ESM・musl・license 条件を満たす場合、または人が依存としての採用を指定した場合に覆す。固定対象を確認できなければ実装しない。
