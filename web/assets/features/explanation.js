@@ -2,7 +2,7 @@
 import * as api from '../api.js';
 import { actions } from '../actions.js';
 import { dom } from '../dom.js';
-import { state, fileCacheKey } from '../state.js';
+import { state, fileCacheKey, explanationInteractable } from '../state.js';
 import { resolveCodeReference } from '../explanation-model.js';
 import { applyReview, jumpToEntry, selectIndex } from './files.js';
 import { updateComments } from './comments.js';
@@ -23,9 +23,10 @@ export function keepExplanationDraft(revision,blockId,body) {state.explanation.d
 /** @param {string} blockId */
 export function openExplanationEditor(blockId) {
   closeSelection();
+  if (!explanationInteractable()) return;
   const article = dom.explanationDocument.querySelector(`[data-explanation-block="${blockId}"]`);
   const form = /** @type {HTMLFormElement|null} */(article?.querySelector('form'));
-  if (!form || state.view !== 'explanation') return;
+  if (!form) return;
   form.hidden = false;
   article?.querySelector('[data-comment-trigger]')?.setAttribute('aria-expanded','true');
   article?.querySelector('textarea')?.focus();

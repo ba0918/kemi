@@ -268,6 +268,10 @@ export function conversationShown() {
   return state.narrow ? state.conversation.sheetOpen : state.conversation.panelOpen;
 }
 
+export function explanationInteractable() {
+  return state.view === 'explanation' && !(state.narrow && state.conversation.sheetOpen);
+}
+
 export function currentEntry() {
   return state.current;
 }

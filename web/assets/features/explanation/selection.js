@@ -1,7 +1,7 @@
 // @ts-check
 import { actions } from '../../actions.js';
 import { dom } from '../../dom.js';
-import { state } from '../../state.js';
+import { state, explanationInteractable } from '../../state.js';
 import { selectedExplanationBlock } from '../../explanation-model.js';
 import { explanationCommentControl } from '../../views/explanation.js';
 
@@ -25,7 +25,7 @@ export function setupExplanationSelection() {
   const refresh = () => {
     queued = false;
     const selection = window.getSelection();
-    if (dragging || state.view !== 'explanation' || !state.explanation.reading || selection?.rangeCount !== 1 || document.activeElement?.matches('textarea,input,[contenteditable="true"]')) {close();return;}
+    if (dragging || !explanationInteractable() || !state.explanation.reading || selection?.rangeCount !== 1 || document.activeElement?.matches('textarea,input,[contenteditable="true"]')) {close();return;}
     const range = selection.getRangeAt(0), start = endpoint(range.startContainer), end = endpoint(range.endContainer);
     const id = selectedExplanationBlock(start,end,!selection.isCollapsed && Boolean(selection.toString().trim()));
     if (!id || !start || !end || start.article !== end.article) {close();return;}
@@ -51,7 +51,7 @@ export function setupExplanationSelection() {
   popup.addEventListener('pointerdown',event=>event.preventDefault());
   popup.addEventListener('click',()=>{
     const chosen = target;
-    if (!chosen?.article.isConnected || chosen.revision !== state.explanation.reading?.revision || state.view !== 'explanation') {dismiss();return;}
+    if (!chosen?.article.isConnected || chosen.revision !== state.explanation.reading?.revision || !explanationInteractable()) {dismiss();return;}
     dismiss();actions.openExplanationEditor(chosen.article.dataset.explanationBlock ?? '');
   });
   document.addEventListener('selectionchange',schedule);
@@ -71,6 +71,7 @@ export function setupExplanationSelection() {
     if (records.some(record=>!(record.target instanceof SVGElement))) schedule();
   });
   geometry.observe(dom.explanationDocument,{attributes:true,subtree:true});
+  geometry.observe(dom.conversation,{attributes:true,attributeFilter:['data-open']});
   for (let node = dom.explanationDocument.parentElement; node; node = node.parentElement) geometry.observe(node,{attributes:true});
   geometry.observe(document.head,{childList:true,subtree:true,attributes:true,characterData:true});
   document.fonts.addEventListener('loadingdone',schedule);
