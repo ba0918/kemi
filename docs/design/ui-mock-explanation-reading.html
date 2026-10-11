@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explanation 読む画面モック</title>
+<style>
+/* kemi の配色トークン（web/assets/style.css）をそのまま写す。 */
+:root {
+  color-scheme: light;
+  --bg:#ffffff; --panel:#f5f6f8; --panel-2:#eceef2;
+  --ink:#1b1f24; --ink-2:#555e6a; --ink-3:#7c8490;
+  --line:#d6dae0; --line-soft:#e8ebef;
+  --ai:#3b4ea8; --ai-soft:#e9ecfa; --ai-ink:#ffffff;
+  --add-bg:#e8f7ec; --add-ink:#1a7f37; --del-bg:#fdeceb; --del-ink:#c62a2a;
+  --note-bg:#fff6d6; --note-line:#e0ac2b; --note-ink:#7a5200; --note-mark:#ffe9a8;
+  --star:#7b4fd0; --star-soft:#f1eafd;
+  --mono:ui-monospace,"SFMono-Regular","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif;
+  --shadow:0 6px 24px #0f121626, 0 1px 3px #0f12161f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg:#0f1216; --panel:#161a20; --panel-2:#1e232b;
+    --ink:#e4e8ee; --ink-2:#9aa3ae; --ink-3:#737c88;
+    --line:#2c323b; --line-soft:#20252d;
+    --ai:#8b9cf0; --ai-soft:#1d2340; --ai-ink:#0f1216;
+    --add-bg:#11261a; --add-ink:#4ac26b; --del-bg:#2a1618; --del-ink:#f0645c;
+    --note-bg:#2b2512; --note-line:#9c7a1f; --note-ink:#e8c060; --note-mark:#4a3d12;
+    --star:#b69af5; --star-soft:#261d3d;
+    --shadow:0 6px 24px #000a, 0 1px 3px #0008;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:#0f1216; --panel:#161a20; --panel-2:#1e232b;
+  --ink:#e4e8ee; --ink-2:#9aa3ae; --ink-3:#737c88;
+  --line:#2c323b; --line-soft:#20252d;
+  --ai:#8b9cf0; --ai-soft:#1d2340; --ai-ink:#0f1216;
+  --add-bg:#11261a; --add-ink:#4ac26b; --del-bg:#2a1618; --del-ink:#f0645c;
+  --note-bg:#2b2512; --note-line:#9c7a1f; --note-ink:#e8c060; --note-mark:#4a3d12;
+  --star:#b69af5; --star-soft:#261d3d;
+  --shadow:0 6px 24px #000a, 0 1px 3px #0008;
+}
+
+* { box-sizing:border-box; }
+html, body { height:100%; margin:0; }
+body { background:var(--bg); color:var(--ink); font:14px/1.6 var(--sans); display:flex; flex-direction:column; overflow:hidden; }
+button { font:inherit; color:inherit; }
+
+/* ---------- モックの操作帯（kemi の外側） ---------- */
+.mockbar { flex-shrink:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:8px 16px; background:#1b1f24; color:#e4e8ee; font-size:12px; }
+.mockbar strong { font-size:13px; }
+.mockbar .seg { display:inline-flex; align-items:center; gap:6px; }
+.mockbar .seg > span { color:#9aa3ae; }
+.mockbar .seg div { display:inline-flex; border:1px solid #3a414c; border-radius:6px; overflow:hidden; }
+.mockbar .seg button { border:0; background:transparent; padding:4px 9px; cursor:pointer; color:#c9d0d9; }
+.mockbar .seg button[aria-pressed="true"] { background:#8b9cf0; color:#0f1216; font-weight:600; }
+.mockbar .plain { border:1px solid #3a414c; background:transparent; border-radius:6px; padding:4px 9px; cursor:pointer; color:#c9d0d9; }
+.mockbar .plain[aria-pressed="true"] { border-color:#8b9cf0; color:#8b9cf0; }
+
+.before { flex-shrink:0; display:none; gap:12px; padding:12px 16px; overflow-x:auto; background:var(--panel-2); border-bottom:1px solid var(--line); }
+body.show-before .before { display:flex; }
+.before figure { margin:0; flex:0 0 auto; width:min(420px, 80vw); }
+.before img { width:100%; border:1px solid var(--line); border-radius:6px; display:block; }
+.before figcaption { font-size:12px; color:var(--ink-2); margin-top:4px; }
+
+/* ---------- kemi の枠 ---------- */
+.topbar { flex-shrink:0; display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:10px 18px; border-bottom:1px solid var(--line); background:var(--panel); }
+.brand { font-weight:700; font-size:16px; }
+.views { display:flex; gap:2px; padding:3px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+.views button { border:0; border-radius:5px; background:transparent; color:var(--ink-2); padding:5px 10px; font:600 12px var(--sans); cursor:pointer; }
+.views button[aria-pressed="true"] { background:var(--ai-soft); color:var(--ai); }
+.title { min-width:0; }
+.title b { display:block; font-size:15px; }
+.title small { color:var(--ink-2); font-size:12px; }
+.topbar .spacer { flex:1; }
+.btn { height:32px; padding:0 12px; white-space:nowrap; border-radius:6px; border:1px solid var(--line); background:var(--bg); cursor:pointer; font-weight:600; font-size:13px; }
+.btn.primary { background:var(--ai); color:var(--ai-ink); border-color:var(--ai); }
+.toc-toggle { display:none; }
+
+.layout { flex:1; min-height:0; display:grid; grid-template-columns:var(--toc-w, 260px) 6px minmax(0,1fr) 36px; }
+
+/* 目次 */
+.toc { overflow:auto; padding:22px 10px 40px 14px; background:var(--panel); }
+.toc h2 { margin:0 8px 2px; font-size:11px; letter-spacing:.1em; color:var(--ink-3); }
+.toc .meta { margin:0 8px 16px; font-size:12px; color:var(--ink-3); }
+.toc ol { list-style:none; margin:0; padding:0; }
+.toc a { display:flex; gap:9px; align-items:baseline; padding:6px 8px 6px 10px; border-left:2px solid transparent; color:var(--ink-2); text-decoration:none; font-size:13px; line-height:1.55; border-radius:0 6px 6px 0; overflow-wrap:anywhere; }
+.toc a:hover { background:var(--panel-2); color:var(--ink); }
+.toc a .n { flex-shrink:0; font:11px var(--mono); color:var(--ink-3); width:1.6em; }
+.toc li.sub a { padding-left:38px; font-size:12px; color:var(--ink-3); }
+.toc li.top + li.top { margin-top:6px; }
+.toc a[aria-current="true"] { border-left-color:var(--ai); color:var(--ai); background:var(--ai-soft); font-weight:600; }
+.toc a[aria-current="true"] .n { color:var(--ai); }
+.toc li.sub a[aria-current="true"] { font-weight:500; }
+.toc li .count { margin-left:auto; flex-shrink:0; font-size:11px; color:var(--note-ink); background:var(--note-bg); border-radius:9px; padding:0 6px; }
+.splitter { cursor:col-resize; touch-action:none; background:var(--panel); border-right:1px solid var(--line); position:relative; }
+.splitter::after { content:""; position:absolute; top:50%; left:2px; width:2px; height:32px; margin-top:-16px; border-radius:2px; background:var(--line); }
+.splitter:hover::after, .splitter.dragging::after { background:var(--ai); }
+
+.rail { border-left:1px solid var(--line); background:var(--panel); display:flex; justify-content:center; }
+.rail button { writing-mode:vertical-rl; border:0; background:transparent; color:var(--ink-2); padding:14px 0; cursor:pointer; font-size:12px; }
+
+/* ---------- 本文 ---------- */
+.doc { overflow:auto; position:relative; scroll-padding-top:24px; }
+.doc-inner { position:relative; max-width:46rem; margin:0 auto; padding:36px 32px 120px; }
+.kicker { display:inline-flex; gap:8px; align-items:center; font-size:12px; color:var(--ink-2); }
+.kicker .pill { border:1px solid var(--line); border-radius:20px; padding:2px 10px; background:var(--panel); }
+.lead-title { font-size:28px; line-height:1.4; margin:14px 0 12px; letter-spacing:.01em; }
+.lead { font-size:16px; line-height:1.9; color:var(--ink); margin:0 0 10px; }
+.lead-meta { font-size:12px; color:var(--ink-3); margin:0; }
+
+.sec { margin-top:72px; }
+.sec-head { display:grid; grid-template-columns:auto 1fr; column-gap:14px; align-items:baseline; padding-bottom:12px; margin-bottom:20px; border-bottom:1px solid var(--line); }
+.sec-head .n { font:600 13px var(--mono); color:var(--ai); background:var(--ai-soft); border-radius:6px; padding:2px 7px; }
+.sec-head h2 { margin:0; font-size:22px; line-height:1.45; }
+.sec-head .gist { grid-column:2; margin:6px 0 0; color:var(--ink-2); font-size:14px; }
+.doc h3 { font-size:16px; margin:36px 0 10px; padding-left:10px; border-left:3px solid var(--ai); line-height:1.5; }
+
+/* ブロック。見た目の箱は持たない。コメントがあるときだけ左に付箋色の線を出す。 */
+[data-block] { position:relative; margin:0 0 18px; }
+[data-block].has-comment::before { content:""; position:absolute; left:-14px; top:4px; bottom:4px; width:3px; border-radius:2px; background:var(--note-line); }
+.prose { font-size:15px; line-height:1.9; }
+.prose p { margin:0 0 .9em; }
+.prose ul, .prose ol { margin:.4em 0 1em; padding-left:1.5em; }
+.prose li + li { margin-top:.35em; }
+.prose code { font-family:var(--mono); font-size:.88em; background:var(--panel-2); border-radius:4px; padding:1px 5px; }
+.prose strong { font-weight:700; }
+
+.callout { border-left:3px solid var(--star); background:var(--star-soft); border-radius:0 8px 8px 0; padding:12px 16px; }
+.callout .label { display:block; font-size:12px; font-weight:700; color:var(--star); margin-bottom:4px; letter-spacing:.04em; }
+.callout p { margin:0; font-size:14.5px; line-height:1.8; }
+
+.compare { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.compare > div { border-radius:8px; padding:12px 14px; font-size:14px; line-height:1.75; }
+.compare .was { background:var(--panel); border:1px solid var(--line); }
+.compare .now { background:var(--add-bg); border:1px solid color-mix(in srgb, var(--add-ink) 30%, transparent); }
+.compare .label { display:block; font-size:11px; font-weight:700; color:var(--ink-3); margin-bottom:4px; letter-spacing:.06em; }
+.compare .now .label { color:var(--add-ink); }
+
+pre.code { margin:0; padding:14px 16px; background:var(--panel); border:1px solid var(--line); border-radius:8px; font:13px/1.7 var(--mono); overflow-x:auto; white-space:pre; }
+pre.code .c { color:var(--ink-3); }
+pre.code .k { color:var(--star); }
+
+.refs { display:flex; flex-wrap:wrap; gap:6px; margin:-6px 0 18px; }
+.ref { display:inline-flex; align-items:center; gap:6px; font:12px var(--mono); color:var(--ai); background:transparent; border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer; }
+.ref::before { content:"‹›"; font-size:11px; color:var(--ink-3); letter-spacing:-1px; }
+.ref:hover { background:var(--ai-soft); border-color:var(--ai); }
+
+/* 図。操作はホバー（タッチでは常時）で右上に小さく出す。 */
+figure.diagram { margin:0; border:1px solid var(--line); border-radius:10px; background:var(--bg); overflow:hidden; }
+figure.diagram figcaption { display:flex; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line-soft); font-size:13px; font-weight:600; color:var(--ink-2); }
+figure.diagram figcaption .kind { font:11px var(--mono); color:var(--ink-3); font-weight:400; }
+.dtools { margin-left:auto; display:flex; gap:2px; opacity:0; transition:opacity .12s; }
+figure.diagram:hover .dtools, figure.diagram:focus-within .dtools { opacity:1; }
+@media (hover:none) { .dtools { opacity:1; } }
+.dtools button { width:28px; height:28px; border:0; border-radius:6px; background:transparent; color:var(--ink-2); cursor:pointer; font-size:14px; display:grid; place-items:center; }
+.dtools button:hover { background:var(--panel-2); color:var(--ink); }
+.dtools .sep { width:1px; margin:5px 3px; background:var(--line); }
+.dtools .dcomment:hover { background:var(--note-bg); color:var(--note-ink); }
+.dview { overflow:hidden; cursor:grab; touch-action:none; }
+.dview svg { display:block; width:100%; height:auto; transform-origin:0 0; }
+.dview svg text { fill:var(--ink); font:13px var(--sans); }
+.dview svg .actor rect { fill:var(--panel); stroke:var(--line); }
+.dview svg .life { stroke:var(--line); stroke-dasharray:3 4; }
+.dview svg .msg { stroke:var(--ink-2); fill:none; }
+.dview svg .msg.back { stroke-dasharray:5 4; }
+.dview svg .head { fill:var(--ink-2); }
+.dview svg .note rect { fill:var(--star-soft); stroke:var(--star); }
+
+/* ---------- コメントの入口と入力 ---------- */
+.sel-btn { position:fixed; z-index:50; display:none; align-items:center; gap:6px; height:30px; padding:0 10px 0 8px; border-radius:15px; border:1px solid var(--note-line); background:var(--note-bg); color:var(--note-ink); font-size:12px; font-weight:600; cursor:pointer; box-shadow:var(--shadow); }
+.sel-btn.show { display:inline-flex; }
+.sel-btn svg { width:15px; height:15px; }
+.sel-hint { position:fixed; z-index:50; display:none; padding:5px 10px; border-radius:6px; background:var(--ink); color:var(--bg); font-size:12px; box-shadow:var(--shadow); }
+.sel-hint.show { display:block; }
+
+.cform { max-width:72ch; margin:10px 0 16px; padding:12px; border:1px solid var(--note-line); border-radius:8px; background:var(--bg); box-shadow:0 0 0 3px color-mix(in srgb, var(--note-line) 18%, transparent); font-size:14px; line-height:1.6; }
+.cform.floating { position:absolute; z-index:40; width:min(380px, calc(100% - 32px)); margin:0; box-shadow:var(--shadow); }
+.cform .target { display:flex; gap:6px; align-items:baseline; font-size:12px; color:var(--ink-3); margin-bottom:8px; }
+.cform .target b { color:var(--note-ink); font-weight:600; }
+.cform blockquote { margin:0 0 8px; padding:6px 10px; border-left:3px solid var(--note-line); background:var(--note-bg); color:var(--ink-2); font-size:13px; line-height:1.6; max-height:5.2em; overflow:auto; white-space:pre-wrap; }
+.cform textarea { display:block; width:100%; min-height:72px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font:14px/1.6 var(--sans); resize:vertical; }
+.cform textarea:focus { outline:2px solid var(--ai); outline-offset:-1px; border-color:transparent; }
+.cform .row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.cform .row .kbd { margin-right:auto; font-size:11px; color:var(--ink-3); }
+.cform .btn { height:30px; }
+.cform.floating .row .kbd { display:none; }
+.cform.floating .row { justify-content:flex-end; }
+
+/* 保存したコメントの札（コード差分の札と同じ 1 行） */
+.ccard { display:flex; align-items:center; gap:8px; max-width:72ch; margin:6px 0 14px; padding:5px 10px; border:1px solid var(--note-line); border-radius:6px; background:var(--note-bg); color:var(--note-ink); font-size:13px; cursor:pointer; text-align:left; width:100%; }
+.ccard .body { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+.ccard .meta { flex-shrink:0; font-size:12px; }
+.ccard:hover { filter:brightness(.98); }
+li > .ccard, li > .cform { margin-top:6px; }
+mark.cmark { background:var(--note-mark); color:inherit; border-bottom:2px solid var(--note-line); border-radius:2px; padding:0 1px; }
+.flash { animation:flash 1.2s ease-out; }
+@keyframes flash { 0% { box-shadow:0 0 0 4px var(--note-line); } 100% { box-shadow:0 0 0 4px transparent; } }
+
+/* 会話パネル（デモ） */
+.convo { position:fixed; z-index:60; top:0; right:0; bottom:0; width:min(380px, 100vw); background:var(--bg); border-left:1px solid var(--line); box-shadow:var(--shadow); transform:translateX(105%); transition:transform .18s; display:flex; flex-direction:column; }
+.convo.open { transform:none; }
+.convo header { display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid var(--line); font-weight:600; }
+.convo header button { margin-left:auto; border:0; background:transparent; cursor:pointer; font-size:18px; color:var(--ink-2); }
+.convo .list { overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
+.convo .thread { border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+.convo .thread .where { font-size:12px; color:var(--ink-3); margin-bottom:6px; }
+.convo .thread blockquote { margin:0 0 8px; padding:4px 8px; border-left:3px solid var(--note-line); background:var(--note-bg); font-size:12.5px; color:var(--ink-2); white-space:pre-wrap; max-height:6em; overflow:auto; }
+.convo .thread .msg { font-size:13.5px; margin:4px 0; }
+.convo .thread .msg b { font-size:12px; color:var(--ink-3); margin-right:6px; }
+.convo .empty { color:var(--ink-3); font-size:13px; }
+.convo .thread.focus { border-color:var(--note-line); box-shadow:0 0 0 3px color-mix(in srgb, var(--note-line) 25%, transparent); }
+
+/* 決めてほしいこと */
+.asks { margin:0 0 28px; padding:12px 16px; border:1px dashed var(--ink-3); border-radius:8px; font-size:13px; color:var(--ink-2); }
+.asks b { color:var(--ink); }
+.asks ol { margin:6px 0 0; padding-left:1.4em; }
+.asks li + li { margin-top:4px; }
+
+:focus-visible { outline:2px solid var(--ai); outline-offset:2px; }
+
+/* ---------- 狭い画面（kemi と同じ 720px 境界） ---------- */
+@media (max-width:719.98px) {
+  .layout { grid-template-columns:minmax(0,1fr); }
+  .splitter, .rail { display:none; }
+  .toc { position:fixed; z-index:55; top:0; bottom:0; left:0; width:min(300px, 86vw); transform:translateX(-105%); transition:transform .18s; box-shadow:var(--shadow); }
+  body.toc-open .toc { transform:none; }
+  .toc-toggle { display:inline-flex; align-items:center; }
+  .topbar { padding:8px 16px; gap:8px; }
+  .title { order:4; width:100%; }
+  .topbar .actions .btn:not(.primary) { display:none; }
+  .doc-inner { padding:24px 16px 120px; }
+  .lead-title { font-size:22px; }
+  .sec { margin-top:56px; }
+  .sec-head h2 { font-size:19px; }
+  .compare { grid-template-columns:1fr; }
+  [data-block].has-comment::before { left:-9px; }
+  .cform.floating { left:0 !important; width:100%; }
+  .cform .row .kbd { display:none; }
+  .cform .row { justify-content:flex-end; }
+}
+</style>
+</head>
+<body>
+
+<div class="mockbar" role="region" aria-label="モックの操作">
+  <strong>Explanation 読む画面・モック</strong>
+  <span class="seg"><span>入力欄の出方</span><div>
+    <button data-form="inline" aria-pressed="false">A 段落の直下</button>
+    <button data-form="float" aria-pressed="true">B 選んだ所に浮かぶ（採用）</button>
+  </div></span>
+  <span class="seg"><span>引用</span><div>
+    <button data-quote="selection" aria-pressed="true">選んだ文字（採用）</button>
+    <button data-quote="block" aria-pressed="false">ブロック全体（今の仕様）</button>
+  </div></span>
+  <button class="plain" id="theme" type="button">テーマ: 自動</button>
+  <button class="plain" id="before-toggle" type="button" aria-pressed="false">今の画面と比べる</button>
+</div>
+
+<div class="before" aria-label="今の画面">
+  <figure><img src="ui-mock-explanation-reading-before-blocks.png" alt="今の画面。節が箱で囲われ、ブロックごとにコメントアイコンが並ぶ"><figcaption>今：節が箱で囲われて畳める。ブロックごとの右上にアイコンが常にある</figcaption></figure>
+  <figure><img src="ui-mock-explanation-reading-before-form.png" alt="今の入力欄。選んだ段落でなくブロックの最後に出る"><figcaption>今：選んだのは 1 段落目でも、入力欄はブロックの最後（2 段落目の下）に大きく出る</figcaption></figure>
+  <figure><img src="ui-mock-explanation-reading-before-diagram.png" alt="今の図。ボタンが常に並ぶ操作パネル"><figcaption>今：図の上にボタンが常に 9 個並ぶ</figcaption></figure>
+</div>
+
+<header class="topbar">
+  <button class="btn toc-toggle" id="toc-toggle" type="button" aria-label="目次を開く">☰ 目次</button>
+  <span class="brand">kemi</span>
+  <div class="views" role="group" aria-label="表示">
+    <button aria-pressed="true">Explanation</button>
+    <button aria-pressed="false" id="to-code">Code</button>
+  </div>
+  <div class="title"><b>Explanation と図付き会話の実装</b><small>c0a2a74..b3380d9 · 92 files · +10349 −422</small></div>
+  <span class="spacer"></span>
+  <div class="actions">
+    <button class="btn" type="button" id="convo-btn">💬 <span id="convo-count">0</span></button>
+    <button class="btn primary" type="button">Approve</button>
+    <button class="btn" type="button">Request changes</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" id="toc" aria-label="目次">
+    <h2>CONTENTS</h2>
+    <p class="meta">5 節 · 版 1</p>
+    <ol id="toc-list"></ol>
+  </nav>
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="目次の幅" tabindex="0"></div>
+
+  <main class="doc" id="doc">
+    <div class="doc-inner" id="doc-inner">
+
+      <aside class="asks" aria-label="決めてほしいこと">
+        <b>このモックで決めたいこと</b>（モック用の注記。本物の画面には出ない）
+        <ol>
+          <li>本文の見た目：節を箱にせず、畳まず、見出しと余白で区切る。これで読みやすいか → <b>合意</b>（10/12「見た目はかなりいい」）</li>
+          <li>コメントの入口は「文字を選ぶ → 出てくるボタン」と「図の 💬」だけ。ブロックごとのアイコンは全部なくした</li>
+          <li>入力欄の出方：<b>A 選んだ段落の直下</b>（コード差分と同じ）か、<b>B 選んだ所に浮かぶ</b>か。上の帯で切り替えられる。→ <b>B に決定</b>（10/12）</li>
+          <li>引用：保存したコメントが<b>選んだ文字</b>を引くか、今の仕様どおり<b>ブロック全体</b>を引くか。選んだ文字にするなら仕様の変更になる。→ <b>選んだ文字に決定</b>（10/12）</li>
+        </ol>
+      </aside>
+
+      <div class="kicker"><span class="pill">エージェントの説明</span><span>版 1 · 10/11 20:48</span></div>
+      <h1 class="lead-title">大量の差分を、目的と前提から読めるようにする</h1>
+      <p class="lead">Explanation・Code・Page の会話を共通にし、図付きの補足と、説明から差分へ移っても戻れる仕組みを足した。承認の対象は説明ではなく、manifest に挙げた実装ファイルの正確なバイト。</p>
+      <p class="lead-meta">読む順は説明者の提案。git のコミット単位とは一致しない。</p>
+
+      <section class="sec" id="s1" data-title="目的とレビュー状況">
+        <div class="sec-head"><span class="n">01</span><h2>目的とレビュー状況</h2><p class="gist">何が変わり、何を承認するのか。</p></div>
+        <div class="prose" data-block="s1-b1">
+          <p>LLM に任せて実装を進めると、差分の量に人間の理解が追いつかない。1 ファイルずつ差分を読むと時間がかかりすぎるし、全体を把握するのは現実的ではない。</p>
+          <p>この機能は、エージェントが<strong>全体の説明、前提、個別の説明</strong>をある程度の粒度で書き、レビューする人がそこへ質問できるようにする。必要なら図や疑似コードも使う。</p>
+          <ul>
+            <li>説明は Explanation タブに出る。差分は今までどおり Code タブで見る。</li>
+            <li>説明のどこにでもコメントでき、エージェントは説明の更新か返信で答える。</li>
+            <li>説明が更新されても、前の版に付けたコメントの引用は失わない。</li>
+          </ul>
+        </div>
+        <div class="callout" data-block="s1-b2">
+          <span class="label">確認してほしい点</span>
+          <p>承認の対象は説明ではなく実装ファイルのバイト。説明だけを直しても、承認はやり直しにならない。この読みで困る場面はあるか。</p>
+        </div>
+
+        <h3 id="s1-h1">変更前と変更後</h3>
+        <div class="compare" data-block="s1-b3">
+          <div class="was"><span class="label">変更前</span>差分を左のファイル一覧から 1 件ずつ開く。変更の意図はコミットメッセージから推測するしかない。</div>
+          <div class="now"><span class="label">変更後</span>Explanation で意図と前提を読み、参照から該当の差分へ飛ぶ。戻ると読んでいた場所に戻る。</div>
+        </div>
+      </section>
+
+      <section class="sec" id="s2" data-title="元の説明・引用を失わない">
+        <div class="sec-head"><span class="n">02</span><h2>元の説明・引用を失わない</h2><p class="gist">説明が更新されても、質問した時点の文面が読める。</p></div>
+        <div class="prose" data-block="s2-b1">
+          <p>説明と差分は別々に版を持つ。説明を更新すると版の番号が上がり、画面には新しい版が届いたことだけを知らせる。読んでいる途中で本文が勝手に差し替わることはない。</p>
+          <p>コメントは作った時点の版とブロック ID を覚える。同じ ID・同じ内容のブロックが新しい版にもあれば、そのブロックのそばにもコメントを出す。内容が変わったブロックのコメントは<strong>古い版の引用付き</strong>で会話パネルに残る。</p>
+        </div>
+        <div class="refs"><button class="ref" type="button">crates/kemi-server/src/explanation.rs:118</button><button class="ref" type="button">web/assets/explanation-model.js:42</button></div>
+
+        <h3 id="s2-h1">説明の版が上がる流れ</h3>
+        <figure class="diagram" data-block="s2-b2" data-label="図: 説明更新と読む版の分離">
+          <figcaption><span>説明更新と読む版の分離</span><span class="kind">sequence</span>
+            <span class="dtools" role="toolbar" aria-label="図の操作">
+              <button type="button" data-z="-1" aria-label="縮小">−</button>
+              <button type="button" data-z="1" aria-label="拡大">＋</button>
+              <button type="button" data-z="0" aria-label="全体を表示">⤢</button>
+              <span class="sep"></span>
+              <button type="button" class="dcomment" aria-label="この図にコメント" title="この図にコメント">
+                <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>
+              </button>
+            </span>
+          </figcaption>
+          <div class="dview">
+            <svg viewBox="0 0 640 300" role="img" aria-label="Agent が explain を送り、Server が版を保存し、Reader に新しい版の通知を出す">
+              <g class="actor"><rect x="40" y="16" width="140" height="38" rx="6"/><text x="110" y="40" text-anchor="middle">Agent</text></g>
+              <g class="actor"><rect x="250" y="16" width="140" height="38" rx="6"/><text x="320" y="40" text-anchor="middle">Server</text></g>
+              <g class="actor"><rect x="460" y="16" width="140" height="38" rx="6"/><text x="530" y="40" text-anchor="middle">Reader</text></g>
+              <line class="life" x1="110" y1="54" x2="110" y2="290"/><line class="life" x1="320" y1="54" x2="320" y2="290"/><line class="life" x1="530" y1="54" x2="530" y2="290"/>
+              <text x="215" y="92" text-anchor="middle">kemi explain（版 2）</text>
+              <line class="msg" x1="110" y1="102" x2="314" y2="102"/><path class="head" d="M320 102 l-9 -4 v8z"/>
+              <g class="note"><rect x="268" y="124" width="104" height="30" rx="4"/><text x="320" y="144" text-anchor="middle">版 2 を保存</text></g>
+              <text x="215" y="186" text-anchor="middle">saved revision</text>
+              <line class="msg back" x1="320" y1="196" x2="116" y2="196"/><path class="head" d="M110 196 l9 -4 v8z"/>
+              <text x="425" y="236" text-anchor="middle">新しい版があります</text>
+              <line class="msg" x1="320" y1="246" x2="524" y2="246"/><path class="head" d="M530 246 l-9 -4 v8z"/>
+              <text x="530" y="276" text-anchor="middle" style="font-size:12px;fill:var(--ink-3)">押すまで版 1 を読み続ける</text>
+            </svg>
+          </div>
+        </figure>
+      </section>
+
+      <section class="sec" id="s3" data-title="説明から差分へ移っても読む場所を保つ">
+        <div class="sec-head"><span class="n">03</span><h2>説明から差分へ移っても読む場所を保つ</h2><p class="gist">参照で Code へ飛び、戻ると同じ段落に戻る。</p></div>
+        <div class="prose" data-block="s3-b1">
+          <p>参照ボタンを押すと Code タブの該当行へ移る。Explanation のタブには戻る印が付き、押すと移る前に読んでいた段落の位置へ戻る。</p>
+          <p>差分の上に「説明へ戻る」の行は足さない。差分の表示領域を削ると読みにくくなるため、戻る操作はタブの切り替えに統合した。</p>
+        </div>
+        <div class="refs"><button class="ref" type="button">web/assets/features/explanation.js:88</button></div>
+        <h3 id="s3-h1">戻り先の覚え方</h3>
+        <pre class="code" data-block="s3-b2"><span class="c">// 参照へ移る直前に、読んでいた位置を覚える</span>
+<span class="k">function</span> followReference(reference) {
+  state.explanationReturn = {
+    revision: state.explanation.revision,
+    blockId: topVisibleBlock(),
+  };
+  selectView(<span class="k">"code"</span>);
+  showLines(reference.path, reference.lines);
+}</pre>
+      </section>
+
+      <section class="sec" id="s4" data-title="図と文章を同じ境界で安全に読む">
+        <div class="sec-head"><span class="n">04</span><h2>図と文章を同じ境界で安全に読む</h2><p class="gist">エージェントの書いた図や文章でページを壊させない。</p></div>
+        <div class="prose" data-block="s4-b1">
+          <p>図は shoryo と同じ描画を使い、sequence と flow は折り返しても情報を落とさない。図の中の文字はすべてテキストとして描き、HTML をそのまま差し込むことはしない。</p>
+          <p>本文の Markdown は許可した要素だけを描く。リンクは http(s) と、差分への参照だけを受け付ける。</p>
+        </div>
+        <div class="callout" data-block="s4-b2">
+          <span class="label">確認してほしい点</span>
+          <p>表と画像は今回の対象外にした。説明に表が欲しくなる場面がどれくらいあるか。</p>
+        </div>
+      </section>
+
+      <section class="sec" id="s5" data-title="公開契約と検証">
+        <div class="sec-head"><span class="n">05</span><h2>公開契約と検証</h2><p class="gist">CLI と JSON の形、テストで固めたこと。</p></div>
+        <div class="prose" data-block="s5-b1">
+          <p><code>kemi explain &lt;id&gt; --file</code> で説明を丸ごと差し替える。差し替えは原子的で、途中で失敗したら前の版のまま残る。</p>
+          <ul>
+            <li>説明の JSON は版・節・ブロックの 3 層。ブロック ID は作成者が決める。</li>
+            <li>返信は <code>kemi reply</code> の型付きの書き込みで送る。図も返信に入れられる。</li>
+            <li>ブラウザの検査は light / dark と幅 390px で回している。</li>
+          </ul>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div class="rail"><button type="button" id="rail-btn">Conversation</button></div>
+</div>
+
+<button class="sel-btn" id="sel-btn" type="button" aria-label="選んだ所にコメント">
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>コメント
+</button>
+<div class="sel-hint" id="sel-hint" role="status">ブロックをまたいだ選択にはコメントできない</div>
+
+<aside class="convo" id="convo" aria-label="会話パネル（デモ）">
+  <header>Conversation <button type="button" id="convo-close" aria-label="閉じる">×</button></header>
+  <div class="list" id="convo-list"><p class="empty">まだコメントはない。本文の文字を選ぶか、図の 💬 から書ける。</p></div>
+</aside>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const doc = $("#doc"), inner = $("#doc-inner");
+  const opts = { form: "float", quote: "selection" };
+
+  // ---- モックの切り替え ----
+  $$(".mockbar [data-form]").forEach(b => b.addEventListener("click", () => setOpt("form", b.dataset.form, "[data-form]")));
+  $$(".mockbar [data-quote]").forEach(b => b.addEventListener("click", () => setOpt("quote", b.dataset.quote, "[data-quote]")));
+  function setOpt(key, value, sel) {
+    opts[key] = value;
+    $$(".mockbar " + sel).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[key] === value)));
+    closeForm();
+  }
+  const themes = ["auto", "light", "dark"], themeLabel = { auto: "自動", light: "ライト", dark: "ダーク" };
+  let theme = "auto";
+  $("#theme").addEventListener("click", () => {
+    theme = themes[(themes.indexOf(theme) + 1) % 3];
+    if (theme === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme;
+    $("#theme").textContent = "テーマ: " + themeLabel[theme];
+  });
+  $("#before-toggle").addEventListener("click", e => {
+    const on = document.body.classList.toggle("show-before");
+    e.currentTarget.setAttribute("aria-pressed", String(on));
+  });
+
+  // ---- 目次 ----
+  const tocList = $("#toc-list");
+  $$(".sec").forEach((sec, i) => {
+    const li = document.createElement("li"); li.className = "top";
+    li.innerHTML = `<a href="#${sec.id}"><span class="n">${String(i + 1).padStart(2, "0")}</span><span>${sec.dataset.title}</span><span class="count" hidden></span></a>`;
+    tocList.append(li);
+    $$("h3[id]", sec).forEach(h => {
+      const sub = document.createElement("li"); sub.className = "sub";
+      sub.innerHTML = `<a href="#${h.id}"><span>${h.textContent}</span></a>`;
+      tocList.append(sub);
+    });
+  });
+  tocList.addEventListener("click", e => {
+    const a = e.target.closest("a"); if (!a) return;
+    e.preventDefault();
+    $(a.getAttribute("href")).scrollIntoView({ block: "start", behavior: "smooth" });
+    document.body.classList.remove("toc-open");
+  });
+  const targets = $$(".sec, .sec h3[id]");
+  function markCurrent() {
+    const top = doc.getBoundingClientRect().top + 80;
+    let current = targets[0];
+    for (const t of targets) if (t.getBoundingClientRect().top <= top) current = t;
+    $$("a", tocList).forEach(a => a.setAttribute("aria-current", String(a.getAttribute("href") === "#" + current.id)));
+  }
+  doc.addEventListener("scroll", markCurrent, { passive: true }); markCurrent();
+  $("#toc-toggle").addEventListener("click", () => document.body.classList.toggle("toc-open"));
+
+  // 目次の幅（ドラッグと矢印キー）
+  const splitter = $("#splitter"), layout = $(".layout");
+  const setWidth = w => layout.style.setProperty("--toc-w", Math.max(180, Math.min(480, w)) + "px");
+  splitter.addEventListener("pointerdown", e => {
+    splitter.setPointerCapture(e.pointerId); splitter.classList.add("dragging");
+    const move = ev => setWidth(ev.clientX - layout.getBoundingClientRect().left);
+    const up = () => { splitter.classList.remove("dragging"); splitter.removeEventListener("pointermove", move); };
+    splitter.addEventListener("pointermove", move); splitter.addEventListener("pointerup", up, { once: true });
+  });
+  splitter.addEventListener("keydown", e => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    setWidth($("#toc").getBoundingClientRect().width + (e.key === "ArrowRight" ? 20 : -20));
+  });
+
+  // ---- 図の拡大縮小（デモ） ----
+  $$("figure.diagram").forEach(fig => {
+    const svg = $("svg", fig); let z = 1;
+    $$("[data-z]", fig).forEach(b => b.addEventListener("click", () => {
+      const d = Number(b.dataset.z); z = d === 0 ? 1 : Math.max(.6, Math.min(2.4, z + d * .2));
+      svg.style.transform = `scale(${z})`;
+    }));
+    $(".dcomment", fig).addEventListener("click", () => {
+      openForm({ block: fig, anchor: fig, quoteText: fig.dataset.label, rect: $(".dcomment", fig).getBoundingClientRect(), range: null });
+    });
+  });
+
+  // ---- 文字選択からのコメント ----
+  const selBtn = $("#sel-btn"), selHint = $("#sel-hint");
+  let pending = null; // { block, anchor, range, text }
+  const ANCHORS = "p, li, pre, figure, .callout, .compare > div";
+
+  function blockOf(node) { const el = node.nodeType === 1 ? node : node.parentElement; return el && el.closest("[data-block]"); }
+  function anchorOf(node, block) {
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const a = el && el.closest(ANCHORS);
+    if (!a || !block.contains(a)) return block;
+    if (a.matches(".compare > div")) return block; // 2 列の比較は比較全体の下に出す
+    return a;
+  }
+  function readSelection() {
+    const sel = getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    if (!inner.contains(range.commonAncestorContainer)) return null;
+    if (range.commonAncestorContainer.nodeType === 1 && range.commonAncestorContainer.closest(".cform, .asks")) return null;
+    if (blockOf(range.startContainer)?.closest(".cform, .asks")) return null;
+    const a = blockOf(range.startContainer), b = blockOf(range.endContainer);
+    const text = sel.toString().trim();
+    if (!text) return null;
+    if (!a || a !== b) return { crossing: true, range };
+    return { block: a, anchor: anchorOf(range.endContainer, a), range: range.cloneRange(), text };
+  }
+  function lastRect(range) {
+    const rects = [...range.getClientRects()].filter(r => r.width || r.height);
+    return rects[rects.length - 1] || range.getBoundingClientRect();
+  }
+  function placeFloating(el, rect) {
+    const w = el.offsetWidth || 110, h = el.offsetHeight || 30;
+    let left = Math.min(rect.right - w / 2, innerWidth - w - 12);
+    left = Math.max(12, left);
+    let top = rect.bottom + 8;
+    if (top + h > innerHeight - 12) top = rect.top - h - 8;
+    el.style.left = left + "px"; el.style.top = top + "px";
+  }
+  function updateSelection() {
+    const info = readSelection();
+    selBtn.classList.remove("show"); selHint.classList.remove("show");
+    pending = null;
+    if (!info) return;
+    if (info.crossing) { selHint.classList.add("show"); placeFloating(selHint, lastRect(info.range)); return; }
+    pending = info;
+    selBtn.classList.add("show"); placeFloating(selBtn, lastRect(info.range));
+  }
+  let selTimer = 0;
+  document.addEventListener("selectionchange", () => { clearTimeout(selTimer); selTimer = setTimeout(updateSelection, 120); });
+  doc.addEventListener("scroll", () => { if (pending) placeFloating(selBtn, lastRect(pending.range)); else selHint.classList.remove("show"); }, { passive: true });
+  selBtn.addEventListener("pointerdown", e => e.preventDefault()); // 押した瞬間に選択が消えないように
+  selBtn.addEventListener("click", () => {
+    if (!pending) return;
+    const p = pending;
+    openForm({ block: p.block, anchor: p.anchor, quoteText: p.text, rect: lastRect(p.range), range: p.range });
+  });
+  // 選択中に c キーでも開ける
+  document.addEventListener("keydown", e => {
+    if (e.key === "c" && pending && !e.target.closest("textarea, input")) { e.preventDefault(); selBtn.click(); }
+    if (e.key === "Escape") { closeForm(); document.body.classList.remove("toc-open"); $("#convo").classList.remove("open"); }
+  });
+
+  // ---- 入力欄 ----
+  let form = null;
+  function sectionTitle(el) { return el.closest(".sec")?.dataset.title ?? ""; }
+  function blockText(block) {
+    if (block.matches("figure")) return block.dataset.label;
+    return block.innerText.replace(/\n{2,}/g, "\n").trim();
+  }
+  function quoteFor(ctx) {
+    if (ctx.block.matches("figure")) return ctx.quoteText;
+    return opts.quote === "selection" ? ctx.quoteText : blockText(ctx.block);
+  }
+  function insertAfterAnchor(node, anchor) {
+    if (anchor.matches("li")) anchor.append(node); else anchor.after(node);
+  }
+  function openForm(ctx) {
+    closeForm();
+    selBtn.classList.remove("show");
+    const el = document.createElement("div");
+    el.className = "cform" + (opts.form === "float" ? " floating" : "");
+    const scope = ctx.block.matches("figure") ? "図全体" : (opts.quote === "selection" ? "選んだ文字" : "ブロック全体");
+    el.innerHTML = `
+      <div class="target"><b>コメント</b><span>${sectionTitle(ctx.block)} · ${scope}</span></div>
+      <blockquote></blockquote>
+      <textarea placeholder="質問や直してほしい点を書く" aria-label="コメント"></textarea>
+      <div class="row"><span class="kbd">Ctrl+Enter で追加 · Esc で閉じる</span>
+        <button type="button" class="btn" data-act="cancel">Cancel</button>
+        <button type="button" class="btn primary" data-act="save">Add comment</button></div>`;
+    $("blockquote", el).textContent = quoteFor(ctx);
+    if (opts.form === "float") {
+      inner.append(el);
+      const box = inner.getBoundingClientRect();
+      const top = ctx.rect.bottom - box.top + 8;
+      let left = ctx.rect.left - box.left - 20;
+      left = Math.max(16, Math.min(left, inner.clientWidth - el.offsetWidth - 16));
+      el.style.top = top + "px"; el.style.left = left + "px";
+    } else {
+      insertAfterAnchor(el, ctx.anchor);
+    }
+    form = { el, ctx };
+    const ta = $("textarea", el);
+    ta.focus({ preventScroll: true });
+    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    el.addEventListener("click", e => {
+      const act = e.target.closest("[data-act]")?.dataset.act;
+      if (act === "cancel") closeForm();
+      if (act === "save") save();
+    });
+    ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); });
+    getSelection().removeAllRanges();
+  }
+  function closeForm() { if (form) { form.el.remove(); form = null; } }
+
+  // ---- 保存と札 ----
+  const threads = [];
+  function save() {
+    const body = $("textarea", form.el).value.trim();
+    if (!body) { $("textarea", form.el).focus(); return; }
+    const { ctx } = form;
+    const quote = quoteFor(ctx);
+    const id = threads.length + 1;
+    const thread = { id, body, quote, where: sectionTitle(ctx.block), replies: [] };
+    threads.push(thread);
+    closeForm();
+
+    // 印：選んだ文字を引くときはその文字に、ブロック全体のときはブロックの左に付ける
+    let target = ctx.block;
+    if (!ctx.block.matches("figure") && opts.quote === "selection" && ctx.range) {
+      const mark = document.createElement("mark"); mark.className = "cmark"; mark.dataset.thread = id;
+      try { ctx.range.surroundContents(mark); target = mark; }
+      catch { ctx.anchor.classList.add("has-comment"); target = ctx.anchor; }
+    } else {
+      ctx.block.classList.add("has-comment");
+    }
+
+    const card = document.createElement("button");
+    card.type = "button"; card.className = "ccard"; card.dataset.thread = id;
+    card.innerHTML = `<span aria-hidden="true">💬</span><span class="body"></span><span class="meta">返信 0</span>`;
+    $(".body", card).textContent = body.split("\n")[0];
+    insertAfterAnchor(card, ctx.anchor);
+    card.addEventListener("click", () => openThread(id));
+    renderConvo(); updateCounts();
+
+    // デモ：少ししてエージェントが返信する
+    setTimeout(() => {
+      thread.replies.push("（デモの返信）受け取った。説明の該当箇所を直して版 2 を出すね。");
+      $(".meta", card).textContent = "返信 1 · 新着";
+      renderConvo(); updateCounts();
+    }, 1600);
+  }
+  function updateCounts() {
+    $("#convo-count").textContent = threads.length;
+    $$(".sec").forEach((sec, i) => {
+      const n = $$(".ccard", sec).length;
+      const badge = $$("li.top .count", tocList)[i];
+      badge.hidden = !n; badge.textContent = n;
+    });
+  }
+  function renderConvo(focusId) {
+    const list = $("#convo-list");
+    if (!threads.length) return;
+    list.innerHTML = "";
+    for (const t of [...threads].reverse()) {
+      const el = document.createElement("div");
+      el.className = "thread" + (t.id === focusId ? " focus" : "");
+      el.innerHTML = `<div class="where"></div><blockquote></blockquote><div class="msg"><b>あなた</b><span></span></div>`;
+      $(".where", el).textContent = "Explanation · " + t.where;
+      $("blockquote", el).textContent = t.quote;
+      $(".msg span", el).textContent = t.body;
+      for (const r of t.replies) {
+        const m = document.createElement("div"); m.className = "msg";
+        m.innerHTML = "<b>agent</b><span></span>"; $("span", m).textContent = r; el.append(m);
+      }
+      const jump = document.createElement("button"); jump.type = "button"; jump.className = "btn"; jump.style.marginTop = "6px"; jump.textContent = "本文で見る";
+      jump.addEventListener("click", () => {
+        const card = $(`.ccard[data-thread="${t.id}"]`);
+        card.scrollIntoView({ block: "center", behavior: "smooth" });
+        card.classList.remove("flash"); void card.offsetWidth; card.classList.add("flash");
+        if (innerWidth < 720) $("#convo").classList.remove("open");
+      });
+      el.append(jump);
+      list.append(el);
+    }
+  }
+  function openThread(id) {
+    renderConvo(id);
+    $("#convo").classList.add("open");
+    const c = $(`.ccard[data-thread="${id}"] .meta`); if (c) c.textContent = c.textContent.replace(" · 新着", "");
+  }
+  const toggleConvo = () => $("#convo").classList.toggle("open");
+  $("#convo-btn").addEventListener("click", toggleConvo);
+  $("#rail-btn").addEventListener("click", toggleConvo);
+  $("#convo-close").addEventListener("click", () => $("#convo").classList.remove("open"));
+  $("#to-code").addEventListener("click", () => alert("モックでは Code タブは省略。今の Code の画面はそのまま使う。"));
+  $$(".ref").forEach(r => r.addEventListener("click", () => alert("モックでは参照先への移動は省略。押すと Code の該当行へ移り、Explanation タブに戻る印が付く。")));
+})();
+</script>
+</body>
+</html>
