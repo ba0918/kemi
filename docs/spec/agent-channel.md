@@ -12,7 +12,7 @@
 返信とレビュー全体への発言で何往復もやりとりできるようにする。**
 
 各要件の「成功条件」と「反例」の書き方は [kemi 仕様](kemi.md) の冒頭と同じ。証拠の出所は
-[R-VERIFY](kemi.md#r-verify-検証)。
+[R-VERIFY](build.md#r-verify-検証)。
 
 ---
 
@@ -22,7 +22,7 @@
 
 - 1 回のレビューは何往復しても 1 回の起動のまま続き、submit（承認か変更要求）で終わる。
   submit の受理が 1 回だけであること、終了コード、stdout の JSON は
-  [R-SUBMIT](kemi.md#r-submit-送信と契約) のまま。
+  [R-SUBMIT](output.md#r-submit-送信と契約) のまま。
 - 人間はコメント・返信・発言を書き、「エージェントに渡す」でまとめてエージェントへ届ける
   （[R-AGENT-HAND](#r-agent-hand-渡す)）。エージェントは `kemi wait` で受け取り、`kemi reply`
   で返信・発言・案を書く（[R-AGENT-CLI](#r-agent-cli-kemi-wait-と-kemi-reply)）。
@@ -60,17 +60,17 @@
   書ける。どちらも書いた人（人間）を持つ。
 - 解決（resolve）は人間だけが行える。解決したスレッドは自動で畳み、開き直せる。
   解決していないスレッドも畳める。畳んだスレッドは、会話パネルの一覧の項目も差分の中の札も
-  1 行（解決したものは解決済みの印つき）に縮め、押すと普通どおり開く（[R-VIEW](kemi.md#r-view-差分の表示)）。
+  1 行（解決したものは解決済みの印つき）に縮め、押すと普通どおり開く（[R-VIEW](view.md#r-view-差分の表示)）。
 - まだ渡していないコメント・返信・発言が残ったまま submit するときは、確認の中に
   その件数を出す。submit は止めない（結果にはすべて入る）。解決していないスレッドが
   残っていても承認は止めない。
 - 返信・発言が届いたとき、会話パネルの並び（開いたスレッドの並びも含む）は、一番下を
   見ているときだけ新しいものが見えるところまでついていく。上のほうを見ているときは位置を
   変えず、新しいものが届いたことを示す。差分のスクロール位置はどちらの場合も変えない
-  （[R-LIVE](kemi.md#r-live-ライブリロード)）。
+  （[R-LIVE](serve.md#r-live-ライブリロード)）。
 - スレッドを開いているときに別のスレッドへ返信が届いたら、開いているスレッドの上に、どの
   スレッドに届いたかを知らせ、押すとそのスレッドを開く。会話パネルを開いている間も、パネルの
-  見出しに新着の数（数え方は [R-VIEW](kemi.md#r-view-差分の表示) の帯の新着の数と同じ）を出す。
+  見出しに新着の数（数え方は [R-VIEW](view.md#r-view-差分の表示) の帯の新着の数と同じ）を出す。
 - 渡した 1 回分の行: 渡したら、その 1 回分に入ったスレッドそれぞれの末尾に、エージェントの受け取りを
   待っていることを示す行を出す。発言だけの 1 回分（スレッドを含まない）は、会話パネルの並びの末尾に
   出す。
@@ -123,7 +123,7 @@ explain/contextは [R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cl
 **要件**
 
 - 起動したレビューは stderr に `kemi: review <id>` の 1 行を出す。`<id>` はセッションの
-  `id`（[R-SESSION](kemi.md#r-session-セッションの保存と復元)）と同じ。この行は契約とする。
+  `id`（[R-SESSION](session.md#r-session-セッションの保存と復元)）と同じ。この行は契約とする。
 - セッションを作れなかったレビュー（状態の置き場所が決まらない、書けないなど）は、この行を
   出さず `<id>.endpoint` も作らない。往復は使えず、エージェントが一度もつながらないレビューと
   同じになる（[R-AGENT-FLOW](#r-agent-flow-往復の流れ)）。
@@ -142,7 +142,7 @@ explain/contextは [R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cl
     stderr に出して終了コード `2`。
   - レビューが動いていない（保留中、`id` が無い）ときは、理由を stderr に出して終了コード `2`。
     submit で終わった後に呼ばれたときも終了コード `2` で、レビューが終わったことと、結果は
-    `kemi --result`（[R-RESULT](kemi.md#r-result-結果ファイル)）で読めることを stderr に出す。
+    `kemi --result`（[R-RESULT](output.md#r-result-結果ファイル)）で読めることを stderr に出す。
   - 起きたことは失わない代わりに、同じものが二度届くことがある（出し終えた後、受け取ったことを
     レビューに知らせる前に止まったとき。次の `kemi wait` が同じ起きたことをもう一度返す）。
     エージェントはコメント・返信・発言の `id` で重なりを見分ける。
@@ -210,14 +210,14 @@ explain/contextは [R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cl
 - `events` は起きた順。`handed` は「エージェントに渡す」1 回分、`chosen` は案の「これにする」
   （[live.md の案](live.md#r-page-variant-案)）、`submitted` は submit。
 - `deleted` のコメントは `id` だけを持つ。
-- コメント・返信・発言・submit の結果の形は [R-SUBMIT](kemi.md#r-submit-送信と契約) と同じで、
-  ここに写さない。`kemi` は [R-SUBMIT](kemi.md#r-submit-送信と契約) と同じ結果 JSON の契約の版。
+- コメント・返信・発言・submit の結果の形は [R-SUBMIT](output.md#r-submit-送信と契約) と同じで、
+  ここに写さない。`kemi` は [R-SUBMIT](output.md#r-submit-送信と契約) と同じ結果 JSON の契約の版。
 
 **成功条件**
 
 - 渡したコメントの `comment` が、submit の JSON の同じコメントと同じキーを持つ（e2e）。
 - ページへのコメントの描き込みの画像は、`kemi wait` の応答でだけ絶対パスで受け取れる。submit の
-  結果では `null`（[R-SUBMIT](kemi.md#r-submit-送信と契約)）。
+  結果では `null`（[R-SUBMIT](output.md#r-submit-送信と契約)）。
 - `kemi wait` を呼ばずに案を選び、続けて渡してから `kemi wait` を呼ぶと、1 つの応答の
   `events` に `chosen` と `handed` が起きた順に並ぶ（e2e）。
 
@@ -325,7 +325,7 @@ bodyかpartsの互換入力と新上限は [R-CONTENT-INPUT](content-parts.md#r-
   値は自動検査のための契約で、画面の文言とは別。
 - 画面の状態の言い方は、人が次に何をすればよいかが分かるものにする: 待機中は渡せること、
   返事済みは返事が届いたことが読み取れる（文言は画面モック。UI の文言は英語。
-  [R-DIST](kemi.md#r-dist-名称と配布)）。
+  [R-DIST](distribution.md#r-dist-名称と配布)）。
 - 「エージェントに渡す」は、状態によらず常に出す（会話パネルを畳んでいても見える）。未接続の
   間は押せず、エージェントが `kemi wait` を始めると渡せることと、そのコマンドを写す操作を
   そばに出す。写すコマンドはこのレビューの `id` を含む `kemi wait <id>`（そのまま貼れば動く。
@@ -333,16 +333,16 @@ bodyかpartsの互換入力と新上限は [R-CONTENT-INPUT](content-parts.md#r-
   会話パネルを畳んだ案内は、`--live` のコメント欄の場所の削除・入力・保存の操作を覆わない。
   一度でも `kemi wait` が呼ばれたら押せる。ただし渡すもの（前に渡した後の変化）が無い間は、押せない
   見た目にして、渡すものが無いことを示す。
-- 狭い画面（[R-NARROW](kemi.md#r-narrow-狭い画面)）では、どの入力モード・見方でも、「エージェントに
+- 狭い画面（[R-NARROW](narrow.md#r-narrow-狭い画面)）では、どの入力モード・見方でも、「エージェントに
   渡す」を画面の下に浮かぶボタンとして出す（`--live` のページの見方では道具のツールバーの中。
   [live.md](live.md#r-page-view-ページの見方)）。会話パネルのシートを開かなくても渡せる。
 - この節と [R-AGENT-HAND](#r-agent-hand-渡す) の画面の約束は、[R-AGENT-FLOW](#r-agent-flow-往復の流れ)
   のとおり入力モードを問わない（`--live` の画面で決めたものも全モードに効く）。
 - 応答なしでもレビューは止めない。表示だけ。
-- 状態の変化は SSE で画面に届ける（[R-SERVE](kemi.md#r-serve-配信モデル) の `api/events`）。
+- 状態の変化は SSE で画面に届ける（[R-SERVE](serve.md#r-serve-配信モデル) の `api/events`）。
 - この節と [R-AGENT-HAND](#r-agent-hand-渡す) の画面の変更（使い勝手の見直しで足したもの）を実装する
   コミットで、`skills/kemi`（`references/conversation.md` の「渡す操作は `kemi wait` の後にだけ出る」
-  という記述と状態の説明）、README、CHANGELOG も同時に直す（[R-DIST](kemi.md#r-dist-名称と配布)）。
+  という記述と状態の説明）、README、CHANGELOG も同時に直す（[R-DIST](distribution.md#r-dist-名称と配布)）。
 
 **成功条件**
 
@@ -422,13 +422,13 @@ explain/contextにも同じ保護を適用する。[R-EXPLANATION-CLI](explanati
 
 - PA1 MCP サーバとしての接続。つなぎ方は `kemi wait` / `kemi reply` だけ。
 - PA2 エージェントがコメントを立てる・解決を付ける機能。
-- PA3 人間ごとの区別（著者）。書いた人は「人間」か「エージェント」かだけ（[P5](kemi.md#作らないもの)）。
+- PA3 人間ごとの区別（著者）。書いた人は「人間」か「エージェント」かだけ（[P5](serve.md#作らないもの)）。
 
 ## 委譲
 
 - DA1 エージェント用 API の URL と内部の形、`<id>.endpoint` の中の形。どの形でも
   [R-AGENT-LINK](#r-agent-link-つなぎ先と安全) の受理条件と、CLI と JSON の契約は同じ。
-- DA2 返信と発言の `id` の形式（[D4](kemi.md#委譲) と同じ扱い）。
+- DA2 返信と発言の `id` の形式（[D4](output.md#委譲) と同じ扱い）。
 
 ## 却下
 

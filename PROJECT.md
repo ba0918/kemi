@@ -17,7 +17,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Path | 内容 |
 |---|---|
 | `docs/README.md` | 文書の入口。各ディレクトリの役割といまの文書 |
-| `docs/spec/kemi.md` | 承認済みの仕様。契約（CLI、JSON、性能条件）の正典 |
+| `docs/spec/kemi.md` | 承認済みの本体の仕様の索引。契約（CLI、JSON、性能条件）の正典は、そこから辿る責務ごとのファイル |
 | `CONTEXT.md` | 用語集。二通りに読める語の読みの正典 |
 | `src/main.rs` | CLI と配線、stdout / stderr、終了コード |
 | `crates/kemi-core/src/domain/` | 純粋なドメイン（整列、コメント、digest、ノイズ判定） |
@@ -82,7 +82,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 
 ## Conventions specific to this project
 
-- `docs/spec/kemi.md` が契約の正典。振る舞いを変えるときは該当節 ID（例 `R-SUBMIT`）を
+- `docs/spec/` の仕様が契約の正典（本体の入口は `kemi.md` の索引）。振る舞いを変えるときは該当節 ID（例 `R-SUBMIT`）を
   引用し、実装より先に仕様を直す。
 - 用語は `CONTEXT.md` の読みに従う（例: コメントを「注釈」と呼ばない）。
 - コードとコミットは日本語、UI の文言と CLI の出力は英語、docs は日本語、README と `skills/` は英語。
