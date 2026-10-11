@@ -1,6 +1,6 @@
 // @ts-check
 import { actions } from '../actions.js';
-import { button, el, textEl } from '../dom.js';
+import { COPY_ICON, el, iconButton, textEl } from '../dom.js';
 import { diagramViewport } from './diagrams/viewport.js';
 import { gridView } from './diagrams/grid.js';
 
@@ -35,14 +35,18 @@ export function partView(value, hooks = {}) {
     const language = value.language;
     const role = value.role;
     host.append(textEl('header', 'part-metadata', `${title} ${language === 'pseudocode' ? 'Pseudocode' : language} · ${role}`));
+    const frame = el('div', 'part-code-frame');
     const pre = el('pre', 'part-code');
     pre.append(textEl('code', '', body));
-    const copy = button('part-copy'); copy.textContent = 'Copy code';
+    // コードを読む幅を削らないよう、コピーは独立した行にせずブロックの右上に重ねる。
+    const copy = iconButton('Copy code', COPY_ICON);
+    copy.classList.add('part-copy');
     copy.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(body); copy.textContent = 'Copied'; }
-      catch (error) { copy.textContent = `Could not copy: ${error}`; }
+      try { await navigator.clipboard.writeText(body); labelCopy(copy, 'Copied', true); }
+      catch (error) { labelCopy(copy, `Could not copy: ${error}`, false); }
     });
-    host.append(pre, copy);
+    frame.append(pre, copy);
+    host.append(frame);
   } else if (value.type === 'sequence' || value.type === 'flow') {
     host.append(diagramViewport(value, false, { comment: hooks.onDiagramComment }));
   } else if (value.type === 'diagram') {
@@ -51,6 +55,18 @@ export function partView(value, hooks = {}) {
     host.append(textEl('pre', 'part-original', JSON.stringify(value, null, 2)));
   }
   return host;
+}
+
+/** @param {HTMLButtonElement} copy @param {string} label @param {boolean} copied */
+function labelCopy(copy, label, copied) {
+  copy.title = label;
+  copy.setAttribute('aria-label', label);
+  copy.classList.toggle('copied', copied);
+  window.setTimeout(() => {
+    copy.title = 'Copy code';
+    copy.setAttribute('aria-label', 'Copy code');
+    copy.classList.remove('copied');
+  }, 1_500);
 }
 
 /** @param {HTMLElement} host @param {string} html */

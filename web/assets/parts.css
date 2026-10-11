@@ -2,6 +2,11 @@
 .content-part { margin: .75rem 0; min-width: 0; }
 .part-original, .part-code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .part-metadata { font-weight: 600; }
+.part-code-frame { position: relative; }
+.content-part .part-code-frame > .part-code { margin: 0; padding-right: 44px; }
+.part-copy.iconbtn { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; padding: 5px; color: var(--ink-3); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; opacity: .75; }
+.part-code-frame:hover .part-copy, .part-copy:focus-visible { opacity: 1; }
+.part-copy.copied { color: var(--add-ink); border-color: var(--add-ink); opacity: 1; }
 .part-markdown { overflow-wrap: anywhere; }
 .part-markdown table { border-collapse: collapse; }
 .part-markdown td, .part-markdown th { border: 1px solid currentColor; padding: .3rem; }

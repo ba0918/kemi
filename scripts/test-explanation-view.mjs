@@ -96,7 +96,7 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='old plain stays')`), false);
   assert.equal(await evaluate(`document.body.textContent.includes('Image not loaded') && document.body.textContent.includes('https://example.invalid/ref.png')`), true);
   await browser('find', 'role', 'button', 'click', '--name', 'Copy code');
-  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Copied')`);
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.getAttribute('aria-label')==='Copied')`);
   const compose = 'Write to the agent about the whole review (Cmd/Ctrl+Enter to post)';
   await browser('find', 'placeholder', compose, 'click');
   await browser('clipboard', 'paste');
