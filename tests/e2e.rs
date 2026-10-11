@@ -1974,6 +1974,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
         revision: 1,
         block_id: "b".into(),
         quote: quote.clone(),
+        selection: None,
     });
     comment.replies.push(Reply {
         id: "r1".into(),

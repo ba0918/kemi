@@ -1140,6 +1140,10 @@ impl CommentDto {
                 },
             )
             .map_err(|e| e.to_string())?;
+            if let Some(selection) = &target.selection {
+                crate::domain::explanation::validate_selection(&target.quote.block.part, selection)
+                    .map_err(|e| e.to_string())?;
+            }
             CommentTarget::Explanation(target)
         } else {
             match self.page {

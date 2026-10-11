@@ -469,6 +469,7 @@ fn add_explanation_comment(
             revision,
             block_id: block_id.into(),
             quote,
+            selection: None,
         }),
     };
     candidate.channel.note_comment(&comment.id);

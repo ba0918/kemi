@@ -511,6 +511,7 @@ async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_
             revision: 1,
             block_id: "b".into(),
             quote: quote.clone(),
+            selection: None,
         }),
     });
     state.messages.push(Message {
