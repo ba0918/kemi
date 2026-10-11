@@ -6,6 +6,7 @@
 
 import { actions } from "../actions.js";
 import { contentView, partView } from './parts.js';
+import { explanationReferences } from './explanation.js';
 import { button, dom, el, textEl } from "../dom.js";
 import {
   commitGroups,
@@ -454,6 +455,12 @@ function renderThread(comment, options) {
       const quote = comment.explanation.quote;
       const context = el('div', 'cv-context');
       context.append(textEl('h3', '', quote.section_title), partView(quote.block.part));
+      if (quote.block.references.length) {
+        context.append(
+          textEl('p', '', 'Saved references. Open the original explanation to navigate using your current display version.'),
+          explanationReferences(quote.block.references, false),
+        );
+      }
       dom.cvThreadBody.append(context);
     }
     const lines = targetLines(comment);

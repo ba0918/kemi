@@ -54,6 +54,30 @@ export function renderExplanationComments() {
   }
 }
 
+/**
+ * @param {({type:'page',url:string}|{type:'code',path:string,side:string,unit:string|null,group_id:string,start_line:number|null,end_line:number|null})[]} references
+ * @param {boolean} [navigate]
+ */
+export function explanationReferences(references, navigate = true) {
+  const host = el('div','explanation-references');
+  for (const reference of references) {
+    let label = reference.type === 'page' ? `Page ${reference.url}` : `Code ${reference.path}${reference.start_line === null ? '' : `:${reference.start_line}–${reference.end_line}`} (${reference.side})`;
+    if (reference.type === 'code') {
+      if (reference.unit) label += ` · ${unitLabel(reference.unit)} / ${reference.group_id}`;
+      else if (!navigate) label += ` · ${reference.group_id}`;
+    }
+    if (navigate) {
+      const link = button('btn explanation-reference');
+      link.textContent = label;
+      link.addEventListener('click',()=>actions.followExplanationReference(reference));
+      host.append(link);
+    } else {
+      host.append(textEl('span','explanation-reference',label));
+    }
+  }
+  return host;
+}
+
 export function renderExplanationDocument() {
   const version = state.explanation.reading;
   dom.explanationDocument.replaceChildren();
@@ -95,15 +119,7 @@ export function renderExplanationDocument() {
       article.id = `explanation-block-${block.id}`;
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
       article.append(partView(block.part));
-      const references = el('div','explanation-references');
-      for (const reference of block.references) {
-        const link = button('btn explanation-reference');
-        link.textContent = reference.type === 'page' ? `Page ${reference.url}` : `Code ${reference.path}${reference.start_line === null ? '' : `:${reference.start_line}–${reference.end_line}`} (${reference.side})`;
-        if (reference.type==='code' && reference.unit) link.textContent+=` · ${unitLabel(reference.unit)} / ${reference.group_id}`;
-        link.addEventListener('click',()=>actions.followExplanationReference(reference));
-        references.append(link);
-      }
-      article.append(references);
+      article.append(explanationReferences(block.references));
       const comments = el('div','explanation-comments'); comments.dataset.blockComments = block.id; article.append(comments);
       const editor = /** @type {HTMLDetailsElement} */(el('details','explanation-comment-editor'));
       editor.append(textEl('summary','','Comment on this block'));
