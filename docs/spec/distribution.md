@@ -140,11 +140,3 @@
 - R17 スキルを plugin 経路（Claude Code / Codex の marketplace の定義ファイル）でも配る
   （理由: 単体のスキルに対して、エージェントごとの定義ファイルと版の写しが要り、手間に
   見合わない。コピー経路は定義ファイル無しで動く）。
-
-## 納品後の環境更新（リポジトリ外）
-
-- `~/.local/bin/diff-review`（Python）を kemi に置き換える。
-- `~/.claude/skills/diff-review-viewer` を消し、`gh skill install ba0918/kemi kemi` で
-  `kemi` スキルを入れる（最初のリリースまでは `skills/kemi/` を手でコピー）。
-  利用者の共通の指示（`~/.claude/CLAUDE.md`）の「diff-review の提示手段は
-  `diff-review-viewer` スキルが担う」を「`kemi` スキルが担う」に直す。
