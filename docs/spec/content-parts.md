@@ -57,7 +57,7 @@
 ### 要件
 
 - 新text.bodyはkemi既存のMarkdown構文・安全なリンクの規則を使う。
-  [R-RENDER](kemi.md#r-render-描画表示) の生HTMLを文字として扱う規則も引き継ぐ。
+  [R-RENDER](render.md#r-render-描画表示) の生HTMLを文字として扱う規則も引き継ぐ。
   ファイル差分の整列、行対応、変更の印は説明のtextには付けない。
 - 初版は外部画像の取り込みを行わない。新parts内のMarkdown画像は外部・相対パス・data URL等を問わずロードしない。
   インライン画像と参照形式画像の双方を、`Image not loaded` とalt文字列・元の参照先を文字として読める非画像の枠にする。

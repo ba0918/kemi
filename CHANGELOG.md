@@ -1,6 +1,6 @@
 # Changelog
 
-kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`（`docs/spec/kemi.md` の
+kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`（`docs/spec/distribution.md` の
 `R-DIST`）。タグは `v<semver>`。読者は、前の版から上げる人。
 
 ## [Unreleased]

@@ -258,7 +258,7 @@
   Cargo.tomlのrepository欄とMITのLICENSEを確認した。調査したcloneの配置は実装要件ではなく、公開版と調査版のcommit一致は未確認。
 - 現行 [R-PAGE-SESSION](live.md#r-page-session-保留と復元) は会話なしのliveを保留で残さず、復元で新しい作業ツリーを読む。
   説明だけの保持と復元後の新tokenはこの節への改訂候補として明記した。
-- 現行 [R-SESSION](kemi.md#r-session-セッションの保存と復元) は凍結メタデータをpayloadに分離し、一般状態保存をファイル数から切り離している。
+- 現行 [R-SESSION](session.md#r-session-セッションの保存と復元) は凍結メタデータをpayloadに分離し、一般状態保存をファイル数から切り離している。
   今回は参照索引を永続保存しない方式を選び、その性能契約を緩めず、小さい世代情報だけをsessionへ追加する。
 
 上の対応表の正典節からこの改訂を参照し、用語は `CONTEXT.md` に置く。CLI/JSONを実装する変更では `README.md` と `skills/kemi/` の派生説明も同時に更新する。
