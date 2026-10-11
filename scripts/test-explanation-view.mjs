@@ -393,6 +393,32 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     assert.equal(restored.explanation.base_display_version,initial.diff_display_version);
     await wait(`document.body.textContent.includes('Explanation for a different display version')`);
     console.log('PASS: actual live process suspend/resume keeps explanation revision/base and displays the new scan mismatch');
+    // 説明の初期表示と Page/Code 往復でも、会話を閉じたまま一つの手渡し操作を使える。
+    running.child.kill('SIGINT');await running.exited;
+    const handSections=[{id:'handoff',title:'Handoff explanation',blocks:[{id:'question',part:{type:'text',body:'Explain before handing'},references:[]}]}];
+    await writeFile(join(root,'initial-explanation.json'),JSON.stringify({sections:handSections}));
+    running=await start(['--live',url,'--explanation',join(root,'initial-explanation.json')]);
+    await browser('open',running.url);
+    await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='EXPLANATION' && e.getAttribute('aria-pressed')==='true')`);
+    const visibleHand=`Array.from(document.querySelectorAll('button')).filter(e=>e.textContent.includes('Hand to agent') && e.checkVisibility())`;
+    assert.equal(await evaluate(`${visibleHand}.length`),1,'initial live Explanation has one visible hand control with Conversation closed');
+    for(const view of ['Page','EXPLANATION','Code','EXPLANATION']) {
+      await browser('find','role','button','click','--name',view,...(view==='Code'?[]:['--exact']));
+      assert.equal(await evaluate(`${visibleHand}.length`),1,`${view} has exactly one visible hand control`);
+    }
+    await browser('find','text','Comment on this block','click');
+    await browser('find','label','Handoff explanation · Block 1','fill','A question to hand from Explanation');
+    await browser('find','role','button','click','--name','Add comment');
+    await wait(`document.body.textContent.includes('A question to hand from Explanation')`);
+    const handId=(await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint') && name.slice(0,-9)!==id).slice(0,-9);
+    const waiting=cli('wait',handId,'--timeout','30');
+    await wait(`${visibleHand}.some(e=>!e.disabled)`);
+    await browser('find','role','button','click','--name','Hand to agent');
+    const handed=JSON.parse(await waiting).events.filter(e=>e.type==='handed').flatMap(e=>e.comments.map(c=>c.comment));
+    assert.equal(handed.length,1);
+    assert.equal(handed[0].target_type,'explanation');
+    assert.equal(handed[0].body,'A question to hand from Explanation');
+    console.log('PASS: 390px initial live Explanation and Page/Code switches keep one Hand with Conversation closed; real wait receives the explanation comment');
   } finally {
     await browser('close').catch(()=>{});
     if(running && running.child.exitCode===null){running.child.kill('SIGINT');await running.exited;}

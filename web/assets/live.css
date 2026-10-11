@@ -688,7 +688,7 @@ body[data-live-view="page"] #menu-comments {
     flex-shrink: 0;
   }
 
-  body[data-live-view="page"] #hand-float {
+  body[data-live-view="page"][data-review-view="page"] #hand-float {
     display: none;
   }
 
