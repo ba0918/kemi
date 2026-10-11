@@ -16,13 +16,19 @@ export function contentView(content) {
   return host;
 }
 
-/** @param {import('../diagrams/types.js').Part} value */
-export function partView(value) {
+/**
+ * @typedef {{onMarkdown?: (host: HTMLElement) => void}} PartHooks
+ * onMarkdown は Markdown の描画が終わった（失敗の表示を含む）後に呼ぶ。描画はサーバで行うので、
+ * 見出しや選択の印はこの後でないと付けられない。
+ */
+
+/** @param {import('../diagrams/types.js').Part} value @param {PartHooks} [hooks] */
+export function partView(value, hooks = {}) {
   const host = el('section', 'content-part');
   if (value.type === 'text') {
     const body = value.body;
     host.append(textEl('pre', 'part-original', body));
-    void actions.renderPartMarkdown(body, host);
+    void actions.renderPartMarkdown(body, host).then(() => hooks.onMarkdown?.(host));
   } else if (value.type === 'code') {
     const body = value.body;
     const title = value.title ?? '';
