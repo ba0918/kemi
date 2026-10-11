@@ -17,9 +17,9 @@ export function contentView(content) {
 }
 
 /**
- * @typedef {{onMarkdown?: (host: HTMLElement) => void}} PartHooks
+ * @typedef {{onMarkdown?: (host: HTMLElement) => void, onDiagramComment?: (button: HTMLButtonElement) => void}} PartHooks
  * onMarkdown は Markdown の描画が終わった（失敗の表示を含む）後に呼ぶ。描画はサーバで行うので、
- * 見出しや選択の印はこの後でないと付けられない。
+ * 見出しや選択の印はこの後でないと付けられない。onDiagramComment を渡した図にだけコメントのボタンを置く。
  */
 
 /** @param {import('../diagrams/types.js').Part} value @param {PartHooks} [hooks] */
@@ -44,9 +44,9 @@ export function partView(value, hooks = {}) {
     });
     host.append(pre, copy);
   } else if (value.type === 'sequence' || value.type === 'flow') {
-    host.append(diagramViewport(value));
+    host.append(diagramViewport(value, false, { comment: hooks.onDiagramComment }));
   } else if (value.type === 'diagram') {
-    host.append(gridView(value));
+    host.append(gridView(value, { comment: hooks.onDiagramComment }));
   } else {
     host.append(textEl('pre', 'part-original', JSON.stringify(value, null, 2)));
   }

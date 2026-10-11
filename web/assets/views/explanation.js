@@ -311,7 +311,10 @@ export function renderExplanationDocument() {
       article.dataset.explanationBlock = block.id;
       article.dataset.partType = block.part.type;
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
-      article.append(partView(block.part,{onMarkdown:()=>{ if (token === renderToken) scheduleReadingRefresh(); }}));
+      article.append(partView(block.part,{
+        onMarkdown:()=>{ if (token === renderToken) scheduleReadingRefresh(); },
+        onDiagramComment:control=>actions.openExplanationEditor({blockId:block.id,selection:null,anchor:control.getBoundingClientRect(),quote:'title' in block.part ? String(block.part.title) : '',returnFocus:control}),
+      }));
       article.append(explanationReferences(block.references));
       sectionElement.append(article);
     }
