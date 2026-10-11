@@ -1,7 +1,7 @@
 // 形式4の復元会話を実バイナリと実フォントで読む。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -24,6 +24,12 @@ const evaluate = async code => {
   return (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
 };
 const wait = code => browser('wait', '--fn', code);
+const frames = () => evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+/** 文字のノード（式の文字列）の [start, end) を選ぶ。 */
+async function selectText(node, start, end) {
+  await evaluate(`(()=>{const n=${node};n.parentElement.scrollIntoView({block:'center'});const r=document.createRange();r.setStart(n,${start});r.setEnd(n,${end});const s=getSelection();s.removeAllRanges();s.addRange(r)})()`);
+  await frames();
+}
 async function start(args) {
   const child = spawn(binary, [...args, '--port', '0', '--no-open'], {
     cwd: root, env: { ...process.env, XDG_STATE_HOME: root, HOME: join(root, 'home') }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -121,6 +127,8 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await evaluate(`Array.from(document.querySelectorAll('[role="group"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations diagram controls').focus();true`);
   const transform = () => evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations').style.transform`);
   const before = await transform(); await browser('press', 'ArrowRight'); assert.notEqual(await transform(), before);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).some(e=>(e.getAttribute('aria-label')??'').startsWith('Comment on ') && e.closest('.part-diagram, .part-grid'))`), false, 'reply diagrams have no comment button');
+  assert.equal(await evaluate(`Boolean(document.querySelector('[aria-label="Sequence operations view tools"] [aria-label="Move right"], [aria-label="Sequence operations view tools"] [aria-label="Reset diagram"]'))`), false, 'inline reply diagrams have no pan or reset buttons');
    await browser('press', '+'); const zoomed = await transform();
   await browser('press', '0'); assert.notEqual(await transform(), zoomed);
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
@@ -163,7 +171,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await writeFile(join(root,'b.txt'),'another file\n');
   await writeFile(join(root,'skip.txt'),'x'.repeat(1_048_577));
   const sections = [{id:'intro',title:'Reading order',blocks:[{id:'first',part:{type:'text',body:bodyA},references:[]},...Array.from({length:12},(_,i)=>({id:`context-${i}`,part:{type:'text',body:`Context paragraph ${i}\n\n${'Reader context. '.repeat(40)}`},references:[]}))]},
-    {id:'middle',title:'Middle section',blocks:[{id:'code',part:codeB,references:[ref,{...ref,path:'b.txt'}]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]},{id:'diagram',part:sequence,references:[]}]}];
+    {id:'middle',title:'Middle section',blocks:[{id:'headings',part:{type:'text',body:'## Sub heading one\n\nUnder the first sub heading.\n\n### Sub heading two\n\nUnder the second sub heading.'},references:[]},{id:'code',part:codeB,references:[ref,{...ref,path:'b.txt'}]},{id:'last',part:{type:'text',body:'**C survives**'},references:[]},{id:'diagram',part:sequence,references:[]}]}];
   await writeFile(join(root, 'explanation.json'), JSON.stringify({sections}));
   running = await start(['--worktree','--explanation',join(root,'explanation.json')]);
   await browser('set','viewport','1280','900');
@@ -199,6 +207,46 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Explanation','--exact');
   await evaluate(`${separator}.focus();true`);await browser('press','Home');
   console.log('PASS: contents resize by keyboard/pointer, both clamps, Code width unchanged');
+  // 畳まない文書と目次を、1280px・390px と light・dark の 4 通りで見る。テーマは画面のボタンで切り替える。
+  const artifacts = resolve('.agents/artifacts'); await mkdir(artifacts, { recursive: true });
+  const readingRegion = `document.querySelector('[aria-label="Explanation"][role="region"]')`;
+  const setTheme = async name => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if ((await evaluate(`document.querySelector('#btn-theme').title`)).startsWith(`Theme: ${name} `)) return;
+      await browser('click', '#btn-theme');
+    }
+    throw new Error(`theme ${name} not reached`);
+  };
+  const goTo = async label => {
+    if (await evaluate(`innerWidth<720`)) {
+      await browser('find','role','button','click','--name','Open file tree');
+      await wait(`document.querySelector('[aria-label="Explanation contents"]').getBoundingClientRect().left>=-1`);
+    }
+    await browser('find','role','button','click','--name',`Go to ${label}`,'--exact');
+    await frames();
+  };
+  const readingLayout = async (width, theme) => {
+    assert.equal(await evaluate(`${readingRegion}.querySelectorAll('details, summary').length`), 0, `${width}/${theme}: sections cannot be collapsed`);
+    assert.equal(await evaluate(`Array.from(${readingRegion}.querySelectorAll('section[aria-labelledby]')).every(e=>{const c=getComputedStyle(e);return ['Top','Right','Bottom','Left'].every(side=>c['border'+side+'Width']==='0px') && c.outlineStyle==='none' && c.backgroundColor==='rgba(0, 0, 0, 0)'})`), true, `${width}/${theme}: sections have no frame`);
+    assert.equal(await evaluate(`Array.from(${readingRegion}.querySelectorAll('section[aria-labelledby] > header')).every(e=>getComputedStyle(e).borderBottomWidth!=='0px' && /^\\d\\d$/.test(e.querySelector('span').textContent))`), true, `${width}/${theme}: numbered headings are underlined`);
+    await goTo('Middle section');
+    assert.ok(await evaluate(`Math.abs(document.getElementById('explanation-section-middle').getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60`), `${width}/${theme}: contents move to the section`);
+    await evaluate(`${readingRegion}.scrollTop=0;true`); await frames();
+    await browser('screenshot', join(artifacts, `explanation-reading-${width}-${theme}.png`));
+  };
+  await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.getAttribute('aria-label')==='Go to Sub heading one')`);
+  await setTheme('light'); await readingLayout(1280, 'light');
+  await setTheme('dark'); await readingLayout(1280, 'dark');
+  await browser('set','viewport','390','900'); await readingLayout(390, 'dark');
+  await browser('set','viewport','1280','900'); await setTheme('light');
+  await browser('set','viewport','390','900'); await readingLayout(390, 'light');
+  await browser('set','viewport','1280','900');
+  const indent = await evaluate(`(()=>{const item=label=>Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to '+label);return [item('Middle section'),item('Sub heading one'),item('Sub heading two')].map(e=>parseFloat(getComputedStyle(e).paddingLeft))})()`);
+  assert.ok(indent[1] > indent[0] && indent[1] === indent[2], `Markdown headings are listed one step indented at every level (${indent})`);
+  await goTo('Sub heading two');
+  assert.ok(await evaluate(`(()=>{const h=Array.from(document.querySelectorAll('h3')).find(e=>e.textContent==='Sub heading two');return Math.abs(h.getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60})()`), 'a sub heading item moves to the heading');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Sub heading two', 'the item at the reading position is shown');
+  console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await (await fetch(`${running.url}api/review`)).json();
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
   const cli = async (...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
@@ -213,10 +261,13 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','text','About the explanation base','click');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /not fixed file contents/.test(e.textContent) && /proof/.test(e.textContent))`),true);
   await browser('find','role','button','click','--name','Go to Middle section','--exact');
-  await browser('find','role','button','click','--name','Comment on Reading order · Block 1','--exact');
-  await browser('find','label','Reading order · Block 1','fill','Question before correction');
+  await selectText(`document.querySelector('[data-explanation-block="first"] .part-markdown strong').firstChild`, 0, 1);
+  await browser('press','c');
+  await browser('find','label','Comment on Reading order','fill','Question before correction');
   await browser('find','role','button','click','--name','Add comment');
   await wait(`document.body.textContent.includes('Question before correction')`);
+  assert.equal(await evaluate(`(()=>{const item=Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to Reading order');const count=document.getElementById(item.getAttribute('aria-describedby'));return count.checkVisibility() && count.textContent})()`), '1', 'the commented section shows its count');
+  assert.equal(await evaluate(`(()=>{const item=Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to Middle section');return document.getElementById(item.getAttribute('aria-describedby')).checkVisibility()})()`), false, 'a section without comments shows no count');
   await browser('find','role','button','click','--name','Open the conversation');
   await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Question before correction')).click();true`);
   await browser('find','placeholder','Reply (Cmd/Ctrl+Enter to send)','fill','Existing reply stays');
@@ -405,8 +456,9 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
       await browser('find','role','button','click','--name',view,...(view==='Code'?[]:['--exact']));
       assert.equal(await evaluate(`${visibleHand}.length`),1,`${view} has exactly one visible hand control`);
     }
-    await browser('find','role','button','click','--name',`Comment on ${handSections[0].title} · Block 1`,'--exact');
-    await browser('find','label','Handoff explanation · Block 1','fill','A question to hand from Explanation');
+    await selectText(`document.querySelector('[data-explanation-block="question"] .part-markdown p').firstChild`, 0, 7);
+    await browser('press','c');
+    await browser('find','label','Comment on Handoff explanation','fill','A question to hand from Explanation');
     await browser('find','role','button','click','--name','Add comment');
     await wait(`document.body.textContent.includes('A question to hand from Explanation')`);
     const handId=(await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint') && name.slice(0,-9)!==id).slice(0,-9);
