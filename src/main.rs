@@ -346,8 +346,10 @@ impl EndpointFile {
     fn publish(&self) -> Result<(), String> {
         kemi_core::session::write_endpoint(&self.dir, &self.id, &self.endpoint)
             .map_err(|error| format!("cannot write the agent endpoint: {error}"))?;
-        eprintln!("kemi: review {}", self.id);
         Ok(())
+    }
+    fn announce(&self) {
+        eprintln!("kemi: review {}", self.id);
     }
     fn remove(&self) {
         if let Err(error) = kemi_core::session::remove_endpoint(&self.dir, &self.id) {
@@ -391,12 +393,17 @@ async fn start_agent_channel(
         port,
         token: token.clone(),
     };
+    let endpoint_file = EndpointFile {
+        dir,
+        id: id.clone(),
+        endpoint,
+    };
     if !defer {
-        if let Err(error) = kemi_core::session::write_endpoint(&dir, &id, &endpoint) {
-            eprintln!("kemi: cannot write the agent endpoint: {error}");
+        if let Err(error) = endpoint_file.publish() {
+            eprintln!("kemi: {error}");
             return None;
         }
-        eprintln!("kemi: review {id}");
+        endpoint_file.announce();
     }
     Some((
         AgentParams {
@@ -405,7 +412,7 @@ async fn start_agent_channel(
             review: id.clone(),
             control: control.clone(),
         },
-        EndpointFile { dir, id, endpoint },
+        endpoint_file,
     ))
 }
 
@@ -723,6 +730,10 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
 /// 保留で待っている kemi wait に理由を返すのに待つ上限。返し終えればすぐ終わる。
 const SUSPEND_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
+fn announce_review_url(url: &str) {
+    eprintln!("kemi: {url}");
+}
+
 /// サーブして、submit・保留・実行時エラーのどれかで終わる。
 async fn run_review(
     cli: &Cli,
@@ -767,7 +778,7 @@ async fn run_review(
         Err(error) => fail(&error.to_string()),
     };
     if cli.explanation.is_none() {
-        eprintln!("kemi: {url}");
+        announce_review_url(&url);
     }
     let warning = if live.is_some() {
         live_exposure_warning(cli.bind, share_address)
@@ -835,7 +846,8 @@ async fn run_review(
         tokio::select! {
             () = control.ready() => {
                 if let Some(endpoint) = &endpoint && let Err(error) = endpoint.publish() { serving.abort(); fail(&error); }
-                eprintln!("kemi: {url}");
+                announce_review_url(&url);
+                if let Some(endpoint) = &endpoint { endpoint.announce(); }
                 if !cli.no_open { open_browser(&browser_url); }
             }
             outcome = &mut serving => {
