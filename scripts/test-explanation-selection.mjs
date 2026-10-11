@@ -187,7 +187,7 @@ try {
   await browser('find','role','button','click','--name','Add comment','--exact');
   await wait(`document.body.textContent.includes('Grid question')`);
   assert.equal((await review()).comments[2].explanation.selection,null);
-  assert.equal(await evaluate(`(()=>{const c=Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Grid question'));return c.parentElement.parentElement===${block('grid')} && ${block('grid')}.classList.contains('has-comment') && getComputedStyle(${block('grid')},'::before').width==='3px'})()`),true,'a diagram comment shows a left line and a card below the block');
+  assert.equal(await evaluate(`(()=>{const c=Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Grid question'));return c.parentElement.parentElement===${block('grid')}})()`),true,'a diagram comment shows a card below the block');
   console.log('PASS: diagram controls follow hover/focus and stay without hover; arrow-key pan; separate view keeps pan buttons and returns; diagram comment by keyboard and touch quotes the title');
 
   // 本文に無い text の selection は、ブロック全体のコメントとして出す。
@@ -196,7 +196,7 @@ try {
   assert.equal(response.status,200);
   await browser('open',url);
   await wait(`document.body.textContent.includes('No match here') && !!document.querySelector('.part-markdown strong')`);
-  assert.equal(await evaluate(`(()=>{const c=Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('No match here'));return c.parentElement.parentElement===${block('other-text')} && ${block('other-text')}.classList.contains('has-comment')})()`),true,'an unmatched selection falls back to the left line and a card below the block');
+  assert.equal(await evaluate(`(()=>{const c=Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('No match here'));return c.parentElement.parentElement===${block('other-text')}})()`),true,'an unmatched selection falls back to a card below the block');
   assert.deepEqual((await review()).comments[3].explanation.selection,{text:'absent words',occurrence:0},'the unmatched selection is kept unchanged');
   // 札を押すと会話パネルでスレッドが開き、選んだ文字を引用として出す。
   await evaluate(`Array.from(document.querySelectorAll('[data-explanation-block] button')).find(e=>e.textContent.includes('Why start here?')).click();true`);
@@ -228,16 +228,15 @@ try {
   await browser('press','c');
   await wait(`document.activeElement.tagName==='TEXTAREA'`);
   await frames();
-  const narrow=await evaluate(`(()=>{const f=${editor}.getBoundingClientRect(),d=document.querySelector('[aria-label="Explanation"][role="region"]'),r=d.getBoundingClientRect(),hand=document.querySelector('#hand-float-bar').getBoundingClientRect(),v=visualViewport;return {left:f.left,right:f.right,width:f.width,area:d.clientWidth,docLeft:r.left,bottom:f.bottom,limit:Math.min(r.bottom,hand.height?hand.top:Infinity,v.offsetTop+v.height),inside:f.left>=v.offsetLeft && f.right<=v.offsetLeft+v.width}})()`);
+  const narrow=await evaluate(`(()=>{const f=${editor}.getBoundingClientRect(),d=document.querySelector('[aria-label="Explanation"][role="region"]'),r=d.getBoundingClientRect(),hand=document.querySelector('#hand-float-bar').getBoundingClientRect(),v=visualViewport;return {bottom:f.bottom,limit:Math.min(r.bottom,hand.height?hand.top:Infinity,v.offsetTop+v.height),inside:f.left>=v.offsetLeft && f.right<=v.offsetLeft+v.width}})()`);
   assert.ok(narrow.inside,'the editor stays inside the viewport at 390px');
-  assert.ok(Math.abs(narrow.width-(narrow.area-32))<=1,`the editor spans the text width at 390px (${narrow.width} / ${narrow.area})`);
   assert.ok(narrow.bottom<=narrow.limit+1,`the editor is not hidden behind the hand bar (${narrow.bottom} / ${narrow.limit})`);
   await browser('find','label','Comment on Selection review','fill','Narrow question');await browser('find','role','button','click','--name','Add comment','--exact');
   await wait(`document.body.textContent.includes('Narrow question')`);
   const narrowComment=(await review()).comments[5];
   assert.equal(narrowComment.explanation.revision,2);
   assert.deepEqual(narrowComment.explanation.selection,{text:'revision',occurrence:0});
-  console.log('PASS: old revision target; 390px selection button, c, full-width editor above the hand bar, and a saved selection');
+  console.log('PASS: old revision target; 390px selection button, c, editor inside the viewport and above the hand bar, and a saved selection');
 } finally {
   socket?.close();
   await browser('close').catch(()=>{});

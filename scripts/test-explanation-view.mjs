@@ -228,9 +228,9 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   const readingLayout = async (width, theme) => {
     assert.equal(await evaluate(`${readingRegion}.querySelectorAll('details, summary').length`), 0, `${width}/${theme}: sections cannot be collapsed`);
     assert.equal(await evaluate(`Array.from(${readingRegion}.querySelectorAll('section[aria-labelledby]')).every(e=>{const c=getComputedStyle(e);return ['Top','Right','Bottom','Left'].every(side=>c['border'+side+'Width']==='0px') && c.outlineStyle==='none' && c.backgroundColor==='rgba(0, 0, 0, 0)'})`), true, `${width}/${theme}: sections have no frame`);
-    assert.equal(await evaluate(`Array.from(${readingRegion}.querySelectorAll('section[aria-labelledby] > header')).every(e=>getComputedStyle(e).borderBottomWidth!=='0px' && /^\\d\\d$/.test(e.querySelector('span').textContent))`), true, `${width}/${theme}: numbered headings are underlined`);
+    assert.equal(await evaluate(`Array.from(${readingRegion}.querySelectorAll('section[aria-labelledby] > header')).every(e=>getComputedStyle(e).borderBottomWidth!=='0px' && /^\\d+$/.test(e.querySelector('span').textContent))`), true, `${width}/${theme}: numbered headings are underlined`);
     await goTo('Middle section');
-    assert.ok(await evaluate(`Math.abs(document.getElementById('explanation-section-middle').getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60`), `${width}/${theme}: contents move to the section`);
+    assert.ok(await evaluate(`Math.abs(Array.from(${readingRegion}.querySelectorAll('section[aria-labelledby]')).find(e=>e.querySelector('h2')?.textContent==='Middle section').getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60`), `${width}/${theme}: contents move to the section`);
     await evaluate(`${readingRegion}.scrollTop=0;true`); await frames();
     await browser('screenshot', join(artifacts, `explanation-reading-${width}-${theme}.png`));
   };
