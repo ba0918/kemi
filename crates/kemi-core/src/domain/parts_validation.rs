@@ -25,6 +25,8 @@ pub enum PartRule {
     MissingCondition,
     GridSyntax,
     UnequalColumns,
+    NotSelectable,
+    Occurrence,
 }
 
 impl std::fmt::Display for PartError {
@@ -44,6 +46,12 @@ impl std::fmt::Display for PartError {
             }
             PartRule::GridSyntax => write!(f, "unrecognized grid diagram line"),
             PartRule::UnequalColumns => write!(f, "grid rows must have equal column counts"),
+            PartRule::NotSelectable => write!(f, "only text and code blocks accept a selection"),
+            PartRule::Occurrence => write!(
+                f,
+                "must be an integer in 0..={}",
+                super::explanation::MAX_OCCURRENCE
+            ),
         }
     }
 }

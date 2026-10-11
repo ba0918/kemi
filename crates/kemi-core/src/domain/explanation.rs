@@ -169,6 +169,18 @@ pub struct ExplanationQuote {
     pub block: ExplanationBlock,
 }
 
+/// 文字を選んで作った説明コメントが指す箇所。対象はブロックのままで、これは手がかり。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplanationSelection {
+    pub text: String,
+    pub occurrence: u64,
+}
+
+pub const MAX_SELECTION_BYTES: usize = 65_536;
+/// ブラウザの Number で失わない整数の上限。説明版の上限と同じ値。
+pub const MAX_OCCURRENCE: u64 = MAX_REVISION;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodeReferenceEntry {
@@ -271,6 +283,36 @@ pub fn quote_block(
         }
     }
     Err(ExplanationError::UnknownBlock)
+}
+/// 作成と復元で同じ規則を使う。表示上の文字列に `text` があるかはブラウザの描画で決まるので見ない。
+pub fn validate_selection(
+    part: &Part,
+    selection: &ExplanationSelection,
+) -> Result<(), ExplanationError> {
+    match part {
+        Part::Text { .. } | Part::Code { .. } => {}
+        Part::Diagram { .. } | Part::Sequence { .. } | Part::Flow { .. } => {
+            return Err(PartError {
+                path: "selection".into(),
+                rule: PartRule::NotSelectable,
+            }
+            .into());
+        }
+    }
+    bound(
+        "selection.text",
+        selection.text.len(),
+        1,
+        MAX_SELECTION_BYTES,
+    )?;
+    if selection.occurrence > MAX_OCCURRENCE {
+        return Err(PartError {
+            path: "selection.occurrence".into(),
+            rule: PartRule::Occurrence,
+        }
+        .into());
+    }
+    Ok(())
 }
 pub fn block_outdated(original: &ExplanationBlock, document: &ExplanationDocument) -> bool {
     !document.sections.iter().flat_map(|s| &s.blocks).any(|b| {
@@ -714,6 +756,85 @@ mod tests {
         assert!(super::validate_update(&input, 0, 0, "review:1", &context).is_err());
         input.sections[1].blocks.clear();
         assert!(super::validate_update(&input, 0, 0, "review:1", &context).is_err());
+    }
+
+    fn selection(text: &str, occurrence: u64) -> super::ExplanationSelection {
+        super::ExplanationSelection {
+            text: text.into(),
+            occurrence,
+        }
+    }
+
+    fn text_part() -> super::Part {
+        super::Part::Text {
+            body: "body".into(),
+        }
+    }
+
+    #[test]
+    fn selection_text_accepts_one_to_65536_utf8_bytes() {
+        assert!(super::validate_selection(&text_part(), &selection("x", 0)).is_ok());
+        assert!(
+            super::validate_selection(&text_part(), &selection(&"x".repeat(65_536), 0)).is_ok()
+        );
+        assert!(super::validate_selection(&text_part(), &selection("", 0)).is_err());
+        assert!(
+            super::validate_selection(&text_part(), &selection(&"x".repeat(65_537), 0)).is_err()
+        );
+    }
+
+    #[test]
+    fn selection_text_limit_counts_japanese_by_bytes_not_characters() {
+        let boundary = "あ".repeat(21_845) + "x";
+        assert_eq!(boundary.len(), 65_536);
+        assert!(super::validate_selection(&text_part(), &selection(&boundary, 0)).is_ok());
+        let over = "あ".repeat(21_846);
+        assert_eq!(over.chars().count(), 21_846);
+        let error = super::validate_selection(&text_part(), &selection(&over, 0)).unwrap_err();
+        assert!(error.to_string().contains("selection.text"));
+    }
+
+    #[test]
+    fn selection_occurrence_accepts_up_to_the_largest_safe_integer() {
+        assert!(
+            super::validate_selection(&text_part(), &selection("x", super::MAX_OCCURRENCE)).is_ok()
+        );
+        let error =
+            super::validate_selection(&text_part(), &selection("x", super::MAX_OCCURRENCE + 1))
+                .unwrap_err();
+        assert!(error.to_string().contains("selection.occurrence"));
+    }
+
+    #[test]
+    fn selection_is_accepted_on_code_blocks_and_refused_on_diagrams() {
+        let code = super::Part::Code {
+            body: "x".into(),
+            language: "rust".into(),
+            role: super::super::parts::Role::Example,
+            title: None,
+        };
+        assert!(super::validate_selection(&code, &selection("x", 0)).is_ok());
+        let diagram: super::Part = serde_json::from_value(
+            serde_json::json!({"type":"diagram","source":"a = A","title":"Grid","role":"example"}),
+        )
+        .unwrap();
+        let error = super::validate_selection(&diagram, &selection("A", 0)).unwrap_err();
+        assert!(error.to_string().contains("selection"));
+    }
+
+    #[test]
+    fn selection_requires_text_and_occurrence_and_refuses_unknown_keys() {
+        for input in [
+            r#"{"text":"x"}"#,
+            r#"{"occurrence":0}"#,
+            r#"{"text":"x","occurrence":0,"extra":1}"#,
+            r#"{"text":"x","occurrence":-1}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<super::ExplanationSelection>(input).is_err(),
+                "{input}"
+            );
+        }
     }
 
     fn document(body: &str) -> super::ExplanationDocument {
