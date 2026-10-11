@@ -13,16 +13,27 @@
 .part-diagram-surface svg rect, .part-diagram-surface svg polygon { fill: var(--bg, white); stroke: currentColor; stroke-width: 1.5; }
 .part-diagram-surface svg path, .part-diagram-surface svg line { stroke: currentColor; }
 .part-diagram-surface svg text, .part-diagram-surface svg .explanation-arrowhead { fill: currentColor; }
-.part-diagram .part-metadata { font-size:13px; color:var(--ink-2); margin-bottom:10px; }
-.part-diagram-controls { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 8px; border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0; background:var(--panel); }
-.part-diagram-tool-group { display:flex; gap:2px; padding-right:8px; border-right:1px solid var(--line); }
-.part-diagram-tool { display:inline-flex; justify-content:center; align-items:center; position:relative; width:32px; height:32px; padding:0; border:1px solid transparent; border-radius:5px; background:transparent; color:var(--ink-2); cursor:pointer; }
+/* 図の見出しの行。操作は右に小さく置き、インラインではポインタを乗せたときと図の中にフォーカスがあるときに出す。 */
+.part-diagram-head { display:flex; align-items:center; gap:8px; min-height:40px; padding:4px 8px 4px 12px; border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0; background:var(--panel); }
+.part-grid .part-diagram-head { border:0; border-radius:0; background:transparent; padding:0 0 4px; }
+.part-diagram-head .part-metadata { flex:1; min-width:0; margin:0; font-size:13px; color:var(--ink-2); overflow-wrap:anywhere; }
+.part-diagram-controls { display:flex; align-items:center; flex-wrap:wrap; gap:2px; margin-left:auto; }
+.part-diagram-view-tools { display:flex; align-items:center; flex-wrap:wrap; gap:2px; }
+.part-diagram-view-tools[hidden] { display:none; }
+.part-diagram:not(.part-diagram-modal) .part-diagram-controls, .part-grid .part-diagram-controls { opacity:0; transition:opacity .12s; }
+.part-diagram:hover .part-diagram-controls, .part-diagram:focus-within .part-diagram-controls, .part-grid:hover .part-diagram-controls, .part-grid:focus-within .part-diagram-controls { opacity:1; }
+@media (hover:none) { .part-diagram:not(.part-diagram-modal) .part-diagram-controls, .part-grid .part-diagram-controls { opacity:1; } }
+.part-diagram-tool-group { display:flex; gap:2px; }
+.part-diagram-modal .part-diagram-tool-group + .part-diagram-tool-group { padding-left:6px; margin-left:4px; border-left:1px solid var(--line); }
+.part-diagram-comment { margin-left:4px; }
+.part-diagram-comment svg { width:15px; height:15px; }
+.part-diagram-comment:hover { background:var(--note-bg)!important; color:var(--note-ink)!important; }
+.part-diagram-tool { display:inline-flex; justify-content:center; align-items:center; position:relative; width:28px; height:28px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--ink-2); cursor:pointer; }
 .part-diagram-tool:hover { background:var(--panel-2); color:var(--ink); border-color:var(--line); }
 .part-diagram-tool:focus-visible, .part-diagram-surface:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-.part-diagram-glyph { font:20px/1 var(--sans); }
+.part-diagram-glyph { font:17px/1 var(--sans); }
 .part-diagram-tool-text .part-diagram-glyph { font-size:12px; font-weight:600; }
 .part-diagram-control-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
-.part-diagram-controls[hidden] { display: none; }
 .part-diagram-dialog { width:90vw; max-width:90vw; height:85vh; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--bg); color:var(--ink); box-shadow:0 16px 64px #0005; }
 .part-diagram-dialog::backdrop { background:#0007; }
 .part-diagram-dialog > button { margin-bottom:12px; padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); cursor:pointer; }
