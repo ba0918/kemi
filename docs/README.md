@@ -13,4 +13,5 @@ kemi の文書の入口。各ディレクトリの役割と、いま正しい文
 説明の承認済み契約は [`spec/explanation.md`](spec/explanation.md)、
 [`spec/content-parts.md`](spec/content-parts.md)、
 [`spec/explanation-contracts.md`](spec/explanation-contracts.md)。実装作業の手順は
-[`plans/explanation-view.md`](plans/explanation-view.md) にある。
+[`plans/explanation-view.md`](plans/explanation-view.md) と、読む画面と選択引用の
+[`plans/explanation-reading.md`](plans/explanation-reading.md) にある。
