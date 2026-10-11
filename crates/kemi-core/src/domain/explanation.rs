@@ -1,5 +1,6 @@
 use super::display_version::{DisplayVersionError, known_generation};
 use super::parts::Part;
+pub use super::parts_validation::MAX_OCCURRENCE;
 use super::parts_validation::{PartError, PartRule, bound, id, string_bytes, text, validate_part};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -178,8 +179,6 @@ pub struct ExplanationSelection {
 }
 
 pub const MAX_SELECTION_BYTES: usize = 65_536;
-/// ブラウザの Number で失わない整数の上限。説明版の上限と同じ値。
-pub const MAX_OCCURRENCE: u64 = MAX_REVISION;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
