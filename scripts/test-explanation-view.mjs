@@ -266,8 +266,8 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','label','Comment on Reading order','fill','Question before correction');
   await browser('find','role','button','click','--name','Add comment');
   await wait(`document.body.textContent.includes('Question before correction')`);
-  assert.equal(await evaluate(`(()=>{const item=Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to Reading order');const count=document.getElementById(item.getAttribute('aria-describedby'));return count.checkVisibility() && count.textContent})()`), '1', 'the commented section shows its count');
-  assert.equal(await evaluate(`(()=>{const item=Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to Middle section');return document.getElementById(item.getAttribute('aria-describedby')).checkVisibility()})()`), false, 'a section without comments shows no count');
+  assert.deepEqual(await evaluate(`(()=>{const item=Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to Reading order');return {shown:item.innerText.trim().split(/\\s+/).at(-1),described:/^1 \\S/.test(document.getElementById(item.getAttribute('aria-describedby')).textContent)}})()`), {shown:'1',described:true}, 'the commented section shows its count and describes it in words');
+  assert.deepEqual(await evaluate(`(()=>{const item=Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Go to Middle section');return {shown:item.innerText.trim().split(/\\s+/).at(-1),described:document.getElementById(item.getAttribute('aria-describedby')).textContent}})()`), {shown:'section',described:''}, 'a section without comments shows and describes no count');
   await browser('find','role','button','click','--name','Open the conversation');
   await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Question before correction')).click();true`);
   await browser('find','placeholder','Reply (Cmd/Ctrl+Enter to send)','fill','Existing reply stays');

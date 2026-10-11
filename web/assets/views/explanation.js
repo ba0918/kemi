@@ -2,7 +2,7 @@
 import { actions } from '../actions.js';
 import { button, dom, el, textEl, svgIcon, COMMENT_ICON } from '../dom.js';
 import { state, unitLabel } from '../state.js';
-import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint, explanationElementId } from '../explanation-model.js';
+import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint, explanationElementId, commentCountDescription } from '../explanation-model.js';
 import { partView } from './parts.js';
 
 /** 画面が本文の中へ後から入れる要素（札）の印。選択の位置を数えるときに中へ入らない。 */
@@ -267,10 +267,12 @@ function renderExplanationCounts() {
   const counts = sectionCommentCounts(state.allComments, version);
   for (const [sectionId, count] of counts) {
     const badge = dom.explanationToc.querySelector(`[data-toc-count="${sectionId}"]`);
-    if (!badge) continue;
+    const description = document.getElementById(explanationElementId('toc-count',sectionId));
+    if (!badge || !description) continue;
     /** @type {HTMLElement} */(badge).hidden = count === 0;
     badge.textContent = String(count);
-    badge.setAttribute('title',`${count} ${count === 1 ? 'comment' : 'comments'}`);
+    badge.setAttribute('title',commentCountDescription(count));
+    description.textContent = commentCountDescription(count);
   }
 }
 
@@ -297,13 +299,16 @@ export function renderExplanationDocument() {
     const li = el('li','explanation-toc-section');
     li.dataset.tocSection = section.id;
     const toc = contentsItem(section.title, sectionElement.id);
+    // aria-describedby は hidden の要素でも中身を読む。見える数字の要素を指すと 0 件でも裸の数字が読まれるので、語の付いた説明を別の要素に置き、0 件では空にする。
     const count = textEl('span','explanation-toc-count','');
-    count.id = explanationElementId('toc-count',section.id);
     count.dataset.tocCount = section.id;
     count.hidden = true;
-    toc.setAttribute('aria-describedby',count.id);
+    const description = textEl('span','','');
+    description.id = explanationElementId('toc-count',section.id);
+    description.hidden = true;
+    toc.setAttribute('aria-describedby',description.id);
     toc.append(textEl('span','explanation-section-number',number),textEl('span','explanation-toc-title',section.title),count);
-    li.append(toc);
+    li.append(toc,description);
     list.append(li);
     for (const [index, block] of section.blocks.entries()) {
       const article = el('article','explanation-block');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts, selectionAt, locateSelection, selectionTooLong, readingText, readingOffset, readingPoint, explanationElementId } from './explanation-model.js';
+import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts, selectionAt, locateSelection, selectionTooLong, readingText, readingOffset, readingPoint, explanationElementId, commentCountDescription } from './explanation-model.js';
 
 test('reading and notification freshness use their own base and the screen Code token', () => {
   assert.equal(freshness('review:1', null), 'pending');
@@ -128,4 +128,10 @@ test('element ids the screen gives sections, titles, counts, blocks and headings
     explanationElementId('heading','a-1-0',0),
   ];
   assert.equal(new Set(ids).size, ids.length);
+});
+
+test('a section count is described in words, and not at all when the section has no comments', () => {
+  assert.equal(commentCountDescription(0), '');
+  assert.match(commentCountDescription(1), /^1 \S/);
+  assert.match(commentCountDescription(3), /^3 \S/);
 });

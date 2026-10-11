@@ -176,3 +176,8 @@ export function readingPoint(root, index, skip, bias) {
 export function explanationElementId(kind, ...parts) {
   return ['explanation', kind, ...parts].join(':');
 }
+
+/** 目次の項目の説明として読む節のコメント数。0 件の節は何も読ませない。 @param {number} count */
+export function commentCountDescription(count) {
+  return count === 0 ? '' : `${count} ${count === 1 ? 'comment' : 'comments'}`;
+}
