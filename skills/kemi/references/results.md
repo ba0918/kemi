@@ -122,7 +122,14 @@
 - `target_type` distinguishes file, page, and explanation comments. For file/page,
   `explanation` is null. For an explanation, group/file/line/page/suggestion fields are null
   and the line quote is `[]`. `explanation` contains its original `revision`, `block_id`,
-  and a quote of `section_title` and the complete `block` with its part and references.
+  a quote of `section_title` and the complete `block` with its part and references, and
+  `selection`. `selection` is `{text, occurrence}` when the person selected text in a text or
+  code block (`text` is the selected part of the block's displayed text, `occurrence` the
+  0-based index of that match among all matches of `text`, overlapping ones included), and
+  `null` for a diagram or a comment without a selection. The comment's target is still the
+  whole block: treat the block quote as authoritative and `selection` as a hint to where the
+  person pointed; kemi does not check that `text` occurs in the block. For example:
+  `"selection": {"text": "goal", "occurrence": 0}`.
   Those original values never move to a new revision. `outdated` compares part and references
   with the current block of the same id; moving it or changing its section title does not
   make it outdated. Identical content returning under the same id makes it current again.

@@ -502,8 +502,26 @@ quotes, retained explanation versions, and undelivered conversation events.
 
 ### Explanations and typed conversation content
 
-An initial explanation opens EXPLANATION, with section headings in the left
-column and comments attached to individual blocks. Without one, EXPLANATION
+An initial explanation opens EXPLANATION. It reads as one continuous document:
+sections are never folded or boxed, only separated by numbered, underlined
+headings. The left column lists the sections, the Markdown headings inside
+their text one step indented, and the number of comments on each section; it
+marks the item at your reading position, and on narrow screens it opens as a
+drawer. To comment, select text in a text or code block: a **Comment** button
+appears next to the selection, and pressing it or `c` opens the editor right
+below the selected line, quoting the section heading and the selected text. A
+selection that spans two blocks shows why it cannot be commented instead.
+Diagrams have a comment button among their controls, which comment on the
+whole diagram. A saved comment marks the selected text and shows a one-line
+card below the paragraph, list item, or code containing the end of the
+selection; a diagram comment, or one whose selected text can no longer be
+found, shows a line beside the block and a card below it. A card opens its
+thread. Diagram controls (zoom out, zoom in, fit, open separately, and, in the
+explanation only, comment) appear at the right of the diagram's heading when
+you point at it or focus it, and always on devices without hover; drag or use
+the arrow keys to pan inline. The separate view also has pan and reset buttons,
+and closing it returns to the diagram. Reply diagrams use the same controls.
+Without an explanation, EXPLANATION
 is disabled until an explanation is added. Conversation is shared by all
 views; changing views keeps its open thread, drafts, and open or closed state.
 Final state / Per commit belongs to Code in commit-range reviews, not to the
@@ -512,7 +530,7 @@ explanation.
 An explanation update shows a notice without replacing the revision or reading
 position you have open. Open the notice to read the new revision. A block's
 Code or registered Page link offers a return to the original explanation,
-including its revision, expanded sections, and reading position. These
+including its revision and reading position. These
 operations work on narrow screens too. Reading an explanation does not mark
 files as Seen.
 
@@ -765,8 +783,16 @@ The JSON printed at the end:
   `parts` array. Preserve its types and order instead of flattening it into text.
   An empty plain body stays an empty string.
 - `target_type` is `file`, `page`, or `explanation`. An explanation target has
-  `explanation: {revision, block_id, quote}`; its quote keeps the original
+  `explanation: {revision, block_id, quote, selection}`; its quote keeps the original
   `section_title` and complete `block`, including its part and references.
+  `selection` is `{text, occurrence}` when the person selected text in a text or
+  code block, and `null` for a diagram or a comment without a selection. `text` is
+  the selected part of the block's displayed text, and `occurrence` counts which
+  match of `text` in that displayed text it is (from 0, by start position,
+  overlapping matches included). The target is still the whole block: read the
+  block quote as authoritative and `selection` as a hint to the place the person
+  pointed at; kemi does not check that `text` appears in the block. For example:
+  `"explanation": {"revision": 1, "block_id": "intent", "quote": {"section_title": "Overview", "block": {"id": "intent", "part": {"type": "text", "body": "Read the goal first."}, "references": []}}, "selection": {"text": "goal", "occurrence": 0}}`.
   Its file/group/page/suggestion fields are null and its line `quote` is `[]`.
   Its `outdated` compares the current block with the original typed content;
   moving a block or renaming its section does not alter the original quote.

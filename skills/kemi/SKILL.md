@@ -151,6 +151,8 @@ its identities with the current bytes. Before applying a suggestion, compare its
 with the file; locate outdated comments by their text rather than trusting old line numbers.
 Use the result reference for field details and `kemi --result` recovery if stdout was lost.
 Keep typed `parts` intact when reading replies or messages. An explanation comment refers
-to an original revision and a complete block quote, rather than a file path. The display
+to an original revision and a complete block quote, rather than a file path. Its
+`selection` (the text the person selected, or null) is a hint to the place in the block;
+the block quote stays authoritative. The display
 version identifies metadata; it guarantees neither fixed file bytes nor explanation correctness.
 Recovery retrieves a stored result; it does not wait for the current review to finish.

@@ -119,6 +119,12 @@ limits are in the [content contract](https://github.com/ba0918/kemi/blob/main/do
 One malformed part in a later write refuses the whole batch. Explanation
 comments cannot receive suggestions or Page variants.
 
+The person comments on an explanation by selecting text in a text or code
+block, or with the comment button of a diagram. An explanation thread is
+still about the whole block: answer from the complete block quote, and use the
+comment's `selection` (the selected text and which match of it, or null for a
+diagram) to see which part of the block the question points at.
+
 Either every write is stored or none is. A write to a comment that does not exist, a body over
 64 KB (UTF-8 bytes), more than 50 agent replies on one comment, more than 200 agent messages,
 or JSON of the wrong shape exits `2` with the reason on stderr and writes nothing. You cannot
