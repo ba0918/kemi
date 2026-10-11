@@ -815,7 +815,7 @@ mod tests {
         };
         assert!(super::validate_selection(&code, &selection("x", 0)).is_ok());
         let diagram: super::Part = serde_json::from_value(
-            serde_json::json!({"type":"diagram","source":"a = A","title":"Grid","role":"example"}),
+            serde_json::json!({"type":"diagram","source":"a = A\n| a |","title":"Grid","role":"example"}),
         )
         .unwrap();
         let error = super::validate_selection(&diagram, &selection("A", 0)).unwrap_err();

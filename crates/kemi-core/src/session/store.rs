@@ -1645,7 +1645,7 @@ mod tests {
         let store = SessionStore::new(scratch.dir());
         let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
         drop(store.create(info(id, 100)).unwrap());
-        let diagram = serde_json::json!({"id":"b","part":{"type":"diagram","source":"a = A","title":"Grid","role":"example"},"references":[]});
+        let diagram = serde_json::json!({"id":"b","part":{"type":"diagram","source":"a = A\n| a |","title":"Grid","role":"example"},"references":[]});
         for (block, selection) in [
             (code_block(), serde_json::json!({"text":"","occurrence":0})),
             (
@@ -1654,13 +1654,18 @@ mod tests {
             ),
             (diagram, serde_json::json!({"text":"A","occurrence":0})),
         ] {
-            let target = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":selection});
-            let value = version_four_with_explanation_comment(id, &block, target);
-            std::fs::write(
-                session_path(&scratch.dir(), id),
-                encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
-            )
-            .unwrap();
+            let write = |selection: &serde_json::Value| {
+                let target = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":selection});
+                let value = version_four_with_explanation_comment(id, &block, target);
+                std::fs::write(
+                    session_path(&scratch.dir(), id),
+                    encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+                )
+                .unwrap();
+            };
+            write(&serde_json::Value::Null);
+            assert!(store.read(id).is_ok(), "the same block without a selection");
+            write(&selection);
             assert!(store.read(id).is_err(), "{selection}");
         }
     }
