@@ -454,7 +454,14 @@ function renderThread(comment, options) {
     if (comment.explanation) {
       const quote = comment.explanation.quote;
       const context = el('div', 'cv-context');
-      context.append(textEl('h3', '', quote.section_title), partView(quote.block.part));
+      context.append(textEl('h3', '', quote.section_title));
+      // 選んだ文字は利用者が指した箇所の手がかり。元のブロック全体もその下で読める。
+      if (comment.explanation.selection) {
+        const selected = textEl('blockquote', 'cv-selection', comment.explanation.selection.text);
+        selected.setAttribute('aria-label', 'Selected text');
+        context.append(selected);
+      }
+      context.append(partView(quote.block.part));
       if (quote.block.references.length) {
         context.append(
           textEl('p', '', 'Saved references. Open the original explanation to navigate using your current display version.'),
