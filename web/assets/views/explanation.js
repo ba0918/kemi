@@ -120,6 +120,12 @@ function cardsHost(article, anchor) {
   return host;
 }
 
+/** ブロックの中に画面が入れた札の入れ物。 @param {string} blockId @returns {HTMLElement[]} */
+export function commentCardHosts(blockId) {
+  const article = dom.explanationDocument.querySelector(`[data-explanation-block="${blockId}"]`);
+  return article ? Array.from(article.querySelectorAll('[data-explanation-cards]')) : [];
+}
+
 /** @param {any} comment */
 function commentCard(comment) {
   const card = button('explanation-card');
@@ -318,7 +324,7 @@ export function renderExplanationDocument() {
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
       article.append(partView(block.part,{
         onMarkdown:()=>{ if (token === renderToken) scheduleReadingRefresh(); },
-        onDiagramComment:control=>actions.openExplanationEditor({blockId:block.id,selection:null,anchor:control.getBoundingClientRect(),quote:'title' in block.part ? String(block.part.title) : '',returnFocus:control}),
+        onDiagramComment:control=>actions.openExplanationEditor({blockId:block.id,selection:null,anchor:()=>control.getBoundingClientRect(),quote:'title' in block.part ? String(block.part.title) : '',returnFocus:control}),
       }));
       article.append(explanationReferences(block.references));
       sectionElement.append(article);

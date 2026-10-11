@@ -8,7 +8,7 @@ import { applyReview, jumpToEntry, selectIndex } from './files.js';
 import { updateComments } from './comments.js';
 import { renderHeader } from '../views/header.js';
 import { renderTree } from '../views/tree.js';
-import { renderExplanationDocument, renderExplanationComments, renderExplanationStatus, explanationEditor } from '../views/explanation.js';
+import { renderExplanationDocument, renderExplanationComments, renderExplanationStatus, explanationEditor, commentCardHosts } from '../views/explanation.js';
 import { showOverlay } from '../views/overlay.js';
 import { setupExplanationSelection } from './explanation/selection.js';
 
@@ -21,8 +21,9 @@ let closeSelection = ()=>{};
 export function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(`${revision}:${blockId}`,body);}
 
 /**
- * 入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の画面上の矩形。
- * @typedef {{blockId:string, selection:{text:string,occurrence:number}|null, anchor:DOMRect, quote:string, returnFocus?:HTMLElement|null}} EditorRequest
+ * 入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の今の画面上の矩形を測る。
+ * 札が差し込まれたり本文が折り返し直したりするたびに測り直すので、開いた時点の矩形ではなく測り方を渡す。
+ * @typedef {{blockId:string, selection:{text:string,occurrence:number}|null, anchor:()=>DOMRect|null, quote:string, returnFocus?:HTMLElement|null}} EditorRequest
  */
 
 /** @type {{form:HTMLFormElement, close:()=>void}|null} */
@@ -43,9 +44,32 @@ export function openExplanationEditor(request) {
   const scope = request.selection ? 'Selected text' : block.part.type === 'text' || block.part.type === 'code' ? 'Whole block' : 'Whole diagram';
   const {form,input,save,cancel} = explanationEditor({sectionTitle:section.title,scope,quote:request.quote,draft:state.explanation.drafts.get(draftKey) ?? ''});
   const area = dom.explanationDocument;
+  // 本文と一緒にスクロールさせるため、本文のスクロールする要素を基準に置く。選んだ文字は隠さず、その下に出す。
+  const place = () => {
+    const anchor = request.anchor();
+    if (!anchor || (!anchor.width && !anchor.height)) return;
+    const box = area.getBoundingClientRect();
+    const inArea = (/** @type {number} */ y) => y - box.top + area.scrollTop;
+    let top = inArea(anchor.bottom) + 8;
+    // 選んだ行のすぐ下に札があれば、札を隠さないようその下へずらす。
+    for (const host of commentCardHosts(block.id)) {
+      const cards = host.getBoundingClientRect();
+      if (inArea(cards.bottom) > top && inArea(cards.top) < top + form.offsetHeight) top = inArea(cards.bottom) + 8;
+    }
+    form.style.top = `${top}px`;
+    if (!state.narrow) {
+      const left = anchor.left - box.left + area.scrollLeft - 20;
+      form.style.left = `${Math.max(16, Math.min(left, area.clientWidth - form.offsetWidth - 16))}px`;
+    }
+  };
+  // 札の描き直し・Markdown の描画・幅の変化で本文がずれたら置き直す。
+  const mutations = new MutationObserver(place);
+  const resizes = new ResizeObserver(place);
   const close = () => {
     if (editor?.form !== form) return;
     editor = null;
+    mutations.disconnect();
+    resizes.disconnect();
     form.remove();
     if (request.returnFocus?.isConnected) request.returnFocus.focus({preventScroll:true});
   };
@@ -60,14 +84,9 @@ export function openExplanationEditor(request) {
     save.disabled=false;
   });
   area.append(form);
-  // 本文と一緒にスクロールさせるため、本文のスクロールする要素を基準に置く。選んだ文字は隠さず、その下に出す。
-  const box = area.getBoundingClientRect();
-  const top = request.anchor.bottom - box.top + area.scrollTop + 8;
-  form.style.top = `${top}px`;
-  if (!state.narrow) {
-    const left = request.anchor.left - box.left + area.scrollLeft - 20;
-    form.style.left = `${Math.max(16, Math.min(left, area.clientWidth - form.offsetWidth - 16))}px`;
-  }
+  place();
+  mutations.observe(area,{childList:true,subtree:true});
+  resizes.observe(area);
   input.focus({preventScroll:true});
   form.scrollIntoView({block:'nearest'});
   if (state.narrow) {

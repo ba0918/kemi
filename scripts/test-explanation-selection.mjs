@@ -111,6 +111,11 @@ try {
   const before=await offset();
   await evaluate(`document.querySelector('[aria-label="Explanation"][role="region"]').scrollTop+=60`);await frames();
   assert.ok(Math.abs(await offset()-before)<1,'the editor scrolls together with the text');
+  // 幅が変わって本文が折り返し直しても、入力欄は選んだ行のすぐ下に付いていく。
+  await browser('set','viewport','960','900');await frames();
+  const followed=await evaluate(`(()=>{const n=${tailParagraph}.firstChild,r=document.createRange();r.setStart(n,0);r.setEnd(n,4);return ${editor}.getBoundingClientRect().top-r.getBoundingClientRect().bottom})()`);
+  assert.ok(followed>=0 && followed<24,`the editor stays right below the selected line after the text reflows (${followed})`);
+  await browser('set','viewport','1280','900');await frames();
   await browser('press','Escape');
   // code パーツでもボタンが出る。ブロックをまたぐ選択では理由が出る。
   await selectText(`${block('literal-code')}.querySelector('code').firstChild`,0,6);

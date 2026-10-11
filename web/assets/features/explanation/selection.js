@@ -16,7 +16,7 @@ export function setupExplanationSelection() {
   hint.setAttribute('role','status');
   hint.setAttribute('popover','manual');
   document.body.append(popup,hint);
-  /** @type {{blockId:string,revision:number,selection:{text:string,occurrence:number},rect:DOMRect}|null} */
+  /** @type {{blockId:string,revision:number,selection:{text:string,occurrence:number},range:Range}|null} */
   let target = null;
   let dragging = false, queued = false;
   /** @param {HTMLElement} element */
@@ -83,7 +83,7 @@ export function setupExplanationSelection() {
     const place = visibleBounds(clipped);
     if (!place) {close();return;}
     hide(hint);
-    target = {blockId:start.dataset.explanationBlock ?? '',revision:state.explanation.reading.revision,selection:chosen,rect:place.rect};
+    target = {blockId:start.dataset.explanationBlock ?? '',revision:state.explanation.reading.revision,selection:chosen,range:clipped};
     if (!showAt(popup, place)) target = null;
   };
   const schedule = () => {if (!queued) {queued = true;requestAnimationFrame(refresh);}};
@@ -91,7 +91,9 @@ export function setupExplanationSelection() {
     const chosen = target;
     if (!chosen || chosen.revision !== state.explanation.reading?.revision || !explanationInteractable()) {dismiss();return;}
     dismiss();
-    actions.openExplanationEditor({blockId:chosen.blockId,selection:chosen.selection,anchor:chosen.rect,quote:chosen.selection.text});
+    // 選択を外しても持っている範囲は残り、札を差し込んでも文字のノードは変わらないので、範囲から測り直せる。
+    const range = chosen.range;
+    actions.openExplanationEditor({blockId:chosen.blockId,selection:chosen.selection,anchor:()=>Array.from(range.getClientRects()).filter(r=>r.width>0).at(-1) ?? null,quote:chosen.selection.text});
   };
   popup.addEventListener('pointerdown',event=>event.preventDefault());
   popup.addEventListener('click',open);
