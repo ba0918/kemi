@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment::{self, CommentError, PlaceError};
+use kemi_core::domain::explanation::{ExplanationSelection, MAX_OCCURRENCE, validate_selection};
 use kemi_core::domain::review::{
     Author, Comment, CommentTarget, FileTarget, LineRange, PageTarget, Place, PlaceElement,
     PlaceKind, Point, Rect, Reply, Side, Suggestion,
@@ -29,6 +30,10 @@ pub(super) enum CommentRequest {
         body: String,
         #[serde(default)]
         suggestion: Option<String>,
+        /// 形の誤りを axum の拒否文でなく、どこが悪いかの文で返すため、値のまま受けて
+        /// `parse_selection` で読む。
+        #[serde(default)]
+        selection: Option<Value>,
     },
     Add {
         file_id: String,
@@ -135,13 +140,15 @@ pub(super) async fn comment_api(
             block_id,
             body,
             suggestion,
+            selection,
         } => {
             if suggestion.is_some() {
                 return Err(ApiError::bad_request(
                     "explanation comments cannot have suggestions",
                 ));
             }
-            add_explanation_comment(&state, explanation_revision, &block_id, body)
+            let selection = parse_selection(selection).map_err(ApiError::bad_request)?;
+            add_explanation_comment(&state, explanation_revision, &block_id, body, selection)
         }
         CommentRequest::Add {
             file_id,
@@ -432,6 +439,7 @@ fn add_explanation_comment(
     revision: u64,
     block_id: &str,
     body: String,
+    selection: Option<ExplanationSelection>,
 ) -> Result<Json<Value>, ApiError> {
     let gate = state.persist.lock().expect("persist poisoned");
     if *state.shutdown.borrow()
@@ -453,6 +461,10 @@ fn add_explanation_comment(
     };
     let quote = kemi_core::domain::explanation::quote_block(&document, block_id)
         .map_err(|error| ApiError::not_found(error.to_string()))?;
+    if let Some(selection) = &selection {
+        validate_selection(&quote.block.part, selection)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
     let mut candidate = session.snapshot();
     candidate.last_comment += 1;
     candidate.last_seq += 1;
@@ -469,7 +481,7 @@ fn add_explanation_comment(
             revision,
             block_id: block_id.into(),
             quote,
-            selection: None,
+            selection,
         }),
     };
     candidate.channel.note_comment(&comment.id);
@@ -487,6 +499,37 @@ fn add_explanation_comment(
     persist(state);
     notify_agent_state(state);
     Ok(Json(value))
+}
+
+/// 作成要求の `selection` の形を読む。無いか null なら選択なし。上限と図の拒否は
+/// 復元と同じ `validate_selection` に任せる。
+fn parse_selection(value: Option<Value>) -> Result<Option<ExplanationSelection>, String> {
+    let object = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(object)) => object,
+        Some(_) => return Err("selection: must be an object with text and occurrence".into()),
+    };
+    if let Some(key) = object
+        .keys()
+        .find(|key| !matches!(key.as_str(), "text" | "occurrence"))
+    {
+        return Err(format!("selection.{key}: unknown field"));
+    }
+    let text = object
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or("selection.text: must be a string")?;
+    // `1.0` や `-1` は as_u64 で読めないので、整数の表記だけが通る。
+    let occurrence = object
+        .get("occurrence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            format!("selection.occurrence: must be an integer in 0..={MAX_OCCURRENCE}")
+        })?;
+    Ok(Some(ExplanationSelection {
+        text: text.into(),
+        occurrence,
+    }))
 }
 
 /// コメントの画像を保存した結果。
