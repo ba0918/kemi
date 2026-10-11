@@ -2,7 +2,7 @@
 import { actions } from '../actions.js';
 import { button, dom, el, textEl, iconButton, COMMENT_ICON } from '../dom.js';
 import { state, unitLabel } from '../state.js';
-import { commentsForBlock, freshness } from '../explanation-model.js';
+import { commentsForBlock, freshness, sectionCommentCounts } from '../explanation-model.js';
 import { partView } from './parts.js';
 
 /** @param {string} label */
@@ -60,6 +60,7 @@ export function renderExplanationComments() {
       host.append(chip);
     }
   }
+  renderExplanationCounts();
 }
 
 /**
@@ -86,49 +87,120 @@ export function explanationReferences(references, navigate = true) {
   return host;
 }
 
+/** 描画のたびに進める。前の描画の Markdown が後から終わっても、今の文書に手を出させない。 */
+let renderToken = 0;
+let refreshQueued = false;
+
+/** 目次の項目のうち、読み位置の上にある最後のものを示す。 */
+function markCurrentContents() {
+  const top = dom.explanationDocument.getBoundingClientRect().top + 80;
+  const items = Array.from(dom.explanationToc.querySelectorAll('[data-toc-target]'));
+  let current = items[0];
+  for (const item of items) {
+    const target = document.getElementById(/** @type {HTMLElement} */(item).dataset.tocTarget ?? '');
+    if (target && target.getBoundingClientRect().top <= top) current = item;
+  }
+  for (const item of items) {
+    if (item === current) item.setAttribute('aria-current','location');
+    else item.removeAttribute('aria-current');
+  }
+}
+
+/** @param {string} label @param {string} targetId */
+function contentsItem(label, targetId) {
+  const item = button('explanation-toc-item');
+  item.dataset.tocTarget = targetId;
+  item.setAttribute('aria-label',`Go to ${label}`);
+  item.addEventListener('click',()=>{
+    document.getElementById(targetId)?.scrollIntoView({block:'start'});
+    actions.closeDrawer();
+  });
+  return item;
+}
+
+/** text パーツの Markdown 見出しを、描画の済んだものから目次の節の下に並べる。 */
+function renderContentsHeadings() {
+  const version = state.explanation.reading;
+  if (!version) return;
+  for (const old of dom.explanationToc.querySelectorAll('.explanation-toc-sub')) old.remove();
+  for (const section of version.sections) {
+    let after = dom.explanationToc.querySelector(`[data-toc-section="${section.id}"]`);
+    if (!after) continue;
+    for (const block of section.blocks) {
+      const article = dom.explanationDocument.querySelector(`[data-explanation-block="${block.id}"]`);
+      const headings = article?.querySelectorAll('.part-markdown :is(h1,h2,h3,h4,h5,h6)') ?? [];
+      for (const [index, heading] of Array.from(headings).entries()) {
+        // 目次から移るための DOM の id。コメントの対象 ID ではない。
+        if (!heading.id) heading.id = `explanation-heading-${block.id}-${index}`;
+        const li = el('li','explanation-toc-sub');
+        const item = contentsItem(heading.textContent ?? '', heading.id);
+        item.append(textEl('span','',heading.textContent ?? ''));
+        li.append(item);
+        after.after(li);
+        after = li;
+      }
+    }
+  }
+  markCurrentContents();
+}
+
+function scheduleReadingRefresh() {
+  if (refreshQueued) return;
+  refreshQueued = true;
+  requestAnimationFrame(()=>{ refreshQueued = false; renderContentsHeadings(); });
+}
+
+export function renderExplanationCounts() {
+  const version = state.explanation.reading;
+  if (!version) return;
+  const counts = sectionCommentCounts(state.allComments, version);
+  for (const [sectionId, count] of counts) {
+    const badge = dom.explanationToc.querySelector(`[data-toc-count="${sectionId}"]`);
+    if (!badge) continue;
+    /** @type {HTMLElement} */(badge).hidden = count === 0;
+    badge.textContent = String(count);
+    badge.setAttribute('title',`${count} ${count === 1 ? 'comment' : 'comments'}`);
+  }
+}
+
 export function renderExplanationDocument() {
   const version = state.explanation.reading;
+  const token = ++renderToken;
   dom.explanationDocument.replaceChildren();
   dom.explanationToc.replaceChildren();
   if (!version) return;
   dom.explanationToc.append(textEl('div','explanation-toc-heading','CONTENTS'), textEl('p','explanation-toc-meta',`${version.sections.length} sections · Revision ${version.revision}`));
-  /** @type {{details:HTMLElement,toc:HTMLButtonElement}[]} */
-  const sections = [];
-  const markCurrent = () => {
-    const top = dom.explanationDocument.getBoundingClientRect().top;
-    let current = sections[0];
-    for (const item of sections) if (item.details.getBoundingClientRect().top <= top + 80) current = item;
-    for (const item of sections) {
-      if (item === current) item.toc.setAttribute('aria-current','location');
-      else item.toc.removeAttribute('aria-current');
-    }
-  };
-  dom.explanationDocument.onscroll = markCurrent;
-  for (const section of version.sections) {
-    const details = el('details','explanation-section');
-    /** @type {HTMLDetailsElement} */(details).open = true;
-    details.id = `explanation-section-${section.id}`;
-    const number = String(sections.length + 1).padStart(2,'0');
-    const summary = textEl('summary','',section.title);
-    summary.dataset.number = number;
-    details.append(summary);
-    const toc = button('explanation-toc-item');
-    toc.append(textEl('span','explanation-section-number',number),textEl('span','',section.title));
-    toc.setAttribute('aria-label',`Go to ${section.title}`);
-    toc.addEventListener('click',()=>{
-      /** @type {HTMLDetailsElement} */(details).open = true;
-      details.scrollIntoView({block:'start'});
-      actions.closeDrawer();
-    });
-    dom.explanationToc.append(toc);
-    sections.push({details,toc});
+  const list = el('ol','explanation-toc-list');
+  dom.explanationToc.append(list);
+  dom.explanationDocument.onscroll = markCurrentContents;
+  for (const [sectionIndex, section] of version.sections.entries()) {
+    const sectionElement = el('section','explanation-section');
+    sectionElement.id = `explanation-section-${section.id}`;
+    const number = String(sectionIndex + 1).padStart(2,'0');
+    const head = el('header','explanation-section-head');
+    const title = textEl('h2','',section.title);
+    title.id = `explanation-section-title-${section.id}`;
+    sectionElement.setAttribute('aria-labelledby',title.id);
+    head.append(textEl('span','explanation-section-number',number),title);
+    sectionElement.append(head);
+    const li = el('li','explanation-toc-section');
+    li.dataset.tocSection = section.id;
+    const toc = contentsItem(section.title, sectionElement.id);
+    const count = textEl('span','explanation-toc-count','');
+    count.id = `explanation-toc-count-${section.id}`;
+    count.dataset.tocCount = section.id;
+    count.hidden = true;
+    toc.setAttribute('aria-describedby',count.id);
+    toc.append(textEl('span','explanation-section-number',number),textEl('span','explanation-toc-title',section.title),count);
+    li.append(toc);
+    list.append(li);
     for (const [index, block] of section.blocks.entries()) {
       const article = el('article','explanation-block');
       article.id = `explanation-block-${block.id}`;
       article.dataset.explanationBlock = block.id;
       article.dataset.partType = block.part.type;
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
-      article.append(partView(block.part));
+      article.append(partView(block.part,{onMarkdown:()=>{ if (token === renderToken) scheduleReadingRefresh(); }}));
       article.append(explanationReferences(block.references));
       const comments = el('div','explanation-comments'); comments.dataset.blockComments = block.id; article.append(comments);
       const trigger = explanationCommentControl(`Comment on ${section.title} · Block ${index + 1}`);
@@ -157,10 +229,10 @@ export function renderExplanationDocument() {
         if (await actions.commentOnExplanation(block,submittedBody,version.revision) && input.value === submittedBody) {input.value='';close();}
         save.disabled=false;
       });
-      details.append(article);
+      sectionElement.append(article);
     }
-    dom.explanationDocument.append(details);
+    dom.explanationDocument.append(sectionElement);
   }
-  requestAnimationFrame(markCurrent);
+  requestAnimationFrame(markCurrentContents);
   renderExplanationComments();
 }

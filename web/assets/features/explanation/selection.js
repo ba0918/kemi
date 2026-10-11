@@ -65,7 +65,6 @@ export function setupExplanationSelection() {
   document.addEventListener('keyup',schedule);
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && target){event.preventDefault();event.stopPropagation();dismiss();}},true);
   dom.explanationDocument.addEventListener('scroll',schedule);
-  dom.explanationDocument.addEventListener('toggle',schedule,true);
   new ResizeObserver(schedule).observe(dom.explanationDocument);
   const geometry = new MutationObserver(records=>{
     if (records.some(record=>!(record.target instanceof SVGElement))) schedule();

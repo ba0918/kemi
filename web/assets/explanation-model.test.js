@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { freshness, resolveCodeReference, commentsForBlock } from './explanation-model.js';
+import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts } from './explanation-model.js';
 
 test('reading and notification freshness use their own base and the screen Code token', () => {
   assert.equal(freshness('review:1', null), 'pending');
@@ -33,4 +33,21 @@ test('a block shows its original comments and unchanged comments from earlier re
   assert.deepEqual(commentsForBlock([comment], 2, block), [comment]);
   assert.deepEqual(commentsForBlock([comment], 2, {...block,part:{type:'text',body:'exact\n'}}), []);
   assert.deepEqual(commentsForBlock([comment], 1, block), [comment]);
+});
+
+test('each section counts the comments shown beside its blocks in the reading revision', () => {
+  const kept = {id:'kept',part:{type:'text',body:'same'},references:[]};
+  const changed = {id:'changed',part:{type:'text',body:'before'},references:[]};
+  const quiet = {id:'quiet',part:{type:'text',body:'none'},references:[]};
+  const on = (/** @type {any} */ block, /** @type {number} */ revision, extra = {}) => ({id:`c-${block.id}-${revision}`,target_type:'explanation',explanation:{revision,block_id:block.id,quote:{section_title:'S',block}},...extra});
+  const comments = [on(kept,1), on(kept,2,{resolved:true}), on(changed,1), {id:'file',target_type:'file',explanation:null}];
+  const version = {revision:2,sections:[
+    {id:'first',blocks:[kept]},
+    {id:'second',blocks:[{...changed,part:{type:'text',body:'after'}}]},
+    {id:'third',blocks:[quiet]},
+  ]};
+  const counts = sectionCommentCounts(comments, version);
+  assert.equal(counts.get('first'), 2);
+  assert.equal(counts.get('second'), 0, 'a comment whose block content changed is outdated here and not shown');
+  assert.equal(counts.get('third'), 0);
 });

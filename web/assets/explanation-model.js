@@ -38,6 +38,16 @@ export function commentsForBlock(comments, revision, block) {
     (comment.explanation.revision === revision || canonical(comment.explanation.quote.block) === canonical(block)));
 }
 
+/**
+ * 目次の節ごとのコメント数。読んでいる版でブロックのそばに出すコメントと同じ集合を数える。
+ * @param {any[]} comments @param {{revision:number,sections:{id:string,blocks:any[]}[]}} version
+ * @returns {Map<string,number>}
+ */
+export function sectionCommentCounts(comments, version) {
+  return new Map(version.sections.map(section => [section.id,
+    section.blocks.reduce((sum, block) => sum + commentsForBlock(comments, version.revision, block).length, 0)]));
+}
+
 /** @param {{id:string,type:string}|null} start @param {{id:string,type:string}|null} end @param {boolean} nonempty */
 export function selectedExplanationBlock(start, end, nonempty) {
   return nonempty && start?.type === 'text' && end?.type === 'text' && start.id === end.id ? start.id : null;
