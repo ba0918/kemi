@@ -1,6 +1,6 @@
 # 動いているページのレビュー 仕様
 
-- Status: 草稿（ライブ改訂）
+- Status: 承認済み（ライブ改訂、2026-10-08）
 - 用語の定義: `CONTEXT.md`
 - 本体の仕様: [kemi 仕様](kemi.md)。エージェントとの往復は [agent-channel.md](agent-channel.md)
 - 比べる相手（スナップショットとモックの選び方、重ねて透かす表示）: [live-compare.md](live-compare.md)

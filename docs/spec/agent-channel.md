@@ -1,6 +1,6 @@
 # エージェントとのやりとり 仕様
 
-- Status: 草稿（ライブ改訂）
+- Status: 承認済み（ライブ改訂、2026-10-08）
 - 用語の定義: `CONTEXT.md`
 - 本体の仕様: [kemi 仕様](kemi.md)。動いているページのレビューは [live.md](live.md)
 - 見た目の参照: `docs/design/ui-mock-conversation.html`（採用したモック。案 A2）。エージェントの
