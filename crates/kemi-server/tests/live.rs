@@ -1022,7 +1022,7 @@ async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_
     std::mem::forget(range);
 }
 
-// ---- ページへのコメント（live.md の R-PAGE-COMMENT、kemi.md の R-SUBMIT の `page`） ----
+// ---- ページへのコメント（live.md の R-PAGE-COMMENT、output.md の R-SUBMIT の `page`） ----
 
 fn page_place(n: u32, kind: &str) -> serde_json::Value {
     serde_json::json!({

@@ -1,4 +1,4 @@
-// `--live` の検査に使う、試験用の開発サーバ（docs/spec/kemi.md の R-VERIFY）。Node の標準だけで、
+// `--live` の検査に使う、試験用の開発サーバ（docs/spec/build.md の R-VERIFY）。Node の標準だけで、
 // ビルドの要らない静的ファイルと、HMR に当たる知らせ（ファイルを書き換えると WebSocket で
 // ページに知らせ、CSS を差し替える）を返す。
 //

@@ -3884,7 +3884,7 @@ async fn live_resume_keeps_comments_and_seen_marks_on_the_same_files() {
     resumed.kill();
 }
 
-// ---- ページへのコメント（live.md の R-PAGE-COMMENT、R-PAGE-SESSION、kemi.md の R-SUBMIT） ----
+// ---- ページへのコメント（live.md の R-PAGE-COMMENT、R-PAGE-SESSION、output.md の R-SUBMIT） ----
 
 /// 画像の中身。base64 にしやすいよう 0 のバイトを並べ、本文の既定の上限（2 MB）を超える大きさにする。
 const PAGE_IMAGE_BYTES: usize = 3 * 1024 * 1024;
