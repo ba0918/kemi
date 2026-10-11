@@ -2,6 +2,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -283,6 +284,13 @@ impl ManifestSource {
 }
 
 impl ReviewSource for ManifestSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(Self {
+            manifest: self.manifest.clone(),
+            base: self.base.clone(),
+            store: PlanStore::new(),
+        })))
+    }
     fn reference_metadata(&self, file_id: &str) -> Option<super::ReferenceMetadata> {
         self.store.reference_metadata(file_id)
     }

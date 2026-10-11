@@ -2602,6 +2602,65 @@ async fn refresh_save_failure_keeps_published_generation_metadata_and_content_re
     server.page.task.abort();
 }
 
+#[tokio::test]
+async fn manifest_refresh_save_failure_keeps_published_token_sides_lines_and_statistics() {
+    let dir = TempRepo::new();
+    dir.write("new.txt", "one\n");
+    let manifest =
+        json!({"groups":[{"id":"g","title":"G","diffs":[{"path":"a.txt","new_path":"new.txt"}]}]});
+    let source = Arc::new(ManifestSource::from_json(&manifest.to_string(), &dir.path).unwrap());
+    let sink = Arc::new(RecordingSink::default());
+    sink.copy_already_saved.store(true, Ordering::SeqCst);
+    let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink.clone()).await;
+    let first: Value = server.page.get("api/review").await.json().await.unwrap();
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(context["references"]["code"][0]["new_lines"], 1);
+    assert_eq!(context["references"]["code"][0]["new_present"], true);
+    assert_eq!(context["references"]["code"][0]["old_present"], false);
+    dir.write("new.txt", "one\ntwo\nthree\n");
+    sink.fail.store(true, Ordering::SeqCst);
+    assert_eq!(server.page.get("api/review?refresh=1").await.status(), 500);
+    let unchanged: Value = server.page.get("api/review").await.json().await.unwrap();
+    let unchanged_context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unchanged_context, context);
+    assert_eq!(unchanged["groups"], first["groups"]);
+    assert_eq!(
+        unchanged["diff_display_version"],
+        first["diff_display_version"]
+    );
+    sink.fail.store(false, Ordering::SeqCst);
+    let accepted = server.page.get("api/review?refresh=1").await;
+    assert_eq!(accepted.status(), 200);
+    let accepted: Value = accepted.json().await.unwrap();
+    let updated: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(
+        updated["diff_display_version"],
+        context["diff_display_version"]
+    );
+    assert_eq!(
+        updated["diff_display_version"],
+        accepted["diff_display_version"]
+    );
+    assert_eq!(updated["references"]["code"][0]["new_lines"], 3);
+    assert_eq!(accepted["groups"][0]["files"][0]["add"], 3);
+    server.page.task.abort();
+}
+
 /// 最初の状態保存を止める sink。保存が完了した順に状態を記録する。
 struct SlowSink {
     entered: tokio::sync::Notify,
