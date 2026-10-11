@@ -153,7 +153,8 @@ export function renderExplanationDocument() {
       save.type='submit'; form.append(target,textEl('p','explanation-comment-scope','Comment on the entire block'),input,save,cancel);article.append(form);
       form.addEventListener('submit', async event=>{
         event.preventDefault();save.disabled=true;
-        if (await actions.commentOnExplanation(block,input.value,version.revision)) {input.value='';close();}
+        const submittedBody = input.value;
+        if (await actions.commentOnExplanation(block,submittedBody,version.revision) && input.value === submittedBody) {input.value='';close();}
         save.disabled=false;
       });
       details.append(article);

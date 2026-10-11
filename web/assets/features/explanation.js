@@ -158,7 +158,8 @@ export async function commentOnExplanation(block,body,revision) {
   if (!body.trim() || state.explanation.reading?.revision !== revision) return false;
   try {
     const comment=await api.postComment({op:'add_explanation',explanation_revision:revision,block_id:block.id,body});
-    state.explanation.drafts.delete(`${revision}:${block.id}`);
+    const draftKey = `${revision}:${block.id}`;
+    if (state.explanation.drafts.get(draftKey) === body) state.explanation.drafts.delete(draftKey);
     updateComments(comments=>[...comments,comment]);
     renderExplanationComments();return true;
   } catch(error) {showOverlay('could not add the comment',String(error));return false;}
