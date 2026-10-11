@@ -37,17 +37,30 @@
 .explanation-references { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 12px; }
 .explanation-references:empty { display:none; }
 .explanation-reference.btn { max-width:100%; height:auto; padding:5px 9px; white-space:normal; overflow-wrap:anywhere; text-align:left; font:12px/1.5 var(--mono); color:var(--accent); background:var(--panel); border-color:var(--line); }
-.explanation-comments:empty { display:none; }
-.explanation-comment-trigger.iconbtn { position:absolute; top:-8px; right:0; width:32px; height:32px; padding:7px; color:var(--ink-2); background:var(--bg); border:1px solid var(--line); border-radius:6px; opacity:0; }
-.explanation-block:hover > .explanation-comment-trigger, .explanation-comment-trigger:focus-visible, .explanation-comment-trigger[aria-expanded="true"] { opacity:1; }
-.explanation-comment-trigger:hover, .explanation-comment-trigger:focus-visible { color:var(--note-ink); background:var(--note-bg); border-color:var(--note-line); }
-.explanation-selection-comment.iconbtn { position:fixed; inset:auto; margin:0; opacity:1; top:0; left:0; right:auto; width:36px; height:36px; box-shadow:0 3px 10px #0003; color:var(--note-ink); border-color:var(--note-line); background:var(--note-bg); z-index:100; }
-.explanation-selection-comment:not(:popover-open) { display:none; }
-.explanation-comment-editor { margin-top:12px; padding:14px; border:1px solid var(--note-line); border-radius:8px; background:var(--note-bg); scroll-margin-bottom:calc(16px + var(--hand-float-height, 0px)); }
-.explanation-comment-editor .btn + .btn { margin-left:8px; }
-.explanation-comment-scope { color:var(--note-ink); font-size:12px; margin:0 0 10px; }
-.explanation-comment-target { display:block; font-size:12px; color:var(--note-ink); margin-bottom:8px; }
-.explanation-block textarea { display:block; box-sizing:border-box; width:100%; min-height:90px; padding:10px; margin-bottom:10px; border:1px solid var(--line); border-radius:6px; font:14px/1.6 var(--sans); color:var(--ink); background:var(--bg); resize:vertical; }
+/* 印と札。コメントのあるブロック全体には左に付箋色の線を付ける。 */
+::highlight(explanation-comment) { background-color:color-mix(in srgb, var(--note-line) 32%, transparent); text-decoration:underline 2px var(--note-line); text-underline-offset:3px; }
+.explanation-block.has-comment::before { content:''; position:absolute; left:-14px; top:4px; bottom:4px; width:3px; border-radius:2px; background:var(--note-line); }
+.explanation-cards { display:flex; flex-direction:column; gap:4px; max-width:72ch; margin:6px 0 14px; }
+li > .explanation-cards { margin-top:6px; }
+.explanation-card { display:flex; align-items:center; gap:8px; width:100%; padding:5px 10px; border:1px solid var(--note-line); border-radius:6px; background:var(--note-bg); color:var(--note-ink); font:13px/1.5 var(--sans); text-align:left; cursor:pointer; }
+.explanation-card svg { width:14px; height:14px; flex-shrink:0; }
+.explanation-card-body { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+.explanation-card-meta { flex-shrink:0; font-size:12px; }
+.explanation-card:hover { filter:brightness(.98); }
+.explanation-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+/* 選択の近くに出すボタンと、コメントできない理由。 */
+.explanation-selection-comment { position:fixed; inset:auto; margin:0; top:0; left:0; display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 10px 0 8px; border-radius:15px; border:1px solid var(--note-line); background:var(--note-bg); color:var(--note-ink); font:600 12px var(--sans); cursor:pointer; box-shadow:0 3px 10px #0003; z-index:100; }
+.explanation-selection-comment svg { width:15px; height:15px; }
+.explanation-selection-comment:not(:popover-open), .explanation-selection-hint:not(:popover-open) { display:none; }
+.explanation-selection-hint { position:fixed; inset:auto; margin:0; top:0; left:0; max-width:min(320px, calc(100vw - 32px)); padding:5px 10px; border:0; border-radius:6px; background:var(--ink); color:var(--bg); font:12px/1.5 var(--sans); box-shadow:0 3px 10px #0003; z-index:100; }
+/* 入力欄は本文のスクロールする要素を基準に、選んだ所の下へ浮かべる。 */
+.explanation-comment-editor { position:absolute; z-index:40; width:min(380px, calc(100% - 32px)); box-sizing:border-box; padding:12px; border:1px solid var(--note-line); border-radius:8px; background:var(--bg); box-shadow:0 6px 24px #0f121626, 0 1px 3px #0f12161f; font-size:14px; line-height:1.6; scroll-margin-bottom:calc(16px + var(--hand-float-height, 0px)); }
+.explanation-comment-target { display:flex; gap:6px; align-items:baseline; font-size:12px; color:var(--ink-3); margin-bottom:8px; }
+.explanation-comment-target b { color:var(--note-ink); font-weight:600; }
+.explanation-comment-quote { margin:0 0 8px; padding:6px 10px; border-left:3px solid var(--note-line); background:var(--note-bg); color:var(--ink-2); font-size:13px; line-height:1.6; max-height:5.2em; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.explanation-comment-editor textarea { display:block; box-sizing:border-box; width:100%; min-height:72px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font:14px/1.6 var(--sans); color:var(--ink); background:var(--bg); resize:vertical; }
+.explanation-comment-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+.cv-selection { margin:0 0 8px; padding:4px 8px; border-left:3px solid var(--note-line); background:var(--note-bg); color:var(--ink-2); font-size:12.5px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:6em; overflow:auto; }
 body[data-review-view="explanation"] .layout { grid-template-columns:var(--explanation-toc-width, 280px) 8px minmax(0, 1fr) auto; }
 #explanation-toc { padding:22px 10px 40px 14px; border-right:0; }
 .explanation-toc-heading { padding:0 8px; font-size:11px; font-weight:700; letter-spacing:.1em; color:var(--ink-3); }
@@ -66,8 +79,7 @@ body[data-review-view="explanation"] .layout { grid-template-columns:var(--expla
 #explanation-splitter { position:relative; cursor:col-resize; touch-action:none; background:var(--panel); border-right:1px solid var(--line); }
 #explanation-splitter::after { content:''; position:absolute; top:45%; left:2px; height:36px; width:2px; border-radius:2px; background:var(--ink-3); }
 #explanation-splitter:hover, #explanation-splitter:focus-visible { background:var(--accent-soft); outline:2px solid var(--accent); outline-offset:-2px; }
-#review-views button:focus-visible, .explanation-toc-item:focus-visible, .explanation-comment-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-@media (hover:none) { .explanation-block > .explanation-comment-trigger { opacity:1; } }
+#review-views button:focus-visible, .explanation-toc-item:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 body[data-review-view="explanation"] #tree,
 body[data-review-view="explanation"] #group-header,
 body[data-review-view="explanation"] #file-header,
@@ -92,5 +104,6 @@ body[data-review-view="explanation"] #explanation-toc:not([hidden]) { display:bl
   #explanation-document { padding:24px 16px; padding-bottom:calc(120px + var(--hand-float-height, 0px)); }
   .explanation-section + .explanation-section { margin-top:56px; }
   .explanation-section-head h2 { font-size:19px; }
-  .explanation-block > .explanation-comment-trigger { opacity:1; }
+  .explanation-block.has-comment::before { left:-9px; }
+  .explanation-comment-editor { left:16px; right:16px; width:auto; }
 }

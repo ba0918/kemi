@@ -8,7 +8,7 @@ import { applyReview, jumpToEntry, selectIndex } from './files.js';
 import { updateComments } from './comments.js';
 import { renderHeader } from '../views/header.js';
 import { renderTree } from '../views/tree.js';
-import { renderExplanationDocument, renderExplanationComments, renderExplanationStatus } from '../views/explanation.js';
+import { renderExplanationDocument, renderExplanationComments, renderExplanationStatus, explanationEditor } from '../views/explanation.js';
 import { showOverlay } from '../views/overlay.js';
 import { setupExplanationSelection } from './explanation/selection.js';
 
@@ -20,22 +20,61 @@ let closeSelection = ()=>{};
 /** @param {number} revision @param {string} blockId @param {string} body */
 export function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(`${revision}:${blockId}`,body);}
 
-/** @param {string} blockId */
-export function openExplanationEditor(blockId) {
+/**
+ * 入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の画面上の矩形。
+ * @typedef {{blockId:string, selection:{text:string,occurrence:number}|null, anchor:DOMRect, quote:string, returnFocus?:HTMLElement|null}} EditorRequest
+ */
+
+/** @type {{form:HTMLFormElement, close:()=>void}|null} */
+let editor = null;
+
+export function closeExplanationEditor() { editor?.close(); }
+
+/** @param {EditorRequest} request */
+export function openExplanationEditor(request) {
   closeSelection();
-  if (!explanationInteractable()) return;
-  const article = dom.explanationDocument.querySelector(`[data-explanation-block="${blockId}"]`);
-  const form = /** @type {HTMLFormElement|null} */(article?.querySelector('form'));
-  if (!form) return;
-  form.hidden = false;
-  article?.querySelector('[data-comment-trigger]')?.setAttribute('aria-expanded','true');
-  article?.querySelector('textarea')?.focus();
+  closeExplanationEditor();
+  const version = state.explanation.reading;
+  if (!explanationInteractable() || !version) return;
+  const section = version.sections.find((/** @type {any} */ s)=>s.blocks.some((/** @type {any} */ b)=>b.id===request.blockId));
+  const block = section?.blocks.find((/** @type {any} */ b)=>b.id===request.blockId);
+  if (!section || !block) return;
+  const draftKey = `${version.revision}:${block.id}`;
+  const scope = request.selection ? 'Selected text' : block.part.type === 'text' || block.part.type === 'code' ? 'Whole block' : 'Whole diagram';
+  const {form,input,save,cancel} = explanationEditor({sectionTitle:section.title,scope,quote:request.quote,draft:state.explanation.drafts.get(draftKey) ?? ''});
+  const area = dom.explanationDocument;
+  const close = () => {
+    if (editor?.form !== form) return;
+    editor = null;
+    form.remove();
+    if (request.returnFocus?.isConnected) request.returnFocus.focus({preventScroll:true});
+  };
+  editor = {form,close};
+  input.addEventListener('input',()=>keepExplanationDraft(version.revision,block.id,input.value));
+  cancel.addEventListener('click',close);
+  form.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}});
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();save.disabled=true;
+    const submittedBody = input.value;
+    if (await commentOnExplanation(block,submittedBody,version.revision,request.selection) && input.value === submittedBody) {input.value='';close();}
+    save.disabled=false;
+  });
+  area.append(form);
+  // 本文と一緒にスクロールさせるため、本文のスクロールする要素を基準に置く。選んだ文字は隠さず、その下に出す。
+  const box = area.getBoundingClientRect();
+  const top = request.anchor.bottom - box.top + area.scrollTop + 8;
+  form.style.top = `${top}px`;
+  if (!state.narrow) {
+    const left = request.anchor.left - box.left + area.scrollLeft - 20;
+    form.style.left = `${Math.max(16, Math.min(left, area.clientWidth - form.offsetWidth - 16))}px`;
+  }
+  input.focus({preventScroll:true});
   form.scrollIntoView({block:'nearest'});
   if (state.narrow) {
     const hand = dom.handFloatBar.getBoundingClientRect();
-    const bottom = Math.min(dom.explanationDocument.getBoundingClientRect().bottom,hand.height ? hand.top : Infinity);
+    const bottom = Math.min(area.getBoundingClientRect().bottom,hand.height ? hand.top : Infinity);
     const covered = form.getBoundingClientRect().bottom - bottom + 12;
-    if (covered > 0) dom.explanationDocument.scrollTop += covered;
+    if (covered > 0) area.scrollTop += covered;
   }
 }
 
@@ -154,11 +193,11 @@ export async function receiveExplanation(notice) {
 export function explanationChanged() {renderExplanationComments();}
 export function explanationCodeChanged() {renderExplanationStatus();}
 
-/** @param {any} block @param {string} body @param {number} revision */
-export async function commentOnExplanation(block,body,revision) {
+/** @param {any} block @param {string} body @param {number} revision @param {{text:string,occurrence:number}|null} [selection] */
+export async function commentOnExplanation(block,body,revision,selection=null) {
   if (!body.trim() || state.explanation.reading?.revision !== revision) return false;
   try {
-    const comment=await api.postComment({op:'add_explanation',explanation_revision:revision,block_id:block.id,body});
+    const comment=await api.postComment({op:'add_explanation',explanation_revision:revision,block_id:block.id,body,selection});
     const draftKey = `${revision}:${block.id}`;
     if (state.explanation.drafts.get(draftKey) === body) state.explanation.drafts.delete(draftKey);
     updateComments(comments=>[...comments,comment]);

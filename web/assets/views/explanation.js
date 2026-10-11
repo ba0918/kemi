@@ -1,16 +1,68 @@
 // @ts-check
 import { actions } from '../actions.js';
-import { button, dom, el, textEl, iconButton, COMMENT_ICON } from '../dom.js';
+import { button, dom, el, textEl, svgIcon, COMMENT_ICON } from '../dom.js';
 import { state, unitLabel } from '../state.js';
-import { commentsForBlock, freshness, sectionCommentCounts } from '../explanation-model.js';
+import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint } from '../explanation-model.js';
 import { partView } from './parts.js';
 
+/** 画面が本文の中へ後から入れる要素（札）の印。選択の位置を数えるときに中へ入らない。 */
+const INJECTED = 'data-explanation-injected';
+const HIGHLIGHT = 'explanation-comment';
+
+/** @param {any} node */
+export function isInjected(node) {
+  return node instanceof Element && node.hasAttribute(INJECTED);
+}
+
+/**
+ * 選択と印の基準にする、利用者が読む本文だけの要素。見出し・Copy・参照ボタンは含めない。
+ * Markdown の描画が済むまでは null（描画前の原文で数えると描画後とずれるため）。
+ * @param {Element} article
+ * @returns {HTMLElement|null}
+ */
+export function readingRoot(article) {
+  const type = /** @type {HTMLElement} */(article).dataset.partType;
+  if (type === 'code') return article.querySelector('.part-code > code');
+  if (type !== 'text') return null;
+  return article.querySelector('.part-markdown') ?? (article.querySelector('.part-failure') ? article.querySelector('.part-original') : null);
+}
+
 /** @param {string} label */
-export function explanationCommentControl(label) {
-  const control = iconButton(label,COMMENT_ICON);
-  control.classList.add('explanation-comment-trigger');
-  control.querySelector('svg')?.setAttribute('aria-hidden','true');
+function commentIcon(label = '') {
+  const icon = svgIcon(COMMENT_ICON);
+  icon.setAttribute('aria-hidden','true');
+  if (label) icon.classList.add(label);
+  return icon;
+}
+
+/** @param {string} text */
+export function selectionCommentButton(text) {
+  const control = button('explanation-selection-comment');
+  control.setAttribute('aria-label','Comment on selection');
+  control.append(commentIcon(),textEl('span','',text));
   return control;
+}
+
+/**
+ * 選んだ所（図ではボタン）の下に浮かべる入力欄。
+ * @param {{sectionTitle:string, scope:string, quote:string, draft:string}} target
+ */
+export function explanationEditor(target) {
+  const form = /** @type {HTMLFormElement} */(el('form','explanation-comment-editor'));
+  form.setAttribute('aria-label','New explanation comment');
+  const head = el('div','explanation-comment-target');
+  head.append(textEl('b','','Comment'),textEl('span','',`${target.sectionTitle} · ${target.scope}`));
+  const quote = textEl('blockquote','explanation-comment-quote',target.quote);
+  const input = /** @type {HTMLTextAreaElement} */(el('textarea'));
+  input.setAttribute('aria-label',`Comment on ${target.sectionTitle}`);
+  input.placeholder = 'Ask a question or suggest a change…';
+  input.value = target.draft;
+  const actions = el('div','explanation-comment-actions');
+  const cancel = button('btn');cancel.textContent = 'Cancel';cancel.setAttribute('aria-label','Cancel comment');
+  const save = button('btn primary');save.textContent = 'Add comment';save.type = 'submit';
+  actions.append(cancel,save);
+  form.append(head,quote,input,actions);
+  return {form,input,save,cancel};
 }
 
 export function renderExplanationStatus() {
@@ -46,19 +98,78 @@ export function renderExplanationStatus() {
   dom.explanationStatus.append(details);
 }
 
+/** 札を置く、選択の終わりを含む段落・リスト項目・引用・表・コードのうち最も内側の要素。 */
+const CARD_ANCHOR = 'p, li, blockquote, table, pre';
+
+/**
+ * @param {Element} article @param {Element|null} anchor 段落などの要素。null ならブロック全体のコメント。
+ * @returns {HTMLElement}
+ */
+function cardsHost(article, anchor) {
+  if (!anchor) {
+    article.classList.add('has-comment');
+    let host = /** @type {HTMLElement|null} */(article.querySelector(':scope > [data-explanation-cards]'));
+    if (!host) { host = el('div','explanation-cards'); host.dataset.explanationCards = ''; host.setAttribute(INJECTED,''); article.append(host); }
+    return host;
+  }
+  // リスト項目では項目の中の末尾に入れる（ul の直下に div を置かない）。
+  const existing = anchor.matches('li') ? anchor.querySelector(':scope > [data-explanation-cards]') : anchor.nextElementSibling?.matches('[data-explanation-cards]') ? anchor.nextElementSibling : null;
+  if (existing) return /** @type {HTMLElement} */(existing);
+  const host = el('div','explanation-cards'); host.dataset.explanationCards = ''; host.setAttribute(INJECTED,'');
+  if (anchor.matches('li')) anchor.append(host); else anchor.after(host);
+  return host;
+}
+
+/** @param {any} comment */
+function commentCard(comment) {
+  const card = button('explanation-card');
+  card.append(commentIcon(),textEl('span','explanation-card-body',`${comment.resolved ? 'Resolved · ' : ''}${String(comment.body).split('\n')[0]}`));
+  const replies = (comment.replies ?? []).length;
+  card.append(textEl('span','explanation-card-meta',`${replies} ${replies === 1 ? 'reply' : 'replies'}`));
+  card.addEventListener('click',()=>actions.openThread(comment.id));
+  return card;
+}
+
+/**
+ * 保存した選択を、今の描画の範囲に戻す。戻せなければ null。
+ * @param {Element} article @param {{text:string,occurrence:number}|null} selection
+ */
+function selectionRange(article, selection) {
+  const root = selection ? readingRoot(article) : null;
+  if (!root || !selection) return null;
+  const at = locateSelection(readingText(root,isInjected), selection);
+  const start = at && readingPoint(root,at.start,isInjected,'start');
+  const end = at && readingPoint(root,at.end,isInjected,'end');
+  if (!start || !end) return null;
+  const range = document.createRange();
+  range.setStart(/** @type {Node} */(/** @type {unknown} */(start.node)),start.offset);
+  range.setEnd(/** @type {Node} */(/** @type {unknown} */(end.node)),end.offset);
+  return range;
+}
+
 export function renderExplanationComments() {
   const version = state.explanation.reading;
-  if (!version) return;
-  for (const section of version.sections) for (const block of section.blocks) {
-    const host = dom.explanationDocument.querySelector(`[data-block-comments="${block.id}"]`);
-    if (!host) continue;
-    host.replaceChildren();
+  for (const injected of dom.explanationDocument.querySelectorAll(`[${INJECTED}]`)) injected.remove();
+  for (const marked of dom.explanationDocument.querySelectorAll('.has-comment')) marked.classList.remove('has-comment');
+  /** @type {Range[]} */ const ranges = [];
+  if (version) for (const section of version.sections) for (const block of section.blocks) {
+    const article = dom.explanationDocument.querySelector(`[data-explanation-block="${block.id}"]`);
+    if (!article) continue;
     for (const comment of commentsForBlock(state.allComments, version.revision, block)) {
-      const chip = button('cchip');
-      chip.textContent = `${comment.resolved ? 'Resolved · ' : ''}${comment.body}`;
-      chip.addEventListener('click',()=>actions.openThread(comment.id));
-      host.append(chip);
+      const range = selectionRange(article, comment.explanation.selection ?? null);
+      let anchor = null;
+      if (range) {
+        ranges.push(range);
+        const end = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
+        const found = end?.closest(CARD_ANCHOR);
+        anchor = found && article.contains(found) ? found : null;
+      }
+      cardsHost(article, anchor).append(commentCard(comment));
     }
+  }
+  if (typeof Highlight === 'function' && CSS.highlights) {
+    if (ranges.length) CSS.highlights.set(HIGHLIGHT,new Highlight(...ranges));
+    else CSS.highlights.delete(HIGHLIGHT);
   }
   renderExplanationCounts();
 }
@@ -147,7 +258,7 @@ function renderContentsHeadings() {
 function scheduleReadingRefresh() {
   if (refreshQueued) return;
   refreshQueued = true;
-  requestAnimationFrame(()=>{ refreshQueued = false; renderContentsHeadings(); });
+  requestAnimationFrame(()=>{ refreshQueued = false; renderContentsHeadings(); renderExplanationComments(); });
 }
 
 export function renderExplanationCounts() {
@@ -202,33 +313,6 @@ export function renderExplanationDocument() {
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
       article.append(partView(block.part,{onMarkdown:()=>{ if (token === renderToken) scheduleReadingRefresh(); }}));
       article.append(explanationReferences(block.references));
-      const comments = el('div','explanation-comments'); comments.dataset.blockComments = block.id; article.append(comments);
-      const trigger = explanationCommentControl(`Comment on ${section.title} · Block ${index + 1}`);
-      trigger.dataset.commentTrigger = '';
-      trigger.setAttribute('aria-expanded','false');
-      const form = /** @type {HTMLFormElement} */(el('form','explanation-comment-editor'));
-      form.hidden = true;form.id = `explanation-form-${block.id}`;
-      trigger.setAttribute('aria-controls',form.id);
-      trigger.addEventListener('click',()=>actions.openExplanationEditor(block.id));
-      article.append(trigger);
-      const target = /** @type {HTMLLabelElement} */(textEl('label','explanation-comment-target',`${section.title} · Block ${index + 1}`));
-      const input = /** @type {HTMLTextAreaElement} */(el('textarea'));
-      input.id = `explanation-input-${block.id}`;target.htmlFor = input.id;
-      input.value = state.explanation.drafts.get(`${version.revision}:${block.id}`) ?? '';
-      input.addEventListener('input',()=>actions.keepExplanationDraft(version.revision,block.id,input.value));
-      input.placeholder = 'Ask a question or suggest a change…';
-      const save = button('btn primary'); save.textContent='Add comment';
-      const cancel = button('btn');cancel.textContent = 'Cancel';cancel.setAttribute('aria-label','Cancel comment');
-      const close = () => {form.hidden = true;trigger.setAttribute('aria-expanded','false');trigger.focus({preventScroll:true});};
-      cancel.addEventListener('click',close);
-      form.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}});
-      save.type='submit'; form.append(target,textEl('p','explanation-comment-scope','Comment on the entire block'),input,save,cancel);article.append(form);
-      form.addEventListener('submit', async event=>{
-        event.preventDefault();save.disabled=true;
-        const submittedBody = input.value;
-        if (await actions.commentOnExplanation(block,submittedBody,version.revision) && input.value === submittedBody) {input.value='';close();}
-        save.disabled=false;
-      });
       sectionElement.append(article);
     }
     dom.explanationDocument.append(sectionElement);
