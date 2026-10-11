@@ -167,3 +167,12 @@ export function readingPoint(root, index, skip, bias) {
   }
   return found;
 }
+
+/**
+ * 画面が節・見出し・目次の数・ブロック・Markdown 見出しに付ける DOM の id。
+ * 説明の ID に使えない ':' で区切る。'-' でつなぐと 'intro' の見出しと 'title-intro' の節のように別の ID の組で重なる。
+ * @param {'section'|'section-title'|'toc-count'|'block'|'heading'} kind @param {...(string|number)} parts
+ */
+export function explanationElementId(kind, ...parts) {
+  return ['explanation', kind, ...parts].join(':');
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts, selectionAt, locateSelection, selectionTooLong, readingText, readingOffset, readingPoint } from './explanation-model.js';
+import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts, selectionAt, locateSelection, selectionTooLong, readingText, readingOffset, readingPoint, explanationElementId } from './explanation-model.js';
 
 test('reading and notification freshness use their own base and the screen Code token', () => {
   assert.equal(freshness('review:1', null), 'pending');
@@ -113,4 +113,19 @@ test('reading offsets map back to text positions without entering inserted eleme
   assert.deepEqual(readingPoint(root, 3, skip, 'end'), {node:first,offset:3});
   assert.deepEqual(readingPoint(root, 6, skip, 'end'), {node:last,offset:3});
   assert.equal(readingPoint(root, 7, skip, 'end'), null);
+});
+
+test('element ids the screen gives sections, titles, counts, blocks and headings never collide across accepted IDs', () => {
+  const ids = [
+    explanationElementId('section','title-intro'),
+    explanationElementId('section-title','intro'),
+    explanationElementId('section','toc-count-intro'),
+    explanationElementId('toc-count','intro'),
+    explanationElementId('section','intro'),
+    explanationElementId('block','intro'),
+    explanationElementId('heading','a-1',0),
+    explanationElementId('heading','a',1),
+    explanationElementId('heading','a-1-0',0),
+  ];
+  assert.equal(new Set(ids).size, ids.length);
 });

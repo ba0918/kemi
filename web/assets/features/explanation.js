@@ -3,7 +3,7 @@ import * as api from '../api.js';
 import { actions } from '../actions.js';
 import { dom } from '../dom.js';
 import { state, fileCacheKey, explanationInteractable } from '../state.js';
-import { resolveCodeReference } from '../explanation-model.js';
+import { resolveCodeReference, explanationElementId } from '../explanation-model.js';
 import { applyReview, jumpToEntry, selectIndex } from './files.js';
 import { updateComments } from './comments.js';
 import { renderHeader } from '../views/header.js';
@@ -248,7 +248,7 @@ export async function showExplanationComment(comment) {
     closeSelection();
     state.explanation.reading=version;
     renderExplanationDocument();state.view='explanation';showView();
-    document.getElementById(`explanation-block-${comment.explanation.block_id}`)?.scrollIntoView();
+    document.getElementById(explanationElementId('block',comment.explanation.block_id))?.scrollIntoView();
     if (previous && previous.revision!==revision) await api.releaseExplanation(state.explanation.screen,previous.revision);
   } catch(error) {showOverlay('could not open the original explanation',String(error));}
 }

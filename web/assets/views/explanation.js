@@ -2,7 +2,7 @@
 import { actions } from '../actions.js';
 import { button, dom, el, textEl, svgIcon, COMMENT_ICON } from '../dom.js';
 import { state, unitLabel } from '../state.js';
-import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint } from '../explanation-model.js';
+import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint, explanationElementId } from '../explanation-model.js';
 import { partView } from './parts.js';
 
 /** 画面が本文の中へ後から入れる要素（札）の印。選択の位置を数えるときに中へ入らない。 */
@@ -242,7 +242,7 @@ function renderContentsHeadings() {
       const headings = article?.querySelectorAll('.part-markdown :is(h1,h2,h3,h4,h5,h6)') ?? [];
       for (const [index, heading] of Array.from(headings).entries()) {
         // 目次から移るための DOM の id。コメントの対象 ID ではない。
-        if (!heading.id) heading.id = `explanation-heading-${block.id}-${index}`;
+        if (!heading.id) heading.id = explanationElementId('heading',block.id,index);
         const li = el('li','explanation-toc-sub');
         const item = contentsItem(heading.textContent ?? '', heading.id);
         item.append(textEl('span','',heading.textContent ?? ''));
@@ -286,11 +286,11 @@ export function renderExplanationDocument() {
   dom.explanationDocument.onscroll = markCurrentContents;
   for (const [sectionIndex, section] of version.sections.entries()) {
     const sectionElement = el('section','explanation-section');
-    sectionElement.id = `explanation-section-${section.id}`;
+    sectionElement.id = explanationElementId('section',section.id);
     const number = String(sectionIndex + 1).padStart(2,'0');
     const head = el('header','explanation-section-head');
     const title = textEl('h2','',section.title);
-    title.id = `explanation-section-title-${section.id}`;
+    title.id = explanationElementId('section-title',section.id);
     sectionElement.setAttribute('aria-labelledby',title.id);
     head.append(textEl('span','explanation-section-number',number),title);
     sectionElement.append(head);
@@ -298,7 +298,7 @@ export function renderExplanationDocument() {
     li.dataset.tocSection = section.id;
     const toc = contentsItem(section.title, sectionElement.id);
     const count = textEl('span','explanation-toc-count','');
-    count.id = `explanation-toc-count-${section.id}`;
+    count.id = explanationElementId('toc-count',section.id);
     count.dataset.tocCount = section.id;
     count.hidden = true;
     toc.setAttribute('aria-describedby',count.id);
@@ -307,7 +307,7 @@ export function renderExplanationDocument() {
     list.append(li);
     for (const [index, block] of section.blocks.entries()) {
       const article = el('article','explanation-block');
-      article.id = `explanation-block-${block.id}`;
+      article.id = explanationElementId('block',block.id);
       article.dataset.explanationBlock = block.id;
       article.dataset.partType = block.part.type;
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
