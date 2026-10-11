@@ -14,6 +14,7 @@ export function diagramViewport(part, modal = false) {
   const surface = el('div', 'part-diagram-surface');
   surface.tabIndex = 0; surface.setAttribute('role', 'group'); surface.setAttribute('aria-label', `${part.title} diagram controls`);
   const controls = el('div', 'part-diagram-controls');
+  controls.setAttribute('role','group'); controls.setAttribute('aria-label',`${part.title} view tools`);
   const svg = svgElement('svg', { class: 'explanation-diagram', role: 'img', 'aria-label': part.title });
   let ready = false, fitted = false, signature = '', queued = false;
   const zoom = new PanZoom(surface, { x: 0, y: 0, k: 1 }, view => {
@@ -26,14 +27,25 @@ export function diagramViewport(part, modal = false) {
     const k = Math.min(1, (box.width - 24) / width, (box.height - 24) / height);
     zoom.set({ k, x: (box.width - width * k) / 2, y: (box.height - height * k) / 2 }); fitted = true;
   };
-  /** @param {string} label @param {()=>void} action */
-  const control = (label, action) => { const btn = button(''); btn.textContent = label; btn.addEventListener('click', action); controls.append(btn); return btn; };
-  control('Zoom out', () => zoom.zoomBy(1 / 1.2)); control('Zoom in', () => zoom.zoomBy(1.2)); control('Show whole diagram', whole);
-  control('Reset diagram', () => { fitted = false; zoom.set({ x: 0, y: 0, k: 1 }); });
+  const zoomTools = el('div','part-diagram-tool-group'), panTools = el('div','part-diagram-tool-group');
+  zoomTools.setAttribute('role','group'); zoomTools.setAttribute('aria-label','Zoom and framing');
+  panTools.setAttribute('role','group'); panTools.setAttribute('aria-label','Pan');
+  controls.append(zoomTools,panTools);
+  /** @param {string} label @param {string} icon @param {()=>void} action @param {HTMLElement} [group] */
+  const control = (label, icon, action, group = zoomTools) => {
+    const btn = button('part-diagram-tool'); btn.title = label; btn.setAttribute('aria-label',label);
+    const glyph = textEl('span','part-diagram-glyph',icon); glyph.setAttribute('aria-hidden','true');
+    btn.append(glyph,textEl('span','part-diagram-control-label',label));
+    btn.addEventListener('click', action); group.append(btn); return btn;
+  };
+  control('Zoom out', '−', () => zoom.zoomBy(1 / 1.2)); control('Zoom in', '+', () => zoom.zoomBy(1.2));
+  control('Show whole diagram', 'Fit', whole).classList.add('part-diagram-tool-text');
+  control('Reset diagram', '↺', () => { fitted = false; zoom.set({ x: 0, y: 0, k: 1 }); });
   /** @type {Record<string,[number,number]>} */ const moves = { ArrowLeft: [-40, 0], ArrowRight: [40, 0], ArrowUp: [0, -40], ArrowDown: [0, 40] };
-  for (const [key, [dx, dy]] of Object.entries(moves)) control(`Move ${key.slice(5).toLowerCase()}`, () => zoom.set({ ...zoom.view, x: zoom.view.x + dx, y: zoom.view.y + dy }));
+  const arrows = ['←','→','↑','↓'];
+  for (const [index, [key, [dx, dy]]] of Object.entries(moves).entries()) control(`Move ${key.slice(5).toLowerCase()}`, arrows[index], () => zoom.set({ ...zoom.view, x: zoom.view.x + dx, y: zoom.view.y + dy }),panTools);
   if (!modal) {
-    const enlarge = control('Open diagram separately', () => {
+    const enlarge = control('Open diagram separately', '⤢', () => {
       const dialog = document.createElement('dialog'); dialog.className = 'part-diagram-dialog';
       dialog.setAttribute('aria-label', part.title);
       dialog.addEventListener('keydown', event => event.stopPropagation());
@@ -41,7 +53,7 @@ export function diagramViewport(part, modal = false) {
       const finish = () => { dialog.close(); dialog.remove(); enlarge.focus(); host.scrollIntoView({ block: 'nearest' }); };
       close.addEventListener('click', finish); dialog.addEventListener('cancel', event => { event.preventDefault(); finish(); });
       dialog.append(close, diagramViewport(part, true)); document.body.append(dialog); dialog.showModal(); close.focus();
-    });
+    },controls);
   }
   surface.addEventListener('keydown', event => {
     if (event.target !== surface || event.ctrlKey || event.metaKey || event.altKey || !ready) return;

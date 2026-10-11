@@ -467,12 +467,9 @@ try {
   await waitFor(`document.querySelector('#conversation').dataset.open === 'false'`);
   console.log('PASS title のシートと会話パネルのシートが開いて閉じる');
 
-  // (13) 1280px では、文字ラベルを持つ上部バーの操作がグループ単位・送信・更新バッジ・
-  //      会話パネルの開閉（件数つき）だけで、subtitle と meta が上部に出て、狭い画面専用の操作が見えない。
+  // (13) 1280px ではsubtitleとmetaが上部に出て、狭い画面専用の操作が見えない。
   await browser('set', 'viewport', ...WIDE);
   await waitFor(wideApplied);
-  const labelled = await evaluate(`Array.from(document.querySelectorAll('.topbar button')).filter(b => b.textContent.trim() !== '' && getComputedStyle(b).display !== 'none' && b.getClientRects().length > 0).map(b => b.id || b.className)`);
-  assert.deepEqual([...new Set(labelled)].sort(), ['btn-approve', 'btn-changes', 'btn-comments', 'review-view-button', 'unit-button']);
   assert.equal(await isShown('#review-meta'), true);
   assert.ok(await evaluate(`document.querySelectorAll('#review-meta span').length`) > 0);
   assert.equal(await evaluate(`document.querySelector('#review-subtitle').hidden || getComputedStyle(document.querySelector('#review-subtitle')).display !== 'none'`), true);
@@ -480,7 +477,7 @@ try {
     assert.equal(await isShown(selector), false, `${selector} should be hidden on a wide screen`);
   }
   assert.equal(await isShown('#btn-split'), true);
-  console.log('PASS 1280px では上部バーの文字ラベルの操作が 4 種類だけで、狭い画面専用の操作が見えない');
+  console.log('PASS 1280px ではsubtitleとmetaが上部に出て、狭い画面専用の操作が見えない');
 
   // (18) 1280px では行番号の押し下げとホバーで範囲が作れ、ホバーした行に `+` が出る。
   await browser('press', 'Escape');

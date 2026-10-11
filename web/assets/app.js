@@ -268,7 +268,6 @@ dom.viewSwitch.addEventListener('click',event=>{
   if(view==='code'||view==='page'||view==='explanation') void selectView(view);
 });
 dom.explanationUpdate.addEventListener('click',()=>void openLatestExplanation());
-dom.explanationReturn.addEventListener('click',()=>void selectView('explanation'));
 dom.drawerScrim.addEventListener("click", closeDrawer);
 dom.menuWrap.addEventListener("click", () => setWrap(!displayWrap()));
 dom.menuFocus.addEventListener("click", toggleFocusOnly);

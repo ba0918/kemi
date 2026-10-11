@@ -124,10 +124,10 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   const before = await transform(); await browser('press', 'ArrowRight'); assert.notEqual(await transform(), before);
   await browser('press', '+'); const zoomed = await transform(); assert.ok(zoomed.includes('1.2'));
   await browser('press', '0'); assert.notEqual(await transform(), zoomed);
-  await evaluate(`Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelectorAll('button').forEach(e=>{if(e.textContent==='Open diagram separately')e.click()}); true`);
+  await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
   await browser('find', 'role', 'button', 'click', '--name', 'Close diagram');
-  assert.equal(await evaluate(`document.activeElement.textContent==='Open diagram separately'`), true);
+  assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true);
   await evaluate(`const style=document.createElement('style');style.id='font-change';style.textContent='.explanation-diagram {font-size:180px!important;font-family:serif!important}';document.head.append(style);true`);
   await wait(`Array.from(document.querySelectorAll('pre')).some(e=>{try{return JSON.parse(e.textContent).title==='Sequence operations'}catch{return false}})`);
   assert.equal(await evaluate(`document.body.textContent.includes('C survives') && document.body.textContent.includes('Comment stays')`), true);
@@ -143,10 +143,10 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await browser('set', 'viewport', '390', '900');
   await browser('find', 'role', 'button', 'click', '--name', 'Conversation (1 comment)');
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations' && e.getClientRects().length)`);
-  await evaluate(`Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelectorAll('button').forEach(e=>{if(e.textContent==='Open diagram separately')e.click()});true`);
+  await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
   await browser('press', 'Escape');
-  assert.equal(await evaluate(`!document.querySelector('dialog') && document.activeElement.textContent==='Open diagram separately' && document.activeElement.getClientRects().length>0`), true);
+  assert.equal(await evaluate(`!document.querySelector('dialog') && document.activeElement===window.diagramSource && document.activeElement.getClientRects().length>0`), true);
   console.log('PASS: Escape closes the separate diagram and returns to its source at 390px');
 } finally {
   await browser('close').catch(() => {});
@@ -175,6 +175,31 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   const initialHar=join(root,'initial.har');await browser('network','har','stop',initialHar);
   const initialRequests=JSON.parse(await readFile(initialHar,'utf8')).log.entries;
   assert.equal(initialRequests.filter(e=>e.request.url.includes('/api/file/')).length,0,'opening Explanation does not precompute Code content');
+  // 人間の追加要件: 説明だけの幅調整。内部DOM名ではなく操作と実幅を観測する。
+  const contentsWidth = () => evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='Explanation contents').getBoundingClientRect().width`);
+  const separator = `Array.from(document.querySelectorAll('[role="separator"]')).find(e=>e.getClientRects().length)`;
+  assert.equal(await evaluate(`Boolean(${separator})`), true, 'Explanation contents can be resized');
+  const initialContentsWidth = await contentsWidth();
+  await evaluate(`${separator}.focus();true`);await browser('press','ArrowRight');
+  assert.ok(await contentsWidth() > initialContentsWidth, 'keyboard expands the contents');
+  await browser('press','End');const maxContentsWidth = await contentsWidth();
+  await browser('press','ArrowRight');assert.equal(await contentsWidth(), maxContentsWidth, 'maximum width is clamped');
+  await browser('press','Home');const minContentsWidth = await contentsWidth();
+  await browser('press','ArrowLeft');assert.equal(await contentsWidth(), minContentsWidth, 'minimum width is clamped');
+  assert.ok(minContentsWidth < initialContentsWidth && maxContentsWidth > initialContentsWidth);
+  const resizeBox = await evaluate(`(()=>{const r=${separator}.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+  await browser('mouse','move',String(resizeBox.x),String(resizeBox.y));await browser('mouse','down');
+  await browser('mouse','move',String(resizeBox.x+60),String(resizeBox.y));await browser('mouse','up');
+  assert.ok(await contentsWidth() > minContentsWidth, 'pointer expands the contents');
+  await browser('find','role','button','click','--name','Code','--exact');
+  const codeTreeWidth = await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`);
+  await browser('find','role','button','click','--name','EXPLANATION','--exact');
+  await evaluate(`${separator}.focus();true`);await browser('press','End');
+  await browser('find','role','button','click','--name','Code','--exact');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`), codeTreeWidth);
+  await browser('find','role','button','click','--name','EXPLANATION','--exact');
+  await evaluate(`${separator}.focus();true`);await browser('press','Home');
+  console.log('PASS: contents resize by keyboard/pointer, both clamps, Code width unchanged');
   const review = await (await fetch(`${running.url}api/review`)).json();
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
   const cli = async (...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
@@ -190,7 +215,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /not fixed file contents/.test(e.textContent) && /proof/.test(e.textContent))`),true);
   await browser('find','role','button','click','--name','Go to Middle section','--exact');
   await browser('find','text','Comment on this block','click');
-  await browser('find','label','Comment on first','fill','Question before correction');
+  await browser('find','label','Reading order · Block 1','fill','Question before correction');
   await browser('find','role','button','click','--name','Add comment');
   await wait(`document.body.textContent.includes('Question before correction')`);
   await browser('find','role','button','click','--name','Open the conversation');

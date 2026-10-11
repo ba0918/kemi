@@ -13,6 +13,45 @@ import { showOverlay } from '../views/overlay.js';
 
 /** @type {(view:'code'|'page', page?:string)=>void} */
 let liveView = ()=>{};
+let contentsWidth = 280;
+
+function setupContentsResize() {
+  const splitter = document.getElementById('explanation-splitter');
+  const layout = dom.explanationToc.parentElement;
+  if (!splitter || !layout) return;
+  const maximum = () => Math.max(200, Math.min(480, layout.clientWidth * .4));
+  /** @param {number} width */
+  const setWidth = (width) => {
+    contentsWidth = Math.max(200, Math.min(maximum(), width));
+    layout.style.setProperty('--explanation-toc-width', `${contentsWidth}px`);
+    splitter.setAttribute('aria-valuemin', '200');
+    splitter.setAttribute('aria-valuemax', String(Math.floor(maximum())));
+    splitter.setAttribute('aria-valuenow', String(Math.round(contentsWidth)));
+  };
+  splitter.addEventListener('keydown', event => {
+    if (state.narrow || state.view !== 'explanation') return;
+    const width = event.key === 'Home' ? 200 : event.key === 'End' ? maximum() : event.key === 'ArrowLeft' ? contentsWidth - 20 : event.key === 'ArrowRight' ? contentsWidth + 20 : null;
+    if (width !== null) { event.preventDefault(); setWidth(width); }
+  });
+  splitter.addEventListener('pointerdown', event => {
+    if (state.narrow || state.view !== 'explanation' || event.button !== 0) return;
+    event.preventDefault(); splitter.focus();
+    const startX = event.clientX, startWidth = contentsWidth;
+    splitter.setPointerCapture(event.pointerId);
+    /** @param {PointerEvent} move */
+    const move = (move) => setWidth(startWidth + move.clientX - startX);
+    const finish = () => {
+      splitter.removeEventListener('pointermove', move);
+      splitter.removeEventListener('pointerup', finish);
+      splitter.removeEventListener('pointercancel', finish);
+    };
+    splitter.addEventListener('pointermove', move);
+    splitter.addEventListener('pointerup', finish);
+    splitter.addEventListener('pointercancel', finish);
+  });
+  new ResizeObserver(() => { if (!state.narrow) setWidth(contentsWidth); }).observe(layout);
+  setWidth(contentsWidth);
+}
 /** @param {(view:'code'|'page', page?:string)=>void} handler */
 export function bindLiveView(handler) {liveView=handler;}
 
@@ -36,6 +75,8 @@ function showView() {
   document.body.dataset.reviewView=state.view;
   dom.explanationDocument.hidden=state.view!=='explanation';
   dom.explanationToc.hidden=state.view!=='explanation';
+  const splitter = document.getElementById('explanation-splitter');
+  if (splitter) splitter.hidden = state.view !== 'explanation';
   if (state.drawerOpen) dom.explanationToc.dataset.drawer='open';
   else delete dom.explanationToc.dataset.drawer;
   renderHeader();renderExplanationStatus();
@@ -45,6 +86,7 @@ function showView() {
 
 /** @param {any} review */
 export async function startExplanation(review) {
+  setupContentsResize();
   const history=review.explanation;
   const current=history?.versions.find((/** @type {any} */ version)=>version.revision===history.current_revision);
   state.explanation.latest=current??null;

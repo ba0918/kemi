@@ -53,7 +53,7 @@
     <header class="topbar">
       <div class="brand">kemi</div>
       <div id="review-views" role="group" aria-label="Review view">
-        <button class="review-view-button" type="button" data-review-view="explanation" disabled title="No explanation yet">EXPLANATION</button>
+        <button id="explanation-return" class="review-view-button" type="button" data-review-view="explanation" disabled title="No explanation yet">EXPLANATION</button>
         <button class="review-view-button" type="button" data-review-view="code" aria-pressed="true">Code</button>
         <button class="review-view-button" type="button" data-review-view="page" hidden>Page</button>
       </div>
@@ -206,12 +206,12 @@
 
     <div class="layout">
       <aside id="explanation-toc" class="tree" aria-label="Explanation contents" hidden></aside>
+      <div id="explanation-splitter" role="separator" aria-label="Resize explanation contents" aria-orientation="vertical" aria-controls="explanation-toc" tabindex="0" hidden></div>
       <aside class="tree" id="tree" aria-label="File tree"></aside>
       <div class="narrow-only" id="drawer-scrim"></div>
       <main id="main">
         <div id="explanation-status" hidden></div>
         <button id="explanation-update" type="button" hidden></button>
-        <button id="explanation-return" type="button" hidden>Back to explanation</button>
         <div id="explanation-document" role="region" aria-label="Explanation" hidden></div>
         <div class="group-header" id="group-header"></div>
         <div class="file-header" id="file-header"></div>
