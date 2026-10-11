@@ -13,26 +13,23 @@
 #explanation-status p { line-height:1.6; overflow-wrap:anywhere; }
 #explanation-status .explanation-mismatch { width:100%; margin:0; color:var(--note-ink); }
 #explanation-update { margin:6px 12px; padding:6px; color:var(--accent); background:var(--accent-soft); border:1px solid var(--line); border-radius:4px; text-align:left; }
-#explanation-document { flex:1; min-height:0; overflow:auto; padding:28px clamp(20px, 3vw, 48px) 64px; scroll-padding-top:28px; }
-.explanation-section { position:relative; max-width:46rem; margin:0 auto 44px; }
-.explanation-section[open] { padding-bottom:20px; border-bottom:2px solid var(--line); }
-.explanation-section[open]::before { content:''; position:absolute; top:0; bottom:0; left:-12px; border-left:2px solid var(--line); }
-.explanation-section > summary { position:relative; font-weight:650; font-size:21px; line-height:1.5; cursor:pointer; padding:14px 42px 14px 46px; background:var(--panel); border:1px solid var(--line); border-radius:8px; list-style:none; }
-.explanation-section > summary::before { content:attr(data-number); position:absolute; left:12px; top:17px; font:600 12px var(--mono); color:var(--accent); }
-.explanation-section > summary::after { content:''; position:absolute; right:18px; top:23px; width:8px; height:8px; border-right:2px solid var(--ink-2); border-bottom:2px solid var(--ink-2); transform:rotate(-45deg); }
-.explanation-section[open] > summary::after { transform:rotate(45deg); top:20px; }
-.explanation-section > .explanation-block:last-child { border-bottom:0; }
-.explanation-block { position:relative; padding:24px 4px 18px; border-bottom:1px solid var(--line-soft); min-width:0; }
-.explanation-block:focus-within { border-bottom-color:var(--accent); }
+#explanation-document { flex:1; min-height:0; overflow:auto; position:relative; padding:36px clamp(20px, 3vw, 48px) 120px; scroll-padding-top:24px; }
+/* 節は箱にせず畳まない。番号付きの見出し、見出しの下の線、節の前の余白で区切る。 */
+.explanation-section { position:relative; max-width:46rem; margin:0 auto; }
+.explanation-section + .explanation-section { margin-top:72px; }
+.explanation-section-head { display:grid; grid-template-columns:auto 1fr; column-gap:14px; align-items:baseline; padding-bottom:12px; margin-bottom:20px; border-bottom:1px solid var(--line); }
+.explanation-section-head .explanation-section-number { font:600 13px var(--mono); color:var(--accent); background:var(--accent-soft); border-radius:6px; padding:2px 7px; }
+.explanation-section-head h2 { margin:0; font-size:22px; line-height:1.45; }
+.explanation-block { position:relative; margin:0 0 18px; min-width:0; }
 .explanation-block .content-part { margin:0 0 16px; }
-.explanation-block .part-markdown { font-size:15px; line-height:1.85; }
-.explanation-block .part-markdown p { margin:0 0 1em; }
-.explanation-block .part-markdown :is(h1,h2,h3,h4,h5,h6) { line-height:1.5; margin:1.4em 0 .6em; }
-.explanation-block .part-markdown h1 { font-size:1.6em; }
-.explanation-block .part-markdown h2 { font-size:1.35em; }
-.explanation-block .part-markdown h3 { font-size:1.15em; }
-.explanation-block .part-markdown li + li { margin-top:.5em; }
-.explanation-block .part-markdown :is(ul,ol) { padding-left:1.6em; margin:.8em 0 1.2em; }
+.explanation-block .part-markdown { font-size:15px; line-height:1.9; }
+.explanation-block .part-markdown p { margin:0 0 .9em; }
+.explanation-block .part-markdown :is(h1,h2,h3,h4,h5,h6) { line-height:1.5; margin:36px 0 10px; padding-left:10px; border-left:3px solid var(--accent); }
+.explanation-block .part-markdown h1 { font-size:1.3em; }
+.explanation-block .part-markdown h2 { font-size:1.15em; }
+.explanation-block .part-markdown :is(h3,h4,h5,h6) { font-size:1.05em; }
+.explanation-block .part-markdown li + li { margin-top:.35em; }
+.explanation-block .part-markdown :is(ul,ol) { padding-left:1.5em; margin:.4em 0 1em; }
 .explanation-block .part-markdown blockquote { margin:1em 0; padding:8px 16px; border-left:3px solid var(--accent); color:var(--ink-2); background:var(--panel); }
 .explanation-block :is(.part-code,.part-markdown pre) { padding:16px; border:1px solid var(--line); border-radius:8px; background:var(--panel); font:13px/1.7 var(--mono); }
 .explanation-block .part-markdown code { font-family:var(--mono); font-size:.9em; background:var(--panel); border-radius:3px; padding:1px 4px; }
@@ -40,31 +37,49 @@
 .explanation-references { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 12px; }
 .explanation-references:empty { display:none; }
 .explanation-reference.btn { max-width:100%; height:auto; padding:5px 9px; white-space:normal; overflow-wrap:anywhere; text-align:left; font:12px/1.5 var(--mono); color:var(--accent); background:var(--panel); border-color:var(--line); }
-.explanation-comments:empty { display:none; }
-.explanation-comment-trigger.iconbtn { position:absolute; top:-8px; right:0; width:32px; height:32px; padding:7px; color:var(--ink-2); background:var(--bg); border:1px solid var(--line); border-radius:6px; opacity:0; }
-.explanation-block:hover > .explanation-comment-trigger, .explanation-comment-trigger:focus-visible, .explanation-comment-trigger[aria-expanded="true"] { opacity:1; }
-.explanation-comment-trigger:hover, .explanation-comment-trigger:focus-visible { color:var(--note-ink); background:var(--note-bg); border-color:var(--note-line); }
-.explanation-selection-comment.iconbtn { position:fixed; inset:auto; margin:0; opacity:1; top:0; left:0; right:auto; width:36px; height:36px; box-shadow:0 3px 10px #0003; color:var(--note-ink); border-color:var(--note-line); background:var(--note-bg); z-index:100; }
-.explanation-selection-comment:not(:popover-open) { display:none; }
-.explanation-comment-editor { margin-top:12px; padding:14px; border:1px solid var(--note-line); border-radius:8px; background:var(--note-bg); scroll-margin-bottom:calc(16px + var(--hand-float-height, 0px)); }
-.explanation-comment-editor .btn + .btn { margin-left:8px; }
-.explanation-comment-scope { color:var(--note-ink); font-size:12px; margin:0 0 10px; }
-.explanation-comment-target { display:block; font-size:12px; color:var(--note-ink); margin-bottom:8px; }
-.explanation-block textarea { display:block; box-sizing:border-box; width:100%; min-height:90px; padding:10px; margin-bottom:10px; border:1px solid var(--line); border-radius:6px; font:14px/1.6 var(--sans); color:var(--ink); background:var(--bg); resize:vertical; }
+/* 印と札。コメントのあるブロック全体には左に付箋色の線を付ける。 */
+::highlight(explanation-comment) { background-color:color-mix(in srgb, var(--note-line) 32%, transparent); text-decoration:underline 2px var(--note-line); text-underline-offset:3px; }
+.explanation-block.has-comment::before { content:''; position:absolute; left:-14px; top:4px; bottom:4px; width:3px; border-radius:2px; background:var(--note-line); }
+.explanation-cards { display:flex; flex-direction:column; gap:4px; max-width:72ch; margin:6px 0 14px; }
+li > .explanation-cards { margin-top:6px; }
+.explanation-card { display:flex; align-items:center; gap:8px; width:100%; padding:5px 10px; border:1px solid var(--note-line); border-radius:6px; background:var(--note-bg); color:var(--note-ink); font:13px/1.5 var(--sans); text-align:left; cursor:pointer; }
+.explanation-card svg { width:14px; height:14px; flex-shrink:0; }
+.explanation-card-body { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+.explanation-card-meta { flex-shrink:0; font-size:12px; }
+.explanation-card:hover { filter:brightness(.98); }
+.explanation-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+/* 選択の近くに出すボタンと、コメントできない理由。 */
+.explanation-selection-comment { position:fixed; inset:auto; margin:0; top:0; left:0; display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 10px 0 8px; border-radius:15px; border:1px solid var(--note-line); background:var(--note-bg); color:var(--note-ink); font:600 12px var(--sans); cursor:pointer; box-shadow:0 3px 10px #0003; z-index:100; }
+.explanation-selection-comment svg { width:15px; height:15px; }
+.explanation-selection-comment:not(:popover-open), .explanation-selection-hint:not(:popover-open) { display:none; }
+.explanation-selection-hint { position:fixed; inset:auto; margin:0; top:0; left:0; max-width:min(320px, calc(100vw - 32px)); padding:5px 10px; border:0; border-radius:6px; background:var(--ink); color:var(--bg); font:12px/1.5 var(--sans); box-shadow:0 3px 10px #0003; z-index:100; }
+/* 入力欄は本文のスクロールする要素を基準に、選んだ所の下へ浮かべる。 */
+.explanation-comment-editor { position:absolute; z-index:40; width:min(380px, calc(100% - 32px)); box-sizing:border-box; padding:12px; border:1px solid var(--note-line); border-radius:8px; background:var(--bg); box-shadow:0 6px 24px #0f121626, 0 1px 3px #0f12161f; font-size:14px; line-height:1.6; scroll-margin-bottom:calc(16px + var(--hand-float-height, 0px)); }
+.explanation-comment-target { display:flex; gap:6px; align-items:baseline; font-size:12px; color:var(--ink-3); margin-bottom:8px; }
+.explanation-comment-target b { color:var(--note-ink); font-weight:600; }
+.explanation-comment-quote { margin:0 0 8px; padding:6px 10px; border-left:3px solid var(--note-line); background:var(--note-bg); color:var(--ink-2); font-size:13px; line-height:1.6; max-height:5.2em; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.explanation-comment-editor textarea { display:block; box-sizing:border-box; width:100%; min-height:72px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font:14px/1.6 var(--sans); color:var(--ink); background:var(--bg); resize:vertical; }
+.explanation-comment-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+.cv-selection { margin:0 0 8px; padding:4px 8px; border-left:3px solid var(--note-line); background:var(--note-bg); color:var(--ink-2); font-size:12.5px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:6em; overflow:auto; }
 body[data-review-view="explanation"] .layout { grid-template-columns:var(--explanation-toc-width, 280px) 8px minmax(0, 1fr) auto; }
-#explanation-toc { padding:24px 12px; border-right:0; }
-.explanation-toc-heading { padding:0 12px; font-size:11px; font-weight:700; letter-spacing:.1em; color:var(--ink-2); }
-.explanation-toc-meta { padding:0 12px; margin:6px 0 20px; font-size:12px; color:var(--ink-2); }
-.explanation-toc-item { display:flex; gap:10px; align-items:baseline; width:100%; text-align:left; border:1px solid transparent; border-radius:7px; padding:11px 10px; margin:3px 0; background:transparent; color:var(--ink-2); cursor:pointer; font:13px/1.6 var(--sans); overflow-wrap:anywhere; }
-.explanation-section-number { flex-shrink:0; font:11px var(--mono); color:var(--ink-3); }
+#explanation-toc { padding:22px 10px 40px 14px; border-right:0; }
+.explanation-toc-heading { padding:0 8px; font-size:11px; font-weight:700; letter-spacing:.1em; color:var(--ink-3); }
+.explanation-toc-meta { padding:0 8px; margin:2px 0 16px; font-size:12px; color:var(--ink-3); }
+.explanation-toc-list { list-style:none; margin:0; padding:0; }
+.explanation-toc-section + .explanation-toc-section { margin-top:6px; }
+.explanation-toc-item { display:flex; gap:9px; align-items:baseline; width:100%; text-align:left; border:0; border-left:2px solid transparent; border-radius:0 6px 6px 0; padding:6px 8px 6px 10px; background:transparent; color:var(--ink-2); cursor:pointer; font:13px/1.55 var(--sans); overflow-wrap:anywhere; }
+.explanation-toc-item .explanation-section-number { flex-shrink:0; width:1.6em; font:11px var(--mono); color:var(--ink-3); }
+.explanation-toc-sub .explanation-toc-item { padding-left:38px; font-size:12px; color:var(--ink-3); }
+.explanation-toc-count { margin-left:auto; flex-shrink:0; font-size:11px; color:var(--note-ink); background:var(--note-bg); border-radius:9px; padding:0 6px; }
+.explanation-toc-count[hidden] { display:none; }
 .explanation-toc-item:hover { background:var(--panel-2); color:var(--ink); }
-.explanation-toc-item[aria-current] { background:var(--accent-soft); color:var(--accent); border-color:color-mix(in srgb, var(--accent) 25%, transparent); }
+.explanation-toc-item[aria-current] { border-left-color:var(--accent); background:var(--accent-soft); color:var(--accent); font-weight:600; }
+.explanation-toc-sub .explanation-toc-item[aria-current] { font-weight:500; }
 .explanation-toc-item[aria-current] .explanation-section-number { color:var(--accent); }
 #explanation-splitter { position:relative; cursor:col-resize; touch-action:none; background:var(--panel); border-right:1px solid var(--line); }
 #explanation-splitter::after { content:''; position:absolute; top:45%; left:2px; height:36px; width:2px; border-radius:2px; background:var(--ink-3); }
 #explanation-splitter:hover, #explanation-splitter:focus-visible { background:var(--accent-soft); outline:2px solid var(--accent); outline-offset:-2px; }
-#review-views button:focus-visible, .explanation-section summary:focus-visible, .explanation-toc-item:focus-visible, .explanation-comment-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-@media (hover:none) { .explanation-block > .explanation-comment-trigger { opacity:1; } }
+#review-views button:focus-visible, .explanation-toc-item:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 body[data-review-view="explanation"] #tree,
 body[data-review-view="explanation"] #group-header,
 body[data-review-view="explanation"] #file-header,
@@ -86,9 +101,9 @@ body[data-review-view="explanation"] #explanation-toc:not([hidden]) { display:bl
   body[data-review-view="explanation"] .layout { grid-template-columns:minmax(0, 1fr); }
   #explanation-splitter { display:none; }
   #explanation-status { padding:8px 16px; gap:12px; }
-  #explanation-document { padding:20px 16px; padding-bottom:calc(24px + var(--hand-float-height, 0px)); }
-  .explanation-section > summary { font-size:18px; }
-  .explanation-section[open]::before { left:-8px; }
-  .explanation-block { padding:20px 0 16px; }
-  .explanation-block > .explanation-comment-trigger { opacity:1; }
+  #explanation-document { padding:24px 16px; padding-bottom:calc(120px + var(--hand-float-height, 0px)); }
+  .explanation-section + .explanation-section { margin-top:56px; }
+  .explanation-section-head h2 { font-size:19px; }
+  .explanation-block.has-comment::before { left:-9px; }
+  .explanation-comment-editor { left:16px; right:16px; width:auto; }
 }

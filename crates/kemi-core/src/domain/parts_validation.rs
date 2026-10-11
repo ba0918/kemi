@@ -4,6 +4,9 @@ use std::collections::HashSet;
 
 use super::parts::{Canvas, FlowKind, Message, Part, Point, SequenceEvent};
 
+/// 選択引用の occurrence の上限。ブラウザの Number で失わない整数の上限。
+pub const MAX_OCCURRENCE: u64 = 9_007_199_254_740_991;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartError {
     pub path: String,
@@ -25,6 +28,8 @@ pub enum PartRule {
     MissingCondition,
     GridSyntax,
     UnequalColumns,
+    NotSelectable,
+    Occurrence,
 }
 
 impl std::fmt::Display for PartError {
@@ -44,6 +49,8 @@ impl std::fmt::Display for PartError {
             }
             PartRule::GridSyntax => write!(f, "unrecognized grid diagram line"),
             PartRule::UnequalColumns => write!(f, "grid rows must have equal column counts"),
+            PartRule::NotSelectable => write!(f, "only text and code blocks accept a selection"),
+            PartRule::Occurrence => write!(f, "must be an integer in 0..={}", MAX_OCCURRENCE),
         }
     }
 }

@@ -2,7 +2,7 @@
 //! よらず共通で使う。
 
 use super::conversation_content::ConversationContent;
-use super::explanation::ExplanationQuote;
+use super::explanation::{ExplanationQuote, ExplanationSelection};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,6 +220,9 @@ pub struct ExplanationTarget {
     pub revision: u64,
     pub block_id: String,
     pub quote: ExplanationQuote,
+    /// 選択なしのコメントでも `null` を書き出す。キーの無い保存値は選択なしとして読む。
+    #[serde(default)]
+    pub selection: Option<ExplanationSelection>,
 }
 
 /// ファイルへのコメントの位置（R-COMMENT）。

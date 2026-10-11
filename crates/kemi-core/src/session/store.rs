@@ -1544,6 +1544,36 @@ mod tests {
         assert!(store.read(id).is_err());
     }
 
+    /// 説明コメント一つを持つ版 4 の保存値。`target` はコメントの `explanation` の値。
+    fn version_four_with_explanation_comment(
+        id: &str,
+        block: &serde_json::Value,
+        target: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut value = serde_json::to_value(MetaDto::from_parts(
+            &info(id, 100),
+            &state_with_comment(),
+            &CopyState::Pending,
+        ))
+        .unwrap();
+        value["state"]["explanation"] = serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:2"),"sections":[{"id":"s","title":"Section","blocks":[block.clone()]}]}]});
+        value["state"]["diff_display_version"] = serde_json::json!(format!("{id}:2"));
+        value["state"]["frozen_display_version"] = serde_json::Value::Null;
+        value["state"]["issued_display_generation"] = serde_json::json!("2");
+        let comment = &mut value["state"]["comments"][0];
+        comment["explanation"] = target;
+        comment["file_id"] = serde_json::Value::Null;
+        comment["side"] = serde_json::Value::Null;
+        comment["path"] = serde_json::Value::Null;
+        comment["replies"][0]["body"] = serde_json::Value::Null;
+        comment["replies"][0]["parts"] = serde_json::json!([{"type":"text","body":"**parts**"}]);
+        value
+    }
+
+    fn code_block() -> serde_json::Value {
+        serde_json::json!({"id":"b","part":{"type":"code","body":"literal\r\n","language":"pseudocode","role":"example"},"references":[]})
+    }
+
     #[test]
     fn version_four_restores_parts_full_explanation_quotes_and_generation_without_rewriting() {
         let scratch = Scratch::new();
@@ -1551,24 +1581,12 @@ mod tests {
         let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
         let open = store.create(info(id, 100)).unwrap();
         drop(open);
-        let mut value = serde_json::to_value(MetaDto::from_parts(
-            &info(id, 100),
-            &state_with_comment(),
-            &CopyState::Pending,
-        ))
-        .unwrap();
-        let block = serde_json::json!({"id":"b","part":{"type":"code","body":"literal\r\n","language":"pseudocode","role":"example"},"references":[]});
-        value["state"]["explanation"] = serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:2"),"sections":[{"id":"s","title":"Section","blocks":[block.clone()]}]}]});
-        value["state"]["diff_display_version"] = serde_json::json!(format!("{id}:2"));
-        value["state"]["frozen_display_version"] = serde_json::Value::Null;
-        value["state"]["issued_display_generation"] = serde_json::json!("2");
-        let comment = &mut value["state"]["comments"][0];
-        comment["explanation"] = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block}});
-        comment["file_id"] = serde_json::Value::Null;
-        comment["side"] = serde_json::Value::Null;
-        comment["path"] = serde_json::Value::Null;
-        comment["replies"][0]["body"] = serde_json::Value::Null;
-        comment["replies"][0]["parts"] = serde_json::json!([{"type":"text","body":"**parts**"}]);
+        let block = code_block();
+        let value = version_four_with_explanation_comment(
+            id,
+            &block,
+            serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block}}),
+        );
         let bytes = encoding::encode_session(4, &serde_json::to_vec(&value).unwrap());
         std::fs::write(session_path(&scratch.dir(), id), &bytes).unwrap();
         let restored = store.read(id).unwrap();
@@ -1584,7 +1602,7 @@ mod tests {
         );
         assert_eq!(
             encoded["state"]["comments"][0]["explanation"],
-            value["state"]["comments"][0]["explanation"]
+            serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":null})
         );
         assert_eq!(
             encoded["state"]["comments"][0]["replies"][0]["parts"],
@@ -1595,6 +1613,61 @@ mod tests {
             std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
             bytes
         );
+    }
+
+    #[test]
+    fn version_four_keeps_the_saved_selection_of_an_explanation_comment() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        drop(store.create(info(id, 100)).unwrap());
+        let block = code_block();
+        let target = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":{"text":"liter","occurrence":3}});
+        let value = version_four_with_explanation_comment(id, &block, target.clone());
+        std::fs::write(
+            session_path(&scratch.dir(), id),
+            encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+        )
+        .unwrap();
+        let restored = store.read(id).unwrap();
+        let encoded = serde_json::to_value(MetaDto::from_parts(
+            &restored.info,
+            &restored.state,
+            &restored.copy,
+        ))
+        .unwrap();
+        assert_eq!(encoded["state"]["comments"][0]["explanation"], target);
+    }
+
+    #[test]
+    fn version_four_refuses_a_selection_the_creation_rules_would_refuse() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        drop(store.create(info(id, 100)).unwrap());
+        let diagram = serde_json::json!({"id":"b","part":{"type":"diagram","source":"a = A\n| a |","title":"Grid","role":"example"},"references":[]});
+        for (block, selection) in [
+            (code_block(), serde_json::json!({"text":"","occurrence":0})),
+            (
+                code_block(),
+                serde_json::json!({"text":"x","occurrence":9_007_199_254_740_992_u64}),
+            ),
+            (diagram, serde_json::json!({"text":"A","occurrence":0})),
+        ] {
+            let write = |selection: &serde_json::Value| {
+                let target = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":selection});
+                let value = version_four_with_explanation_comment(id, &block, target);
+                std::fs::write(
+                    session_path(&scratch.dir(), id),
+                    encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+                )
+                .unwrap();
+            };
+            write(&serde_json::Value::Null);
+            assert!(store.read(id).is_ok(), "the same block without a selection");
+            write(&selection);
+            assert!(store.read(id).is_err(), "{selection}");
+        }
     }
 
     fn review() -> ReviewMeta {

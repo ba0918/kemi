@@ -1974,6 +1974,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
         revision: 1,
         block_id: "b".into(),
         quote: quote.clone(),
+        selection: None,
     });
     comment.replies.push(Reply {
         id: "r1".into(),
@@ -4908,7 +4909,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
         .unwrap();
     let f:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add","file_id":file["id"],"side":"new","body":"File question"})).await.json().await.unwrap();
     let p:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_page","body":"Page question","page":{"url":"/page.html","width":640,"places":[{"n":1,"kind":"pen","points":[{"x":1,"y":1},{"x":3,"y":3}]}]}})).await.json().await.unwrap();
-    let e:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_explanation","explanation_revision":1,"block_id":"b","body":"Explanation question"})).await.json().await.unwrap();
+    let e:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_explanation","explanation_revision":1,"block_id":"b","body":"Explanation question","selection":{"text":"plan","occurrence":0}})).await.json().await.unwrap();
     let parts = serde_json::json!([{"type":"text","body":"**Answer**"},{"type":"code","body":"literal()","language":"pseudocode","role":"example"}]);
     let writes = serde_json::json!({"writes":[{"type":"reply","comment_id":f["id"],"parts":parts},{"type":"reply","comment_id":p["id"],"parts":parts},{"type":"reply","comment_id":e["id"],"parts":parts},{"type":"message","parts":parts}]});
     let mut reply = kemi_command(&workspace.path, &state.path)
@@ -4960,15 +4961,24 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
     assert_eq!(waited.status.code(), Some(0));
     let waited: serde_json::Value = serde_json::from_slice(&waited.stdout).unwrap();
     assert_eq!(waited["kemi"], 3);
+    let selection = serde_json::json!({"text":"plan","occurrence":0});
     for handed in waited["events"][0]["comments"].as_array().unwrap() {
         assert_eq!(handed["comment"]["replies"][0]["parts"], parts);
+        if handed["comment"]["target_type"] == "explanation" {
+            assert_eq!(handed["comment"]["explanation"]["selection"], selection);
+        }
     }
+    assert_eq!(
+        waited["events"][0]["comments"][2]["comment"]["target_type"],
+        "explanation"
+    );
     kemi.post("api/submit", serde_json::json!({"verdict":"approved"}))
         .await;
     let (_, result) = kemi.wait();
     let result: serde_json::Value = serde_json::from_str(&result).unwrap();
     assert_eq!(result["explanation"]["current_revision"], 1);
     assert_eq!(result["comments"][2]["target_type"], "explanation");
+    assert_eq!(result["comments"][2]["explanation"]["selection"], selection);
 }
 #[tokio::test]
 async fn resumed_context_keeps_skipped_files_present_but_does_not_offer_line_references() {

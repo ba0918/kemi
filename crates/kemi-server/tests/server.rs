@@ -461,7 +461,8 @@ async fn new_result_without_explanation_has_version_three_and_explicit_content_k
 async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_and_result() {
     use kemi_core::domain::conversation_content::ConversationContent;
     use kemi_core::domain::explanation::{
-        ExplanationDocument, ExplanationHistory, ExplanationVersion, quote_block,
+        ExplanationDocument, ExplanationHistory, ExplanationSelection, ExplanationVersion,
+        quote_block,
     };
     use kemi_core::domain::review::{
         Author, Comment, CommentTarget, ExplanationTarget, Message, Reply,
@@ -511,6 +512,10 @@ async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_
             revision: 1,
             block_id: "b".into(),
             quote: quote.clone(),
+            selection: Some(ExplanationSelection {
+                text: "literal".into(),
+                occurrence: 0,
+            }),
         }),
     });
     state.messages.push(Message {
@@ -539,6 +544,10 @@ async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_
     assert_eq!(status, 200);
     let handed = &handed_events(&answer)[0]["comments"][0]["comment"];
     assert_eq!(handed["explanation"]["quote"], json!(quote));
+    assert_eq!(
+        handed["explanation"]["selection"],
+        json!({"text":"literal","occurrence":0})
+    );
     assert_eq!(handed["replies"][0]["body"], Value::Null);
     assert_eq!(handed["replies"][0]["parts"][0]["body"], "**parts**");
     assert!(
@@ -573,6 +582,10 @@ async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_
     }
     assert_eq!(comment["quote"], json!([]));
     assert_eq!(comment["explanation"]["quote"], json!(quote));
+    assert_eq!(
+        comment["explanation"]["selection"],
+        json!({"text":"literal","occurrence":0})
+    );
     assert_eq!(result["messages"][0]["body"], "**plain**");
     assert!(result["messages"][0].get("parts").unwrap().is_null());
 }
@@ -5492,6 +5505,194 @@ async fn explanation_comments_keep_the_original_block_and_old_versions_can_be_he
     );
     assert_eq!(server.page.post("api/comment",json!({"op":"add_explanation","explanation_revision":1,"block_id":"missing","body":"question"})).await.status(),404);
 }
+/// text・code・図のブロックを一つずつ持つ説明を入れたサーバ。
+async fn server_with_selectable_explanation() -> AgentServer {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let sections = json!([{"id":"overview","title":"Overview","blocks":[
+        {"id":"intent","part":{"type":"text","body":"Read the intent, then the intent again."},"references":[]},
+        {"id":"snippet","part":{"type":"code","body":"let a = 1;","language":"rust","role":"example"},"references":[]},
+        {"id":"grid","part":{"type":"diagram","source":"a = A\n| a |","title":"Grid","role":"example"},"references":[]}
+    ]}]);
+    assert_eq!(server.agent_post("explain", json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":sections})).await.status(), 200);
+    server
+}
+
+fn explanation_comment_request(block_id: &str, selection: Option<Value>) -> Value {
+    let mut request = json!({"op":"add_explanation","explanation_revision":1,"block_id":block_id,"body":"question"});
+    if let Some(selection) = selection {
+        request["selection"] = selection;
+    }
+    request
+}
+
+#[tokio::test]
+async fn explanation_selections_reach_the_review_the_handed_wait_and_the_result() {
+    let server = server_with_selectable_explanation().await;
+    let text_selection = json!({"text":"intent","occurrence":1});
+    let code_selection = json!({"text":"a = 1","occurrence":0});
+    for (block, selection) in [
+        ("intent", Some(text_selection.clone())),
+        ("snippet", Some(code_selection.clone())),
+        ("grid", None),
+        ("intent", Some(Value::Null)),
+    ] {
+        let response = server
+            .page
+            .post("api/comment", explanation_comment_request(block, selection))
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+    let expected = [text_selection, code_selection, Value::Null, Value::Null];
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    for (comment, selection) in review["comments"].as_array().unwrap().iter().zip(&expected) {
+        assert_eq!(comment["explanation"]["selection"], *selection);
+    }
+    assert!(
+        server
+            .page
+            .post("api/hand", json!({}))
+            .await
+            .status()
+            .is_success()
+    );
+    let (status, answer) = server.wait(Some(1000)).await;
+    assert_eq!(status, 200);
+    let handed = handed_events(&answer)[0]["comments"].as_array().unwrap();
+    for (entry, selection) in handed.iter().zip(&expected) {
+        let explanation = entry["comment"]["explanation"].as_object().unwrap();
+        assert_eq!(explanation["selection"], *selection);
+    }
+    assert!(
+        server
+            .page
+            .post("api/submit", json!({"verdict":"changes_requested"}))
+            .await
+            .status()
+            .is_success()
+    );
+    let result = server.page.finish().await;
+    for (comment, selection) in result["comments"].as_array().unwrap().iter().zip(&expected) {
+        let explanation = comment["explanation"].as_object().unwrap();
+        assert_eq!(explanation["selection"], *selection);
+    }
+}
+
+#[tokio::test]
+async fn explanation_selections_accept_the_byte_and_occurrence_boundaries() {
+    let server = server_with_selectable_explanation().await;
+    let boundary = "あ".repeat(21_845) + "x";
+    assert_eq!(boundary.len(), 65_536);
+    for selection in [
+        json!({"text":"x","occurrence":0}),
+        json!({"text":boundary,"occurrence":9_007_199_254_740_991_u64}),
+    ] {
+        let response = server
+            .page
+            .post(
+                "api/comment",
+                explanation_comment_request("intent", Some(selection.clone())),
+            )
+            .await;
+        assert_eq!(response.status(), 200, "{selection}");
+        let comment: Value = response.json().await.unwrap();
+        assert_eq!(comment["explanation"]["selection"], selection);
+    }
+}
+
+#[tokio::test]
+async fn invalid_explanation_selections_are_refused_with_a_reason_and_change_nothing() {
+    let server = server_with_selectable_explanation().await;
+    assert_eq!(
+        server
+            .page
+            .post(
+                "api/comment",
+                explanation_comment_request(
+                    "intent",
+                    Some(json!({"text":"intent","occurrence":0}))
+                ),
+            )
+            .await
+            .status(),
+        200
+    );
+    let cases = [
+        ("grid", json!({"text":"A","occurrence":0})),
+        ("intent", json!({"text":"","occurrence":0})),
+        ("intent", json!({"text":"あ".repeat(21_846),"occurrence":0})),
+        ("intent", json!({"text":"x","occurrence":-1})),
+        (
+            "intent",
+            serde_json::from_str(r#"{"text":"x","occurrence":1.0}"#).unwrap(),
+        ),
+        (
+            "intent",
+            json!({"text":"x","occurrence":9_007_199_254_740_992_u64}),
+        ),
+        ("intent", json!({"text":"x","occurrence":"0"})),
+        ("intent", json!({"text":1,"occurrence":0})),
+        ("intent", json!({"text":"x"})),
+        ("intent", json!({"occurrence":0})),
+        ("intent", json!({"text":"x","occurrence":0,"extra":true})),
+        ("intent", json!("intent")),
+        ("intent", json!([])),
+    ];
+    for (block, selection) in cases {
+        let before: Value = server.page.get("api/review").await.json().await.unwrap();
+        let saved = server.sink.last_state();
+        let response = server
+            .page
+            .post(
+                "api/comment",
+                explanation_comment_request(block, Some(selection.clone())),
+            )
+            .await;
+        assert_eq!(response.status(), 400, "{selection}");
+        let reason: Value = response.json().await.unwrap();
+        assert!(reason.to_string().contains("selection"), "{reason}");
+        let after: Value = server.page.get("api/review").await.json().await.unwrap();
+        assert_eq!(before["comments"], after["comments"], "{selection}");
+        let after_saved = server.sink.last_state();
+        assert_eq!(saved.comments, after_saved.comments);
+        assert_eq!(saved.channel, after_saved.channel);
+        assert_eq!(saved.last_comment, after_saved.last_comment);
+        assert_eq!(saved.last_seq, after_saved.last_seq);
+    }
+}
+
+#[tokio::test]
+async fn editing_an_explanation_comment_keeps_its_selection() {
+    let server = server_with_selectable_explanation().await;
+    let selection = json!({"text":"intent","occurrence":1});
+    let comment: Value = server
+        .page
+        .post(
+            "api/comment",
+            explanation_comment_request("intent", Some(selection.clone())),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let edited = server
+        .page
+        .post(
+            "api/comment",
+            json!({"op":"edit","id":comment["id"],"body":"changed"}),
+        )
+        .await;
+    assert_eq!(edited.status(), 200);
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"][0]["body"], "changed");
+    assert_eq!(review["comments"][0]["explanation"]["selection"], selection);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn initial_explanation_accepts_opposite_units_while_the_full_build_is_gated() {
     for startup in [GroupBy::File, GroupBy::Commit] {

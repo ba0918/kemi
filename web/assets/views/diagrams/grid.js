@@ -2,11 +2,24 @@
 // @ts-check
 import { el, textEl } from '../../dom.js';
 import { svgElement, textMetrics } from '../../diagrams/explanation-svg.js';
+import { diagramCommentButton } from './viewport.js';
 
-/** @param {{type:'diagram',title:string,role:string,source:string}} part */
-export function gridView(part) {
+/**
+ * grid 図は非対話の表示。説明のブロックでは見出しの行の右にコメントのボタンだけを置く。
+ * @param {{type:'diagram',title:string,role:string,source:string}} part
+ * @param {{comment?: (button: HTMLButtonElement) => void}} [options]
+ */
+export function gridView(part, options = {}) {
   const host = el('section', 'part-grid');
-  host.append(textEl('header', 'part-metadata', `${part.title} · ${part.role}`));
+  const head = el('div', 'part-diagram-head');
+  head.append(textEl('header', 'part-metadata', `${part.title} · ${part.role}`));
+  if (options.comment) {
+    const controls = el('div', 'part-diagram-controls');
+    controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', `${part.title} view tools`);
+    controls.append(diagramCommentButton(part.title, options.comment));
+    head.append(controls);
+  }
+  host.append(head);
   requestAnimationFrame(async () => {
     await document.fonts.ready;
     if (!host.isConnected) return;
