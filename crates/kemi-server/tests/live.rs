@@ -1151,6 +1151,77 @@ async fn editing_a_page_comment_changes_only_its_body() {
     assert_eq!(edited["page"], added["page"]);
 }
 
+async fn page_body_boundary(op: &str) {
+    let (authority, dev) = start_dev_server().await;
+    let scratch = Scratch::new(&format!("page-body-boundary-{op}"));
+    let store = kemi_core::session::SessionStore::new(scratch.0.clone());
+    let open = store
+        .create(stored_session_info(&authority, &scratch))
+        .unwrap();
+    let sink = Arc::new(StoreSink {
+        open: std::sync::Mutex::new(open),
+    });
+    let running = start_review_with_session(
+        LiveTarget::Url {
+            authority: authority.clone(),
+            start: "/".into(),
+            display: format!("http://{authority}/"),
+        },
+        scratch.0.clone(),
+        Some(sink.clone()),
+    )
+    .await;
+    let added: serde_json::Value =
+        add_page_comment(&running, serde_json::json!([page_place(1, "element")]))
+            .await
+            .json()
+            .await
+            .unwrap();
+    let boundary = "あ".repeat(21_845) + "x";
+    {
+        let request = |body: &str| serde_json::json!({"op":op,"id":added["id"],"page":{"url":"/products?x=1","width":390,"places":[page_place(1,"element")]},"body":body});
+        let accepted = post_review(&running, "api/comment", request(&boundary)).await;
+        assert_eq!(accepted.status(), 200, "{op}");
+        let before = get_review_json(&running, "api/review").await;
+        let saved = sink.open.lock().unwrap().state().clone();
+        let refused =
+            post_review(&running, "api/comment", request(&(boundary.clone() + "x"))).await;
+        assert_eq!(refused.status(), 413, "{op}");
+        assert!(refused.text().await.unwrap().contains("body"));
+        let after = get_review_json(&running, "api/review").await;
+        assert_eq!(before["comments"], after["comments"]);
+        assert_eq!(before["agent"], after["agent"]);
+        assert_eq!(*sink.open.lock().unwrap().state(), saved);
+        assert_eq!(
+            post_review(&running, "api/comment", request("next"))
+                .await
+                .status(),
+            200
+        );
+        let next = sink.open.lock().unwrap().state().clone();
+        assert_eq!(next.last_seq, saved.last_seq + u32::from(op != "edit"));
+        assert_eq!(
+            next.last_comment,
+            saved.last_comment + u32::from(op == "add_page")
+        );
+        assert_eq!(next.last_reply, saved.last_reply + u32::from(op == "reply"));
+    }
+    dev.abort();
+}
+
+#[tokio::test]
+async fn page_comment_additions_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    page_body_boundary("add_page").await;
+}
+#[tokio::test]
+async fn page_comment_edits_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    page_body_boundary("edit").await;
+}
+#[tokio::test]
+async fn page_comment_replies_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    page_body_boundary("reply").await;
+}
+
 /// 割り込む要求。画像を書いた直後に別のスレッドで送り、応答の状態を返す。
 type Interruption = Box<dyn FnOnce() -> std::sync::mpsc::Receiver<StatusCode> + Send>;
 

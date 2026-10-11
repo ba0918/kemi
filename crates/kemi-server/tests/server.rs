@@ -5286,6 +5286,75 @@ async fn context_uses_known_source_lines_and_real_sides_without_reading_content_
     bad["sections"][0]["blocks"][0]["references"][0]["end_line"] = json!(3);
     assert_eq!(server.agent_post("explain", bad).await.status(), 400);
 }
+async fn file_body_boundary(op: &str) {
+    let server = AgentServer::start().await;
+    let comment = server.page.add_comment_with_body(11, "question").await;
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    let request = |body: &str| match op {
+        "add" => {
+            json!({"op":"add","file_id":review["groups"][0]["files"][0]["id"],"side":"new","body":body})
+        }
+        "message" => json!({"body":body}),
+        _ => json!({"op":op,"id":comment["id"],"body":body}),
+    };
+    let endpoint = if op == "message" {
+        "api/message"
+    } else {
+        "api/comment"
+    };
+    let boundary = "あ".repeat(21_845) + "x";
+    assert_eq!(
+        server
+            .page
+            .post(endpoint, request(&boundary))
+            .await
+            .status(),
+        200
+    );
+    let before: Value = server.page.get("api/review").await.json().await.unwrap();
+    let saved = server.sink.last_state();
+    let rejected = server.page.post(endpoint, request(&(boundary + "x"))).await;
+    assert_eq!(rejected.status(), 413);
+    assert!(rejected.text().await.unwrap().contains("body"));
+    let after: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(before["comments"], after["comments"]);
+    assert_eq!(before["messages"], after["messages"]);
+    assert_eq!(before["agent"], after["agent"]);
+    assert_eq!(server.sink.last_state(), saved);
+    assert_eq!(
+        server.page.post(endpoint, request("next")).await.status(),
+        200
+    );
+    let next = server.sink.last_state();
+    assert_eq!(next.last_seq, saved.last_seq + u32::from(op != "edit"));
+    assert_eq!(
+        next.last_comment,
+        saved.last_comment + u32::from(op == "add")
+    );
+    assert_eq!(next.last_reply, saved.last_reply + u32::from(op == "reply"));
+    assert_eq!(
+        next.last_message,
+        saved.last_message + u32::from(op == "message")
+    );
+}
+
+#[tokio::test]
+async fn file_comment_additions_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    file_body_boundary("add").await;
+}
+#[tokio::test]
+async fn file_comment_edits_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    file_body_boundary("edit").await;
+}
+#[tokio::test]
+async fn file_comment_replies_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    file_body_boundary("reply").await;
+}
+#[tokio::test]
+async fn reviewer_messages_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    file_body_boundary("message").await;
+}
+
 async fn explanation_body_boundary(op: &str) {
     let server = AgentServer::start().await;
     let context: Value = server

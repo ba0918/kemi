@@ -93,7 +93,7 @@ pub fn decode_content(input: &str) -> Result<ConversationContent, ContentError> 
 pub fn validate_content(content: ConversationContent) -> Result<ConversationContent, ContentError> {
     Ok(match content {
         ConversationContent::Plain(body) => {
-            bound("body UTF-8 bytes", body.len(), 0, 65_536).map_err(ContentError::Structure)?;
+            validate_plain_body(&body)?;
             ConversationContent::Plain(body)
         }
         ConversationContent::Parts(parts) => {
@@ -101,6 +101,10 @@ pub fn validate_content(content: ConversationContent) -> Result<ConversationCont
             ConversationContent::Parts(parts)
         }
     })
+}
+
+pub fn validate_plain_body(body: &str) -> Result<(), ContentError> {
+    bound("body UTF-8 bytes", body.len(), 0, 65_536).map_err(ContentError::Structure)
 }
 
 #[cfg(test)]

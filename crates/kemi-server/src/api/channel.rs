@@ -25,6 +25,8 @@ pub(super) async fn message_api(
     Path(_token): Path<String>,
     Json(request): Json<MessageRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    kemi_core::parts::validate_plain_body(&request.body)
+        .map_err(|error| ApiError::too_large(error.to_string()))?;
     let value = {
         let mut session = state.session.lock().expect("session poisoned");
         session.last_message += 1;

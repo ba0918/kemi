@@ -118,6 +118,17 @@ pub(super) async fn comment_api(
     Path(_token): Path<String>,
     Json(request): Json<CommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    match &request {
+        CommentRequest::AddExplanation { body, .. }
+        | CommentRequest::Add { body, .. }
+        | CommentRequest::AddPage { body, .. }
+        | CommentRequest::Edit { body, .. }
+        | CommentRequest::Reply { body, .. } => {
+            kemi_core::parts::validate_plain_body(body)
+                .map_err(|error| ApiError::too_large(error.to_string()))?;
+        }
+        CommentRequest::Delete { .. } | CommentRequest::Resolve { .. } => {}
+    }
     match request {
         CommentRequest::AddExplanation {
             explanation_revision,
@@ -160,9 +171,6 @@ pub(super) async fn comment_api(
                 .iter_mut()
                 .find(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
-            if matches!(comment.target, CommentTarget::Explanation(_)) {
-                validate_explanation_body(&body)?;
-            }
             // 行レンジ・side・quote・作成時の内容ハッシュも、ページの場所と画像も変えない
             // （R-COMMENT、live.md の R-PAGE-COMMENT）。
             match comment.file_mut() {
@@ -224,12 +232,6 @@ pub(super) async fn comment_api(
                 .iter()
                 .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
-            if matches!(
-                session.comments[index].target,
-                CommentTarget::Explanation(_)
-            ) {
-                validate_explanation_body(&body)?;
-            }
             session.last_reply += 1;
             let reply = Reply {
                 id: format!("r{}", session.last_reply),
@@ -440,7 +442,6 @@ fn add_explanation_comment(
     {
         return Err(ApiError::conflict("the review is being submitted"));
     }
-    validate_explanation_body(&body)?;
     let mut session = state.session.lock().expect("session poisoned");
     let version = session
         .explanation
@@ -485,13 +486,6 @@ fn add_explanation_comment(
     persist(state);
     notify_agent_state(state);
     Ok(Json(value))
-}
-
-fn validate_explanation_body(body: &str) -> Result<(), ApiError> {
-    if body.len() > kemi_core::domain::agent::MAX_BODY_BYTES {
-        return Err(ApiError::too_large("body exceeds 65536 UTF-8 bytes"));
-    }
-    Ok(())
 }
 
 /// コメントの画像を保存した結果。
