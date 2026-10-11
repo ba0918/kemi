@@ -170,7 +170,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('open','about:blank');await browser('network','har','start');
   await browser('open',running.url);
   await wait(`document.body.textContent.includes('C survives')`);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='EXPLANATION' && e.getAttribute('aria-pressed')==='true')`),true);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Explanation' && e.getAttribute('aria-pressed')==='true')`),true);
   const initialHar=join(root,'initial.har');await browser('network','har','stop',initialHar);
   const initialRequests=JSON.parse(await readFile(initialHar,'utf8')).log.entries;
   assert.equal(initialRequests.filter(e=>e.request.url.includes('/api/file/')).length,0,'opening Explanation does not precompute Code content');
@@ -192,11 +192,11 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.ok(await contentsWidth() > minContentsWidth, 'pointer expands the contents');
   await browser('find','role','button','click','--name','Code','--exact');
   const codeTreeWidth = await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`);
-  await browser('find','role','button','click','--name','EXPLANATION','--exact');
+  await browser('find','role','button','click','--name','Explanation','--exact');
   await evaluate(`${separator}.focus();true`);await browser('press','End');
   await browser('find','role','button','click','--name','Code','--exact');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`), codeTreeWidth);
-  await browser('find','role','button','click','--name','EXPLANATION','--exact');
+  await browser('find','role','button','click','--name','Explanation','--exact');
   await evaluate(`${separator}.focus();true`);await browser('press','Home');
   console.log('PASS: contents resize by keyboard/pointer, both clamps, Code width unchanged');
   const review = await (await fetch(`${running.url}api/review`)).json();
@@ -332,7 +332,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await wait(`document.body.textContent.includes('line count is unknown')`);
   await browser('find','role','button','click','--name','Close','--exact');
   await browser('find','role','button','click','--name','Code','--exact');
-  await browser('find','role','button','click','--name','EXPLANATION','--exact');
+  await browser('find','role','button','click','--name','Explanation','--exact');
   await browser('find','role','button','click','--name','Code a.txt:2–3 (new)','--exact');
   await wait(`document.body.textContent.includes('requested lines are no longer present')`);
   assert.equal(await evaluate(`(${moduleState}).view==='explanation' && (${moduleState}).codeToken===${JSON.stringify(review.diff_display_version)}`),true);
@@ -356,7 +356,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     running=await start(['--live',url]);
     await browser('set','viewport','1280','900');await browser('open',running.url);
     await wait(`document.querySelector('#live-stage')?.checkVisibility()`);
-    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='EXPLANATION').disabled`),true);
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
     const id=(await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
     const cli=async(...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
     const context=async()=>JSON.parse(await cli('explain',id,'--context'));
@@ -398,10 +398,10 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     await writeFile(join(root,'initial-explanation.json'),JSON.stringify({sections:handSections}));
     running=await start(['--live',url,'--explanation',join(root,'initial-explanation.json')]);
     await browser('open',running.url);
-    await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='EXPLANATION' && e.getAttribute('aria-pressed')==='true')`);
+    await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Explanation' && e.getAttribute('aria-pressed')==='true')`);
     const visibleHand=`Array.from(document.querySelectorAll('button')).filter(e=>e.textContent.includes('Hand to agent') && e.checkVisibility())`;
     assert.equal(await evaluate(`${visibleHand}.length`),1,'initial live Explanation has one visible hand control with Conversation closed');
-    for(const view of ['Page','EXPLANATION','Code','EXPLANATION']) {
+    for(const view of ['Page','Explanation','Code','Explanation']) {
       await browser('find','role','button','click','--name',view,...(view==='Code'?[]:['--exact']));
       assert.equal(await evaluate(`${visibleHand}.length`),1,`${view} has exactly one visible hand control`);
     }
@@ -437,7 +437,7 @@ if (process.argv.includes('--range-navigation') || process.argv.length===3) {
   for(const unit of ['file','commit']) try {
     running=await start(['--from',base,'--group-by',unit]);await browser('set','viewport','1280','900');await browser('open',running.url);
     await wait(`document.querySelector('[aria-label="Review view"]')?.querySelector('[aria-pressed="true"]')?.textContent==='Code'`);
-    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='EXPLANATION').disabled`),true);
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
     running.child.kill('SIGINT');await running.exited;
     running=await start(['--from',base,'--group-by',unit,'--explanation',join(root,'explanation.json')]);await browser('open',running.url);
     await wait(`document.body.textContent.includes('Both group units')`);

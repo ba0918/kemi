@@ -14,10 +14,14 @@
 #explanation-status .explanation-mismatch { width:100%; margin:0; color:var(--note-ink); }
 #explanation-update { margin:6px 12px; padding:6px; color:var(--accent); background:var(--accent-soft); border:1px solid var(--line); border-radius:4px; text-align:left; }
 #explanation-document { flex:1; min-height:0; overflow:auto; padding:28px clamp(20px, 3vw, 48px) 64px; scroll-padding-top:28px; }
-.explanation-section { max-width:46rem; margin:0 auto 36px; }
-.explanation-section > summary { position:relative; font-weight:650; font-size:21px; line-height:1.5; cursor:pointer; padding:14px 12px 14px 46px; background:var(--panel); border:1px solid var(--line); border-radius:8px; list-style:none; }
+.explanation-section { position:relative; max-width:46rem; margin:0 auto 44px; }
+.explanation-section[open] { padding-bottom:20px; border-bottom:2px solid var(--line); }
+.explanation-section[open]::before { content:''; position:absolute; top:0; bottom:0; left:-12px; border-left:2px solid var(--line); }
+.explanation-section > summary { position:relative; font-weight:650; font-size:21px; line-height:1.5; cursor:pointer; padding:14px 42px 14px 46px; background:var(--panel); border:1px solid var(--line); border-radius:8px; list-style:none; }
 .explanation-section > summary::before { content:attr(data-number); position:absolute; left:12px; top:17px; font:600 12px var(--mono); color:var(--accent); }
-.explanation-section:not([open]) > summary::after { content:' +'; color:var(--ink-2); }
+.explanation-section > summary::after { content:''; position:absolute; right:18px; top:23px; width:8px; height:8px; border-right:2px solid var(--ink-2); border-bottom:2px solid var(--ink-2); transform:rotate(-45deg); }
+.explanation-section[open] > summary::after { transform:rotate(45deg); top:20px; }
+.explanation-section > .explanation-block:last-child { border-bottom:0; }
 .explanation-block { padding:24px 4px 18px; border-bottom:1px solid var(--line-soft); min-width:0; }
 .explanation-block:focus-within { border-bottom-color:var(--accent); }
 .explanation-block .content-part { margin:0 0 16px; }
@@ -80,6 +84,7 @@ body[data-review-view="explanation"] #explanation-toc:not([hidden]) { display:bl
   #explanation-status { padding:8px 16px; gap:12px; }
   #explanation-document { padding:20px 16px; padding-bottom:calc(24px + var(--hand-float-height, 0px)); }
   .explanation-section > summary { font-size:18px; }
+  .explanation-section[open]::before { left:-8px; }
   .explanation-block { padding:20px 0 16px; }
   .explanation-comment-editor > summary { min-height:32px; }
 }

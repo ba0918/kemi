@@ -18,7 +18,7 @@ export function renderExplanationStatus() {
   }
   const returning = Boolean(returnTo && state.view !== 'explanation');
   dom.explanationReturn.classList.toggle('has-return', returning);
-  dom.explanationReturn.setAttribute('aria-label', returning ? 'Back to explanation' : 'EXPLANATION');
+  dom.explanationReturn.setAttribute('aria-label', returning ? 'Back to explanation' : 'Explanation');
   dom.explanationReturn.title = returning ? 'Back to your reading position' : latest ? 'Read the explanation' : 'No explanation yet';
   dom.explanationUpdate.hidden = !notification;
   if (notification) {
