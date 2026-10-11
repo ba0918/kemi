@@ -1,9 +1,17 @@
 // @ts-check
 import { actions } from '../actions.js';
-import { button, dom, el, textEl } from '../dom.js';
+import { button, dom, el, textEl, iconButton, COMMENT_ICON } from '../dom.js';
 import { state, unitLabel } from '../state.js';
 import { commentsForBlock, freshness } from '../explanation-model.js';
 import { partView } from './parts.js';
+
+/** @param {string} label */
+export function explanationCommentControl(label) {
+  const control = iconButton(label,COMMENT_ICON);
+  control.classList.add('explanation-comment-trigger');
+  control.querySelector('svg')?.setAttribute('aria-hidden','true');
+  return control;
+}
 
 export function renderExplanationStatus() {
   const {reading, notification, latest, returnTo} = state.explanation;
@@ -117,23 +125,35 @@ export function renderExplanationDocument() {
     for (const [index, block] of section.blocks.entries()) {
       const article = el('article','explanation-block');
       article.id = `explanation-block-${block.id}`;
+      article.dataset.explanationBlock = block.id;
+      article.dataset.partType = block.part.type;
       article.setAttribute('aria-label',`${section.title} · Block ${index + 1}`);
       article.append(partView(block.part));
       article.append(explanationReferences(block.references));
       const comments = el('div','explanation-comments'); comments.dataset.blockComments = block.id; article.append(comments);
-      const editor = /** @type {HTMLDetailsElement} */(el('details','explanation-comment-editor'));
-      editor.append(textEl('summary','','Comment on this block'));
-      const form = /** @type {HTMLFormElement} */(el('form'));
+      const trigger = explanationCommentControl(`Comment on ${section.title} · Block ${index + 1}`);
+      trigger.dataset.commentTrigger = '';
+      trigger.setAttribute('aria-expanded','false');
+      const form = /** @type {HTMLFormElement} */(el('form','explanation-comment-editor'));
+      form.hidden = true;form.id = `explanation-form-${block.id}`;
+      trigger.setAttribute('aria-controls',form.id);
+      trigger.addEventListener('click',()=>actions.openExplanationEditor(block.id));
+      article.append(trigger);
       const target = /** @type {HTMLLabelElement} */(textEl('label','explanation-comment-target',`${section.title} · Block ${index + 1}`));
       const input = /** @type {HTMLTextAreaElement} */(el('textarea'));
       input.id = `explanation-input-${block.id}`;target.htmlFor = input.id;
+      input.value = state.explanation.drafts.get(`${version.revision}:${block.id}`) ?? '';
+      input.addEventListener('input',()=>actions.keepExplanationDraft(version.revision,block.id,input.value));
       input.placeholder = 'Ask a question or suggest a change…';
       const save = button('btn primary'); save.textContent='Add comment';
-      save.type='submit'; form.append(target,input,save);editor.append(form);article.append(editor);
-      editor.addEventListener('toggle',()=>{if(editor.open) input.focus();});
+      const cancel = button('btn');cancel.textContent = 'Cancel';cancel.setAttribute('aria-label','Cancel comment');
+      const close = () => {form.hidden = true;trigger.setAttribute('aria-expanded','false');trigger.focus({preventScroll:true});};
+      cancel.addEventListener('click',close);
+      form.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}});
+      save.type='submit'; form.append(target,textEl('p','explanation-comment-scope','Comment on the entire block'),input,save,cancel);article.append(form);
       form.addEventListener('submit', async event=>{
         event.preventDefault();save.disabled=true;
-        if (await actions.commentOnExplanation(block,input.value)) {input.value='';editor.open=false;}
+        if (await actions.commentOnExplanation(block,input.value,version.revision)) {input.value='';close();}
         save.disabled=false;
       });
       details.append(article);

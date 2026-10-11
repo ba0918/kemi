@@ -37,3 +37,8 @@ export function commentsForBlock(comments, revision, block) {
   return comments.filter(comment => comment.target_type === 'explanation' && comment.explanation.block_id === block.id &&
     (comment.explanation.revision === revision || canonical(comment.explanation.quote.block) === canonical(block)));
 }
+
+/** @param {{id:string,type:string}|null} start @param {{id:string,type:string}|null} end @param {boolean} nonempty */
+export function selectedExplanationBlock(start, end, nonempty) {
+  return nonempty && start?.type === 'text' && end?.type === 'text' && start.id === end.id ? start.id : null;
+}

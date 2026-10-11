@@ -1,0 +1,92 @@
+// 説明本文の選択は入力のきっかけで、保存対象はブロック全体のまま。
+import assert from 'node:assert/strict';
+import {spawn,execFile} from 'node:child_process';
+import {mkdtemp,writeFile,readdir} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {promisify} from 'node:util';
+const run=promisify(execFile), binary=resolve(process.argv[2]);
+const root=await mkdtemp(join(tmpdir(),'kemi-selection-')), session=`kemi-selection-${process.pid}`;
+const env={...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')};
+async function browser(...args) {const {stdout}=await run('agent-browser',['--session',session,'--json',...args],{maxBuffer:8*1024*1024});const r=JSON.parse(stdout);assert.ok(r.success,stdout);return r.data;}
+const evaluate=async code=>(await browser('eval','-b',Buffer.from(code).toString('base64'))).result;
+const wait=code=>browser('wait','--fn',code);
+const popup=`Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Comment on selected block' && e.checkVisibility())`;
+async function select(start,end=start) {
+  await evaluate(`(()=>{const a=${start},b=${end};a.scrollIntoView({block:'center'});const r=document.createRange();r.setStart(a,0);r.setEnd(b,b.childNodes.length);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`);
+  await evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+}
+const paragraph=`document.querySelectorAll('article')[0].querySelector('.part-markdown p')`;
+const other=`document.querySelectorAll('article')[1].querySelector('.part-markdown p')`;
+const ref={type:'code',unit:null,group_id:'worktree',path:'a.txt',side:'new',start_line:null,end_line:null};
+const first={id:'kept-text',part:{type:'text',body:'Selection starts here with **emphasis**.\n\nThe complete second paragraph must also remain in the quote.'},references:[ref]};
+const second={id:'other-text',part:{type:'text',body:'A separate block must never be guessed as the selection target.'},references:[]};
+const code={id:'literal-code',part:{type:'code',title:'Read-only example',language:'pseudocode',role:'example',body:'do_not_execute()\n'},references:[]};
+const diagram={id:'diagram',part:{type:'sequence',title:'Example exchange',role:'example',participants:[{id:'a',label:'Reader'},{id:'b',label:'Server'}],events:[{type:'message',from:'a',to:'b',label:'Request',kind:'call'}]},references:[]};
+const sections=[{id:'one-section',title:'Selection review',blocks:[first,second,code,diagram]}];
+let child;
+try {
+  await writeFile(join(root,'a.txt'),'old\n');await run('git',['init','-q',root]);await run('git',['-C',root,'add','a.txt']);await run('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture']);await writeFile(join(root,'a.txt'),'new\n');
+  await writeFile(join(root,'explanation.json'),JSON.stringify({sections}));
+  child=spawn(binary,['--worktree','--explanation',join(root,'explanation.json'),'--port','0','--no-open'],{cwd:root,env,stdio:['ignore','pipe','pipe']});
+  let stderr='';const url=await new Promise((resolve,reject)=>{child.stderr.on('data',chunk=>{stderr+=chunk;const match=stderr.match(/^kemi: (http:\/\/\S+)/m);if(match)resolve(match[1]);});child.on('error',reject);child.on('exit',code=>reject(new Error(`${code}: ${stderr}`)));});
+  await browser('set','viewport','1280','900');await browser('open',url);
+  await wait(`!!document.querySelector('.part-markdown strong')`);
+  // 通常のポインタ入力で本文を選ぶ。
+  const points=await evaluate(`(()=>{const n=${paragraph}.firstChild,r=document.createRange();r.setStart(n,0);r.setEnd(n,20);const b=r.getBoundingClientRect();return {x:Math.round(b.x+1),y:Math.round(b.y+b.height/2),end:Math.round(b.right-1)}})()`);
+  await browser('mouse','move',String(points.x),String(points.y));await browser('mouse','down');await browser('mouse','move',String(points.end),String(points.y));await browser('mouse','up');
+  await evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  assert.ok(await evaluate(`Boolean(${popup})`),'selecting text offers a comment action');
+  await browser('find','role','button','click','--name','Comment on selected block','--exact');
+  await wait(`document.activeElement.tagName==='TEXTAREA'`);
+  await browser('find','label','Selection review · Block 1','fill','The whole block is the target');
+  await browser('find','role','button','click','--name','Add comment','--exact');
+  const review=async()=> (await (await fetch(`${url}api/review`)).json());
+  await wait(`document.body.textContent.includes('The whole block is the target')`);
+  const saved=(await review()).comments[0];assert.equal(saved.explanation.revision,1);assert.deepEqual(saved.explanation.quote,{section_title:'Selection review',block:first});
+  console.log('PASS: pointer selection opens the correct editor; the saved quote is the complete block, not the selected text');
+  await select(paragraph,`document.querySelectorAll('article')[0].querySelectorAll('.part-markdown p')[1]`);assert.ok(await evaluate(`Boolean(${popup})`),'multiple paragraphs within one block share one action');
+  await select(paragraph,other);assert.equal(await evaluate(`Boolean(${popup})`),false,'cross-block selection has no single-target action');
+  await select(`document.querySelectorAll('article')[2].querySelector('pre')`);assert.equal(await evaluate(`Boolean(${popup})`),false,'read-only code does not masquerade as text selection');
+  await select(`document.querySelectorAll('article')[3].querySelector('header')`);assert.equal(await evaluate(`Boolean(${popup})`),false,'diagram controls do not masquerade as text selection');
+  await select(paragraph);await browser('press','Escape');assert.equal(await evaluate(`Boolean(${popup})`),false);
+  await select(paragraph);await browser('click','header.topbar');
+  assert.equal(await evaluate(`Boolean(${popup})`),false,'outside click dismisses selection UI');
+  await select(paragraph);await browser('find','role','button','click','--name','Zoom in','--exact');assert.equal(await evaluate(`Boolean(${popup})`),false,'a diagram operation cannot revive a previous text selection');
+  await select(paragraph);await evaluate(`getSelection().removeAllRanges()`);await wait(`!(${popup})`);
+  await select(paragraph);await browser('find','role','button','click','--name','Code','--exact');assert.equal(await evaluate(`Boolean(${popup})`),false);
+  await browser('find','role','button','click','--name','Explanation','--exact');
+  // キーボード用のブロックアイコンから開く。Escape/Cancelは下書きを消さない。
+  await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Comment on Selection review · Block 2').focus()`);await browser('press','Enter');
+  await browser('find','label','Selection review · Block 2','fill','Draft survives dismissal');await browser('press','Escape');
+  await browser('find','role','button','click','--name','Comment on Selection review · Block 2','--exact');
+  assert.equal(await evaluate(`document.activeElement.value`),'Draft survives dismissal');
+  await browser('find','role','button','click','--name','Cancel comment','--exact');
+  await browser('find','role','button','click','--name','Comment on Selection review · Block 3','--exact');await wait(`document.activeElement.tagName==='TEXTAREA'`);await browser('find','role','button','click','--name','Cancel comment','--exact');
+  await browser('find','role','button','click','--name','Comment on Selection review · Block 4','--exact');await browser('find','label','Selection review · Block 4','fill','Diagram question');await browser('find','role','button','click','--name','Add comment','--exact');
+  await wait(`document.body.textContent.includes('Diagram question')`);assert.deepEqual((await review()).comments[1].explanation.quote.block,diagram);
+  console.log('PASS: cross-block/code/diagram exclusions, Escape/outside/clear/view dismissal, drafts, code and diagram block icons');
+  const id=(await readdir(join(root,'kemi','sessions'))).find(n=>n.endsWith('.endpoint')).slice(0,-9);
+  const context=JSON.parse((await run(binary,['explain',id,'--context'],{cwd:root,env})).stdout);
+  const updated=[{...sections[0],blocks:[{...first,part:{type:'text',body:'New revision text'}},second,code,diagram]}];
+  await writeFile(join(root,'update.json'),JSON.stringify({expected_revision:1,base_display_version:context.diff_display_version,sections:updated}));
+  await run(binary,['explain',id,'--file',join(root,'update.json')],{cwd:root,env});
+  await wait(`document.body.textContent.includes('Open explanation revision 2')`);
+  await select(paragraph);await browser('find','role','button','click','--name','Comment on selected block','--exact');await browser('find','label','Selection review · Block 1','fill','Old reading still targets old block');await browser('find','role','button','click','--name','Add comment','--exact');
+  await wait(`document.body.textContent.includes('Old reading still targets old block')`);const old=(await review()).comments[2];assert.equal(old.explanation.revision,1);assert.deepEqual(old.explanation.quote.block,first);assert.equal(old.outdated,true);
+  await select(paragraph);await browser('find','role','button','click','--name','Open explanation revision 2');assert.equal(await evaluate(`Boolean(${popup})`),false);
+  await browser('set','viewport','390','900');await evaluate(`document.body.style.zoom='1.25'`);
+  await select(`document.querySelectorAll('article')[0].querySelector('.part-markdown p')`);await wait(`Boolean(${popup})`);
+  const visible=await evaluate(`(()=>{const b=${popup}.getBoundingClientRect(),v=visualViewport;return b.left>=v.offsetLeft && b.top>=v.offsetTop && b.right<=v.offsetLeft+v.width && b.bottom<=v.offsetTop+v.height})()`);assert.ok(visible,'selection control remains in the visual viewport at 390px and zoom');
+  await evaluate(`document.querySelector('[aria-label="Explanation"][role="region"]').scrollTop+=100`);
+  await evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  assert.ok(await evaluate(`(()=>{const e=${popup};if(!e)return true;const r=e.getBoundingClientRect(),v=visualViewport;return r.left>=v.offsetLeft && r.top>=v.offsetTop && r.right<=v.offsetLeft+v.width && r.bottom<=v.offsetTop+v.height})()`),'scrolling never leaves a visible control outside the viewport');
+  await browser('find','role','button','click','--name','Comment on Selection review · Block 2','--exact');assert.equal(await evaluate(`document.activeElement.value`),'','new revision does not reuse a different revision draft');
+  await browser('find','role','button','click','--name','Cancel comment','--exact');
+  await evaluate(`document.body.style.zoom='1'`);
+  await select(`document.querySelectorAll('article')[0].querySelector('.part-markdown p')`);await browser('find','role','button','click','--name','Comment on selected block','--exact');
+  await browser('find','label','Selection review · Block 1','fill','New reading targets the new block');await browser('find','role','button','click','--name','Add comment','--exact');
+  await wait(`document.body.textContent.includes('New reading targets the new block')`);
+  const current=(await review()).comments[3];assert.equal(current.explanation.revision,2);assert.deepEqual(current.explanation.quote.block,updated[0].blocks[0]);
+  console.log('PASS: old/new revision target correctness and popup lifecycle; 390px/zoom viewport and per-revision drafts');
+} finally {await browser('close').catch(()=>{});if(child && child.exitCode===null){child.kill('SIGINT');await new Promise(resolve=>child.on('exit',resolve));}}

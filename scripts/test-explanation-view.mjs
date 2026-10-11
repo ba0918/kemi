@@ -213,7 +213,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','text','About the explanation base','click');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /not fixed file contents/.test(e.textContent) && /proof/.test(e.textContent))`),true);
   await browser('find','role','button','click','--name','Go to Middle section','--exact');
-  await browser('find','text','Comment on this block','click');
+  await browser('find','role','button','click','--name','Comment on Reading order · Block 1','--exact');
   await browser('find','label','Reading order · Block 1','fill','Question before correction');
   await browser('find','role','button','click','--name','Add comment');
   await wait(`document.body.textContent.includes('Question before correction')`);
@@ -405,7 +405,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
       await browser('find','role','button','click','--name',view,...(view==='Code'?[]:['--exact']));
       assert.equal(await evaluate(`${visibleHand}.length`),1,`${view} has exactly one visible hand control`);
     }
-    await browser('find','text','Comment on this block','click');
+    await browser('find','role','button','click','--name',`Comment on ${handSections[0].title} · Block 1`,'--exact');
     await browser('find','label','Handoff explanation · Block 1','fill','A question to hand from Explanation');
     await browser('find','role','button','click','--name','Add comment');
     await wait(`document.body.textContent.includes('A question to hand from Explanation')`);

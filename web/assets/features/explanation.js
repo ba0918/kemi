@@ -10,10 +10,33 @@ import { renderHeader } from '../views/header.js';
 import { renderTree } from '../views/tree.js';
 import { renderExplanationDocument, renderExplanationComments, renderExplanationStatus } from '../views/explanation.js';
 import { showOverlay } from '../views/overlay.js';
+import { setupExplanationSelection } from './explanation/selection.js';
 
 /** @type {(view:'code'|'page', page?:string)=>void} */
 let liveView = ()=>{};
 let contentsWidth = 280;
+let closeSelection = ()=>{};
+
+/** @param {number} revision @param {string} blockId @param {string} body */
+export function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(`${revision}:${blockId}`,body);}
+
+/** @param {string} blockId */
+export function openExplanationEditor(blockId) {
+  closeSelection();
+  const article = dom.explanationDocument.querySelector(`[data-explanation-block="${blockId}"]`);
+  const form = /** @type {HTMLFormElement|null} */(article?.querySelector('form'));
+  if (!form || state.view !== 'explanation') return;
+  form.hidden = false;
+  article?.querySelector('[data-comment-trigger]')?.setAttribute('aria-expanded','true');
+  article?.querySelector('textarea')?.focus();
+  form.scrollIntoView({block:'nearest'});
+  if (state.narrow) {
+    const hand = dom.handFloatBar.getBoundingClientRect();
+    const bottom = Math.min(dom.explanationDocument.getBoundingClientRect().bottom,hand.height ? hand.top : Infinity);
+    const covered = form.getBoundingClientRect().bottom - bottom + 12;
+    if (covered > 0) dom.explanationDocument.scrollTop += covered;
+  }
+}
 
 function setupContentsResize() {
   const splitter = document.getElementById('explanation-splitter');
@@ -72,6 +95,7 @@ export async function selectView(view) {
 export function syncReviewView(view) {state.view=view;showView();}
 
 function showView() {
+  closeSelection();
   document.body.dataset.reviewView=state.view;
   dom.explanationDocument.hidden=state.view!=='explanation';
   dom.explanationToc.hidden=state.view!=='explanation';
@@ -87,6 +111,7 @@ function showView() {
 /** @param {any} review */
 export async function startExplanation(review) {
   setupContentsResize();
+  closeSelection = setupExplanationSelection();
   const history=review.explanation;
   const current=history?.versions.find((/** @type {any} */ version)=>version.revision===history.current_revision);
   state.explanation.latest=current??null;
@@ -100,6 +125,7 @@ export async function openLatestExplanation() {
   try {
     await api.holdExplanation(state.explanation.screen,version.revision);
     const previous=state.explanation.reading;
+    closeSelection();
     state.explanation.reading=version;
     state.explanation.notification=null;
     state.explanation.returnTo=false;
@@ -127,11 +153,12 @@ export async function receiveExplanation(notice) {
 export function explanationChanged() {renderExplanationComments();}
 export function explanationCodeChanged() {renderExplanationStatus();}
 
-/** @param {any} block @param {string} body */
-export async function commentOnExplanation(block,body) {
-  if (!body.trim() || !state.explanation.reading) return false;
+/** @param {any} block @param {string} body @param {number} revision */
+export async function commentOnExplanation(block,body,revision) {
+  if (!body.trim() || state.explanation.reading?.revision !== revision) return false;
   try {
-    const comment=await api.postComment({op:'add_explanation',explanation_revision:state.explanation.reading.revision,block_id:block.id,body});
+    const comment=await api.postComment({op:'add_explanation',explanation_revision:revision,block_id:block.id,body});
+    state.explanation.drafts.delete(`${revision}:${block.id}`);
     updateComments(comments=>[...comments,comment]);
     renderExplanationComments();return true;
   } catch(error) {showOverlay('could not add the comment',String(error));return false;}
@@ -177,6 +204,7 @@ export async function showExplanationComment(comment) {
     await api.holdExplanation(state.explanation.screen,revision);
     const version=await api.getExplanation(revision);
     const previous=state.explanation.reading;
+    closeSelection();
     state.explanation.reading=version;
     renderExplanationDocument();state.view='explanation';showView();
     document.getElementById(`explanation-block-${comment.explanation.block_id}`)?.scrollIntoView();

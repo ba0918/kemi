@@ -96,7 +96,7 @@ import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayMode, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
-import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, commentOnExplanation } from './features/explanation.js';
+import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, commentOnExplanation, openExplanationEditor, keepExplanationDraft } from './features/explanation.js';
 
 /**
  * @param {KeyboardEvent} event
@@ -324,6 +324,8 @@ bindActions({
   showExplanationComment: comment=>void showExplanationComment(comment),
   followExplanationReference: reference=>void followExplanationReference(reference),
   commentOnExplanation,
+  openExplanationEditor,
+  keepExplanationDraft,
   renderPartMarkdown,
   addComment,
   closeThread,
