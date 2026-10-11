@@ -66,6 +66,14 @@ export function setupExplanationSelection() {
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && target){event.preventDefault();event.stopPropagation();dismiss();}},true);
   dom.explanationDocument.addEventListener('scroll',schedule);
   dom.explanationDocument.addEventListener('toggle',schedule,true);
+  new ResizeObserver(schedule).observe(dom.explanationDocument);
+  const geometry = new MutationObserver(records=>{
+    if (records.some(record=>!(record.target instanceof SVGElement))) schedule();
+  });
+  geometry.observe(dom.explanationDocument,{attributes:true,subtree:true});
+  for (let node = dom.explanationDocument.parentElement; node; node = node.parentElement) geometry.observe(node,{attributes:true});
+  geometry.observe(document.head,{childList:true,subtree:true,attributes:true,characterData:true});
+  document.fonts.addEventListener('loadingdone',schedule);
   window.addEventListener('resize',schedule);
   window.visualViewport?.addEventListener('resize',schedule);
   window.visualViewport?.addEventListener('scroll',schedule);
