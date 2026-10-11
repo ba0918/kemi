@@ -167,8 +167,3 @@ export function readingPoint(root, index, skip, bias) {
   }
   return found;
 }
-
-/** @param {{id:string,type:string}|null} start @param {{id:string,type:string}|null} end @param {boolean} nonempty */
-export function selectedExplanationBlock(start, end, nonempty) {
-  return nonempty && start?.type === 'text' && end?.type === 'text' && start.id === end.id ? start.id : null;
-}

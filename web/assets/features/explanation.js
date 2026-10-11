@@ -28,7 +28,7 @@ export function keepExplanationDraft(revision,blockId,body) {state.explanation.d
 /** @type {{form:HTMLFormElement, close:()=>void}|null} */
 let editor = null;
 
-export function closeExplanationEditor() { editor?.close(); }
+function closeExplanationEditor() { editor?.close(); }
 
 /** @param {EditorRequest} request */
 export function openExplanationEditor(request) {

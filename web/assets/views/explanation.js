@@ -261,7 +261,7 @@ function scheduleReadingRefresh() {
   requestAnimationFrame(()=>{ refreshQueued = false; renderContentsHeadings(); renderExplanationComments(); });
 }
 
-export function renderExplanationCounts() {
+function renderExplanationCounts() {
   const version = state.explanation.reading;
   if (!version) return;
   const counts = sectionCommentCounts(state.allComments, version);
