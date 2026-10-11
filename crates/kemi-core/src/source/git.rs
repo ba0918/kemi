@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::domain::content;
 use crate::domain::focus::FocusTargets;
@@ -37,6 +37,7 @@ pub use crate::domain::review::GroupBy;
 
 #[derive(Clone, Debug)]
 struct DiffEntry {
+    new_lines: Option<u32>,
     path: PathBuf,
     old_path: Option<PathBuf>,
     status: Status,
@@ -50,7 +51,8 @@ pub struct GitSource {
     repo: PathBuf,
     mode: GitMode,
     store: PlanStore,
-    ids: Mutex<FileIds>,
+    ids: Arc<Mutex<FileIds>>,
+    labels: Option<(String, String)>,
     final_origin: Mutex<Option<FinalOrigin>>,
 }
 
@@ -87,7 +89,8 @@ impl GitSource {
             repo,
             mode,
             store: PlanStore::new(),
-            ids: Mutex::new(FileIds::default()),
+            ids: Arc::new(Mutex::new(FileIds::default())),
+            labels: None,
             final_origin: Mutex::new(None),
         }
     }
@@ -109,6 +112,29 @@ impl GitSource {
         Ok(GitSource::new(repo, mode))
     }
 
+    pub(crate) fn detached(&self) -> Result<Self, SourceError> {
+        let (mode, labels) = match &self.mode {
+            GitMode::Range { from, to, group_by } => (
+                GitMode::Range {
+                    from: resolve_ref(&self.repo, from)?,
+                    to: resolve_ref(&self.repo, to)?,
+                    group_by: *group_by,
+                },
+                Some(
+                    self.labels
+                        .clone()
+                        .unwrap_or_else(|| (from.clone(), to.clone())),
+                ),
+            ),
+            GitMode::Worktree => (GitMode::Worktree, None),
+            GitMode::Staged => (GitMode::Staged, None),
+        };
+        let mut candidate = Self::new(self.repo.clone(), mode);
+        candidate.ids = self.ids.clone();
+        candidate.labels = labels;
+        Ok(candidate)
+    }
+
     fn review_worktree(&self) -> Result<(ReviewMeta, Plan), SourceError> {
         let attributes = read_attributes(&self.repo);
         let mut entries = worktree_diff_entries(&self.repo)?;
@@ -121,23 +147,25 @@ impl GitSource {
             let full = self.repo.join(path_from_bytes(path));
             let size = std::fs::metadata(&full).map_or(0, |meta| meta.len());
             let content_skipped = size > UNTRACKED_LIMIT;
-            let (add, binary) = if content_skipped {
-                (0, true)
+            let (add, binary, new_lines) = if content_skipped {
+                (0, true, None)
             } else {
                 let bytes = std::fs::read(&full).map_err(|source| SourceError::Io {
                     path: full.clone(),
                     source,
                 })?;
                 if content::is_binary(&bytes) {
-                    (0, true)
+                    (0, true, None)
                 } else {
                     (
                         content::lines(&String::from_utf8_lossy(&bytes)).len() as u64,
                         false,
+                        super::known_lines(Some(&bytes)),
                     )
                 }
             };
             entries.push(DiffEntry {
+                new_lines,
                 path: path_from_bytes(path),
                 old_path: None,
                 status: Status::Add,
@@ -402,13 +430,167 @@ impl GitSource {
                 noise,
                 content_skipped: entry.content_skipped,
             });
-            planned.push(PlannedFile { id, old, new });
+            planned.push(PlannedFile {
+                id,
+                old,
+                new,
+                old_lines: None,
+                new_lines: entry.new_lines,
+            });
         }
         (files, planned)
     }
 }
 
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+    use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn unaccepted_candidate_cannot_replace_published_content_references() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+        repo.write("a.txt", "two\n");
+        let factory = GitSource::new(repo.path.clone(), GitMode::Worktree);
+        let published = factory.fork().unwrap().unwrap();
+        published.review().unwrap();
+        repo.write("b.txt", "new\n");
+        let candidate = factory.fork().unwrap().unwrap();
+        let meta = candidate.review().unwrap();
+        let added = meta.groups[0]
+            .files
+            .iter()
+            .find(|f| f.path == "b.txt")
+            .unwrap();
+        assert!(matches!(
+            published.content(&added.id),
+            Err(SourceError::UnknownFileId(_))
+        ));
+        assert_eq!(candidate.content(&added.id).unwrap().new.unwrap(), b"new\n");
+    }
+
+    #[test]
+    fn deferred_opposite_unit_uses_the_range_captured_for_its_display_generation() {
+        let repo = TempRepo::new();
+        repo.write("a.txt", "one\n");
+        repo.add_and_commit("base");
+        let base = git_text(&repo.path, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        repo.write("a.txt", "two\n");
+        repo.add_and_commit("D1");
+        let factory = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: base,
+                to: "HEAD".into(),
+                group_by: GroupBy::File,
+            },
+        );
+        let d1 = factory.fork().unwrap().unwrap();
+        d1.review().unwrap();
+        repo.write("b.txt", "three\n");
+        repo.add_and_commit("D2");
+        let d2 = factory.fork().unwrap().unwrap();
+        d2.review().unwrap();
+        assert_eq!(d1.review_unit(GroupBy::Commit).unwrap().groups.len(), 1);
+        assert_eq!(d2.review_unit(GroupBy::Commit).unwrap().groups.len(), 2);
+    }
+}
+
 impl ReviewSource for GitSource {
+    fn reference_metadata(&self, file_id: &str) -> Option<super::ReferenceMetadata> {
+        self.store.reference_metadata(file_id)
+    }
+    fn select_references(
+        &self,
+        requested: &[(crate::domain::explanation::ReferenceUnit, String, String)],
+    ) -> Result<Vec<crate::domain::explanation::CodeReferenceEntry>, SourceError> {
+        use crate::domain::explanation::{CodeReferenceEntry, ReferenceUnit};
+        let GitMode::Range { from, to, .. } = &self.mode else {
+            return Ok(vec![]);
+        };
+        let range = format!("{from}..{to}");
+        let commits = git_raw(&self.repo, &["rev-list", "--no-merges", &range])?;
+        let commits = String::from_utf8_lossy(&commits);
+        let groups: std::collections::HashSet<_> = requested
+            .iter()
+            .map(|(unit, group, _)| {
+                (
+                    match unit {
+                        ReferenceUnit::File => GroupBy::File,
+                        ReferenceUnit::Commit => GroupBy::Commit,
+                    },
+                    group.clone(),
+                )
+            })
+            .collect();
+        let mut result = Vec::new();
+        for (unit, group) in groups {
+            let entries = match unit {
+                GroupBy::File if group == "all" => {
+                    let range = format!("{from}...{to}");
+                    parse_name_status(&git_raw(
+                        &self.repo,
+                        &[
+                            "diff",
+                            NO_ORDER_FILE,
+                            "--name-status",
+                            "-z",
+                            "-M",
+                            &range,
+                            "--",
+                        ],
+                    )?)
+                }
+                GroupBy::Commit if commits.lines().any(|sha| sha == group) => {
+                    parse_name_status(&git_raw(
+                        &self.repo,
+                        &[
+                            "diff-tree",
+                            "--root",
+                            "--no-commit-id",
+                            "-r",
+                            "--name-status",
+                            "-z",
+                            "-M",
+                            &group,
+                            "--",
+                        ],
+                    )?)
+                }
+                GroupBy::File | GroupBy::Commit => continue,
+            };
+            let reference_unit = match unit {
+                GroupBy::File => ReferenceUnit::File,
+                GroupBy::Commit => ReferenceUnit::Commit,
+            };
+            for entry in entries {
+                let path = entry.path.to_string_lossy().into_owned();
+                if requested
+                    .iter()
+                    .any(|(unit, g, p)| *unit == reference_unit && *g == group && *p == path)
+                {
+                    result.push(CodeReferenceEntry {
+                        unit: Some(reference_unit),
+                        group_id: group.clone(),
+                        path,
+                        old_present: entry.status != Status::Add,
+                        new_present: entry.status != Status::Delete,
+                        old_lines: None,
+                        new_lines: None,
+                    });
+                }
+            }
+        }
+        Ok(result)
+    }
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(self.detached()?)))
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let (review, plan) = match &self.mode {
             GitMode::Worktree => self.review_worktree()?,
@@ -430,11 +612,19 @@ impl ReviewSource for GitSource {
         let GitMode::Range { from, to, .. } = &self.mode else {
             return self.review();
         };
-        let (review, plan) = match unit {
+        let (mut review, plan) = match unit {
             GroupBy::File => self.review_final(from, to)?,
             GroupBy::Commit => self.review_per_commit(from, to)?,
         };
         self.store.update_unit(Some(unit), plan);
+        if let Some((from, to)) = &self.labels {
+            review.title = format!("{from}..{to}");
+            if unit == GroupBy::File
+                && let Some(group) = review.groups.first_mut()
+            {
+                group.title = format!("{from}...{to}");
+            }
+        }
         Ok(review)
     }
 
@@ -707,6 +897,7 @@ fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
                 Status::Modify
             };
             DiffEntry {
+                new_lines: None,
                 path: stat.new_path,
                 old_path: stat.old_path,
                 status,
@@ -877,6 +1068,7 @@ fn combine_entries(name_status: Vec<NameStatus>, numstat: Vec<Numstat>) -> Vec<D
             let stat = statistics.get(&name.path);
             DiffEntry {
                 add: stat.map_or(0, |stat| stat.add),
+                new_lines: None,
                 del: stat.map_or(0, |stat| stat.del),
                 binary: stat.is_some_and(|stat| stat.binary),
                 content_skipped: false,
@@ -924,9 +1116,9 @@ fn range_messages(repo: &Path, range: &str) -> Result<Vec<CommitMessage>, Source
 /// 1 秒未満で作りつつ、表示中の api/file を遅らせない値として選んだ。
 fn commit_diff_workers() -> usize {
     std::thread::available_parallelism()
-        .map(|count| count.get())
+        .map(|count| count.get().saturating_mul(2))
         .unwrap_or(4)
-        .clamp(2, 8)
+        .clamp(2, 16)
 }
 
 /// 各コミットの差分（状態と増減数）。コミットを分けて `git diff-tree --stdin` を並列に呼ぶ。
@@ -2374,5 +2566,163 @@ mod unit_tests {
 
             assert_eq!(reads.load(Ordering::SeqCst), 0, "{group_by:?}");
         }
+    }
+}
+#[cfg(test)]
+mod explanation_reference_tests {
+    use super::*;
+    use crate::domain::explanation::ReferenceUnit;
+    use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn opposite_unit_references_keep_group_path_and_side_without_building_a_plan() {
+        let repo = TempRepo::new();
+        repo.write("keep.txt", "keep\n");
+        repo.write("old.txt", "old\n");
+        let base = repo.add_and_commit("base");
+        repo.write("first.txt", "first\n");
+        let first = repo.add_and_commit("first");
+        repo.write("second.txt", "second\n");
+        let second = repo.add_and_commit("second");
+        let source = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: base,
+                to: second,
+                group_by: GroupBy::File,
+            },
+        );
+        let candidate = source.detached().unwrap();
+        let code = candidate
+            .select_references(&[
+                (ReferenceUnit::Commit, first.clone(), "first.txt".into()),
+                (ReferenceUnit::Commit, first.clone(), "second.txt".into()),
+                (ReferenceUnit::Commit, first, "keep.txt".into()),
+            ])
+            .unwrap();
+        assert_eq!(code.len(), 1);
+        assert_eq!(code[0].path, "first.txt");
+        assert!(!code[0].old_present && code[0].new_present);
+        assert_eq!(code[0].new_lines, None);
+        assert!(candidate.store.state.lock().unwrap().is_empty());
+        assert_eq!(candidate.ids.lock().unwrap().next, 0);
+    }
+
+    #[test]
+    fn references_to_merge_commits_are_not_per_commit_groups_even_when_the_path_is_in_their_tree() {
+        let repo = TempRepo::new();
+        repo.write("base.txt", "base\n");
+        let base = repo.add_and_commit("base");
+        repo.git(&["checkout", "-q", "-b", "topic"]);
+        repo.write("topic.txt", "topic\n");
+        let topic = repo.add_and_commit("topic");
+        repo.git(&["checkout", "-q", "-"]);
+        repo.write("main.txt", "main\n");
+        repo.add_and_commit("main");
+        repo.git(&["merge", "--no-ff", "-q", "topic", "-m", "merge"]);
+        let merged = repo.head();
+        let source = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: base,
+                to: merged.clone(),
+                group_by: GroupBy::File,
+            },
+        )
+        .detached()
+        .unwrap();
+        let entries = source
+            .select_references(&[
+                (ReferenceUnit::Commit, merged, "topic.txt".into()),
+                (ReferenceUnit::Commit, topic.clone(), "topic.txt".into()),
+            ])
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].group_id, topic);
+    }
+
+    #[test]
+    fn selective_references_reject_wrong_groups_and_keep_rename_add_delete_sides() {
+        let repo = TempRepo::new();
+        repo.write("renamed.txt", "rename me\n");
+        repo.write("deleted.txt", "delete me\n");
+        repo.write("unchanged.txt", "unchanged\n");
+        let base = repo.add_and_commit("base");
+        repo.git(&["mv", "renamed.txt", "new-name.txt"]);
+        repo.remove("deleted.txt");
+        repo.write("added.txt", "added\n");
+        let change = repo.add_and_commit("change");
+        let source = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: base.clone(),
+                to: change.clone(),
+                group_by: GroupBy::Commit,
+            },
+        )
+        .detached()
+        .unwrap();
+        let requested: Vec<_> = [
+            "new-name.txt",
+            "renamed.txt",
+            "deleted.txt",
+            "added.txt",
+            "unchanged.txt",
+        ]
+        .iter()
+        .map(|path| (ReferenceUnit::File, "all".into(), (*path).into()))
+        .chain(std::iter::once((
+            ReferenceUnit::Commit,
+            base,
+            "added.txt".into(),
+        )))
+        .chain(std::iter::once((
+            ReferenceUnit::File,
+            change,
+            "added.txt".into(),
+        )))
+        .collect();
+        let entries = source.select_references(&requested).unwrap();
+        assert_eq!(entries.len(), 3);
+        for entry in entries {
+            match entry.path.as_str() {
+                "new-name.txt" => assert!(entry.old_present && entry.new_present),
+                "deleted.txt" => assert!(entry.old_present && !entry.new_present),
+                "added.txt" => assert!(!entry.old_present && entry.new_present),
+                other => panic!("unexpected entry {other}"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selective_references_preserve_ambiguous_lossy_paths_for_the_validator_to_reject() {
+        use std::os::unix::ffi::OsStrExt;
+        let repo = TempRepo::new();
+        repo.write("base.txt", "base\n");
+        let base = repo.add_and_commit("base");
+        for path in [b"b\xffad.txt", b"b\xfead.txt"] {
+            std::fs::write(
+                repo.path.join(std::ffi::OsStr::from_bytes(path)),
+                "content\n",
+            )
+            .unwrap();
+        }
+        let head = repo.add_and_commit("paths");
+        let source = GitSource::new(
+            repo.path.clone(),
+            GitMode::Range {
+                from: base,
+                to: head,
+                group_by: GroupBy::Commit,
+            },
+        )
+        .detached()
+        .unwrap();
+        let entries = source
+            .select_references(&[(ReferenceUnit::File, "all".into(), "b�ad.txt".into())])
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, entries[1].path);
     }
 }

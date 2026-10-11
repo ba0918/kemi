@@ -1,8 +1,8 @@
-# EXPLANATIONに伴う既存契約の改訂候補
+# EXPLANATIONに伴う既存契約の改訂
 
-- Status: 承認前の草稿。現行正典を置換する効力はない。
+- Status: 承認済み。承認対象は `55ba772` の三文書の契約本文と、その後に加えた説明コメントの `selection`（[説明](explanation.md#r-explanation-comment-対象と更新後の会話)）。
 - 承認対象: [説明](explanation.md)、[共通パーツ](content-parts.md)、この文書。
-- この文書は変更する契約だけを持つ。承認後、対応する正典節へ反映する。
+- この文書は変更する契約だけを持つ。対応する正典節からこの文書へリンクし、改訂部分の正典を一箇所に保つ。
 
 ## 現行との対応
 
@@ -109,7 +109,8 @@
   target_typeは `file` / `page` / `explanation`。
   File/Pageは従来の意味のままでexplanation=null。Fileはpage=null、Pageは従来どおりファイルの位置がnull。
   explanation対象はgroup_id/group_title/path/side/start_line/end_line/page/suggestionがnull、quoteは[]。
-  explanationは `{revision,block_id,quote}`。quoteは `{section_title,block}` の保存時の完全な値。
+  explanationは `{revision,block_id,quote,selection}`。quoteは `{section_title,block}` の保存時の完全な値。
+  selectionは保存時の `{text,occurrence}` かnull（[説明](explanation.md#r-explanation-comment-対象と更新後の会話)）。
   outdatedは現在版との比較値。元のrevisionと引用は変えない。
   コメントbodyはstring、replies/resolvedなどの必須性と並びは現行どおり。
 - 全返信・発言の出力にはbodyとpartsを必ず両方出す。
@@ -145,7 +146,7 @@
     "group_id": null, "group_title": null, "path": null, "side": null,
     "start_line": null, "end_line": null, "quote": [], "body": "前提を補足してほしい。",
     "page": null,
-    "explanation": {"revision":1,"block_id":"intent","quote":{"section_title":"全体","block":{"id":"intent","part":{"type":"text","body":"まず変更の目的を読む。"},"references":[]}}},
+    "explanation": {"revision":1,"block_id":"intent","quote":{"section_title":"全体","block":{"id":"intent","part":{"type":"text","body":"まず変更の目的を読む。"},"references":[]}},"selection":{"text":"変更の目的","occurrence":0}},
     "replies": [{"id":"r1","author":"agent","body":null,"parts":[{"type":"code","language":"pseudocode","role":"example","body":"read_premise()"}],"variants":[],"chosen":null,"applied":null}],
     "resolved": false, "outdated": false, "suggestion": null
   }],
@@ -174,7 +175,7 @@
   読み込みだけで旧ファイルや固定済みpayloadを書き換えない。初回の状態保存で版4とともに保存する。
   補完したtokenを外部へ提供する段階は発行の状態保存に当たり、下の原子的保存規則に従う。
   形式と世代の補完だけでは元の作成・最終更新時刻を進めない。
-- 版4は現在説明、必要な旧説明版、元引用を持つ説明コメント、parts返信・発言、未配達イベントを保存する。
+- 版4は現在説明、必要な旧説明版、元引用と `selection` を持つ説明コメント、parts返信・発言、未配達イベントを保存する。
   サーバ現在差分表示版と、既存payloadの起動時メタデータに対応する `frozen_display_version` を小さい識別子として保存する。
   frozen_display_versionは写しに入れるメタデータの版を記録し、非liveの写し完成時に確定する。liveではnull。
   全token一覧の代わりに `issued_display_generation` を10進文字列一つで保存する。現在版・凍結版の世代はこの値以下でなければならない。
@@ -260,10 +261,10 @@
 - 現行 [R-SESSION](kemi.md#r-session-セッションの保存と復元) は凍結メタデータをpayloadに分離し、一般状態保存をファイル数から切り離している。
   今回は参照索引を永続保存しない方式を選び、その性能契約を緩めず、小さい世代情報だけをsessionへ追加する。
 
-承認後は上の対応表の正典節と `CONTEXT.md` に反映し、CLI/JSONを実装する変更では `README.md` と `skills/kemi/` の派生説明も同時に更新する。
-今回の草稿は派生説明に未承認の契約を実装済みとして記さない。
+上の対応表の正典節からこの改訂を参照し、用語は `CONTEXT.md` に置く。CLI/JSONを実装する変更では `README.md` と `skills/kemi/` の派生説明も同時に更新する。
+実装状況はコードと実装計画で確認する。
 
 ## 未決
 
-利用者判断が必須の未決は残していない。技術提案の値・名前・保持方式はこの承認セットの審査対象。
+利用者判断が必須の未決は残していない。値・名前・保持方式はこの承認セットの契約に従う。
 図の見た目と容量の性能は未検証。今回の根拠は仕様とソースの照合であり、ブラウザやサーバの動作確認ではない。

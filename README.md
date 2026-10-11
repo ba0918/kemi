@@ -60,6 +60,8 @@ kemi --resume                        # pick an interrupted review (terminal only
 kemi --resume <id>                   # continue that review, from any directory
 kemi wait <id> [--timeout <seconds>] # (agent) wait for what the reviewer hands over
 kemi reply <id> < writes.json        # (agent) answer in the page
+kemi explain <id> --context          # (agent) current metadata reference map
+kemi explain <id> --file explanation-update.json  # (agent) replace the explanation
 ```
 
 A commit range has two ways to group the same changes, and the page switches
@@ -83,6 +85,7 @@ Useful flags:
 | `--to <ref>` | end of the commit range (default `HEAD`) |
 | `--group-by <commit\|file>` | grouping shown first for a commit range (default `file`) |
 | `--focus <path>` | JSON file with focus flags and notes |
+| `--explanation <file>` | Initial explanation JSON, separate from manifest stdin |
 | `--base <dir>` | base for manifest and focus paths (default `.`) |
 | `--port <n>` | listen port (default `0`, pick a free one) |
 | `--bind <addr>` | listen address as an IPv4 literal (default `127.0.0.1`; `0.0.0.0` is every IPv4 interface) |
@@ -143,8 +146,10 @@ reloads it, and a link to another HTML file there moves to that page. Paths
 outside the directory, symlinks pointing outside, and `.git/` return 404. If
 the file is gone, the page says so and waits for it.
 
-The review has two views, switched by the two tabs at the left of the top
-bar:
+The top bar switches between EXPLANATION, Code, and Page. EXPLANATION is
+available when a document has been supplied; Page is available only in a live
+review. Without an initial explanation, a live review starts on Page.
+The existing live views are:
 
 - **Live page**: the running page at a width of 390, 768, 1280, or any width
   from 320 to 3840 (type it and press Enter or leave the field; the field
@@ -165,8 +170,9 @@ bar:
   shows in both views; pressing it in the page view switches to the code
   view and reloads it.
 
-On a narrow screen the tabs are shortened to **Page** and **Code** in the
-first row of the top bar, whose **…** menu then holds only the theme. The
+On a narrow screen the live tabs are shortened to **Page** and **Code**;
+EXPLANATION remains available in the top bar. In the Page view, the **…** menu
+holds only the theme. The
 controls of the page view fit in one row: Now / Before (the running page or
 what it is compared with, one at a time), the page, its width, the agent's
 state, and a **…** menu with what the page is compared with, **Record now**,
@@ -302,7 +308,7 @@ only while comparing, but the changes and the marks on the page show while
 the page is alone too. **Record now** stays in the band whatever the way of
 comparing. The way of comparing, Fit / 100%, and what is compared
 with are kept while the review page is open and reset when it is reloaded. `--live` takes only `--port`, `--bind`, `--no-open`,
-`--live-port`, `--focus`, and `--serve`. The review title is
+`--live-port`, `--focus`, `--explanation`, and `--serve`. The review title is
 `Live review of <url>`; for a file the URL is its path from the served
 directory, such as `/docs/mock.html`.
 
@@ -315,7 +321,7 @@ open:
 
 - `kemi wait <id> [--timeout <seconds>]` waits until you press **Hand to
   agent** (or submit) and prints everything handed over since its previous
-  call as one JSON document: `{"kemi": 2, "review": "<id>", "events": [...]}`.
+  call as one JSON document: `{"kemi": 3, "review": "<id>", "events": [...]}`.
   A `handed` event lists comments as `added`, `edited`, or `deleted` (id
   only), new replies, and new messages; a `submitted` event carries the
   result JSON. Exit codes: 0 (events; an approval if submitted), 1 (submitted
@@ -491,6 +497,105 @@ session under the same state root as results:
 `XDG_STATE_HOME` is unset or relative (unix); on Windows it is
 `%LOCALAPPDATA%\kemi\sessions\`. A session holds the review as it was when it
 started, together with the comments, seen marks, folding, and resolutions.
+Session format 4 preserves typed reply/message parts, complete explanation
+quotes, retained explanation versions, and undelivered conversation events.
+
+### Explanations and typed conversation content
+
+An initial explanation opens EXPLANATION. It reads as one continuous document:
+sections are never folded or boxed, only separated by numbered, underlined
+headings. The left column lists the sections, the Markdown headings inside
+their text one step indented, and the number of comments on each section; it
+marks the item at your reading position, and on narrow screens it opens as a
+drawer. To comment, select text in a text or code block: a **Comment** button
+appears next to the selection, and pressing it or `c` opens the editor right
+below the selected line, quoting the section heading and the selected text. A
+selection that spans two blocks shows why it cannot be commented instead.
+Diagrams have a comment button among their controls, which comment on the
+whole diagram. A saved comment marks the selected text and shows a one-line
+card below the paragraph, list item, or code containing the end of the
+selection; a diagram comment, or one whose selected text can no longer be
+found, shows a line beside the block and a card below it. A card opens its
+thread. Diagram controls (zoom out, zoom in, fit, open separately, and, in the
+explanation only, comment) appear at the right of the diagram's heading when
+you point at it or focus it, and always on devices without hover; drag or use
+the arrow keys to pan inline. The separate view also has pan and reset buttons,
+and closing it returns to the diagram. Reply diagrams use the same controls.
+Without an explanation, EXPLANATION
+is disabled until an explanation is added. Conversation is shared by all
+views; changing views keeps its open thread, drafts, and open or closed state.
+Final state / Per commit belongs to Code in commit-range reviews, not to the
+explanation.
+
+An explanation update shows a notice without replacing the revision or reading
+position you have open. Open the notice to read the new revision. A block's
+Code or registered Page link offers a return to the original explanation,
+including its revision and reading position. These
+operations work on narrow screens too. Reading an explanation does not mark
+files as Seen.
+
+Each screen compares the explanation's base with its own imported Code list.
+An explanation notice or conversation recovery never refreshes that list or
+its cache. A different base is shown with both display versions; a matching
+base has an information detail instead of a permanent warning. The detail
+explains that a metadata generation guarantees neither fixed file bytes nor
+the explanation's correctness. Font and zoom changes do not change this
+comparison. References unavailable in the screen's list give a reason, rather
+than fetching the newest list or substituting another target.
+Code references use the known presence of each side and known total lines,
+not the file's Add/Modified/Delete label. A target that disappears or has fewer
+lines when loaded gives a reason; a requested range is never silently shortened.
+
+`--explanation <file>` accepts a UTF-8 JSON object with `sections` in every normal
+input mode, including `kemi -` with a manifest on stdin. Each section has `id`,
+plain `title`, and nonempty `blocks`; each block has `id`, one `part`, and
+`references`. The server assigns revision 1 and the initial display version.
+It refuses invalid input or unavailable persistent storage before publishing
+the review URL. Do not combine it with `--digest`, `--result`, `--resume`, or
+an agent subcommand.
+
+`kemi explain <id> --context` reads no stdin and prints
+`{kemi:3,review,diff_display_version,explanation_revision,explanation,references}`.
+`explanation` is the current saved version or null. `references.code` lists
+`unit`, `group_id`, `path`, `old_present`, `new_present`, `old_lines`, and
+`new_lines`; line counts are null when absent or not known. `references.pages`
+contains registered live page URLs. Context contains metadata, not file
+contents, and is refused while the current opposite grouping is unavailable.
+
+`kemi explain <id>` reads an update from stdin; `--file <file>` reads it from
+a file instead. `--context` and `--file` are mutually exclusive. An update is
+`{expected_revision,base_display_version,sections}`. Use revision 0 to add the
+first explanation. Success prints `{revision,base_display_version}` and exits
+0. A conflict, invalid reference, capacity refusal, or save failure exits 2
+with empty stdout and a reason on stderr. Updates replace the whole document
+only after atomic state saving. Current bases require exact targets and
+sides; known old bases accept the shape of Code references without claiming
+historical existence. Page references always require registration.
+Code reference `unit` is `file` or `commit` for a commit range and null
+otherwise, including when the base is older. If a resumed live Code scan is
+unavailable, known bases remain usable for explanation updates; context stays
+unavailable until the scan recovers.
+Use `kemi reply` for ordinary questions and additional explanation in a
+thread. Use `kemi explain` when the explanation document itself needs a
+correction or an agreed change. Explain does not answer threads, clear
+hand-over lines, reset the response clock, or create `wait` conversation
+events; send any needed thread reply separately.
+
+Reply/message input accepts exactly one of `body` or `parts`. Both keys are
+refused even if one is null. Plain bodies keep their literal text. Parts are
+an ordered nonempty list of `text`, `code`, grid `diagram`, `sequence`, or
+`flow`; see [the content contract](docs/spec/content-parts.md) for fields and
+limits. Text uses safe Markdown with all images disabled at generation time.
+Failed text retains its full original body; a failed diagram retains its full
+JSON, without dropping adjacent content. Code is read-only and copyable.
+The role labels `proposal`, `example`, and `confirmed` are author-supplied,
+not evidence that kemi verified the meaning. Explanation comments have no
+suggestion or Page variants. File/Page behavior remains subject to its own
+target rules.
+The bare first argument `explain` is a subcommand. Write `./explain` to read a
+manifest with that name.
+Formats 2 and 3 remain readable; their old `body` strings stay plain text.
+Reading an old session does not rewrite it. Its next state save writes format 4.
 Only a session whose copy completed within the size limit can be resumed; one
 whose copy is unfinished or too large keeps the state alone and stays out of
 the list and `--resume` (its id exits with 2), and a review with neither state
@@ -518,7 +623,7 @@ kemi --resume <id>     # continue a known session, from any directory
   it is now and keeps watching it. Its snapshots, including the one taken at
   the start, and its mock assignments come back, so the default comparison
   stays the same; a mock whose file is gone by then says it cannot be read.
-  It is kept only when it holds a comment, a reply, or a message; seen marks,
+  It is kept only when it holds a comment, a reply, a message, or an explanation; seen marks,
   folding, snapshots, and mock assignments alone are not kept. Its mode
   column reads `live <url>`.
 - A `--live` session keeps its snapshots and comment images in `<id>.files/`
@@ -535,6 +640,14 @@ kemi --resume <id>     # continue a known session, from any directory
 - `--resume` accepts only `--port`, `--bind`, `--no-open`, `--serve`, and
   `--live-port`.
   `--digest` and `--result` do not create sessions.
+
+Each accepted diff-metadata import has a `diff_display_version` of
+`<review-id>:<generation>`, separate from the URL token. It identifies metadata,
+not fixed file bytes or proof that an explanation is correct. A failed refresh
+keeps the previously published metadata and version. A non-live resume uses the
+frozen startup version, even if the previous process later imported another
+version, and leaves explanation bases unchanged. A successful live rescan
+issues a new version; a failed rescan leaves Code unavailable until retry succeeds.
 
 The `kemi: resume with: kemi --resume <id>` line on stderr is how a script
 finds the id after an interruption.
@@ -594,13 +707,17 @@ The JSON printed at the end:
 
 ```json
 {
-  "kemi": 2,
+  "kemi": 3,
   "title": "Review",
   "verdict": "approved",
   "approval": [{ "path": "src/a.rs", "identity": "sha256:…" }],
+  "diff_display_version": "01K00000000000000000000000:1",
+  "explanation": null,
   "comments": [
     {
       "id": "c1",
+      "target_type": "file",
+      "explanation": null,
       "group_id": "g1",
       "group_title": "First change",
       "path": "src/a.rs",
@@ -615,6 +732,7 @@ The JSON printed at the end:
           "id": "r1",
           "author": "reviewer",
           "body": "a reply in the thread",
+          "parts": null,
           "variants": [],
           "chosen": null,
           "applied": null
@@ -625,12 +743,13 @@ The JSON printed at the end:
       "suggestion": { "replacement": "the replacement text" }
     }
   ],
-  "messages": [{ "id": "m1", "author": "reviewer", "body": "a note on the whole review" }]
+  "messages": [{ "id": "m1", "author": "reviewer", "body": "a note on the whole review", "parts": null }]
 }
 ```
 
-- `kemi` is the contract version, `2`. Version `1` results (from kemi before
-  replies and messages) are printed unchanged by `kemi --result`; do not read
+- `kemi` is the contract version, `3` for every newly generated result and wait
+  response, including a resumed old session. Stored version `1` and `2` results
+  are printed unchanged by `kemi --result`; do not read
   a version you do not know by guessing.
 - `side` is `new` or `old`. File-wide comments are `new` with `start_line` and
   `end_line` `null`, and `quote` `[]`.
@@ -659,6 +778,28 @@ The JSON printed at the end:
   absolute path only in what `kemi wait` returns, and `null` in the result.
 - `messages` are notes on the whole review, in creation order.
 - `comments` are in creation order.
+- Replies and messages always carry both `body` and `parts`. Plain content has
+  a string `body` and `parts: null`; typed content has `body: null` and a nonempty
+  `parts` array. Preserve its types and order instead of flattening it into text.
+  An empty plain body stays an empty string.
+- `target_type` is `file`, `page`, or `explanation`. An explanation target has
+  `explanation: {revision, block_id, quote, selection}`; its quote keeps the original
+  `section_title` and complete `block`, including its part and references.
+  `selection` is `{text, occurrence}` when the person selected text in a text or
+  code block, and `null` for a diagram or a comment without a selection. `text` is
+  the selected part of the block's displayed text, and `occurrence` counts which
+  match of `text` in that displayed text it is (from 0, by start position,
+  overlapping matches included). The target is still the whole block: read the
+  block quote as authoritative and `selection` as a hint to the place the person
+  pointed at; kemi does not check that `text` appears in the block. For example:
+  `"explanation": {"revision": 1, "block_id": "intent", "quote": {"section_title": "Overview", "block": {"id": "intent", "part": {"type": "text", "body": "Read the goal first."}, "references": []}}, "selection": {"text": "goal", "occurrence": 0}}`.
+  Its file/group/page/suggestion fields are null and its line `quote` is `[]`.
+  Its `outdated` compares the current block with the original typed content;
+  moving a block or renaming its section does not alter the original quote.
+- Top-level `explanation` is null or `{current_revision, versions}`. Versions
+  are ordered by revision and include retained originals needed to read the result.
+  `diff_display_version` is the server's metadata version at submit, not a claim
+  that every open screen displayed that version.
 
 ## Digest
 

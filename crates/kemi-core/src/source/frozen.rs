@@ -13,6 +13,7 @@ use super::{FileContent, FileOrigin, ReviewSource, SourceError};
 
 /// セッションの写しからレビューを配る。
 pub struct FrozenSource {
+    reference_metadata: BTreeMap<String, super::ReferenceMetadata>,
     workspace: PathBuf,
     range: Option<(String, String)>,
     startup_unit: Option<GroupBy>,
@@ -32,6 +33,21 @@ impl FrozenSource {
             | SessionMode::Live { .. } => None,
         };
         FrozenSource {
+            reference_metadata: copy
+                .contents
+                .iter()
+                .map(|(id, content)| {
+                    (
+                        id.clone(),
+                        super::ReferenceMetadata {
+                            old_present: content.old.is_some(),
+                            new_present: content.new.is_some(),
+                            old_lines: super::known_lines(content.old.as_deref()),
+                            new_lines: super::known_lines(content.new.as_deref()),
+                        },
+                    )
+                })
+                .collect(),
             workspace: info.workspace.clone(),
             range,
             startup_unit: copy.startup_unit,
@@ -73,6 +89,9 @@ impl FrozenSource {
 }
 
 impl ReviewSource for FrozenSource {
+    fn reference_metadata(&self, file_id: &str) -> Option<super::ReferenceMetadata> {
+        self.reference_metadata.get(file_id).cloned()
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         self.startup_review()
     }
@@ -230,6 +249,24 @@ mod tests {
             assert_eq!(frozen.content(id).unwrap(), *content);
         }
         assert!(frozen.watch_paths().is_empty());
+    }
+
+    #[test]
+    fn frozen_reference_metadata_preserves_known_line_counts_without_the_original_files() {
+        let (repo, from, to) = fixture();
+        let original = range_source(&repo, &from, &to);
+        let (info, copy) = freeze(&repo, &from, &to, &original);
+        let frozen = FrozenSource::new(&info, &copy);
+        let file = copy.units[0].review.groups[0]
+            .files
+            .iter()
+            .find(|file| file.path == "src/a.rs")
+            .unwrap();
+        repo.write("src/a.rs", "changed\n");
+        let metadata = frozen.reference_metadata(&file.id).unwrap();
+        assert!(metadata.old_present && metadata.new_present);
+        assert_eq!(metadata.old_lines, Some(3));
+        assert_eq!(metadata.new_lines, Some(3));
     }
 
     #[test]

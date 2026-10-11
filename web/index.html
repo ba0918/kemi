@@ -1,6 +1,22 @@
 <!doctype html>
 <html lang="en" data-theme="light">
-  <head>
+<head>
+  <link rel="stylesheet" href="assets/parts.css">
+  <link rel="stylesheet" href="assets/explanation.css">
+  <link rel="modulepreload" href="assets/explanation-model.js">
+  <link rel="modulepreload" href="assets/views/explanation.js">
+  <link rel="modulepreload" href="assets/features/explanation.js">
+  <link rel="modulepreload" href="assets/features/explanation/selection.js">
+  <link rel="modulepreload" href="assets/views/parts.js">
+  <link rel="modulepreload" href="assets/features/parts.js">
+  <link rel="modulepreload" href="assets/views/diagrams/viewport.js">
+  <link rel="modulepreload" href="assets/views/diagrams/grid.js">
+  <link rel="modulepreload" href="assets/diagrams/explanation-svg.js">
+  <link rel="modulepreload" href="assets/diagrams/explanation-sequence.js">
+  <link rel="modulepreload" href="assets/diagrams/explanation-flow.js">
+  <link rel="modulepreload" href="assets/diagrams/explanation-layout-validation.js">
+  <link rel="modulepreload" href="assets/diagrams/explanation-collision.js">
+  <link rel="modulepreload" href="assets/diagrams/pan-zoom.js">
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>kemi</title>
@@ -37,6 +53,11 @@
   <body>
     <header class="topbar">
       <div class="brand">kemi</div>
+      <div id="review-views" role="group" aria-label="Review view">
+        <button id="explanation-return" class="review-view-button" type="button" data-review-view="explanation" disabled title="No explanation yet">Explanation</button>
+        <button class="review-view-button" type="button" data-review-view="code" aria-pressed="true">Code</button>
+        <button class="review-view-button" type="button" data-review-view="page" hidden>Page</button>
+      </div>
       <button
         class="iconbtn narrow-only"
         id="btn-tree"
@@ -185,9 +206,14 @@
     </header>
 
     <div class="layout">
+      <aside id="explanation-toc" class="tree" aria-label="Explanation contents" hidden></aside>
+      <div id="explanation-splitter" role="separator" aria-label="Resize explanation contents" aria-orientation="vertical" aria-controls="explanation-toc" tabindex="0" hidden></div>
       <aside class="tree" id="tree" aria-label="File tree"></aside>
       <div class="narrow-only" id="drawer-scrim"></div>
       <main id="main">
+        <div id="explanation-status" hidden></div>
+        <button id="explanation-update" type="button" hidden></button>
+        <div id="explanation-document" role="region" aria-label="Explanation" hidden></div>
         <div class="group-header" id="group-header"></div>
         <div class="file-header" id="file-header"></div>
         <div id="floating-threads" hidden></div>

@@ -33,6 +33,9 @@ presentation, adding focus marks, reviewing a running page with `--live`, or sur
 change with `--digest`. It also covers
 `--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
 reviewed work.
+Add an initial explanation with `--explanation <file>`; it reads a separate
+JSON file even when the manifest comes from stdin. Read the input reference
+for its section/block structure and exclusions.
 For approval, identify the exact bytes being approved; the manifest's `approval` field is
 returned unchanged, not checked by kemi.
 
@@ -75,7 +78,7 @@ seen marks, folding, and resolutions are saved in a session, and stderr prints o
 copy completed within the size limit can be reopened; one whose copy is unfinished or too large
 keeps the state alone and stays out of the list and `--resume`, and a review with nothing to
 keep leaves no session. A `--live` review keeps no copy: it is kept only when it holds a
-comment, a reply, or a message. An empty stdout file while the process runs means no result has
+comment, a reply, a message, or an explanation. An empty stdout file while the process runs means no result has
 arrived yet.
 
 If the user approves in the conversation instead of submitting on the page, record it as a
@@ -95,6 +98,17 @@ the main `kemi` process as well: its exit code and stdout stay the result of the
 codes, and the limits. Without the review line, or if you never call `kemi wait`, the review
 is submit-only as before.
 
+Use `kemi explain <id> --context` for the server's current metadata reference
+map, then `kemi explain <id> --file <file>` or stdin JSON to replace the whole
+explanation with an expected revision and known display base. These operations
+do not answer a handed thread or create wait events. `kemi reply` accepts old
+plain `body` or ordered typed `parts`, exactly one key. Read the conversation
+reference for the input rules, conflicts, and failure behavior.
+Answer ordinary questions with reply. Use explain for a correction or agreed
+change to the document itself; send a thread reply as well when one is needed.
+Readers keep their current revision until they open the update notice, and
+their Code lists do not refresh just because an explanation changed.
+
 ## Resume an interrupted review
 
 When a run ends without a submit and the user still wants that review, continue it instead
@@ -112,6 +126,10 @@ read "Cannot determine" if the repository is gone. Live reload and its update ba
 A `--live` review is the exception: resuming it reads the working tree as it is then, keeps live
 reload and the update badge, and connects to the same page again
 ([the input reference](references/inputs.md)).
+Typed parts and complete original explanation quotes survive resume without the original
+explanation input file. A non-live resume uses the frozen startup display version; it does
+not attach an explanation to a different base. A live rescan issues a new display version
+only on success, and leaves Code unavailable after failure until a retry succeeds.
 Resuming continues the same session rather than creating one, and a submit that follows
 writes its result for the workspace the review was started from, with the manifest
 `approval` unchanged.
@@ -125,11 +143,16 @@ error (exit `2`), and `--digest` / `--result` never create sessions.
 
 ## Handle the result
 
-Check the JSON contract version (`kemi: 2`) and that `verdict` agrees with the exit code. Do
-not guess at a version you do not know; a result written before version 2 is printed by
+Check the JSON contract version (`kemi: 3` for new result/wait output) and that `verdict` agrees with the exit code. Do
+not guess at a version you do not know; a stored version 1 or 2 result is printed by
 `kemi --result` exactly as it was stored.
 Read comments on both approval and requests for changes. Before using an approval, compare
 its identities with the current bytes. Before applying a suggestion, compare its `quote`
 with the file; locate outdated comments by their text rather than trusting old line numbers.
 Use the result reference for field details and `kemi --result` recovery if stdout was lost.
+Keep typed `parts` intact when reading replies or messages. An explanation comment refers
+to an original revision and a complete block quote, rather than a file path. Its
+`selection` (the text the person selected, or null) is a hint to the place in the block;
+the block quote stays authoritative. The display
+version identifies metadata; it guarantees neither fixed file bytes nor explanation correctness.
 Recovery retrieves a stored result; it does not wait for the current review to finish.

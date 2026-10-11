@@ -68,7 +68,7 @@ function metaStat(item) {
 export function renderUnitSwitch() {
   const focusKey = focusKeyWithin(dom.unitSwitch);
   dom.unitSwitch.textContent = "";
-  dom.unitSwitch.hidden = state.units.length === 0;
+  dom.unitSwitch.hidden = state.units.length === 0 || state.view !== 'code';
   for (const status of unitSwitchOrder(state.units)) {
     const unit = String(status.unit);
     const item = button("unit-button");
@@ -96,7 +96,7 @@ export function renderUnitSwitch() {
  */
 export function renderProgress() {
   const progress = seenProgress(state.entries.map((entry) => entry.file));
-  dom.progress.hidden = !state.review || progress.total === 0 || state.live !== null;
+  dom.progress.hidden = !state.review || progress.total === 0 || state.live !== null || state.view !== 'code';
   dom.progressBar.style.width = `${progress.total ? (progress.seen / progress.total) * 100 : 0}%`;
   dom.progressText.textContent = `Seen ${progress.seen} / ${progress.total}`;
   fitProgress();

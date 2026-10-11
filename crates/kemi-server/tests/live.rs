@@ -1151,6 +1151,77 @@ async fn editing_a_page_comment_changes_only_its_body() {
     assert_eq!(edited["page"], added["page"]);
 }
 
+async fn page_body_boundary(op: &str) {
+    let (authority, dev) = start_dev_server().await;
+    let scratch = Scratch::new(&format!("page-body-boundary-{op}"));
+    let store = kemi_core::session::SessionStore::new(scratch.0.clone());
+    let open = store
+        .create(stored_session_info(&authority, &scratch))
+        .unwrap();
+    let sink = Arc::new(StoreSink {
+        open: std::sync::Mutex::new(open),
+    });
+    let running = start_review_with_session(
+        LiveTarget::Url {
+            authority: authority.clone(),
+            start: "/".into(),
+            display: format!("http://{authority}/"),
+        },
+        scratch.0.clone(),
+        Some(sink.clone()),
+    )
+    .await;
+    let added: serde_json::Value =
+        add_page_comment(&running, serde_json::json!([page_place(1, "element")]))
+            .await
+            .json()
+            .await
+            .unwrap();
+    let boundary = "あ".repeat(21_845) + "x";
+    {
+        let request = |body: &str| serde_json::json!({"op":op,"id":added["id"],"page":{"url":"/products?x=1","width":390,"places":[page_place(1,"element")]},"body":body});
+        let accepted = post_review(&running, "api/comment", request(&boundary)).await;
+        assert_eq!(accepted.status(), 200, "{op}");
+        let before = get_review_json(&running, "api/review").await;
+        let saved = sink.open.lock().unwrap().state().clone();
+        let refused =
+            post_review(&running, "api/comment", request(&(boundary.clone() + "x"))).await;
+        assert_eq!(refused.status(), 413, "{op}");
+        assert!(refused.text().await.unwrap().contains("body"));
+        let after = get_review_json(&running, "api/review").await;
+        assert_eq!(before["comments"], after["comments"]);
+        assert_eq!(before["agent"], after["agent"]);
+        assert_eq!(*sink.open.lock().unwrap().state(), saved);
+        assert_eq!(
+            post_review(&running, "api/comment", request("next"))
+                .await
+                .status(),
+            200
+        );
+        let next = sink.open.lock().unwrap().state().clone();
+        assert_eq!(next.last_seq, saved.last_seq + u32::from(op != "edit"));
+        assert_eq!(
+            next.last_comment,
+            saved.last_comment + u32::from(op == "add_page")
+        );
+        assert_eq!(next.last_reply, saved.last_reply + u32::from(op == "reply"));
+    }
+    dev.abort();
+}
+
+#[tokio::test]
+async fn page_comment_additions_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    page_body_boundary("add_page").await;
+}
+#[tokio::test]
+async fn page_comment_edits_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    page_body_boundary("edit").await;
+}
+#[tokio::test]
+async fn page_comment_replies_accept_the_utf8_boundary_and_reject_overflow_without_changes() {
+    page_body_boundary("reply").await;
+}
+
 /// 割り込む要求。画像を書いた直後に別のスレッドで送り、応答の状態を返す。
 type Interruption = Box<dyn FnOnce() -> std::sync::mpsc::Receiver<StatusCode> + Send>;
 
@@ -1323,6 +1394,24 @@ struct StoreSink {
 }
 
 impl SessionSink for StoreSink {
+    fn review_id(&self) -> Option<String> {
+        Some(self.open.lock().unwrap().id().into())
+    }
+    fn initial_state(&self) -> kemi_core::session::SessionState {
+        self.open.lock().unwrap().state().clone()
+    }
+    fn is_resumed(&self) -> bool {
+        self.open.lock().unwrap().state().display.is_some()
+    }
+    fn needs_copy(&self) -> bool {
+        !self.open.lock().unwrap().info().mode.is_live()
+    }
+    fn save_issued_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_issued_state(state)
+    }
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
     fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), SessionError> {
@@ -1360,6 +1449,130 @@ impl SessionSink for StoreSink {
     ) -> FilesWrite {
         self.open.lock().unwrap().save_snapshot(snapshot, comments)
     }
+}
+
+struct ToggleScan {
+    fail: std::sync::atomic::AtomicBool,
+}
+impl ReviewSource for ToggleScan {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(SourceError::Git("scan failed".into()))
+        } else {
+            EmptySource.review()
+        }
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        Err(SourceError::UnknownFileId(id.into()))
+    }
+}
+
+#[tokio::test]
+async fn live_resume_failed_scan_has_no_code_token_until_a_successful_new_generation() {
+    resumed_code_failure_case(false).await;
+}
+
+#[tokio::test]
+async fn a_known_base_explanation_can_be_updated_while_resumed_code_is_unavailable() {
+    resumed_code_failure_case(true).await;
+}
+
+async fn resumed_code_failure_case(update_explanation: bool) {
+    let (authority, dev) = start_dev_server().await;
+    let scratch = Scratch::new("failed-scan");
+    let store = kemi_core::session::SessionStore::new(scratch.0.clone());
+    let info = stored_session_info(&authority, &scratch);
+    let id = info.id.clone();
+    let mut open = store.create(info).unwrap();
+    let state = kemi_core::session::SessionState {
+        display:Some(kemi_core::domain::display_version::DisplayVersions::initial(&id).unwrap()),
+        explanation:Some(serde_json::from_value(serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"before"},"references":[]}]}]}]})).unwrap()),
+        ..kemi_core::session::SessionState::default()
+    };
+    open.save_issued_state(state).unwrap();
+    let sink = Arc::new(StoreSink {
+        open: std::sync::Mutex::new(open),
+    });
+    let source = Arc::new(ToggleScan {
+        fail: std::sync::atomic::AtomicBool::new(true),
+    });
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let url = format!(
+        "http://127.0.0.1:{}/s/test-token/",
+        listener.local_addr().unwrap().port()
+    );
+    let relay = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let agent_listener = kemi_server::bind_agent_listener().await.unwrap();
+    let agent_port = agent_listener.local_addr().unwrap().port();
+    let params = ServeParams {
+        source: source.clone(),
+        assets: Arc::new(PageAssets),
+        token: "test-token".into(),
+        results: None,
+        session: Some(sink.clone()),
+        notices: Arc::new(Quiet),
+        share_address: None,
+        agent: update_explanation.then_some(kemi_server::AgentParams {
+            listener: agent_listener,
+            token: "agent-token".into(),
+            review: id.clone(),
+            control: kemi_server::ServeControl::new(),
+        }),
+        live: Some(LiveParams {
+            listener: relay,
+            target: LiveTarget::Url {
+                authority: authority.clone(),
+                start: "/".into(),
+                display: format!("http://{authority}/"),
+            },
+            root: scratch.0.clone(),
+            cookie: RELAY.into(),
+            mock_secret: MOCK_SECRET.into(),
+            code_view: true,
+            snapshots: vec![],
+            last_snapshot_number: 0,
+        }),
+    };
+    let task = tokio::spawn(serve(listener, params));
+    let response = reqwest::get(format!("{url}api/review")).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["diff_display_version"].is_null());
+    assert_eq!(body["live"]["code"], false);
+    assert!(body["code_unavailable"].as_str().is_some());
+    assert_eq!(body["explanation"]["current_revision"], 1);
+    if update_explanation {
+        let response=reqwest::Client::new().post(format!("http://127.0.0.1:{agent_port}/a/agent-token/explain")).json(&serde_json::json!({"expected_revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"updated"},"references":[{"type":"code","unit":null,"group_id":"old","path":"old.txt","side":"new","start_line":1,"end_line":2}]}]}]})).send().await.unwrap();
+        assert_eq!(response.status(), 200);
+    }
+    assert_eq!(
+        sink.open
+            .lock()
+            .unwrap()
+            .state()
+            .display
+            .as_ref()
+            .unwrap()
+            .issued,
+        1
+    );
+    source
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let restored: serde_json::Value = reqwest::get(format!("{url}api/review?refresh=1"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(restored["diff_display_version"], format!("{id}:2"));
+    assert_eq!(restored["live"]["code"], true);
+    assert_eq!(
+        restored["explanation"]["current_revision"],
+        if update_explanation { 2 } else { 1 }
+    );
+    task.abort();
+    dev.abort();
 }
 
 /// `start_stored_review` が開くセッションの情報。

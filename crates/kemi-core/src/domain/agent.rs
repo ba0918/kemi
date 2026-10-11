@@ -552,7 +552,7 @@ mod tests {
             seq: 0,
             group_id: "g1".to_string(),
             group_title: "group".to_string(),
-            body: body.to_string(),
+            body: body.into(),
             replies: Vec::new(),
             resolved: false,
             outdated: false,
@@ -574,7 +574,7 @@ mod tests {
             id: id.to_string(),
             seq: 0,
             author: Author::Reviewer,
-            body: body.to_string(),
+            body: body.into(),
         }
     }
 
@@ -688,7 +688,7 @@ mod tests {
             id: "r1".to_string(),
             seq: 0,
             author: Author::Reviewer,
-            body: "also the caller".to_string(),
+            body: "also the caller".into(),
         };
         comments[0].replies.push(reply.clone());
         channel.note_reply("c1", "r1");
@@ -727,7 +727,7 @@ mod tests {
             id: "r1".to_string(),
             seq: 0,
             author: Author::Reviewer,
-            body: "more".to_string(),
+            body: "more".into(),
         });
         let messages = vec![message("m1", "hello")];
         channel.note_comment("c1");
@@ -755,7 +755,7 @@ mod tests {
                         id: format!("r-{id}"),
                         seq: 0,
                         author: Author::Reviewer,
-                        body: "more".to_string(),
+                        body: "more".into(),
                     },
                 })
                 .collect(),
@@ -1238,7 +1238,7 @@ mod tests {
                 id: format!("r{n}"),
                 seq: 0,
                 author: Author::Agent,
-                body: "x".to_string(),
+                body: "x".into(),
             })
             .collect()
     }
@@ -1309,7 +1309,7 @@ mod tests {
             id: "r99".to_string(),
             seq: 0,
             author: Author::Reviewer,
-            body: "x".to_string(),
+            body: "x".into(),
         });
 
         assert_eq!(
@@ -1336,7 +1336,7 @@ mod tests {
                 id: format!("m{n}"),
                 seq: 0,
                 author: Author::Agent,
-                body: "x".to_string(),
+                body: "x".into(),
             })
             .collect();
         messages.push(message("m200", "a reviewer message is not counted"));

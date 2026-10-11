@@ -26,6 +26,7 @@ pub(super) struct Wrap {
 }
 
 pub(super) enum ImageSource {
+    Disabled(String),
     External(String),
     /// 参照と、元のパス（`data-kemi-path` に出す）。
     Reference(ImageRef, String),
@@ -93,6 +94,7 @@ pub(super) struct Inline {
 
 /// 相対パス画像を解決するのに要る、その側の情報。
 pub(super) struct ImageContext<'a> {
+    pub disabled: bool,
     pub side: Side,
     pub markdown_path: Option<&'a str>,
     /// その側のレビュー対象ファイル（id とパス）。
@@ -279,6 +281,9 @@ fn common_prefix(left: &[usize], right: &[usize]) -> usize {
 }
 
 fn resolve_image(raw: &str, context: &ImageContext<'_>) -> ImageSource {
+    if context.disabled {
+        return ImageSource::Disabled(raw.to_string());
+    }
     let relative = match url::classify(raw) {
         LinkTarget::External(url) => return ImageSource::External(url),
         LinkTarget::Relative(path) => path,
@@ -494,6 +499,12 @@ fn write_atom(sink: &mut Sink<'_>, atom: &Atom) {
 
 fn write_image(sink: &mut Sink<'_>, image: &ImageSpec) {
     match &image.source {
+        ImageSource::Disabled(path) => {
+            sink.out
+                .push_str("<span class=\"kb-img-frame\"><span>Image not loaded</span>");
+            write_image_frame(sink.out, &image.alt, path);
+            sink.out.push_str("</span>");
+        }
         ImageSource::External(url) => {
             sink.out.push_str("<img src=\"");
             push_attribute(sink.out, url);

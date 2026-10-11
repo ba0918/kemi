@@ -1,4 +1,5 @@
 // @ts-check
+import { actions } from '../actions.js';
 // 会話パネル（R-VIEW）の開閉と幅、一覧とスレッドの行き来、絞り込み、畳み、スレッドから
 // その行へ移る処理と、書く欄（全体への発言と返信）の受け付け。広い画面では右の列、狭い画面
 // では画面いっぱいのシート（R-NARROW）。
@@ -228,8 +229,7 @@ export function closeThread() {
 }
 
 /**
- * ページへのコメントの本文の編集を、開いたスレッドの中で始める（null でやめる）。場所は変えない
- * （live.md の R-PAGE-COMMENT。コードへのコメントは差分の中の入力欄で編集する）。
+ * Page・説明コメントの本文編集をスレッド内で始める（null でやめる）。
  * @param {string | null} id
  */
 export function editPageComment(id) {
@@ -239,7 +239,7 @@ export function editPageComment(id) {
 }
 
 /**
- * 編集しているページへのコメントの本文の書きかけを覚える（会話の描き直しで消えないように）。
+ * スレッド内で編集している本文の書きかけを覚える。
  * @param {string} text
  */
 export function keepPageCommentDraft(text) {
@@ -247,7 +247,7 @@ export function keepPageCommentDraft(text) {
 }
 
 /**
- * ページへのコメントの本文を保存する。
+ * スレッド内で編集したコメント本文を保存する。
  * @param {any} comment
  * @param {string} body
  */
@@ -300,7 +300,7 @@ export async function loadCommitGroups() {
   const reviews = state.reviews;
   try {
     const review = await api.getReview(false, "commit");
-    if (!reviews.has("commit")) {
+    if (review.diff_display_version === state.codeToken && !reviews.has("commit")) {
       reviews.set("commit", review);
     }
   } catch {
@@ -324,6 +324,11 @@ export async function loadCommitGroups() {
  * @param {string | null} unit
  */
 export async function goToComment(comment, unit) {
+  if (comment.target_type === 'explanation') {
+    if (state.narrow) closeSheet();
+    actions.showExplanationComment(comment);return;
+  }
+  actions.selectView('code');
   const line =
     comment.start_line === null || comment.start_line === undefined
       ? null

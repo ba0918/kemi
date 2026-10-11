@@ -26,7 +26,9 @@ use axum::routing::post;
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use kemi_core::domain::agent::{AgentEvent, AgentWrite, validate_writes};
+use kemi_core::domain::conversation_content::ConversationContent;
 use kemi_core::domain::review::{Author, Message, Reply};
+use kemi_core::parts::{WriteContent, validate_content};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -40,6 +42,8 @@ pub(crate) fn agent_router(state: Arc<AppState>) -> Router {
         .route("/a/{token}/wait", post(wait_api))
         .route("/a/{token}/reply", post(reply_api))
         .route("/a/{token}/received", post(received_api))
+        .route("/a/{token}/context", post(super::explanation::context))
+        .route("/a/{token}/explain", post(super::explanation::explain))
         // 書き込みの上限は件数と本文ごとの大きさ（R-AGENT-WRITE）で、要求全体の大きさでは
         // ない。上限の中の書き込みをまとめると既定の 2 MB を超えるので、本文の大きさでは
         // 断らない。ここに届くのはトークンを持つ同じマシンの要求だけ（R-AGENT-LINK）。
@@ -325,7 +329,8 @@ struct ReplyRequest {
 enum WriteRequest {
     Reply {
         comment_id: String,
-        body: String,
+        #[serde(flatten)]
+        content: WriteContent,
         /// 案は動いているページのレビューでだけ受け付ける。キーがあれば形の誤り。
         #[serde(default)]
         variants: Option<Value>,
@@ -333,7 +338,18 @@ enum WriteRequest {
         applied: Option<Value>,
     },
     Message {
-        body: String,
+        #[serde(flatten)]
+        content: WriteContent,
+    },
+}
+
+enum ContentWrite {
+    Reply {
+        comment_id: String,
+        content: ConversationContent,
+    },
+    Message {
+        content: ConversationContent,
     },
 }
 
@@ -358,14 +374,24 @@ async fn reply_api(
                 "applied is accepted only in a review of a running page (--live)",
             )),
             WriteRequest::Reply {
-                comment_id, body, ..
-            } => Ok(AgentWrite::Reply { comment_id, body }),
-            WriteRequest::Message { body } => Ok(AgentWrite::Message { body }),
+                comment_id,
+                content,
+                ..
+            } => validate_content(content.0)
+                .map(|content| ContentWrite::Reply {
+                    comment_id,
+                    content,
+                })
+                .map_err(|error| ApiError::bad_request(error.to_string())),
+            WriteRequest::Message { content } => validate_content(content.0)
+                .map(|content| ContentWrite::Message { content })
+                .map_err(|error| ApiError::bad_request(error.to_string())),
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
 
     let (ids, threads, messages) = {
         let mut session = state.session.lock().expect("session poisoned");
+        let previous = session.clone();
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
         if matches!(
@@ -376,20 +402,42 @@ async fn reply_api(
                 "the review is being submitted; print its result with kemi --result",
             ));
         }
-        validate_writes(&writes, &session.comments, &session.messages)
+        let plain = |content: &ConversationContent| match content {
+            ConversationContent::Plain(body) => body.clone(),
+            ConversationContent::Parts(_) => String::new(),
+        };
+        let counted: Vec<_> = writes
+            .iter()
+            .map(|write| match write {
+                ContentWrite::Reply {
+                    comment_id,
+                    content,
+                } => AgentWrite::Reply {
+                    comment_id: comment_id.clone(),
+                    body: plain(content),
+                },
+                ContentWrite::Message { content } => AgentWrite::Message {
+                    body: plain(content),
+                },
+            })
+            .collect();
+        validate_writes(&counted, &session.comments, &session.messages)
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
         let mut ids = Vec::new();
         let mut touched: Vec<String> = Vec::new();
         let mut messages = Vec::new();
         for write in writes {
             match write {
-                AgentWrite::Reply { comment_id, body } => {
+                ContentWrite::Reply {
+                    comment_id,
+                    content,
+                } => {
                     session.last_reply += 1;
                     let reply = Reply {
                         id: format!("r{}", session.last_reply),
                         seq: session.next_seq(),
                         author: Author::Agent,
-                        body,
+                        body: content,
                     };
                     ids.push(reply.id.clone());
                     if let Some(comment) = session
@@ -403,13 +451,13 @@ async fn reply_api(
                         touched.push(comment_id);
                     }
                 }
-                AgentWrite::Message { body } => {
+                ContentWrite::Message { content } => {
                     session.last_message += 1;
                     let message = Message {
                         id: format!("m{}", session.last_message),
                         seq: session.next_seq(),
                         author: Author::Agent,
-                        body,
+                        body: content,
                     };
                     ids.push(message.id.clone());
                     messages.push(page_message_json(&message));
@@ -422,6 +470,10 @@ async fn reply_api(
             .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
             .map(page_comment_json)
             .collect();
+        if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+            *session = previous;
+            return Err(ApiError::too_large(error.to_string()));
+        }
         // 返信のスレッドと発言の行を消し、状態を表のとおりに移す（R-AGENT-STATE, R-AGENT-HAND）。
         // セッションのロックの中で行う（ロックは session → agent の順）。外で行うと、その間に人間が
         // 同じスレッドを渡し直して受け取り待ちにした行を、この古い返信が消してしまう。

@@ -545,6 +545,9 @@ export function collapseDefault(file, collapsedMap) {
  * @returns {string}
  */
 export function commentLabel(comment) {
+  if (comment.explanation || comment.target_type === "explanation") {
+    return `Explanation · revision ${comment.explanation.revision}`;
+  }
   if (comment.page) {
     const count = comment.page.places.length;
     return `${comment.page.width}px · ${count} ${count === 1 ? "place" : "places"}`;
@@ -987,11 +990,21 @@ export function seenProgress(files) {
 
 /**
  * コメントの札に出す、本文の最初の空でない行。
- * @param {string} body
+ * @param {string | {body: string|null, parts?: unknown[]|null}} body
  * @returns {string}
  */
 export function firstLine(body) {
-  return body.split("\n").find((line) => line.trim() !== "") ?? "";
+  return conversationText(body).split("\n").find((line) => line.trim() !== "") ?? "";
+}
+
+/**
+ * @param {string | {body: string|null, parts?: unknown[]|null}} content
+ * @returns {string}
+ */
+export function conversationText(content) {
+  if (typeof content === "string") return content;
+  if (content.body !== null) return content.body;
+  return content.parts ? JSON.stringify(content.parts, null, 2) : "";
 }
 
 /**
@@ -1035,7 +1048,7 @@ export function commentedLines(display, comments) {
  * @returns {{ unit: string | null, subject: string, vanished: boolean }}
  */
 export function describeComment(comment, context) {
-  if (!context.range) {
+  if (!context.range || comment.explanation || comment.target_type === "explanation") {
     return { unit: null, subject: "", vanished: false };
   }
   if (comment.group_id === "all") {
@@ -1060,6 +1073,7 @@ export function commentCountChanges(before, after) {
    * @param {number} delta
    */
   const count = (comment, delta) => {
+    if (comment.explanation || comment.target_type === "explanation") return;
     const key = JSON.stringify([comment.group_id, comment.path]);
     const found = files.get(key) ?? { group_id: comment.group_id, path: comment.path, delta: 0 };
     found.delta += delta;

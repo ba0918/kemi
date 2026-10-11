@@ -32,6 +32,7 @@ Other flags worth knowing:
 | `--port <n>` | listen on a fixed port; the default `0` picks a free one |
 | `--bind <addr>` | listen address as an IPv4 literal; the default `127.0.0.1` keeps the page local, while `0.0.0.0` listens on every IPv4 interface and exposes it to the network |
 | `--focus <path>` | a JSON file that adds focus marks and watch points to any input mode |
+| `--explanation <file>` | initial UTF-8 explanation JSON, read from a file rather than stdin |
 | `--base <dir>` | where relative paths in a manifest and in `--focus` resolve from; default `.` |
 
 The `--focus` file looks like this:
@@ -55,7 +56,7 @@ must be a `.html` or `.htm` inside the git working tree kemi starts in, or insid
 directory outside git; a symlink counts where it points, and nothing in `.git/` is served.
 Anything else is a usage error (exit `2`). The code view is the same as `--worktree`; outside
 a git repository there is none. `--live` combines only with `--port`, `--bind`, `--no-open`,
-`--live-port <n>`, `--focus`, and `--serve`. The review title is `Live review of <url>`, and
+`--live-port <n>`, `--focus`, `--explanation`, and `--serve`. The review title is `Live review of <url>`, and
 for a file the URL is its path from that directory, such as `/docs/mock.html`.
 
 kemi prints `kemi: live <url>` after the review line: the page relayed through a second port
@@ -81,7 +82,7 @@ and, from `kemi wait`, the path of a PNG of the area with the places drawn on it
 the body refers to a place as `#n`, the place whose `n` is that number.
 
 A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
-connects to the same URL again, and it is kept only when it holds a comment, a reply, or a message.
+connects to the same URL again, and it is kept only when it holds a comment, a reply, a message, or an explanation.
 Its snapshots and mock assignments come back on resume too.
 
 ## Surveying a large change first
@@ -100,7 +101,7 @@ An interrupted run (exit `130`) keeps its comments, seen marks, folding, and res
 session. Only a session whose copy completed within the size limit can be listed or resumed;
 one whose copy is unfinished or too large keeps the state alone, and a run with nothing to keep
 leaves no session. A `--live` review keeps no copy: it is kept only when it holds a comment, a
-reply, or a message. Continue it instead of rebuilding the input:
+reply, a message, or an explanation. Continue it instead of rebuilding the input:
 
 ```text
 kemi --resume <id>   # the id is in the `kemi: resume with:` line on stderr
@@ -115,6 +116,40 @@ it takes only `--port`, `--bind`, `--no-open`, `--serve`, and `--live-port`, and
 `--digest` beside it is a usage error (exit `2`). Without an id and without a terminal it prints the resumable
 sessions as tab-separated lines (id, last update, workspace, mode, seen/total, newest first) and
 exits `0`, or exits `2` with nothing on stdout when there are none.
+
+Sessions write format 4 and read formats 2, 3, and 4. Old body strings stay plain text;
+typed parts, original explanation quotes, retained versions, and undelivered events keep
+their content. The original explanation file is not needed for resume. A non-live resume
+uses the frozen startup display version, retaining the highest issued generation and the
+explanation's original base. A live rescan publishes a new display version only after it
+succeeds and is saved; until a failed scan can be retried, Code is unavailable.
+
+## Adding an explanation
+
+An initial explanation is a separate file with `{sections:[...]}`, so it can
+accompany a manifest on stdin. Sections have `id`, plain `title`, and nonempty
+`blocks`. Each block has `id`, one typed `part`, and `references`. Section IDs
+are unique within the document; block IDs are unique across all sections.
+Use the [explanation contract](https://github.com/ba0918/kemi/blob/main/docs/spec/explanation.md) and
+[part fields and limits](https://github.com/ba0918/kemi/blob/main/docs/spec/content-parts.md) when creating
+these values. The server sets revision 1 and the initial metadata base. Valid
+whole-file references to the opposite range grouping are accepted before its
+full list is built; do not guess unknown total line counts from diff statistics.
+Invalid JSON/references or unavailable persistent storage exits 2 before the
+review is published. `--explanation` does not combine with `--digest`,
+`--result`, `--resume`, wait, reply, or explain.
+
+An initial document opens EXPLANATION instead of the mode's usual Code or
+Page start. Its left column is a contents list, and Conversation stays shared
+with the other views. Without a document the explanation switch is disabled
+until a later update adds one; that update offers a notice without changing
+the reader's view. Final state / Per commit is a Code-only switch.
+
+For example, a complete initial file can be:
+
+```json
+{"sections":[{"id":"overview","title":"Review purpose","blocks":[{"id":"intent","part":{"type":"text","body":"Read the **reason** before the implementation."},"references":[]}]}]}
+```
 
 ## Writing a manifest
 

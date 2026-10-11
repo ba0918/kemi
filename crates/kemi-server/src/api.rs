@@ -5,8 +5,10 @@
 mod agent;
 mod channel;
 mod comments;
+pub(crate) mod explanation;
 mod file;
 mod mock;
+mod parts;
 mod rendered;
 mod snapshot;
 mod submit;
@@ -53,6 +55,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/s/{token}/api/file/{id}", get(file_api))
         .route("/s/{token}/api/origin/{id}", get(origin))
         .route("/s/{token}/api/render/{id}", get(render_file))
+        .route("/s/{token}/api/parts", post(parts::render_part))
+        .route(
+            "/s/{token}/api/explanation",
+            get(explanation::get_version).post(explanation::hold_version),
+        )
         .route("/s/{token}/api/image/review/{id}/{side}", get(review_image))
         .route(
             "/s/{token}/api/image/repo/{id}/{side}/{*path}",
@@ -237,14 +244,6 @@ impl AllowedHosts {
     }
 }
 
-async fn source_review(state: &AppState) -> Result<ReviewMeta, ApiError> {
-    let source = state.source.clone();
-    tokio::task::spawn_blocking(move || source.review())
-        .await
-        .map_err(|error| runtime_error(state, error))?
-        .map_err(|error| runtime_error(state, error))
-}
-
 /// 内容を読む。一覧にある id でも、再取得や裏での単位の作り直しで内容の計画が先に
 /// 差し替わると、内容の側はその id をもう知らないことがある。これは git や I/O の
 /// 失敗ではないので、レビューは終えず None を返す（一覧に無い id と同じ扱い）。
@@ -333,13 +332,11 @@ async fn review(
     Query(query): Query<ReviewQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let unit = query.unit.as_deref().map(parse_unit).transpose()?;
+    ensure_display_persisted(&state)?;
     if query.refresh.as_deref() == Some("1") {
-        let _guard = state.refresh.lock().await;
-        let startup = Arc::new(source_review(&state).await?);
-        state.review.write().expect("review lock poisoned").startup = startup;
-        units::refresh_other(&state).await;
+        units::refresh(&state).await.map_err(ApiError::internal)?;
     }
-    let (mut body, page_comment_saved) = {
+    let (mut body, page_comment_saved, code_error) = {
         let review = state.review.read().expect("review lock poisoned");
         let (shown, meta) = review.meta(unit).map_err(|reason| match reason {
             Unavailable::NoSuchUnit => ApiError::not_found("no such unit"),
@@ -347,14 +344,43 @@ async fn review(
         })?;
         let session = state.session.lock().expect("session poisoned");
         let mut body = review_json(meta.as_ref(), &session);
+        let source = state.sources.current();
+        for (group, output) in meta.groups.iter().zip(
+            body["groups"]
+                .as_array_mut()
+                .expect("review groups are arrays"),
+        ) {
+            for (file, output) in group.files.iter().zip(
+                output["files"]
+                    .as_array_mut()
+                    .expect("review files are arrays"),
+            ) {
+                let known = explanation::entry_reference_metadata(file, source.as_ref());
+                output["old_present"] = json!(known.old_present);
+                output["new_present"] = json!(known.new_present);
+                output["old_lines"] = json!(known.old_lines);
+                output["new_lines"] = json!(known.new_lines);
+            }
+        }
         body["unit"] = json!(shown.map(GroupBy::as_str));
         body["units"] = review.units_json();
-        (body, session.page_comment_saved)
+        body["diff_display_version"] = if review.code_error.is_some() {
+            Value::Null
+        } else {
+            json!(session.display.as_ref().map(|d| &d.current))
+        };
+        body["code_unavailable"] = json!(review.code_error);
+        body["explanation"] = json!(session.explanation);
+        (body, session.page_comment_saved, review.code_error.clone())
     };
     body["agent"] = agent_json(&state);
     body["live"] = state.live.as_ref().map_or(Value::Null, |live| live.json());
     // ページへのコメントの始め方の案内を出すかは、画面がこれで決める（live.md の R-PAGE-COMMENT）。
     if let Some(live) = body["live"].as_object_mut() {
+        if let Some(reason) = code_error {
+            live.insert("code".into(), json!(false));
+            live.insert("code_unavailable".into(), json!(reason));
+        }
         live.insert("page_comment_saved".to_string(), json!(page_comment_saved));
     }
     // 起動時の単位を返した後に、もう片方を裏で作り始める（R-UNIT, R-SERVE）。
@@ -362,6 +388,31 @@ async fn review(
     // 応答を返した後に、写しの凍結を裏で始める（R-SESSION）。
     start_freeze(&state);
     Ok(Json(body))
+}
+
+pub(super) fn ensure_display_persisted(state: &AppState) -> Result<(), ApiError> {
+    if state
+        .display_ready
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Ok(());
+    }
+    let _gate = state.persist.lock().expect("persist poisoned");
+    if state
+        .display_ready
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Ok(());
+    }
+    let snapshot = state.session.lock().expect("session poisoned").snapshot();
+    if let Some(sink) = &state.session_sink {
+        sink.save_issued_state(snapshot)
+            .map_err(ApiError::internal)?;
+    }
+    state
+        .display_ready
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
 }
 
 fn review_json(review: &ReviewMeta, session: &Session) -> Value {
@@ -600,6 +651,7 @@ async fn events(
                 Ok(Event::Message(message)) => ("message", message.to_string()),
                 Ok(Event::Agent(agent)) => ("agent", agent.to_string()),
                 Ok(Event::Snapshots) => ("snapshots", "{}".to_string()),
+                Ok(Event::Explanation(value)) => ("explanation", value.to_string()),
                 // 取りこぼした通知は、どれだったか分からない。ページは更新があったもの
                 // として扱い、スレッドと発言とエージェントの状態を取り直す。
                 Err(_) => ("lagged", "{}".to_string()),

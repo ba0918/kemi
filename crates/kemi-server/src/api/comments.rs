@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment::{self, CommentError, PlaceError};
+use kemi_core::domain::explanation::{ExplanationSelection, MAX_OCCURRENCE, validate_selection};
 use kemi_core::domain::review::{
     Author, Comment, CommentTarget, FileTarget, LineRange, PageTarget, Place, PlaceElement,
     PlaceKind, Point, Rect, Reply, Side, Suggestion,
@@ -22,6 +23,18 @@ use crate::{AppState, Event, Notice};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub(super) enum CommentRequest {
+    #[serde(rename = "add_explanation")]
+    AddExplanation {
+        explanation_revision: u64,
+        block_id: String,
+        body: String,
+        #[serde(default)]
+        suggestion: Option<String>,
+        /// 形の誤りを axum の拒否文でなく、どこが悪いかの文で返すため、値のまま受けて
+        /// `parse_selection` で読む。
+        #[serde(default)]
+        selection: Option<Value>,
+    },
     Add {
         file_id: String,
         side: String,
@@ -110,7 +123,33 @@ pub(super) async fn comment_api(
     Path(_token): Path<String>,
     Json(request): Json<CommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    match &request {
+        CommentRequest::AddExplanation { body, .. }
+        | CommentRequest::Add { body, .. }
+        | CommentRequest::AddPage { body, .. }
+        | CommentRequest::Edit { body, .. }
+        | CommentRequest::Reply { body, .. } => {
+            kemi_core::parts::validate_plain_body(body)
+                .map_err(|error| ApiError::too_large(error.to_string()))?;
+        }
+        CommentRequest::Delete { .. } | CommentRequest::Resolve { .. } => {}
+    }
     match request {
+        CommentRequest::AddExplanation {
+            explanation_revision,
+            block_id,
+            body,
+            suggestion,
+            selection,
+        } => {
+            if suggestion.is_some() {
+                return Err(ApiError::bad_request(
+                    "explanation comments cannot have suggestions",
+                ));
+            }
+            let selection = parse_selection(selection).map_err(ApiError::bad_request)?;
+            add_explanation_comment(&state, explanation_revision, &block_id, body, selection)
+        }
         CommentRequest::Add {
             file_id,
             side,
@@ -133,6 +172,7 @@ pub(super) async fn comment_api(
             suggestion,
         } => {
             let mut session = state.session.lock().expect("session poisoned");
+            let previous = session.clone();
             let comment = session
                 .comments
                 .iter_mut()
@@ -160,6 +200,10 @@ pub(super) async fn comment_api(
             comment.body = body;
             let value = page_comment_json(comment);
             session.channel.note_comment(&id);
+            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+                *session = previous;
+                return Err(ApiError::too_large(error.to_string()));
+            }
             drop(session);
             persist(&state);
             notify_agent_state(&state);
@@ -189,6 +233,7 @@ pub(super) async fn comment_api(
         }
         CommentRequest::Reply { id, body } => {
             let mut session = state.session.lock().expect("session poisoned");
+            let previous = session.clone();
             let index = session
                 .comments
                 .iter()
@@ -199,12 +244,16 @@ pub(super) async fn comment_api(
                 id: format!("r{}", session.last_reply),
                 seq: session.next_seq(),
                 author: Author::Reviewer,
-                body,
+                body: body.into(),
             };
             session.channel.note_reply(&id, &reply.id);
             let comment = &mut session.comments[index];
             comment.replies.push(reply);
             let value = page_comment_json(comment);
+            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+                *session = previous;
+                return Err(ApiError::too_large(error.to_string()));
+            }
             drop(session);
             persist(&state);
             let _ = state.events.send(Event::Thread(value.clone()));
@@ -213,6 +262,7 @@ pub(super) async fn comment_api(
         }
         CommentRequest::Resolve { id, resolved } => {
             let mut session = state.session.lock().expect("session poisoned");
+            let previous = session.clone();
             let comment = session
                 .comments
                 .iter_mut()
@@ -220,6 +270,10 @@ pub(super) async fn comment_api(
                 .ok_or_else(comment_not_found)?;
             comment.resolved = resolved;
             let value = page_comment_json(comment);
+            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+                *session = previous;
+                return Err(ApiError::too_large(error.to_string()));
+            }
             drop(session);
             persist(&state);
             Ok(Json(value))
@@ -378,6 +432,104 @@ fn add_page_comment(
         answer["image_unsaved"] = json!(true);
     }
     Ok(Json(answer))
+}
+
+fn add_explanation_comment(
+    state: &AppState,
+    revision: u64,
+    block_id: &str,
+    body: String,
+    selection: Option<ExplanationSelection>,
+) -> Result<Json<Value>, ApiError> {
+    let gate = state.persist.lock().expect("persist poisoned");
+    if *state.shutdown.borrow()
+        || matches!(
+            *state.submit_state.lock().expect("submit poisoned"),
+            crate::SubmitState::Claimed
+        )
+    {
+        return Err(ApiError::conflict("the review is being submitted"));
+    }
+    let mut session = state.session.lock().expect("session poisoned");
+    let version = session
+        .explanation
+        .as_ref()
+        .and_then(|history| history.versions.iter().find(|v| v.revision == revision))
+        .ok_or_else(|| ApiError::not_found("explanation revision is no longer available"))?;
+    let document = kemi_core::domain::explanation::ExplanationDocument {
+        sections: version.sections.clone(),
+    };
+    let quote = kemi_core::domain::explanation::quote_block(&document, block_id)
+        .map_err(|error| ApiError::not_found(error.to_string()))?;
+    if let Some(selection) = &selection {
+        validate_selection(&quote.block.part, selection)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
+    let mut candidate = session.snapshot();
+    candidate.last_comment += 1;
+    candidate.last_seq += 1;
+    let comment = Comment {
+        id: format!("c{}", candidate.last_comment),
+        seq: candidate.last_seq,
+        group_id: String::new(),
+        group_title: String::new(),
+        body,
+        replies: vec![],
+        resolved: false,
+        outdated: false,
+        target: CommentTarget::Explanation(kemi_core::domain::review::ExplanationTarget {
+            revision,
+            block_id: block_id.into(),
+            quote,
+            selection,
+        }),
+    };
+    candidate.channel.note_comment(&comment.id);
+    candidate.comments.push(comment);
+    candidate.refresh_explanation_comments();
+    kemi_core::session::validate_additional(&candidate)
+        .map_err(|error| ApiError::too_large(error.to_string()))?;
+    let value = page_comment_json(candidate.comments.last().expect("new comment appended"));
+    session.last_comment = candidate.last_comment;
+    session.last_seq = candidate.last_seq;
+    session.comments = candidate.comments;
+    session.channel = candidate.channel;
+    drop(session);
+    drop(gate);
+    persist(state);
+    notify_agent_state(state);
+    Ok(Json(value))
+}
+
+/// 作成要求の `selection` の形を読む。無いか null なら選択なし。上限と図の拒否は
+/// 復元と同じ `validate_selection` に任せる。
+fn parse_selection(value: Option<Value>) -> Result<Option<ExplanationSelection>, String> {
+    let object = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(object)) => object,
+        Some(_) => return Err("selection: must be an object with text and occurrence".into()),
+    };
+    if let Some(key) = object
+        .keys()
+        .find(|key| !matches!(key.as_str(), "text" | "occurrence"))
+    {
+        return Err(format!("selection.{key}: unknown field"));
+    }
+    let text = object
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or("selection.text: must be a string")?;
+    // `1.0` や `-1` は as_u64 で読めないので、整数の表記だけが通る。
+    let occurrence = object
+        .get("occurrence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            format!("selection.occurrence: must be an integer in 0..={MAX_OCCURRENCE}")
+        })?;
+    Ok(Some(ExplanationSelection {
+        text: text.into(),
+        occurrence,
+    }))
 }
 
 /// コメントの画像を保存した結果。

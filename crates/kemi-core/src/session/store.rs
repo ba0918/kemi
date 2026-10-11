@@ -412,6 +412,94 @@ impl OpenSession {
         self.save_state_at(state, super::now_millis())
     }
 
+    pub fn save_issued_state(&mut self, state: SessionState) -> Result<(), SessionError> {
+        self.save_atomic_state(state, self.info.updated)
+    }
+
+    pub fn save_explanation_state(&mut self, state: SessionState) -> Result<(), SessionError> {
+        super::validate_additional(&state)?;
+        self.save_atomic_state(state, super::now_millis())
+    }
+
+    fn save_atomic_state(
+        &mut self,
+        state: SessionState,
+        updated: u128,
+    ) -> Result<(), SessionError> {
+        if self.deleted || self.suspended {
+            return Err(SessionError::Unusable {
+                id: self.info.id.clone(),
+                reason: "the review is stopping".into(),
+            });
+        }
+        let display = state.display.as_ref().ok_or_else(|| SessionError::Encode {
+            reason: "diff_display_version: missing generation state".into(),
+        })?;
+        display
+            .validate(&self.info.id)
+            .map_err(|e| SessionError::Encode {
+                reason: e.to_string(),
+            })?;
+        let mut info = self.info.clone();
+        info.updated = updated;
+        let meta = MetaDto::from_parts(&info, &state, &self.copy);
+        let bytes = serde_json::to_vec(&meta).map_err(|e| SessionError::Encode {
+            reason: e.to_string(),
+        })?;
+        write_atomic(
+            &self.dir,
+            &self.path(),
+            &encoding::encode_session(encoding::VERSION, &bytes),
+        )?;
+        self.state = state;
+        self.info = info;
+        cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
+        Ok(())
+    }
+
+    pub fn save_frozen_copy(
+        &mut self,
+        prepared: super::PreparedCopy,
+        mut state: SessionState,
+    ) -> Result<bool, SessionError> {
+        if self.deleted || self.suspended {
+            return Err(SessionError::Unusable {
+                id: self.info.id.clone(),
+                reason: "the review is stopping".into(),
+            });
+        }
+        let ready = prepared.compressed.len() as u64 <= COPY_LIMIT;
+        let copy = if ready {
+            write_atomic(
+                &self.dir,
+                &payload_path(&self.dir, &self.info.id),
+                &prepared.compressed,
+            )?;
+            CopyState::Ready(prepared.copy)
+        } else {
+            if let Some(display) = state.display.as_mut() {
+                display.frozen = None;
+            }
+            CopyState::Unusable("the review copy is larger than 20 MB".into())
+        };
+        let meta = MetaDto::from_parts(&self.info, &state, &copy);
+        let bytes = serde_json::to_vec(&meta).map_err(|e| SessionError::Encode {
+            reason: e.to_string(),
+        })?;
+        write_atomic(
+            &self.dir,
+            &self.path(),
+            &encoding::encode_session(encoding::VERSION, &bytes),
+        )?;
+        self.state = state;
+        self.copy = copy;
+        if !ready {
+            self.remove_payload_file()?;
+        }
+        cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
+        Ok(ready)
+    }
+
     /// 凍結した写しを保存する。圧縮後の上限を超えたら写しを捨てて復元不可にする。
     pub fn save_copy(&mut self, copy: SessionCopy) -> Result<(), SessionError> {
         self.save_copy_with_limit(copy, super::now_millis(), COPY_LIMIT)
@@ -509,10 +597,19 @@ impl OpenSession {
     /// 片付けた後は `<id>.files/` に書かない。
     pub fn close_suspended(&mut self) -> Result<(), SessionError> {
         self.suspended = true;
-        if self.deleted || !self.info.mode.is_live() || self.state.has_conversation() {
+        if self.deleted {
             return Ok(());
         }
-        remove_dir_if_present(&files_path(&self.dir, &self.info.id))
+        if self.info.mode.is_live() && !self.state.has_conversation() {
+            self.remove_file()?;
+            self.remove_payload_file()?;
+            return remove_dir_if_present(&files_path(&self.dir, &self.info.id));
+        }
+        if !self.info.mode.is_live() && self.state.is_empty() && !self.has_copy() {
+            self.remove_file()?;
+            self.remove_payload_file()?;
+        }
+        Ok(())
     }
 
     fn write_into_files(
@@ -589,6 +686,7 @@ impl OpenSession {
         state: SessionState,
         now: u128,
     ) -> Result<(), SessionError> {
+        super::validate_additional(&state)?;
         self.state = state;
         self.info.updated = now;
         self.persist()
@@ -644,7 +742,9 @@ impl OpenSession {
         }
         // 写しを作れなかった理由を残すためでも、状態が空ならセッションは残さない
         // （R-SESSION）。
-        let keep = if self.info.mode.is_live() {
+        let keep = if self.state.display.is_some() && !self.suspended {
+            true
+        } else if self.info.mode.is_live() {
             // `--live` は見た・折りたたみだけでは残さない（R-PAGE-SESSION）。
             self.state.has_conversation()
         } else {
@@ -1153,7 +1253,7 @@ mod tests {
                 id: "r1".to_string(),
                 seq: 0,
                 author: Author::Reviewer,
-                body: "done".to_string(),
+                body: "done".into(),
             }],
             resolved: true,
             outdated: false,
@@ -1180,6 +1280,393 @@ mod tests {
             last_comment: 1,
             last_reply: 1,
             ..SessionState::default()
+        }
+    }
+
+    #[test]
+    fn old_format_ignores_new_field_names_and_opaque_extensions_under_its_original_contract() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        drop(store.create(info(id, 100)).unwrap());
+        let mut meta = serde_json::to_value(MetaDto::from_parts(
+            &info(id, 100),
+            &state_with_comment(),
+            &CopyState::Pending,
+        ))
+        .unwrap();
+        meta["state"]["opaque_extension"] =
+            serde_json::json!({"author":"opaque","body":{"not":"a conversation"}});
+        meta["state"]["comments"][0]["explanation"] =
+            serde_json::json!({"unknown":"ignored in version 3"});
+        meta["state"]["comments"][0]["replies"][0]["parts"] =
+            serde_json::json!({"unknown":"ignored in version 3"});
+        std::fs::write(
+            session_path(&scratch.dir(), id),
+            encoding::encode_session(3, &serde_json::to_vec(&meta).unwrap()),
+        )
+        .unwrap();
+        let restored = store.read(id).unwrap();
+        assert!(restored.state.comments[0].file().is_some());
+        assert_eq!(restored.state.comments[0].replies[0].body, "done".into());
+        assert!(restored.state.explanation.is_none());
+    }
+
+    #[test]
+    fn fixed_version_three_plain_session_is_supplemented_and_first_written_as_four_without_timestamp_or_payload_changes()
+     {
+        const META: &str = r#"{"info":{"id":"01HF7YAT00AAAAAAAAAAAAAAAA","created":111,"updated":222,"workspace":"/tmp/fixture","workspace_key":"00000000000000aa","mode":{"kind":"worktree"},"title":"Working tree changes","total_files":1},"state":{"comments":[],"seen":[],"collapsed":{},"messages":[{"id":"m1","author":"agent","body":"**plain**"}]},"copy":{"state":"ready"}}"#;
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        drop(store.create(info(id, 222)).unwrap());
+        let mut oldcopy = copy();
+        oldcopy.startup_unit = None;
+        oldcopy.units[0].unit = None;
+        let payload = encoding::gzip(&super::super::encode_copy(&oldcopy).unwrap());
+        std::fs::write(payload_path(&scratch.dir(), id), &payload).unwrap();
+        let original = encoding::encode_session(3, META.as_bytes());
+        std::fs::write(session_path(&scratch.dir(), id), &original).unwrap();
+        let mut open = store.open(id).unwrap();
+        assert_eq!(open.info().created, 111);
+        assert_eq!(open.info().updated, 222);
+        assert_eq!(open.state().messages[0].body, "**plain**".into());
+        let display = open.state().display.as_ref().unwrap();
+        assert_eq!(display.current, format!("{id}:1"));
+        assert_eq!(display.frozen.as_deref(), Some(format!("{id}:1").as_str()));
+        assert_eq!(
+            std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
+            original
+        );
+        open.save_issued_state(open.state().clone()).unwrap();
+        assert_eq!(open.info().updated, 222);
+        assert_eq!(
+            encoding::decode_version(&std::fs::read(session_path(&scratch.dir(), id)).unwrap())
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            std::fs::read(payload_path(&scratch.dir(), id)).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn old_plain_file_conversations_are_not_retroactively_counted_as_new_saved_content() {
+        let mut state = state_with_comment();
+        state.comments = (0..257)
+            .map(|i| {
+                let mut c = comment();
+                c.id = format!("c{i}");
+                c.body = "x".repeat(65_536);
+                c
+            })
+            .collect();
+        assert_eq!(super::super::additional_saved_size(&state), 0);
+        assert!(super::super::validate_additional(&state).is_ok());
+    }
+
+    #[test]
+    fn saved_parts_capacity_counts_the_whole_hand_event_and_keeps_rejected_state_unchanged() {
+        use crate::domain::conversation_content::ConversationContent;
+        use crate::domain::parts::{Part, Role};
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        let mut state = state_with_comment();
+        state.comments[0].file_mut().unwrap().quote = vec![String::new()];
+        state.messages = (1..=16)
+            .map(|n| Message {
+                id: format!("m{n}"),
+                seq: n,
+                author: Author::Reviewer,
+                body: ConversationContent::Parts(
+                    (0..16)
+                        .map(|_| Part::Code {
+                            body: "x".repeat(32_700),
+                            language: "x".into(),
+                            role: Role::Example,
+                            title: None,
+                        })
+                        .collect(),
+                ),
+            })
+            .collect();
+        let hand = |state: &mut SessionState| {
+            state.channel = Channel::default();
+            state.channel.note_comment("c1");
+            for message in &state.messages {
+                state.channel.note_message(&message.id);
+            }
+            state.channel.hand(&state.comments, &state.messages);
+        };
+        hand(&mut state);
+        let measured = |state: &SessionState| {
+            let dto = serde_json::to_value(MetaDto::from_parts(
+                &info(id, 100),
+                state,
+                &CopyState::Pending,
+            ))
+            .unwrap();
+            dto["state"]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(super::super::canonical_size)
+                .sum::<usize>()
+                + super::super::canonical_size(&dto["state"]["channel"]["events"][0])
+        };
+        let extra = 16_777_216 - measured(&state);
+        state.comments[0].file_mut().unwrap().quote = crate::domain::comment::quote_for(
+            &["x".repeat(extra)],
+            crate::domain::review::LineRange { start: 1, end: 1 },
+        )
+        .unwrap();
+        hand(&mut state);
+        assert_eq!(measured(&state), 16_777_216);
+        assert_eq!(super::super::additional_saved_size(&state), 16_777_216);
+        let mut open = store.create(info(id, 100)).unwrap();
+        open.save_state_at(state.clone(), 200).unwrap();
+        let before = std::fs::read(session_path(&scratch.dir(), id)).unwrap();
+        state.comments[0].file_mut().unwrap().quote[0].push('x');
+        hand(&mut state);
+        assert!(open.save_state_at(state, 300).is_err());
+        assert_eq!(open.info().updated, 200);
+        assert_eq!(
+            std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
+            before
+        );
+        assert_eq!(
+            super::super::additional_saved_size(open.state()),
+            16_777_216
+        );
+    }
+
+    #[test]
+    fn issued_generation_is_persisted_without_changing_timestamp_or_payload_and_io_failure_rolls_back()
+     {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        let mut open = store.create(info(id, 100)).unwrap();
+        let first = SessionState {
+            display: Some(crate::domain::display_version::DisplayVersions::initial(id).unwrap()),
+            ..SessionState::default()
+        };
+        open.save_issued_state(first.clone()).unwrap();
+        assert_eq!(open.info().updated, 100);
+        assert!(!payload_path(&scratch.dir(), id).exists());
+        let bytes = std::fs::read(session_path(&scratch.dir(), id)).unwrap();
+        let mut second = first.clone();
+        second.display = Some(first.display.as_ref().unwrap().next(id).unwrap());
+        std::fs::create_dir(scratch.dir().join(format!(".{id}.session.tmp"))).unwrap();
+        assert!(open.save_issued_state(second).is_err());
+        assert_eq!(open.state(), &first);
+        assert_eq!(open.info().updated, 100);
+        assert_eq!(
+            std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn explanation_state_saving_advances_updated_time_only_after_atomic_success_without_payload_io()
+    {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        let mut open = store.create(info(id, 100)).unwrap();
+        let document:crate::domain::explanation::ExplanationDocument=serde_json::from_value(serde_json::json!({"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"Body"},"references":[]}]}]})).unwrap();
+        let state = SessionState {
+            display: Some(crate::domain::display_version::DisplayVersions::initial(id).unwrap()),
+            explanation: Some(crate::domain::explanation::ExplanationHistory {
+                current_revision: 1,
+                versions: vec![crate::domain::explanation::ExplanationVersion {
+                    revision: 1,
+                    base_display_version: format!("{id}:1"),
+                    sections: document.sections,
+                }],
+            }),
+            ..SessionState::default()
+        };
+        open.save_explanation_state(state.clone()).unwrap();
+        assert!(open.info().updated > 100);
+        let updated = open.info().updated;
+        assert!(!payload_path(&scratch.dir(), id).exists());
+        let bytes = std::fs::read(session_path(&scratch.dir(), id)).unwrap();
+        std::fs::create_dir(scratch.dir().join(format!(".{id}.session.tmp"))).unwrap();
+        assert!(open.save_explanation_state(state.clone()).is_err());
+        assert_eq!(open.state(), &state);
+        assert_eq!(open.info().updated, updated);
+        assert_eq!(
+            std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn malformed_parts_are_rejected_from_version_four_instead_of_becoming_plain() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        drop(store.create(info(id, 100)).unwrap());
+        let mut value = serde_json::to_value(MetaDto::from_parts(
+            &info(id, 100),
+            &state_with_comment(),
+            &CopyState::Pending,
+        ))
+        .unwrap();
+        value["state"]["comments"][0]["replies"][0]["body"] = serde_json::Value::Null;
+        for parts in [
+            serde_json::json!([]),
+            serde_json::json!([{"type":"text","body":null}]),
+            serde_json::json!([{"type":"code","body":"x","language":"x","role":"example","title":null}]),
+        ] {
+            value["state"]["comments"][0]["replies"][0]["parts"] = parts;
+            std::fs::write(
+                session_path(&scratch.dir(), id),
+                encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+            )
+            .unwrap();
+            assert!(store.read(id).is_err());
+        }
+        value["state"]["comments"][0]["replies"][0]["parts"] =
+            serde_json::json!([{"type":"text","body":"valid"}]);
+        value["state"]["comments"][0]["replies"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("body");
+        std::fs::write(
+            session_path(&scratch.dir(), id),
+            encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+        )
+        .unwrap();
+        assert!(store.read(id).is_err());
+    }
+
+    /// 説明コメント一つを持つ版 4 の保存値。`target` はコメントの `explanation` の値。
+    fn version_four_with_explanation_comment(
+        id: &str,
+        block: &serde_json::Value,
+        target: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut value = serde_json::to_value(MetaDto::from_parts(
+            &info(id, 100),
+            &state_with_comment(),
+            &CopyState::Pending,
+        ))
+        .unwrap();
+        value["state"]["explanation"] = serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:2"),"sections":[{"id":"s","title":"Section","blocks":[block.clone()]}]}]});
+        value["state"]["diff_display_version"] = serde_json::json!(format!("{id}:2"));
+        value["state"]["frozen_display_version"] = serde_json::Value::Null;
+        value["state"]["issued_display_generation"] = serde_json::json!("2");
+        let comment = &mut value["state"]["comments"][0];
+        comment["explanation"] = target;
+        comment["file_id"] = serde_json::Value::Null;
+        comment["side"] = serde_json::Value::Null;
+        comment["path"] = serde_json::Value::Null;
+        comment["replies"][0]["body"] = serde_json::Value::Null;
+        comment["replies"][0]["parts"] = serde_json::json!([{"type":"text","body":"**parts**"}]);
+        value
+    }
+
+    fn code_block() -> serde_json::Value {
+        serde_json::json!({"id":"b","part":{"type":"code","body":"literal\r\n","language":"pseudocode","role":"example"},"references":[]})
+    }
+
+    #[test]
+    fn version_four_restores_parts_full_explanation_quotes_and_generation_without_rewriting() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        let open = store.create(info(id, 100)).unwrap();
+        drop(open);
+        let block = code_block();
+        let value = version_four_with_explanation_comment(
+            id,
+            &block,
+            serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block}}),
+        );
+        let bytes = encoding::encode_session(4, &serde_json::to_vec(&value).unwrap());
+        std::fs::write(session_path(&scratch.dir(), id), &bytes).unwrap();
+        let restored = store.read(id).unwrap();
+        let encoded = serde_json::to_value(MetaDto::from_parts(
+            &restored.info,
+            &restored.state,
+            &restored.copy,
+        ))
+        .unwrap();
+        assert_eq!(
+            encoded["state"]["explanation"],
+            value["state"]["explanation"]
+        );
+        assert_eq!(
+            encoded["state"]["comments"][0]["explanation"],
+            serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":null})
+        );
+        assert_eq!(
+            encoded["state"]["comments"][0]["replies"][0]["parts"],
+            value["state"]["comments"][0]["replies"][0]["parts"]
+        );
+        assert_eq!(restored.info.updated, 100);
+        assert_eq!(
+            std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn version_four_keeps_the_saved_selection_of_an_explanation_comment() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        drop(store.create(info(id, 100)).unwrap());
+        let block = code_block();
+        let target = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":{"text":"liter","occurrence":3}});
+        let value = version_four_with_explanation_comment(id, &block, target.clone());
+        std::fs::write(
+            session_path(&scratch.dir(), id),
+            encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+        )
+        .unwrap();
+        let restored = store.read(id).unwrap();
+        let encoded = serde_json::to_value(MetaDto::from_parts(
+            &restored.info,
+            &restored.state,
+            &restored.copy,
+        ))
+        .unwrap();
+        assert_eq!(encoded["state"]["comments"][0]["explanation"], target);
+    }
+
+    #[test]
+    fn version_four_refuses_a_selection_the_creation_rules_would_refuse() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+        drop(store.create(info(id, 100)).unwrap());
+        let diagram = serde_json::json!({"id":"b","part":{"type":"diagram","source":"a = A\n| a |","title":"Grid","role":"example"},"references":[]});
+        for (block, selection) in [
+            (code_block(), serde_json::json!({"text":"","occurrence":0})),
+            (
+                code_block(),
+                serde_json::json!({"text":"x","occurrence":9_007_199_254_740_992_u64}),
+            ),
+            (diagram, serde_json::json!({"text":"A","occurrence":0})),
+        ] {
+            let write = |selection: &serde_json::Value| {
+                let target = serde_json::json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block},"selection":selection});
+                let value = version_four_with_explanation_comment(id, &block, target);
+                std::fs::write(
+                    session_path(&scratch.dir(), id),
+                    encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
+                )
+                .unwrap();
+            };
+            write(&serde_json::Value::Null);
+            assert!(store.read(id).is_ok(), "the same block without a selection");
+            write(&selection);
+            assert!(store.read(id).is_err(), "{selection}");
         }
     }
 
@@ -1796,6 +2283,63 @@ mod tests {
         assert_eq!(std::fs::read(&payload).unwrap(), b"not a gzip");
     }
 
+    #[test]
+    fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let mut states = Vec::new();
+        for (files, generation) in [(2, 1), (10_000, 4098)] {
+            let scratch = Scratch::new();
+            let store = SessionStore::new(scratch.dir());
+            let mut metadata = info(id, 100);
+            metadata.total_files = files;
+            let mut open = store.create(metadata).unwrap();
+            let mut frozen = copy();
+            let template = frozen.units[0].review.groups[0].files[0].clone();
+            for index in 2..files {
+                let mut file = template.clone();
+                file.id = format!("extra-{index}");
+                file.path = format!("extra-{index}.txt");
+                frozen
+                    .contents
+                    .insert(file.id.clone(), content(None, Some(b"one\n")));
+                frozen.units[0].review.groups[0].files.push(file);
+            }
+            open.save_copy_with_limit(frozen, 200, COPY_LIMIT).unwrap();
+            let payload = payload_path(&scratch.dir(), id);
+            std::fs::remove_file(&payload).unwrap();
+            std::fs::create_dir(&payload).unwrap();
+            let mut state = state_with_comment();
+            state.display = Some(crate::domain::display_version::DisplayVersions {
+                current: format!("{id}:{generation}"),
+                frozen: Some(format!("{id}:1")),
+                issued: generation,
+            });
+            for updated in [300, 400, 500] {
+                open.save_state_at(state.clone(), updated).unwrap();
+            }
+            assert!(payload.is_dir());
+            let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
+            let envelope: serde_json::Value = serde_json::from_slice(&bytes[18..]).unwrap();
+            let mut saved = envelope["state"].clone();
+            for key in [
+                "diff_display_version",
+                "frozen_display_version",
+                "issued_display_generation",
+            ] {
+                assert!(
+                    saved
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(key)
+                        .unwrap()
+                        .is_string()
+                );
+            }
+            states.push(saved);
+        }
+        assert_eq!(states[0], states[1]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn session_copy_that_cannot_be_written_does_not_become_resumable() {
@@ -2408,7 +2952,7 @@ mod tests {
             id: id.to_string(),
             seq: 0,
             author,
-            body: body.to_string(),
+            body: body.into(),
         }
     }
 
@@ -2423,7 +2967,7 @@ mod tests {
             id: "m1".to_string(),
             seq: 0,
             author: Author::Agent,
-            body: "started on the review".to_string(),
+            body: "started on the review".into(),
         }];
         state.last_reply = 2;
         state.last_message = 1;
@@ -2454,7 +2998,7 @@ mod tests {
                     id: "m2".to_string(),
                     seq: 0,
                     author: Author::Reviewer,
-                    body: "look at the tests first".to_string(),
+                    body: "look at the tests first".into(),
                 }],
             })],
         };
@@ -2473,7 +3017,7 @@ mod tests {
         drop(open);
 
         let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
-        assert_eq!(encoding::decode_version(&bytes).unwrap(), 3);
+        assert_eq!(encoding::decode_version(&bytes).unwrap(), 4);
         assert_eq!(store.read(&id).unwrap().state, state_with_agent_channel());
     }
 
@@ -2768,7 +3312,7 @@ mod tests {
                 id: "m1".to_string(),
                 seq: 1,
                 author: Author::Reviewer,
-                body: "hello".to_string(),
+                body: "hello".into(),
             }],
             last_message: 1,
             last_seq: 1,
@@ -2850,10 +3394,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("page_comment_saved");
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         std::fs::write(
             &path,
-            encoding::encode_session(version, &serde_json::to_vec(&meta).unwrap()),
+            encoding::encode_session(3, &serde_json::to_vec(&meta).unwrap()),
         )
         .unwrap();
 

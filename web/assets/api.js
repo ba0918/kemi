@@ -137,6 +137,29 @@ export function postComment(body) {
   return postJson("api/comment", body);
 }
 
+/** @param {{type: 'text', body: string}} part */
+export function renderPart(part) {
+  return postJson('api/parts', part);
+}
+
+/** @param {number|null} [revision] */
+export function getExplanation(revision = null) {
+  return getJson(`api/explanation${revision === null ? '' : `?revision=${revision}`}`);
+}
+/** @param {string} screen @param {number} revision */
+export function holdExplanation(screen, revision) {
+  return postJson('api/explanation', { op: 'hold', screen, revision });
+}
+/** @param {string} screen @param {number} revision */
+export function releaseExplanation(screen, revision) {
+  return postJson('api/explanation', { op: 'release', screen, revision });
+}
+
+/** @param {string} url */
+export function registerExplanationPage(url) {
+  return postJson('api/explanation', { op: 'register_page', url });
+}
+
 /**
  * レビュー全体への発言を書く。
  * @param {string} body
@@ -163,6 +186,7 @@ export function submit(verdict) {
  *   onMessage: (message: any) => void,
  *   onAgent: (agent: any) => void,
  *   onMissed: () => void,
+ *   onExplanation: (notice: any) => void,
  * }} AgentHandlers
  */
 
@@ -253,6 +277,7 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
   json("thread", agent.onThread);
   json("message", agent.onMessage);
   json("agent", agent.onAgent);
+  json('explanation', agent.onExplanation);
   // どの通知を取りこぼしたかは分からない。更新があったものとして扱い、往復の中身も取り直す。
   events.addEventListener("lagged", () => {
     onUpdate();

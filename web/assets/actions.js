@@ -20,6 +20,16 @@
 /**
  * @typedef {{
  *   addComment: (payload: any) => void,
+ *   selectView: (view: 'explanation'|'code'|'page') => void,
+ *   syncReviewView: (view: 'code'|'page') => void,
+ *   explanationChanged: () => void,
+ *   explanationCodeChanged: () => void,
+ *   showExplanationComment: (comment: any) => void,
+ *   followExplanationReference: (reference: any) => void,
+ *   commentOnExplanation: (block: any, body: string, revision: number, selection?: {text:string,occurrence:number}|null) => Promise<boolean>,
+ *   openExplanationEditor: (request: import('./features/explanation.js').EditorRequest) => void,
+ *   keepExplanationDraft: (revision:number, blockId:string, body:string) => void,
+ *   renderPartMarkdown: (body: string, host: HTMLElement) => Promise<void>,
  *   closeThread: () => void,
  *   loadCommitGroups: () => void,
  *   reloadThreadLines: () => void,

@@ -52,6 +52,9 @@ export const THEME_LABELS = {
 
 /** @type {{
  *   review: any,
+ *   view: 'explanation'|'code'|'page',
+ *   codeToken: string|null,
+ *   explanation: {latest: any, reading: any, notification: any, screen: string, returnTo: boolean, scrollTop: number, drafts: Map<string,string>},
  *   messages: any[],
  *   agent: import("./model.js").AgentState,
  *   conversation: {
@@ -151,6 +154,9 @@ export const THEME_LABELS = {
  * }} */
 export const state = {
   review: null,
+  view: 'code',
+  codeToken: null,
+  explanation: {latest:null,reading:null,notification:null,screen:Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''),returnTo:false,scrollTop:0,drafts:new Map()},
   // エージェントとの往復（agent-channel.md）。発言、状態と未渡しの件数（サーバが数える）、
   // 書きかけの返信（描き直しで消さないため。ページの間だけ）。
   messages: [],
@@ -260,6 +266,10 @@ export const state = {
 /** 会話パネル（狭い画面ではシート）の中身を見せているか。 */
 export function conversationShown() {
   return state.narrow ? state.conversation.sheetOpen : state.conversation.panelOpen;
+}
+
+export function explanationInteractable() {
+  return state.view === 'explanation' && !(state.narrow && state.conversation.sheetOpen);
 }
 
 export function currentEntry() {

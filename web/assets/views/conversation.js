@@ -5,6 +5,8 @@
 // 通知で描き直しても、書きかけ・カーソル・変換中の文字が残る。
 
 import { actions } from "../actions.js";
+import { contentView, partView } from './parts.js';
+import { explanationReferences } from './explanation.js';
 import { button, dom, el, textEl } from "../dom.js";
 import {
   commitGroups,
@@ -247,13 +249,13 @@ function renderList(options) {
  * @returns {HTMLElement}
  */
 function messageRow(message) {
-  return post(message.author, message.body, "cv-msg", message.id);
+  return post(message.author, message, "cv-msg", message.id);
 }
 
 /**
  * 書き込み 1 つ（発言・コメントの本文・返信）。書いた人で見分ける。
  * @param {string} author
- * @param {string} body
+ * @param {string | {body: string|null, parts?: import('../diagrams/types.js').Part[]|null}} body
  * @param {string} className
  * @param {string} id
  * @returns {HTMLElement}
@@ -262,7 +264,7 @@ function post(author, body, className, id) {
   const item = el("div", `cv-post ${className}`);
   item.dataset.author = author;
   item.dataset.id = id;
-  item.append(textEl("span", "cv-who", authorLabel(author)), textEl("p", "cv-text", body));
+  item.append(textEl("span", "cv-who", authorLabel(author)), contentView(body));
   return item;
 }
 
@@ -280,7 +282,7 @@ function place(comment, info) {
     where.append(textEl("span", "cv-unit", unitLabel(info.unit)));
   }
   where.append(
-    textEl("span", "cv-path", comment.page ? comment.page.url : comment.path),
+    textEl("span", "cv-path", comment.explanation ? comment.explanation.block_id : comment.page ? comment.page.url : comment.path),
     textEl("span", "cv-where", commentLabel(comment)),
   );
   return where;
@@ -346,7 +348,7 @@ function threadCard(comment, context) {
     const last = replies.length > 0 ? replies[replies.length - 1] : { author: "reviewer", body: comment.body };
     const line = el("span", "cv-last");
     line.dataset.author = last.author;
-    line.append(textEl("b", "cv-who", authorLabel(last.author)), textEl("span", "cv-first", firstLine(last.body)));
+    line.append(textEl("b", "cv-who", authorLabel(last.author)), textEl("span", "cv-first", firstLine(last)));
     card.append(line);
   }
   appendHandLine(card, comment.id);
@@ -405,7 +407,7 @@ function renderThread(comment, options) {
     acts.append(go);
   } else if (!info.vanished) {
     const go = button("cv-go");
-    go.textContent = "Go to line";
+    go.textContent = comment.explanation ? 'Show original explanation' : "Go to line";
     go.addEventListener("click", () => actions.goToComment(comment, info.unit));
     acts.append(go);
   }
@@ -424,7 +426,9 @@ function renderThread(comment, options) {
     const edit = button("cv-edit");
     edit.textContent = "Edit";
     edit.addEventListener("click", () =>
-      comment.page ? actions.editPageComment(comment.id) : actions.editFromThread(comment, info.unit),
+      comment.page || comment.explanation
+        ? actions.editPageComment(comment.id)
+        : actions.editFromThread(comment, info.unit),
     );
     acts.append(edit);
   }
@@ -447,6 +451,25 @@ function renderThread(comment, options) {
       : null;
   followScroll(dom.cvThreadBody, options, comment.id, posts, () => {
     dom.cvThreadBody.textContent = "";
+    if (comment.explanation) {
+      const quote = comment.explanation.quote;
+      const context = el('div', 'cv-context');
+      context.append(textEl('h3', '', quote.section_title));
+      // 選んだ文字は利用者が指した箇所の手がかり。元のブロック全体もその下で読める。
+      if (comment.explanation.selection) {
+        const selected = textEl('blockquote', 'cv-selection', comment.explanation.selection.text);
+        selected.setAttribute('aria-label', 'Selected text');
+        context.append(selected);
+      }
+      context.append(partView(quote.block.part));
+      if (quote.block.references.length) {
+        context.append(
+          textEl('p', '', 'Saved references. Open the original explanation to navigate using your current display version.'),
+          explanationReferences(quote.block.references, false),
+        );
+      }
+      dom.cvThreadBody.append(context);
+    }
     const lines = targetLines(comment);
     if (lines.length > 0) {
       const box = el("div", "cv-context");
@@ -470,7 +493,7 @@ function renderThread(comment, options) {
       dom.cvThreadBody.append(marks);
     }
     const opening =
-      state.conversation.editing === comment.id && comment.page
+      state.conversation.editing === comment.id && (comment.page || comment.explanation)
         ? pageCommentEditor(comment)
         : post("reviewer", comment.body, "cv-comment", comment.id);
     if (comment.suggestion) {
@@ -494,13 +517,13 @@ function renderThread(comment, options) {
         textEl(
           "div",
           "t-outdated",
-          "Outdated comment — the file changed after this comment (line numbers are as of creation)",
+          comment.explanation ? "Outdated explanation block" : "Outdated comment — the file changed after this comment (line numbers are as of creation)",
         ),
       );
     }
     dom.cvThreadBody.append(opening);
     for (const reply of comment.replies || []) {
-      dom.cvThreadBody.append(post(reply.author, reply.body, "cv-reply-post", reply.id));
+      dom.cvThreadBody.append(post(reply.author, reply, "cv-reply-post", reply.id));
     }
     appendHandLine(dom.cvThreadBody, comment.id);
     const editor = /** @type {HTMLTextAreaElement | null} */ (

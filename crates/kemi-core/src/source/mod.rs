@@ -16,9 +16,10 @@ pub(crate) mod testutil;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
+use crate::domain::explanation::{CodeReferenceEntry, ReferenceUnit};
 use crate::domain::focus::{self, FocusTargets};
 use crate::domain::origin::{BlockOrigin, RangeCommit};
 use crate::domain::review::{GroupBy, ReviewMeta, Side};
@@ -58,6 +59,33 @@ pub struct FileContent {
     pub new: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ReferenceMetadata {
+    pub old_present: bool,
+    pub new_present: bool,
+    pub old_lines: Option<u32>,
+    pub new_lines: Option<u32>,
+}
+
+pub(crate) fn known_lines(bytes: Option<&[u8]>) -> Option<u32> {
+    let bytes = bytes?;
+    if crate::domain::content::is_binary(bytes) {
+        return None;
+    }
+    if bytes.is_empty() {
+        return Some(0);
+    }
+    let separators = bytes
+        .iter()
+        .enumerate()
+        .filter(|(index, byte)| {
+            **byte == b'\r' || (**byte == b'\n' && (*index == 0 || bytes[*index - 1] != b'\r'))
+        })
+        .count();
+    let unterminated = usize::from(!matches!(bytes.last(), Some(b'\r' | b'\n')));
+    u32::try_from(separators + unterminated).ok()
+}
+
 /// 最終形の 1 ファイルの由来（R-ORIGIN）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileOrigin {
@@ -70,6 +98,21 @@ pub struct FileOrigin {
 
 /// レビューの供給元。`review` はメタデータと統計、`content` は表示時の行内容を返す。
 pub trait ReviewSource: Send + Sync {
+    fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        let _ = file_id;
+        None
+    }
+    fn select_references(
+        &self,
+        requested: &[(ReferenceUnit, String, String)],
+    ) -> Result<Vec<CodeReferenceEntry>, SourceError> {
+        let _ = requested;
+        Ok(Vec::new())
+    }
+    /// 内容参照を変更するソースは、未公開の作成対象を分ける。参照計画が不変のソースはNone。
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(None)
+    }
     /// 起動時に表示するグループ単位のメタデータ。
     fn review(&self) -> Result<ReviewMeta, SourceError>;
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError>;
@@ -123,6 +166,81 @@ pub trait ReviewSource: Send + Sync {
     }
 }
 
+pub struct SourceSlot {
+    factory: Arc<dyn ReviewSource>,
+    current: RwLock<Arc<dyn ReviewSource>>,
+}
+impl SourceSlot {
+    pub fn new(factory: Arc<dyn ReviewSource>, current: Arc<dyn ReviewSource>) -> Self {
+        Self {
+            factory,
+            current: RwLock::new(current),
+        }
+    }
+    pub fn current(&self) -> Arc<dyn ReviewSource> {
+        self.current.read().expect("source slot poisoned").clone()
+    }
+    pub fn prepare(&self) -> Result<Arc<dyn ReviewSource>, SourceError> {
+        Ok(self.factory.fork()?.unwrap_or_else(|| self.factory.clone()))
+    }
+    pub fn publish(&self, candidate: Arc<dyn ReviewSource>) {
+        *self.current.write().expect("source slot poisoned") = candidate;
+    }
+}
+impl ReviewSource for SourceSlot {
+    fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        self.current().reference_metadata(file_id)
+    }
+    fn select_references(
+        &self,
+        requested: &[(ReferenceUnit, String, String)],
+    ) -> Result<Vec<CodeReferenceEntry>, SourceError> {
+        self.current().select_references(requested)
+    }
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.current().review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.current().content(id)
+    }
+    fn units(&self) -> Vec<GroupBy> {
+        self.current().units()
+    }
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        self.current().review_unit(unit)
+    }
+    fn extra_focus_targets(&self) -> Result<FocusTargets, SourceError> {
+        self.current().extra_focus_targets()
+    }
+    fn origin(&self, id: &str, force: bool) -> Result<Option<FileOrigin>, SourceError> {
+        self.current().origin(id, force)
+    }
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        self.factory
+            .watch_paths()
+            .into_iter()
+            .chain(self.current().watch_paths())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+    fn work_tree(&self) -> Option<work_tree::WorkTree> {
+        self.current().work_tree()
+    }
+    fn reads_repository(&self) -> bool {
+        self.current().reads_repository()
+    }
+    fn repository_file(
+        &self,
+        id: &str,
+        side: Side,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        self.current().repository_file(id, side, path, limit)
+    }
+}
+
 /// 表示時に内容を読むための参照。
 #[derive(Clone, Debug)]
 pub(crate) enum SideRef {
@@ -139,6 +257,8 @@ pub(crate) enum SideRef {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlannedFile {
+    pub old_lines: Option<u32>,
+    pub new_lines: Option<u32>,
     pub id: String,
     pub old: SideRef,
     pub new: SideRef,
@@ -212,12 +332,21 @@ pub(crate) fn text_stats(
 /// 片方を差し替えても、もう片方のファイル id は引けるままにする。
 pub(crate) struct PlanStore {
     state: Mutex<HashMap<Option<GroupBy>, Plan>>,
+    metadata: Mutex<HashMap<String, ReferenceMetadata>>,
 }
 
 impl PlanStore {
+    pub fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        self.metadata
+            .lock()
+            .expect("reference metadata poisoned")
+            .get(file_id)
+            .cloned()
+    }
     pub fn new() -> Self {
         PlanStore {
             state: Mutex::new(HashMap::new()),
+            metadata: Mutex::new(HashMap::new()),
         }
     }
 
@@ -226,10 +355,25 @@ impl PlanStore {
     }
 
     pub fn update_unit(&self, unit: Option<GroupBy>, plan: Plan) {
-        self.state
-            .lock()
-            .expect("plan store poisoned")
-            .insert(unit, plan);
+        let mut state = self.state.lock().expect("plan store poisoned");
+        let mut metadata = self.metadata.lock().expect("reference metadata poisoned");
+        if let Some(old) = state.get(&unit) {
+            for file in &old.files {
+                metadata.remove(&file.id);
+            }
+        }
+        for file in &plan.files {
+            metadata.insert(
+                file.id.clone(),
+                ReferenceMetadata {
+                    old_present: !matches!(file.old, SideRef::Absent),
+                    new_present: !matches!(file.new, SideRef::Absent),
+                    old_lines: file.old_lines,
+                    new_lines: file.new_lines,
+                },
+            );
+        }
+        state.insert(unit, plan);
     }
 
     pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
@@ -282,17 +426,17 @@ impl Default for PlanStore {
 /// `--focus` を後付けする装飾ソース。照合は起動時（最初の `review()`）に 1 回だけ行い、
 /// 取得し直したときは照合せずに後付けだけする。
 pub struct FocusSource {
-    inner: Box<dyn ReviewSource>,
+    inner: Arc<dyn ReviewSource>,
     layer: focus::FocusLayer,
-    validated: AtomicBool,
+    validated: Arc<AtomicBool>,
 }
 
 impl FocusSource {
     pub fn new(inner: Box<dyn ReviewSource>, layer: focus::FocusLayer) -> Self {
         FocusSource {
-            inner,
+            inner: Arc::from(inner),
             layer,
-            validated: AtomicBool::new(false),
+            validated: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -326,6 +470,24 @@ impl FocusSource {
 }
 
 impl ReviewSource for FocusSource {
+    fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
+        self.inner.reference_metadata(file_id)
+    }
+    fn select_references(
+        &self,
+        requested: &[(ReferenceUnit, String, String)],
+    ) -> Result<Vec<CodeReferenceEntry>, SourceError> {
+        self.inner.select_references(requested)
+    }
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(self.inner.fork()?.map(|inner| {
+            Arc::new(FocusSource {
+                inner,
+                layer: self.layer.clone(),
+                validated: self.validated.clone(),
+            }) as Arc<dyn ReviewSource>
+        }))
+    }
     fn review(&self) -> Result<ReviewMeta, SourceError> {
         let mut meta = self.inner.review()?;
         self.validate_once(&meta)?;

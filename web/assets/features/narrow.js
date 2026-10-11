@@ -64,6 +64,7 @@ export function toggleComments() {
 
 export function openDrawer() {
   state.drawerOpen = true;
+  dom.explanationToc.dataset.drawer='open';
   renderDrawer();
 }
 
@@ -72,6 +73,7 @@ export function closeDrawer() {
     return;
   }
   state.drawerOpen = false;
+  delete dom.explanationToc.dataset.drawer;
   renderDrawer();
 }
 

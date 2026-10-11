@@ -11,6 +11,12 @@ function must(selector) {
 }
 
 export const dom = {
+  viewSwitch: must('#review-views'),
+  explanationToc: must('#explanation-toc'),
+  explanationDocument: must('#explanation-document'),
+  explanationStatus: must('#explanation-status'),
+  explanationUpdate: /** @type {HTMLButtonElement} */ (must('#explanation-update')),
+  explanationReturn: /** @type {HTMLButtonElement} */ (must('#explanation-return')),
   titleBlock: must(".title-block"),
   title: must("#review-title"),
   subtitle: must("#review-subtitle"),

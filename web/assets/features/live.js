@@ -59,7 +59,7 @@ import { refreshCommentBadges } from "../views/tree.js";
 
 /**
  * `page_comment_saved` は、このレビューでページへのコメントを一度でも保存したか（始め方の案内を出すかを決める）。
- * @typedef {{ port: number, start: string, page: string, code: boolean, page_comment_saved?: boolean }} LiveInfo
+ * @typedef {{ port: number, start: string, page: string, code: boolean, code_unavailable?: string|null, page_comment_saved?: boolean }} LiveInfo
  * @typedef {import("../live-model.js").SnapshotSummary} SnapshotSummary
  * @typedef {import("../live-diff.js").Description} Description
  * @typedef {import("../live-diff.js").Change} Change
@@ -270,6 +270,7 @@ export function startLive(info) {
   live.info = info;
   live.origin = liveOrigin(location.protocol, location.hostname, info.port);
   live.page = pageKey(info.start);
+  void api.registerExplanationPage(live.page);
   live.pageCommentSaved = info.page_comment_saved === true;
   const stylesheet = document.createElement("link");
   stylesheet.rel = "stylesheet";
@@ -277,6 +278,21 @@ export function startLive(info) {
   document.head.append(stylesheet);
 
   shell = buildShell();
+  if (info.code_unavailable) {
+    shell.noCode.textContent = `Code unavailable: ${info.code_unavailable}`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.textContent = "Retry code";
+    retry.addEventListener("click", async () => {
+      await refresh();
+      const updated = state.review?.live;
+      if (updated?.code) {
+        live.info = updated;
+        setView("code");
+      }
+    });
+    shell.noCode.append(retry);
+  }
   const main = dom.viewport.closest("main");
   main?.prepend(shell.band);
   main?.append(shell.stage, shell.noCode);
@@ -284,7 +300,14 @@ export function startLive(info) {
   mirrorDrawer(shell.pageTree);
 
   topbar = buildTopbar();
-  dom.titleBlock.before(topbar.tabs, topbar.meta, topbar.agent);
+  dom.viewSwitch.classList.add('lv-view','lv-modetabs');
+  for (const tab of topbar.tabs.querySelectorAll('button')) {
+    const view=/** @type {HTMLButtonElement} */(tab).dataset.view;
+    dom.viewSwitch.querySelector(`[data-review-view="${view}"]`)?.remove();
+    /** @type {HTMLButtonElement} */(tab).dataset.reviewView=view;
+    dom.viewSwitch.append(tab);
+  }
+  dom.titleBlock.before(topbar.meta, topbar.agent);
   mirrorAgentState(topbar.agent);
   mirrorAgentState(shell.bandAgent);
   mirrorHand(shell.hand);
@@ -292,12 +315,6 @@ export function startLive(info) {
   // 狭い画面の帯のメニューは、帯のすぐ下に開く。
   menu.addEventListener("beforetoggle", () => {
     menu.style.top = `${Math.round(shell?.band.getBoundingClientRect().bottom ?? 0) + 4}px`;
-  });
-  topbar.tabs.addEventListener("click", (event) => {
-    const view = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.view;
-    if (view === "page" || view === "code") {
-      setView(view);
-    }
   });
   shell.widthSeg.addEventListener("click", (event) => {
     const width = /** @type {HTMLElement} */ (event.target).closest("button")?.dataset.width;
@@ -495,6 +512,13 @@ function setView(view) {
   render();
   // 見たの進捗はページの見方の間は出さない（views/header.js が state.live を見る）。
   renderHeader();
+  actions.syncReviewView(view);
+}
+
+/** @param {'code'|'page'} view @param {string} [page] */
+export function setLiveView(view,page) {
+  if (page !== undefined) openPage(page);
+  setView(view);
 }
 
 /** 更新バッジを押した。ページの見方の間なら、コードの見方に切り替えてから読み直す（R-PAGE-MODE）。 */
@@ -511,8 +535,8 @@ function renderTopbar() {
   if (!topbar) {
     return;
   }
-  for (const tab of topbar.tabs.querySelectorAll("button")) {
-    tab.setAttribute("aria-pressed", String(tab.dataset.view === live.view));
+  for (const tab of dom.viewSwitch.querySelectorAll("button[data-view]")) {
+    tab.setAttribute("aria-pressed", String(/** @type {HTMLElement} */(tab).dataset.view === state.view));
   }
   /** @type {{ files: unknown[] }[]} */
   const groups = state.review?.groups ?? [];
@@ -640,6 +664,7 @@ function receive(event) {
     return;
   }
   const page = pageKey(String(message.path ?? "/"));
+  void api.registerExplanationPage(page);
   const moved = page !== live.page;
   if (moved) {
     live.refNotice = "";
