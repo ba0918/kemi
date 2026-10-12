@@ -272,11 +272,6 @@ pub fn collapse(rows: &[Row], context: usize, keep: impl Fn(&Row) -> bool) -> Ve
     display
 }
 
-/// 折りたたまれた範囲の元の行を返す。
-pub fn expand(rows: &[Row], skip: &Skip) -> Vec<Row> {
-    rows[skip.from..skip.to].to_vec()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,27 +577,5 @@ mod tests {
 
         assert_eq!(display.len(), 20);
         assert!(display.iter().all(|row| matches!(row, DisplayRow::Diff(_))));
-    }
-
-    #[test]
-    fn expand_returns_the_hidden_rows() {
-        let mut old = numbered("top", 10);
-        old.push("old".to_string());
-        let new = {
-            let mut new = numbered("top", 10);
-            new.push("new".to_string());
-            new
-        };
-        let rows = align(&old, &new);
-        let display = collapse(&rows, 2, |_| false);
-        let skip = match &display[0] {
-            DisplayRow::Skip(skip) => skip,
-            other => panic!("expected skip, got {other:?}"),
-        };
-
-        let expanded = expand(&rows, skip);
-        assert_eq!(expanded.len(), skip.to - skip.from);
-        assert_eq!(expanded[0].old.as_ref().unwrap().text, "top0");
-        assert_eq!(expanded[7].old.as_ref().unwrap().text, "top7");
     }
 }
