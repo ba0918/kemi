@@ -381,8 +381,6 @@ pub(crate) struct AppState {
     pub agent: Mutex<AgentLink>,
     /// エージェント用の API のトークン。無ければその API を立てない。
     pub agent_token: Option<String>,
-    /// エージェント用の API を立てたレビューの id。立てていなければ None（画面はコマンドを写せない）。
-    pub review_id: Option<String>,
     /// 待っている `kemi wait` を起こす（渡したとき）。
     pub wake: tokio::sync::Notify,
     /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
@@ -633,7 +631,6 @@ pub async fn serve(
         events,
         agent: Mutex::new(agent),
         agent_token: params.agent.as_ref().map(|agent| agent.token.clone()),
-        review_id: params.agent.as_ref().map(|agent| agent.review.clone()),
         wake: tokio::sync::Notify::new(),
         shutdown,
         stop: Mutex::new(None),
