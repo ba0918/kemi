@@ -4817,18 +4817,9 @@ async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_
         .await
         .unwrap();
     let id = review["agent"]["review"].as_str().unwrap();
-    // 凍結が終わってから、状態ファイルの差し替え先だけをディレクトリにする。
-    let session = sessions_dir(&state.path).join(format!("{id}.session"));
-    let store = SessionStore::new(sessions_dir(&state.path));
-    for _ in 0..200 {
-        if matches!(
-            store.read(id).unwrap().copy,
-            kemi_core::session::CopyState::Ready(_)
-        ) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    // 凍結前に差し替えると、保存失敗ではなく凍結との競合を確かめてしまうため。
+    let session = wait_for_frozen_session(&state.path).await;
+    assert_eq!(session_id(&session), id);
     let original = std::fs::read(&session).unwrap();
     let backup = session.with_extension("backup");
     std::fs::rename(&session, &backup).unwrap();
