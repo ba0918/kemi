@@ -52,39 +52,20 @@ pub struct Session {
 }
 
 impl Session {
-    /// 保存された状態から読み戻す。コメント・返信・発言の id は再利用しないので、採番は
-    /// 保存した最終番号と、残っているものの番号の大きい方から続ける。
-    pub fn from_state(mut state: SessionState) -> Self {
-        state.refresh_explanation_comments();
-        let from_comments = highest_number(state.comments.iter().map(|comment| &comment.id), 'c');
-        let from_replies = highest_number(
-            state
-                .comments
-                .iter()
-                .flat_map(|comment| comment.replies.iter().map(|reply| &reply.id)),
-            'r',
-        );
-        let from_messages = highest_number(state.messages.iter().map(|message| &message.id), 'm');
-        let from_writes = state
-            .comments
-            .iter()
-            .flat_map(|comment| {
-                std::iter::once(comment.seq).chain(comment.replies.iter().map(|reply| reply.seq))
-            })
-            .chain(state.messages.iter().map(|message| message.seq))
-            .max()
-            .unwrap_or(0);
+    /// 保存された状態から読み戻す。
+    pub fn from_state(state: SessionState) -> Self {
+        let state = state.prepare_for_restore();
         Session {
             display: state.display,
             explanation: state.explanation,
             comments: state.comments,
             seen: state.seen,
             collapsed: state.collapsed,
-            last_comment: state.last_comment.max(from_comments),
+            last_comment: state.last_comment,
             messages: state.messages,
-            last_reply: state.last_reply.max(from_replies),
-            last_message: state.last_message.max(from_messages),
-            last_seq: state.last_seq.max(from_writes),
+            last_reply: state.last_reply,
+            last_message: state.last_message,
+            last_seq: state.last_seq,
             channel: state.channel,
             received: 0,
             mocks: state.mocks,
@@ -116,14 +97,6 @@ impl Session {
             page_comment_saved: self.page_comment_saved,
         }
     }
-}
-
-/// `c12` のような id の番号の最大。
-fn highest_number<'a>(ids: impl Iterator<Item = &'a String>, prefix: char) -> u32 {
-    ids.filter_map(|id| id.strip_prefix(prefix))
-        .filter_map(|number| number.parse::<u32>().ok())
-        .max()
-        .unwrap_or(0)
 }
 
 /// R-SUBMIT の契約に合わせたコメントの JSON。`content_hash` は出さない。ページへのコメントの

@@ -142,6 +142,36 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    /// コメント・返信・発言の id は再利用しないので、採番は
+    /// 保存した最終番号と、残っているものの番号の大きい方から続ける。
+    pub fn prepare_for_restore(mut self) -> Self {
+        self.refresh_explanation_comments();
+        let from_comments =
+            highest_number(self.comments.iter().map(|comment| comment.id.as_str()), 'c');
+        let from_replies = highest_number(
+            self.comments
+                .iter()
+                .flat_map(|comment| comment.replies.iter().map(|reply| reply.id.as_str())),
+            'r',
+        );
+        let from_messages =
+            highest_number(self.messages.iter().map(|message| message.id.as_str()), 'm');
+        let from_writes = self
+            .comments
+            .iter()
+            .flat_map(|comment| {
+                std::iter::once(comment.seq).chain(comment.replies.iter().map(|reply| reply.seq))
+            })
+            .chain(self.messages.iter().map(|message| message.seq))
+            .max()
+            .unwrap_or(0);
+        self.last_comment = self.last_comment.max(from_comments);
+        self.last_reply = self.last_reply.max(from_replies);
+        self.last_message = self.last_message.max(from_messages);
+        self.last_seq = self.last_seq.max(from_writes);
+        self
+    }
+
     pub fn refresh_explanation_comments(&mut self) {
         if let Some(history) = self.explanation.as_mut() {
             history.versions.sort_by_key(|version| version.revision);
@@ -175,6 +205,14 @@ impl SessionState {
     pub fn has_conversation(&self) -> bool {
         !self.comments.is_empty() || !self.messages.is_empty() || self.explanation.is_some()
     }
+}
+
+/// `c12` のような id の番号の最大。
+fn highest_number<'a>(ids: impl Iterator<Item = &'a str>, prefix: char) -> u32 {
+    ids.filter_map(|id| id.strip_prefix(prefix))
+        .filter_map(|number| number.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
 }
 
 pub fn validate_additional(state: &SessionState) -> Result<(), SessionError> {
