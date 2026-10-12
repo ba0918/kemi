@@ -246,23 +246,57 @@ pub(crate) fn start_freeze(state: &Arc<AppState>) {
 /// 読み取りに失敗したら数回試してから復元不可の印を付ける。
 async fn freeze(state: Arc<AppState>) {
     let mut shutdown = state.shutdown.subscribe();
-    let input = loop {
+    let Some(input) = wait_for_input(&state, &mut shutdown).await else {
+        return;
+    };
+    let last_error = match read_copy(&input, &mut shutdown).await {
+        Ok(Some(copy)) => {
+            // 読み取りの間に submit の停止が始まっていたら、消したセッションを
+            // 作り直さない（R-SESSION）。
+            if *shutdown.borrow() {
+                return;
+            }
+            if let Some(sink) = &state.session_sink {
+                save_frozen_copy(&state, sink.as_ref(), copy, &input.token, &shutdown).await;
+            }
+            return;
+        }
+        Ok(None) => return,
+        Err(error) => error,
+    };
+
+    if *shutdown.borrow() {
+        return;
+    }
+    if let Some(sink) = &state.session_sink {
+        let _gate = state.persist.lock().expect("persist poisoned");
+        let reason = format!("cannot read the review contents: {last_error}");
+        if let Err(error) = sink.mark_unresumable(&reason) {
+            state.notices.notify(Notice::SessionNotSaved(error));
+        }
+    }
+}
+
+/// 凍結の入力（初回の両方の単位）がそろうまで待つ。止まるか凍結できないなら None。
+async fn wait_for_input(
+    state: &AppState,
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+) -> Option<FreezeInput> {
+    loop {
         if *shutdown.borrow() {
             state
                 .initial_review
                 .lock()
                 .expect("initial review poisoned")
                 .take();
-            return;
+            return None;
         }
         let (ready, failed) = {
             let initial = state
                 .initial_review
                 .lock()
                 .expect("initial review poisoned");
-            let Some(initial) = initial.as_ref() else {
-                return;
-            };
+            let initial = initial.as_ref()?;
             (
                 initial
                     .other
@@ -288,23 +322,31 @@ async fn freeze(state: Arc<AppState>) {
             {
                 state.notices.notify(Notice::SessionNotSaved(error));
             }
-            return;
+            return None;
         }
         if ready {
-            break state
-                .initial_review
-                .lock()
-                .expect("initial review poisoned")
-                .take()
-                .expect("freeze target present");
+            return Some(
+                state
+                    .initial_review
+                    .lock()
+                    .expect("initial review poisoned")
+                    .take()
+                    .expect("freeze target present"),
+            );
         }
         // 現在版の他方の単位を待つと、更新後のメタデータを初回写しに混ぜることになる。
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-            _ = shutdown.changed() => {state.initial_review.lock().expect("initial review poisoned").take();return;},
+            _ = shutdown.changed() => {state.initial_review.lock().expect("initial review poisoned").take();return None;},
         }
-    };
+    }
+}
 
+/// 写しの内容を読む。失敗したら 3 回まで試す。途中で止まったら `Ok(None)`。
+async fn read_copy(
+    input: &FreezeInput,
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<Option<SessionCopy>, String> {
     let (startup_unit, units) = {
         let mut units = vec![FrozenUnit {
             unit: input.startup_unit,
@@ -333,83 +375,73 @@ async fn freeze(state: Arc<AppState>) {
     for attempt in 0..3 {
         match read_contents(input.source.clone(), ids.clone()).await {
             Ok(contents) => {
-                // 読み取りの間に submit の停止が始まっていたら、消したセッションを
-                // 作り直さない（R-SESSION）。
-                if *shutdown.borrow() {
-                    return;
-                }
-                if let Some(sink) = &state.session_sink {
-                    let copy = SessionCopy {
-                        startup_unit,
-                        units,
-                        contents,
-                    };
-                    let prepared = match tokio::task::spawn_blocking(move || {
-                        kemi_core::session::prepare_copy(copy)
-                    })
-                    .await
-                    {
-                        Ok(Ok(copy)) => copy,
-                        Ok(Err(error)) => {
-                            state.notices.notify(Notice::SessionNotSaved(error));
-                            return;
-                        }
-                        Err(error) => {
-                            state.notices.notify(Notice::SessionNotSaved(
-                                kemi_core::session::SessionError::Encode {
-                                    reason: error.to_string(),
-                                },
-                            ));
-                            return;
-                        }
-                    };
-                    let _gate = state.persist.lock().expect("persist poisoned");
-                    if *shutdown.borrow() {
-                        return;
-                    }
-                    let mut session = state.session.lock().expect("session poisoned");
-                    let mut snapshot = session.snapshot();
-                    snapshot
-                        .display
-                        .as_mut()
-                        .expect("initial display assigned")
-                        .frozen = Some(input.token.clone());
-                    match sink.save_frozen_copy(prepared, snapshot) {
-                        Ok(true) => {
-                            session
-                                .state
-                                .display
-                                .as_mut()
-                                .expect("initial display assigned")
-                                .frozen = Some(input.token.clone())
-                        }
-                        Ok(false) => {}
-                        Err(error) => state.notices.notify(Notice::SessionNotSaved(error)),
-                    }
-                }
-                return;
+                return Ok(Some(SessionCopy {
+                    startup_unit,
+                    units,
+                    contents,
+                }));
             }
             Err(error) => {
                 last_error = error;
                 if attempt < 2 {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-                        _ = shutdown.changed() => return,
+                        _ = shutdown.changed() => return Ok(None),
                     }
                 }
             }
         }
     }
 
+    Err(last_error)
+}
+
+/// 読んだ写しを保存し、保存できたら表示版に凍結した印を付ける。
+async fn save_frozen_copy(
+    state: &AppState,
+    sink: &dyn crate::SessionSink,
+    copy: SessionCopy,
+    token: &str,
+    shutdown: &tokio::sync::watch::Receiver<bool>,
+) {
+    let prepared =
+        match tokio::task::spawn_blocking(move || kemi_core::session::prepare_copy(copy)).await {
+            Ok(Ok(copy)) => copy,
+            Ok(Err(error)) => {
+                state.notices.notify(Notice::SessionNotSaved(error));
+                return;
+            }
+            Err(error) => {
+                state.notices.notify(Notice::SessionNotSaved(
+                    kemi_core::session::SessionError::Encode {
+                        reason: error.to_string(),
+                    },
+                ));
+                return;
+            }
+        };
+    let _gate = state.persist.lock().expect("persist poisoned");
     if *shutdown.borrow() {
         return;
     }
-    if let Some(sink) = &state.session_sink {
-        let _gate = state.persist.lock().expect("persist poisoned");
-        let reason = format!("cannot read the review contents: {last_error}");
-        if let Err(error) = sink.mark_unresumable(&reason) {
-            state.notices.notify(Notice::SessionNotSaved(error));
+    let mut session = state.session.lock().expect("session poisoned");
+    let mut snapshot = session.snapshot();
+    snapshot
+        .display
+        .as_mut()
+        .expect("initial display assigned")
+        .frozen = Some(token.to_owned());
+    match sink.save_frozen_copy(prepared, snapshot) {
+        Ok(true) => {
+            session
+                .state
+                .display
+                .as_mut()
+                .expect("initial display assigned")
+                .frozen = Some(token.to_owned())
         }
+        Ok(false) => {}
+        Err(error) => state.notices.notify(Notice::SessionNotSaved(error)),
     }
 }
 
