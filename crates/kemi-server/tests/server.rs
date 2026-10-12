@@ -2715,6 +2715,15 @@ impl SlowSink {
     }
 }
 
+// 途中のアサーションで失敗しても、保存を止めたワーカーを残さないため。
+struct FirstSaveGuard(Arc<SlowSink>);
+
+impl Drop for FirstSaveGuard {
+    fn drop(&mut self) {
+        self.0.open_first_save();
+    }
+}
+
 impl SessionSink for SlowSink {
     fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.states.lock().unwrap().push(state);
@@ -2768,6 +2777,7 @@ impl SessionSink for SlowSink {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generation() {
     let sink = Arc::new(SlowSink::new());
+    let _release_on_drop = FirstSaveGuard(sink.clone());
     let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
     let initial: Value = server.get("api/review").await.json().await.unwrap();
     let message_url = format!("{}api/message", server.url);
@@ -2922,11 +2932,12 @@ async fn session_state_is_saved_on_every_change() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn session_saves_keep_changes_made_while_a_save_is_slow() {
     let sink = Arc::new(SlowSink::new());
+    let _release_on_drop = FirstSaveGuard(sink.clone());
     let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
 
     let url = server.url.clone();
     let origin = server.origin.clone();
-    let first = tokio::spawn({
+    let mut first = tokio::spawn({
         let (url, origin) = (url.clone(), origin.clone());
         async move {
             post_json(
@@ -2941,8 +2952,15 @@ async fn session_saves_keep_changes_made_while_a_save_is_slow() {
             .await
         }
     });
-    sink.entered.notified().await;
-    let mut second = tokio::spawn(async move {
+    // HTTP タスクが保存に届く前に失敗しても、通知を永久に待たないため。
+    tokio::select! {
+        () = sink.entered.notified() => {}
+        result = &mut first => panic!("最初の要求が保存に入る前に終了した: {result:?}"),
+        () = tokio::time::sleep(Duration::from_secs(10)) => {
+            panic!("最初の要求が保存に入らなかった");
+        }
+    }
+    let second = tokio::spawn(async move {
         post_json(
             &url,
             &origin,
@@ -2955,14 +2973,24 @@ async fn session_saves_keep_changes_made_while_a_save_is_slow() {
         .await
     });
 
-    // 2 つ目の変更が保存に入るのを待つ。保存が直列化されていれば入らないので、
-    // 打ち切ってから最初の保存を解放する。
-    let second_done = tokio::time::timeout(Duration::from_millis(300), &mut second).await;
-    sink.open_first_save();
-    let second_response = match second_done {
-        Ok(result) => result.unwrap(),
-        Err(_) => second.await.unwrap(),
-    };
+    // 保存がワーカーを同期的にふさいでも、tokio のタイマーに頼らず解放するため。
+    // 直列化されていれば、最初の保存を解放するまで次の保存は始まらない。
+    let release = std::thread::spawn({
+        let sink = sink.clone();
+        move || {
+            let opened = sink.gate.lock().unwrap();
+            let (mut opened, _) = sink
+                .gate_opened
+                .wait_timeout_while(opened, Duration::from_millis(300), |opened| !*opened)
+                .unwrap();
+            let calls_before_release = sink.calls.load(Ordering::SeqCst);
+            *opened = true;
+            sink.gate_opened.notify_all();
+            calls_before_release
+        }
+    });
+    let second_response = second.await.unwrap();
+    assert_eq!(release.join().unwrap(), 1);
 
     assert_eq!(first.await.unwrap().status(), 200);
     assert_eq!(second_response.status(), 200);
