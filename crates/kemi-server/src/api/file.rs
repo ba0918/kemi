@@ -184,15 +184,17 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
     let mut session = state.session.lock().expect("session poisoned");
+    let mut old_hash = None;
+    let mut new_hash = None;
     for comment in session.state.comments.iter_mut() {
         let Some(file) = comment.file().filter(|file| file.file_id == file_id) else {
             continue;
         };
-        let lines = match file.side {
-            Side::Old => old_lines,
-            Side::New => new_lines,
+        let current_hash = match file.side {
+            Side::Old => old_hash.get_or_insert_with(|| comment::content_hash(old_lines)),
+            Side::New => new_hash.get_or_insert_with(|| comment::content_hash(new_lines)),
         };
-        comment.outdated = comment::is_outdated(&file.content_hash, &comment::content_hash(lines));
+        comment.outdated = comment::is_outdated(&file.content_hash, current_hash);
     }
 }
 
