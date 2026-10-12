@@ -140,7 +140,13 @@ impl Kemi {
         let url = loop {
             line.clear();
             let read = reader.read_line(&mut line).unwrap();
-            assert!(read > 0, "kemi が URL を出さずに終了しました");
+            if read == 0 {
+                let status = child.wait();
+                panic!(
+                    "kemi が URL を出さずに終了しました\n終了状態: {status:?}\nURL より前の stderr:\n{}",
+                    preamble.concat()
+                );
+            }
             if let Some(found) = line.strip_prefix("kemi: http") {
                 break format!("http{found}").trim().to_string();
             }
@@ -2532,7 +2538,7 @@ async fn resume_keeps_the_frozen_contents_and_state() {
     let state = TempDir::new();
     let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     kemi.wait_serving().await;
-    let session = wait_for_session(&state.path).await;
+    let session = wait_for_frozen_session(&state.path).await;
     let id = session_id(&session);
     let review = kemi.get_json("api/review").await;
     let file_id = review["groups"][0]["files"][0]["id"]
@@ -2603,7 +2609,7 @@ async fn resume_writes_state_back_to_the_same_session() {
     let state = TempDir::new();
     let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     kemi.wait_serving().await;
-    let id = session_id(&wait_for_session(&state.path).await);
+    let id = session_id(&wait_for_frozen_session(&state.path).await);
     let review = kemi.get_json("api/review").await;
     let file_id = review["groups"][0]["files"][0]["id"]
         .as_str()
@@ -2658,7 +2664,7 @@ async fn resume_does_not_reuse_a_deleted_comment_id() {
     let state = TempDir::new();
     let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     kemi.wait_serving().await;
-    let id = session_id(&wait_for_session(&state.path).await);
+    let id = session_id(&wait_for_frozen_session(&state.path).await);
     let review = kemi.get_json("api/review").await;
     let file_id = review["groups"][0]["files"][0]["id"]
         .as_str()
@@ -2765,7 +2771,7 @@ async fn resume_submit_uses_the_original_workspace_for_the_result() {
     let state = TempDir::new();
     let kemi = Kemi::spawn_with_state(&dir.path, &["manifest.json", "--no-open"], &state.path);
     kemi.wait_serving().await;
-    let id = session_id(&wait_for_session(&state.path).await);
+    let id = session_id(&wait_for_frozen_session(&state.path).await);
     let original_url = kemi.url.clone();
     signal(&kemi.child, "-INT");
     kemi.wait_with_stderr();
@@ -2863,19 +2869,6 @@ impl Kemi {
         assert_eq!(response.status(), 200);
         response.json().await.unwrap()
     }
-}
-
-/// 写し（`<id>.payload`）ができるまで待つ。できる前に保留すると復元できない。
-#[cfg(unix)]
-async fn wait_for_copy(state: &Path, id: &str) {
-    let payload = sessions_dir(state).join(format!("{id}.payload"));
-    for _ in 0..500 {
-        if payload.exists() {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    panic!("the session copy was never written");
 }
 
 fn endpoint_dir(state: &Path) -> PathBuf {
@@ -3338,7 +3331,7 @@ async fn a_hand_made_before_suspending_is_returned_after_resuming() {
     let state = TempDir::new();
     let (kemi, id) = start_worktree_review(&dir, &state, &[]);
     kemi.wait_serving().await;
-    wait_for_copy(&state.path, &id).await;
+    wait_for_frozen_session(&state.path).await;
     kemi.add_comment(1, "rename this").await;
     kemi.hand().await;
     signal(&kemi.child, "-INT");
