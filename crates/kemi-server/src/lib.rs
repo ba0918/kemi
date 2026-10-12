@@ -423,6 +423,24 @@ fn stopping(state: &AppState) -> impl std::future::Future<Output = ()> + use<> {
     }
 }
 
+/// 起動時に取得したレビュー。
+struct BootstrapReview {
+    initial_source: Arc<dyn ReviewSource>,
+    review: kemi_core::domain::review::ReviewMeta,
+    units: Vec<kemi_core::domain::review::GroupBy>,
+    resumed: bool,
+    code_error: Option<String>,
+}
+
+/// 復元を反映した、起動時のセッションと単位の状態。
+struct InitialSessionState {
+    initial_source: Arc<dyn ReviewSource>,
+    initial_state: kemi_core::session::SessionState,
+    display_id: String,
+    review_state: units::ReviewState,
+    initial_review: Option<session::FreezeInput>,
+}
+
 pub async fn serve(
     listener: TcpListener,
     params: ServeParams,
@@ -438,6 +456,13 @@ pub async fn serve(
     };
     let allowed = AllowedHosts::new(bind, params.share_address, address.port());
 
+    let bootstrap = bootstrap_review(&params)?;
+    let initial = initial_session_state(&params, bootstrap)?;
+    run_servers(listener, params, address, allowed, initial).await
+}
+
+/// ソースを分けて起動時のレビューを取得する。復元した `--live` では取得の誤りを許す。
+fn bootstrap_review(params: &ServeParams) -> Result<BootstrapReview, ServerError> {
     let resumed = params
         .session
         .as_ref()
@@ -484,6 +509,27 @@ pub async fn serve(
         sink.describe_review(&review.title, total_files);
     }
     let units = initial_source.units();
+    Ok(BootstrapReview {
+        initial_source,
+        review,
+        units,
+        resumed,
+        code_error,
+    })
+}
+
+/// 表示版・初期の解説・世代・凍結の入力を決める。
+fn initial_session_state(
+    params: &ServeParams,
+    bootstrap: BootstrapReview,
+) -> Result<InitialSessionState, ServerError> {
+    let BootstrapReview {
+        initial_source,
+        review,
+        units,
+        resumed,
+        code_error,
+    } = bootstrap;
     // 復元では、セッションの状態から見た・折りたたみ・コメント・解決を読み戻す（R-SESSION）。
     let mut initial_state = params
         .session
@@ -590,6 +636,30 @@ pub async fn serve(
                 .current
                 .clone(),
         });
+    Ok(InitialSessionState {
+        initial_source,
+        initial_state,
+        display_id,
+        review_state,
+        initial_review,
+    })
+}
+
+/// 状態を組み立て、監視とサーバを動かし、止まり方を結果にする。
+async fn run_servers(
+    listener: TcpListener,
+    params: ServeParams,
+    address: SocketAddr,
+    allowed: AllowedHosts,
+    initial: InitialSessionState,
+) -> Result<ServeOutcome, ServerError> {
+    let InitialSessionState {
+        initial_source,
+        initial_state,
+        display_id,
+        review_state,
+        initial_review,
+    } = initial;
     let sources = Arc::new(kemi_core::source::SourceSlot::new(
         params.source,
         initial_source,
