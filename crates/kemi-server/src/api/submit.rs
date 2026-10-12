@@ -42,16 +42,21 @@ pub(super) async fn submit_api(
 
     match build_submit_document(&state, &request.verdict).await {
         Ok(document) => {
-            {
-                let mut stop = state.stopping.stop.lock().expect("stop poisoned");
-                if matches!(*stop, Some(Stop::Failed(_) | Stop::Suspended)) {
-                    return Err(ApiError::conflict("the review is already stopping"));
+            let saved = {
+                // suspend が確定済みの submit を返す前に、結果の保存とセッションの削除を終える。
+                let _gate = state.persist.lock().expect("persist poisoned");
+                {
+                    let mut stop = state.stopping.stop.lock().expect("stop poisoned");
+                    if matches!(*stop, Some(Stop::Failed(_) | Stop::Suspended)) {
+                        return Err(ApiError::conflict("the review is already stopping"));
+                    }
+                    *stop = Some(Stop::Submitted(document.clone()));
                 }
-                *stop = Some(Stop::Submitted(document.clone()));
-            }
-            let saved = save_result(&state, &document);
-            // 結果を書いた後にセッションを消し、その後に停止する（R-SESSION）。
-            delete_stored(&state);
+                let saved = save_result(&state, &document);
+                // 結果を書いた後にセッションを消し、その後に停止する（R-SESSION）。
+                delete_stored(&state);
+                saved
+            };
             let _ = state.stopping.shutdown.send(true);
             Ok(Json(json!({ "result": document, "saved": saved })))
         }

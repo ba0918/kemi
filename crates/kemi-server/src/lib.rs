@@ -64,6 +64,18 @@ pub enum ServeOutcome {
     Submitted(serde_json::Value),
 }
 
+/// 保留を頼んだ結果。submit が先に確定していれば、保留にせずその結果を返す。
+#[derive(Debug)]
+pub enum SuspendOutcome {
+    Submitted {
+        document: serde_json::Value,
+        waiting: bool,
+    },
+    Suspended {
+        waiting: bool,
+    },
+}
+
 /// サーバを止めた理由。submit か、レビュー中の実行時エラーか、保留か。
 pub(crate) enum Stop {
     Submitted(serde_json::Value),
@@ -296,12 +308,11 @@ impl ServeControl {
         ServeControl::default()
     }
 
-    /// 保留で終わることを、待っている `kemi wait` に知らせてサーバを止め始める。待っている
-    /// ものが無ければ停止だけ知らせて false を返し、起動側はすぐ終わってよい。true の
-    /// ときは、serve が返る（理由を返し終えて接続が閉じる）のを待ってから終わる。
-    pub fn suspend(&self) -> bool {
+    /// 確定済みの submit は保留にせず起動側へ返す（R-SUBMIT）。保留で待っている
+    /// `kemi wait` があるときは、理由を返し終えて接続が閉じるまで起動側で待つ。
+    pub fn suspend(&self) -> SuspendOutcome {
         let Some(state) = self.state.get().and_then(std::sync::Weak::upgrade) else {
-            return false;
+            return SuspendOutcome::Suspended { waiting: false };
         };
         let _gate = state.persist.lock().expect("persist poisoned");
         let waiting = state
@@ -312,8 +323,15 @@ impl ServeControl {
             .is_waiting();
         {
             let mut stop = state.stopping.stop.lock().expect("stop poisoned");
-            if stop.is_none() {
-                *stop = Some(Stop::Suspended);
+            match stop.as_ref() {
+                Some(Stop::Submitted(document)) => {
+                    return SuspendOutcome::Submitted {
+                        document: document.clone(),
+                        waiting,
+                    };
+                }
+                Some(Stop::Failed(_) | Stop::Suspended) => {}
+                None => *stop = Some(Stop::Suspended),
             }
         }
         let _ = state.stopping.shutdown.send(true);
@@ -322,7 +340,7 @@ impl ServeControl {
             .lock()
             .expect("initial review poisoned")
             .take();
-        waiting
+        SuspendOutcome::Suspended { waiting }
     }
 }
 

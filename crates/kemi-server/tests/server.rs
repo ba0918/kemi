@@ -4200,6 +4200,7 @@ struct AgentServer {
     agent_port: u16,
     agent_token: String,
     sink: Arc<RecordingSink>,
+    control: kemi_server::ServeControl,
 }
 
 impl AgentServer {
@@ -4230,6 +4231,7 @@ impl AgentServer {
         let agent_listener = bind_agent_listener().await.unwrap();
         let agent_port = agent_listener.local_addr().unwrap().port();
         let notices = Arc::new(RecordingNotices::default());
+        let control = kemi_server::ServeControl::new();
         let params = ServeParams {
             source,
             assets: Arc::new(FakeAssets),
@@ -4242,7 +4244,7 @@ impl AgentServer {
                 listener: agent_listener,
                 token: "agent-secret".to_string(),
                 review: "01TESTREVIEW".to_string(),
-                control: kemi_server::ServeControl::new(),
+                control: control.clone(),
             }),
             live: None,
         };
@@ -4259,6 +4261,7 @@ impl AgentServer {
             agent_port,
             agent_token: "agent-secret".to_string(),
             sink,
+            control,
         }
     }
 
@@ -4448,6 +4451,94 @@ async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
     assert_eq!(submitted["result"]["kemi"], 3);
     let document = server.page.finish().await;
     assert_eq!(document["verdict"], "changes_requested");
+}
+
+struct SuspendGatedSource {
+    inner: FakeSource,
+    gate: Arc<GenerationGate>,
+}
+
+impl ReviewSource for SuspendGatedSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.gate.entered.notify_one();
+        let _ = self.gate.release.lock().unwrap().recv();
+        self.inner.content(id)
+    }
+}
+
+#[tokio::test]
+async fn suspend_after_submit_returns_the_committed_document() {
+    for verdict in ["approved", "changes_requested"] {
+        let (release, receiver) = std::sync::mpsc::channel();
+        let gate = Arc::new(GenerationGate {
+            entered: tokio::sync::Notify::new(),
+            release: Mutex::new(receiver),
+        });
+        let source = Arc::new(SuspendGatedSource {
+            inner: FakeSource::new(),
+            gate: gate.clone(),
+        });
+        let sink = Arc::new(RecordingSink::default());
+        sink.copy_already_saved.store(true, Ordering::SeqCst);
+        let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
+        server.control.ready().await;
+        // 別のファイル取得が処理中なら、submit の応答後も serve は接続の終了を待つ。
+        let url = format!("{}api/file/f1", server.page.url);
+        let reading = tokio::spawn(async move { reqwest::get(url).await.unwrap() });
+        tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+            .await
+            .expect("file request did not reach the source");
+
+        let response = server
+            .page
+            .post("api/submit", json!({"verdict": verdict}))
+            .await;
+        assert_eq!(response.status(), 200);
+        let submitted: Value = response.json().await.unwrap();
+        assert_eq!(submitted["result"]["verdict"], verdict);
+        assert!(server.sink.deleted.load(Ordering::SeqCst));
+        assert!(!server.page.task.is_finished());
+
+        let outcome = server.control.suspend();
+        release.send(()).unwrap();
+        let kemi_server::SuspendOutcome::Submitted { document, .. } = outcome else {
+            panic!("suspend discarded the committed submit");
+        };
+        assert_eq!(document, submitted["result"]);
+        assert!(server.sink.deleted.load(Ordering::SeqCst));
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), reading)
+                .await
+                .unwrap()
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        assert_eq!(server.page.finish().await, document);
+    }
+}
+
+#[tokio::test]
+async fn suspend_before_submit_returns_suspended_without_a_waiter() {
+    let server = AgentServer::start().await;
+    server.control.ready().await;
+
+    assert!(matches!(
+        server.control.suspend(),
+        kemi_server::SuspendOutcome::Suspended { waiting: false }
+    ));
+    assert!(!server.sink.deleted.load(Ordering::SeqCst));
+    let error = tokio::time::timeout(Duration::from_secs(5), server.page.task)
+        .await
+        .expect("server did not stop")
+        .expect("server task panicked")
+        .expect_err("suspend must not produce a submit");
+    assert_eq!(error.to_string(), "the review was suspended");
 }
 
 #[tokio::test]
