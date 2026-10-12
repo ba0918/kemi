@@ -44,12 +44,14 @@ and any unverified points or caveats. A few lines are enough for a small change;
 only when it helps explain the decision. This requirement is for human review handoffs, not
 for inspecting a diff yourself, running `--digest`, or retrieving a stored result.
 
-For a new review, pass `--explanation <file>` with the chosen input mode. It reads a separate
-JSON file even when the manifest comes from stdin. Read [the input reference](references/inputs.md)
-for the section/block structure, a short example, and excluded flag combinations.
-For an already running or resumed review, read its explanation with `kemi explain <id> --context`
-and add or update it as needed using the update procedure below; do not combine `--resume`
-with `--explanation`.
+For a new review, write the explanation file first and pass `--explanation <file>` with the
+chosen input mode; do not start a human review without it. It reads a separate JSON file even
+when the manifest comes from stdin. Startup validates and saves it: an invalid file exits `2`
+before any URL is printed, so once stderr prints `kemi: review <id>` the explanation is saved.
+Read [the input reference](references/inputs.md) for the section/block structure, a short
+example, and excluded flag combinations.
+For an already running or resumed review, add or update the explanation with the update
+procedure below; do not combine `--resume` with `--explanation`.
 
 ## Run and wait
 
@@ -58,10 +60,11 @@ method that keeps the process alive until the user submits the review. Retain th
 identifier and output paths. A tool that yields while the process keeps running is not the
 process ending.
 
-Read the `kemi: <url>` line from stderr. Before sharing it, use `kemi explain <id> --context`
-to confirm that the saved explanation contains the intended handoff text. If startup or an
-explanation update fails, fix or report the failure rather than handing off a review without
-its explanation. Then send the review URL to the user in a progress message.
+Read the `kemi: <url>` line from stderr. Share it for a human handoff only when the run was
+started with `--explanation`, or after an explanation update printed its success JSON and exited
+`0`. If startup fails on the explanation, fix the file and start again; if an update fails, fix
+or report the failure rather than handing off a review without its explanation. Then send the
+review URL to the user in a progress message.
 stderr also reports the result storage directory, followed by `kemi: review <id>` when the
 review can hold a conversation (see below). Explain the groups, what needs judgment,
 any assumptions, and that **Approve** or **Request changes** submits the review.

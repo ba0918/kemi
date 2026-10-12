@@ -157,9 +157,9 @@ A small change can use one text block with a few lines. For example, save this a
 
 Start a new review with the file, for example `kemi --worktree --explanation explanation.json`.
 Keep the explanation file outside the reviewed working tree if it is only handoff material;
-otherwise `--worktree` includes it as an untracked file. After startup, use the printed review
-id with `kemi explain <id> --context` to check the saved explanation before sharing the review
-URL. An existing or resumed review uses [the update procedure](conversation.md#updating-the-explanation)
+otherwise `--worktree` includes it as an untracked file. A successful startup has already
+validated and saved the file, so no separate check is needed before sharing the review URL.
+An existing or resumed review uses [the update procedure](conversation.md#updating-the-explanation)
 instead of `--explanation`.
 
 ## Writing a manifest

@@ -170,9 +170,11 @@ an absent explanation, otherwise `explanation_revision` from context. For an exp
 of the current review, use context's `diff_display_version` as `base_display_version`
 and replace the complete `sections` with the intended document. Success prints
 `{revision,base_display_version}` and exits 0. `--file` excludes `--context`.
-Confirm both the success JSON and exit code before reporting the update as saved.
-When adding a missing explanation before a handoff, read context again to confirm the
-saved text, then share the review URL.
+Confirm both the success JSON and exit code before reporting the update as saved; that
+confirmation is enough to share the review URL after adding a missing explanation.
+In a commit range, context is refused until the other grouping is built, which starts
+when the page is first opened. If context is refused for that reason before a handoff,
+ask the person to open the review page, then read context again and update.
 Invalid JSON, duplicate keys, references, limits, revision conflicts, or save
 failures print no success JSON, report a reason on stderr, and exit 2.
 Concurrent requests with the same expected revision accept only one. Submit
