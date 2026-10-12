@@ -376,10 +376,14 @@ pub(crate) struct AgentChannel {
     pub(crate) wake: tokio::sync::Notify,
 }
 
+/// 保存と説明の更新を同じ門で進めるための、登録ページと画面が保持する説明の版。
+pub(crate) struct PersistGuarded {
+    pub(crate) registered_pages: std::collections::BTreeSet<String>,
+    pub(crate) explanation_holds:
+        std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>,
+}
+
 pub(crate) struct AppState {
-    pub registered_pages: Mutex<std::collections::BTreeSet<String>>,
-    pub explanation_holds:
-        Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>>,
     pub sources: Arc<kemi_core::source::SourceSlot>,
     pub initial_review: Mutex<Option<session::FreezeInput>>,
     pub display_id: String,
@@ -397,8 +401,9 @@ pub(crate) struct AppState {
     /// 再取得を 1 つずつ行う。同じ単位を同時に作り直して計画が入れ替わらないように。
     pub refresh: tokio::sync::Mutex<()>,
     pub session: Mutex<Session>,
-    /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
-    pub persist: Mutex<()>,
+    /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。登録ページと画面が
+    /// 保持する説明の版も、この門の中身として守る。
+    pub(crate) persist: Mutex<PersistGuarded>,
     pub events: broadcast::Sender<Event>,
     pub(crate) agent: AgentChannel,
     pub(crate) stopping: Stopping,
@@ -695,8 +700,6 @@ async fn run_servers(
         &initial_state.channel.events,
     );
     let state = Arc::new(AppState {
-        registered_pages: Mutex::new(std::collections::BTreeSet::new()),
-        explanation_holds: Mutex::new(std::collections::BTreeMap::new()),
         source: sources.clone(),
         sources,
         initial_review: Mutex::new(initial_review),
@@ -712,7 +715,10 @@ async fn run_servers(
         review: RwLock::new(review_state),
         refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::from_state(initial_state)),
-        persist: Mutex::new(()),
+        persist: Mutex::new(PersistGuarded {
+            registered_pages: std::collections::BTreeSet::new(),
+            explanation_holds: std::collections::BTreeMap::new(),
+        }),
         events,
         agent: AgentChannel {
             link: Mutex::new(agent),

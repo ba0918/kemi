@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{ApiError, ensure_display_persisted};
-use crate::{AppState, Event, SubmitState};
+use crate::{AppState, Event, PersistGuarded, SubmitState};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -197,7 +197,7 @@ fn update_references(
     (code, requested)
 }
 
-fn pages(state: &AppState) -> Vec<String> {
+fn pages(state: &AppState, guarded: &PersistGuarded) -> Vec<String> {
     state.live.as_ref().map_or_else(Vec::new, |live| {
         std::iter::once(live.start.clone())
             .chain(
@@ -208,14 +208,7 @@ fn pages(state: &AppState) -> Vec<String> {
                     .iter()
                     .map(|s| s.record.page.clone()),
             )
-            .chain(
-                state
-                    .registered_pages
-                    .lock()
-                    .expect("registered pages poisoned")
-                    .iter()
-                    .cloned(),
-            )
+            .chain(guarded.registered_pages.iter().cloned())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -224,9 +217,9 @@ fn pages(state: &AppState) -> Vec<String> {
 
 pub(crate) async fn context(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
     ensure_display_persisted(&state)?;
-    let _gate = state.persist.lock().expect("persist poisoned");
+    let gate = state.persist.lock().expect("persist poisoned");
     let code = current_map(&state)?;
-    let pages = pages(&state);
+    let pages = pages(&state, &gate);
     let session = state.session.lock().expect("session poisoned");
     let display = session.state.display.as_ref().expect("display assigned");
     Ok(Json(
@@ -284,7 +277,7 @@ fn update_error(error: kemi_core::domain::explanation::ExplanationError) -> ApiE
 
 /// 新しい版を足し、容量に収まるまで古い版を外した保存状態の候補。
 fn explanation_candidate(
-    state: &AppState,
+    guarded: &PersistGuarded,
     session: &crate::session::Session,
     incoming: &ExplanationVersion,
     revision: u64,
@@ -297,10 +290,8 @@ fn explanation_candidate(
         versions: vec![],
     });
     let other_saved_bytes = kemi_core::session::additional_saved_size(&candidate);
-    let screens: Vec<_> = state
+    let screens: Vec<_> = guarded
         .explanation_holds
-        .lock()
-        .expect("holds poisoned")
         .values()
         .flatten()
         .copied()
@@ -370,7 +361,7 @@ pub(crate) async fn explain(
                 .map_err(ApiError::internal)?,
         );
     }
-    let _gate = state.persist.lock().expect("persist poisoned");
+    let gate = state.persist.lock().expect("persist poisoned");
     if *state.stopping.shutdown.borrow()
         || matches!(
             *state.stopping.submit_state.lock().expect("submit poisoned"),
@@ -400,7 +391,7 @@ pub(crate) async fn explain(
             "display version changed during reference validation; retrieve context and retry",
         ));
     }
-    let pages = pages(&state);
+    let pages = pages(&state, &gate);
     let revision = validate_update(
         &document,
         update.expected_revision,
@@ -426,7 +417,7 @@ pub(crate) async fn explain(
         sections: document.sections,
     };
     validate_version(&incoming).map_err(|error| ApiError::bad_request(error.to_string()))?;
-    let candidate = explanation_candidate(&state, &session, &incoming, revision)?;
+    let candidate = explanation_candidate(&gate, &session, &incoming, revision)?;
     sink.save_explanation_state(candidate.clone())
         .map_err(ApiError::internal)?;
     session.state.explanation = candidate.explanation;
@@ -473,9 +464,8 @@ pub(super) async fn hold_version(
     State(state): State<Arc<AppState>>,
     Json(request): Json<HoldRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let _gate = state.persist.lock().expect("persist poisoned");
+    let mut gate = state.persist.lock().expect("persist poisoned");
     let session = state.session.lock().expect("session poisoned");
-    let mut holds = state.explanation_holds.lock().expect("holds poisoned");
     match request {
         HoldRequest::RegisterPage { url } => {
             if state.live.is_none() {
@@ -494,11 +484,7 @@ pub(super) async fn hold_version(
                     "page must be a path and query in this live review",
                 ));
             }
-            state
-                .registered_pages
-                .lock()
-                .expect("registered pages poisoned")
-                .insert(url);
+            gate.registered_pages.insert(url);
         }
         HoldRequest::Hold { screen, revision } => {
             if screen.is_empty() {
@@ -514,9 +500,13 @@ pub(super) async fn hold_version(
                     "explanation revision is no longer available",
                 ));
             }
-            holds.entry(screen).or_default().insert(revision);
+            gate.explanation_holds
+                .entry(screen)
+                .or_default()
+                .insert(revision);
         }
         HoldRequest::Release { screen, revision } => {
+            let holds = &mut gate.explanation_holds;
             if let Some(held) = holds.get_mut(&screen) {
                 held.remove(&revision);
                 if held.is_empty() {

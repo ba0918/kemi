@@ -204,7 +204,8 @@ pub(crate) fn persist(state: &AppState) {
         return;
     };
     // スナップショットと保存を 1 つずつ進め、遅い保存が新しい状態を上書きしないように
-    // する。呼び出し側はセッション mutex を離してから来るので、ロックは persist →
+    // する。登録ページと画面が保持する説明の版も守るため、セッション mutex より広い
+    // 範囲を守る。呼び出し側はセッション mutex を離してから来るので、ロックは persist →
     // session の一方向に保たれる。
     let _persist = state.persist.lock().expect("persist poisoned");
     let snapshot = state.session.lock().expect("session poisoned").snapshot();
