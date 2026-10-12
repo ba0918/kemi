@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::domain::review::{FileEntry, ReviewMeta};
+use crate::domain::review::{FileEntry, Group, ReviewMeta};
 
 /// 文字列フィールドの上限。切った場合は末尾に `…` を付ける。
 const FIELD_LIMIT: usize = 2_000;
@@ -90,7 +90,23 @@ struct Limits {
     top_files: usize,
 }
 
+/// 上限の探索で変わらない集計とファイルの並び。候補ごとに作り直さない。
+struct PreparedDigest<'a> {
+    title: &'a str,
+    totals: DigestTotals,
+    groups: Vec<GroupStats<'a>>,
+    directories: Vec<DigestDirectory>,
+    all_files: Vec<&'a FileEntry>,
+}
+
+struct GroupStats<'a> {
+    group: &'a Group,
+    add: u64,
+    del: u64,
+}
+
 pub fn build_digest(review: &ReviewMeta, top_n: usize) -> Digest {
+    let prepared = prepare_digest(review);
     let mut limits = Limits {
         strings: FIELD_LIMIT,
         groups: GROUP_LIMIT,
@@ -98,7 +114,7 @@ pub fn build_digest(review: &ReviewMeta, top_n: usize) -> Digest {
         top_files: top_n,
     };
     loop {
-        if let Some(digest) = fit_strings(review, top_n, limits) {
+        if let Some(digest) = fit_strings(&prepared, top_n, limits) {
             return digest;
         }
         // 文字列を空にしても予算を超えるのは、項目の構造だけで大きい場合。
@@ -113,15 +129,15 @@ pub fn build_digest(review: &ReviewMeta, top_n: usize) -> Digest {
             limits.top_files /= 2;
             continue;
         }
-        return assemble(review, top_n, limits);
+        return assemble(&prepared, top_n, limits);
     }
 }
 
 /// 文字列の上限だけを二分探索し、予算に収まる最大の文字数を探す。
 /// 文字列をすべて空にしても収まらない場合は None。
-fn fit_strings(review: &ReviewMeta, top_n: usize, limits: Limits) -> Option<Digest> {
+fn fit_strings(prepared: &PreparedDigest<'_>, top_n: usize, limits: Limits) -> Option<Digest> {
     let empty = assemble(
-        review,
+        prepared,
         top_n,
         Limits {
             strings: 0,
@@ -137,7 +153,7 @@ fn fit_strings(review: &ReviewMeta, top_n: usize, limits: Limits) -> Option<Dige
     while low < high {
         let middle = (low + high).div_ceil(2);
         let candidate = assemble(
-            review,
+            prepared,
             top_n,
             Limits {
                 strings: middle,
@@ -158,7 +174,7 @@ fn serialized_len(digest: &Digest) -> usize {
     serde_json::to_string(digest).map_or(usize::MAX, |json| json.len())
 }
 
-fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
+fn prepare_digest(review: &ReviewMeta) -> PreparedDigest<'_> {
     let mut totals = DigestTotals {
         files: 0,
         add: 0,
@@ -166,14 +182,10 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
         noise_files: 0,
     };
     let mut groups = Vec::new();
-    let mut omitted_groups = 0usize;
-    let mut omitted_group_files = 0usize;
-    let mut omitted_group_add = 0u64;
-    let mut omitted_group_del = 0u64;
     let mut directories: BTreeMap<String, DigestDirectory> = BTreeMap::new();
     let mut all_files: Vec<&FileEntry> = Vec::new();
 
-    for (index, group) in review.groups.iter().enumerate() {
+    for group in &review.groups {
         let mut group_add = 0;
         let mut group_del = 0;
         for file in &group.files {
@@ -205,6 +217,37 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
 
             all_files.push(file);
         }
+        groups.push(GroupStats {
+            group,
+            add: group_add,
+            del: group_del,
+        });
+    }
+
+    all_files.sort_by(|left, right| {
+        let left_total = u64::from(left.add) + u64::from(left.del);
+        let right_total = u64::from(right.add) + u64::from(right.del);
+        right_total
+            .cmp(&left_total)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    PreparedDigest {
+        title: &review.title,
+        totals,
+        groups,
+        directories: directories.into_values().collect(),
+        all_files,
+    }
+}
+
+fn assemble(prepared: &PreparedDigest<'_>, top_n: usize, limits: Limits) -> Digest {
+    let mut groups = Vec::new();
+    let mut omitted_groups = 0usize;
+    let mut omitted_group_files = 0usize;
+    let mut omitted_group_add = 0u64;
+    let mut omitted_group_del = 0u64;
+    for (index, stats) in prepared.groups.iter().enumerate() {
+        let group = stats.group;
         if index < limits.groups {
             groups.push(DigestGroup {
                 id: truncate(&group.id, limits.strings),
@@ -212,14 +255,14 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
                 why: truncate(&group.why, limits.strings),
                 watch: truncate(&group.watch, limits.strings),
                 files: group.files.len(),
-                add: group_add,
-                del: group_del,
+                add: stats.add,
+                del: stats.del,
             });
         } else {
             omitted_groups += 1;
             omitted_group_files += group.files.len();
-            omitted_group_add += group_add;
-            omitted_group_del += group_del;
+            omitted_group_add += stats.add;
+            omitted_group_del += stats.del;
         }
     }
     if omitted_groups > 0 {
@@ -234,14 +277,18 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
         });
     }
 
-    let mut directories: Vec<DigestDirectory> = directories.into_values().collect();
-    if directories.len() > limits.directories {
-        let omitted = directories.split_off(limits.directories);
+    let mut directories: Vec<DigestDirectory> = prepared
+        .directories
+        .iter()
+        .take(limits.directories)
+        .cloned()
+        .collect();
+    if prepared.directories.len() > limits.directories {
         let mut files = 0;
         let mut add = 0u64;
         let mut del = 0u64;
         let mut noise_files = 0;
-        for directory in omitted {
+        for directory in prepared.directories.iter().skip(limits.directories) {
             files += directory.files;
             add += directory.add;
             del += directory.del;
@@ -256,13 +303,7 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
         });
     }
 
-    all_files.sort_by(|left, right| {
-        let left_total = u64::from(left.add) + u64::from(left.del);
-        let right_total = u64::from(right.add) + u64::from(right.del);
-        right_total
-            .cmp(&left_total)
-            .then_with(|| left.path.cmp(&right.path))
-    });
+    let all_files = &prepared.all_files;
     let omitted = DigestOmitted {
         files: all_files.len().saturating_sub(limits.top_files),
         add: all_files
@@ -277,7 +318,7 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
             .sum(),
     };
     let mut top_files: Vec<DigestFile> = all_files
-        .into_iter()
+        .iter()
         .take(limits.top_files)
         .map(|file| DigestFile {
             path: truncate(&file.path, limits.strings),
@@ -300,8 +341,8 @@ fn assemble(review: &ReviewMeta, top_n: usize, limits: Limits) -> Digest {
 
     Digest {
         kemi: KEMI_CONTRACT_VERSION,
-        title: truncate(&review.title, limits.strings),
-        totals,
+        title: truncate(prepared.title, limits.strings),
+        totals: prepared.totals.clone(),
         groups,
         directories,
         top_files,
