@@ -16,7 +16,8 @@ use std::time::{Duration, SystemTime};
 
 use super::encoding;
 use super::files::{self, FILES_LIMIT, PageSnapshot};
-use super::{CopyMeta, CopyState, MetaDto, SessionCopy, SessionInfo, SessionState, SessionSummary};
+use super::format::{CopyMeta, MetaDto};
+use super::{CopyState, SessionCopy, SessionInfo, SessionState, SessionSummary};
 
 /// 写しの上限（`<id>.payload` 全体のバイト数）。超えた写しは捨てて復元不可にする。
 pub const COPY_LIMIT: u64 = 20 * 1024 * 1024;

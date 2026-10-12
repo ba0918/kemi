@@ -416,6 +416,18 @@ impl TreeWatch {
         events: &[notify::Event],
         files: &HashSet<PathBuf>,
     ) -> Result<bool, WatchFallback> {
+        let (mut occurrences, gone) = self.collect_occurrences(events);
+        self.settle_verdicts(&mut occurrences);
+        let known = self.diff_paths(&occurrences, files);
+        self.ask_unknown(&occurrences, &known);
+        self.apply_changes(watcher, occurrences, &gone, &known)
+    }
+
+    /// イベントを、パスごとの起きたことの列と、消えたパスにまとめる。
+    fn collect_occurrences(
+        &mut self,
+        events: &[notify::Event],
+    ) -> (Vec<Occurrence>, HashSet<PathBuf>) {
         // 消えたかどうかはイベントで決める。続けて同じ名前に戻されると、処理する時点では
         // ディレクトリがあるように見える。
         let mut occurrences: Vec<Occurrence> = Vec::new();
@@ -449,6 +461,11 @@ impl TreeWatch {
                 });
             }
         }
+        (occurrences, gone)
+    }
+
+    /// 消えたパスと現れたパスの無視の判定を、イベントの順に決める。
+    fn settle_verdicts(&mut self, occurrences: &mut [Occurrence]) {
         if self.rules_changed {
             self.verdicts.clear();
         }
@@ -458,7 +475,7 @@ impl TreeWatch {
         // 消えたパスは見えていたときの判定で決め、その判定は忘れる。現れたパスは判定を
         // 忘れて聞き直す。同じ名前でディレクトリとファイルが入れ替わると、判定も変わる。
         // 1 回のまとまりに消えたのと現れたのが続けて入るので、イベントの順に決める。
-        for occurrence in &mut occurrences {
+        for occurrence in occurrences {
             match occurrence.moved {
                 Moved::Away => occurrence.settled = self.verdicts.remove(&occurrence.path),
                 Moved::In => {
@@ -467,17 +484,25 @@ impl TreeWatch {
                 Moved::Stayed => {}
             }
         }
-        let known: HashSet<PathBuf> = occurrences
+    }
+
+    /// 起きたことのうち、差分に載っているファイルのパス。
+    fn diff_paths(&self, occurrences: &[Occurrence], files: &HashSet<PathBuf>) -> HashSet<PathBuf> {
+        occurrences
             .iter()
             .map(|occurrence| &occurrence.path)
             .filter(|path| files.contains(&self.canonical_of(path)))
             .cloned()
-            .collect();
+            .collect()
+    }
+
+    /// 判定がまだ無いパスを、まとめて git に聞いて覚える。
+    fn ask_unknown(&mut self, occurrences: &[Occurrence], known: &HashSet<PathBuf>) {
         // 無視したディレクトリの下のパスも無視されるので、聞かない。聞くときは祖先も
         // 一緒に聞いて覚え、その下で続く書き込み（ビルドの出力など）は git を呼ばずに捨てる。
         let mut unknown: Vec<PathBuf> = Vec::new();
         let mut asking: HashSet<PathBuf> = HashSet::new();
-        for Occurrence { path, settled, .. } in &occurrences {
+        for Occurrence { path, settled, .. } in occurrences {
             if known.contains(path) || settled.is_some() || self.under_ignored(path) {
                 continue;
             }
@@ -495,9 +520,19 @@ impl TreeWatch {
                 self.verdicts.insert(path, verdict);
             }
         }
+    }
 
+    /// 変化があったかを数え、消えたディレクトリを外し、新しいディレクトリを見張りに足す。
+    fn apply_changes(
+        &mut self,
+        watcher: &mut impl Watcher,
+        occurrences: Vec<Occurrence>,
+        gone: &HashSet<PathBuf>,
+        known: &HashSet<PathBuf>,
+    ) -> Result<bool, WatchFallback> {
         let mut changed = false;
         let mut created: Vec<PathBuf> = Vec::new();
+        let mut seen_created: HashSet<PathBuf> = HashSet::new();
         for Occurrence { path, settled, .. } in occurrences {
             if known.contains(&path) {
                 changed = true;
@@ -525,7 +560,10 @@ impl TreeWatch {
                 self.kept
                     .retain(|directory| !directory.starts_with(&canonical));
             }
-            if is_directory && !self.directories.contains(&path) && !created.contains(&path) {
+            if is_directory
+                && !self.directories.contains(&path)
+                && seen_created.insert(path.clone())
+            {
                 created.push(path);
             }
         }

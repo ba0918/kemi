@@ -46,11 +46,6 @@ impl LiveSource {
         }
     }
 
-    /// コードの見方を出せるか（git の作業ツリーの中か）。
-    pub fn has_code(&self) -> bool {
-        self.code.is_some()
-    }
-
     /// 外に見せた id を、作業ツリーの差分の id にする。
     fn inner(&self, file_id: &str) -> Result<(&GitSource, String), SourceError> {
         let unknown = || SourceError::UnknownFileId(file_id.to_string());

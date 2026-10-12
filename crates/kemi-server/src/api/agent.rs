@@ -25,9 +25,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use futures_util::StreamExt;
-use kemi_core::domain::agent::{AgentEvent, AgentWrite, validate_writes};
+use kemi_core::domain::agent::{AgentEvent, AgentWrite, ContentWrite, validate_writes};
 use kemi_core::domain::conversation_content::ConversationContent;
-use kemi_core::domain::review::{Author, Message, Reply};
 use kemi_core::parts::{WriteContent, validate_content};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -65,7 +64,7 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
         .and_then(|rest| rest.split('/').next())
         .unwrap_or_default()
         .to_string();
-    let expected = state.agent_token.as_deref().unwrap_or_default();
+    let expected = state.agent.token.as_deref().unwrap_or_default();
     match peer {
         Some(peer) => {
             if let Err(error) = admit(peer, request.headers(), &token, expected) {
@@ -130,7 +129,7 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         }
     };
     {
-        let mut agent = state.agent.lock().expect("agent poisoned");
+        let mut agent = state.agent.link.lock().expect("agent poisoned");
         if agent.is_waiting() {
             return ApiError::conflict("another kemi wait is already waiting for this review")
                 .into_response();
@@ -147,9 +146,9 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     let deadline = request
         .timeout_ms
         .map(|millis| tokio::time::Instant::now() + Duration::from_millis(millis));
-    let mut shutdown = state.shutdown.subscribe();
+    let mut shutdown = state.stopping.shutdown.subscribe();
     loop {
-        let notified = state.wake.notified();
+        let notified = state.agent.wake.notified();
         tokio::pin!(notified);
         // 確かめる前に通知を受ける用意をして、確かめた直後の通知を取りこぼさない。
         notified.as_mut().enable();
@@ -204,7 +203,7 @@ impl WaitGuard {
 impl Drop for WaitGuard {
     fn drop(&mut self) {
         {
-            let mut agent = self.state.agent.lock().expect("agent poisoned");
+            let mut agent = self.state.agent.link.lock().expect("agent poisoned");
             let now = kemi_core::session::now_millis();
             match &self.returned {
                 Some(handed) => agent.wait_returned(now, handed),
@@ -220,7 +219,7 @@ impl Drop for WaitGuard {
 fn mark_called(state: &AppState) {
     let changed = {
         let mut session = state.session.lock().expect("session poisoned");
-        !std::mem::replace(&mut session.channel.called, true)
+        !std::mem::replace(&mut session.state.channel.called, true)
     };
     if changed {
         persist(state);
@@ -231,15 +230,16 @@ fn ready(state: &AppState) -> Ready {
     let (mut events, through, handed): (Vec<Value>, u64, Vec<AgentEvent>) = {
         let session = state.session.lock().expect("session poisoned");
         let events: Vec<Value> = session
+            .state
             .channel
             .events
             .iter()
             .map(agent_event_json)
             .collect();
         let through = session.received + events.len() as u64;
-        (events, through, session.channel.events.clone())
+        (events, through, session.state.channel.events.clone())
     };
-    match &*state.stop.lock().expect("stop poisoned") {
+    match &*state.stopping.stop.lock().expect("stop poisoned") {
         Some(Stop::Submitted(document)) => {
             events.push(json!({ "type": "submitted", "result": document }));
             return Ready::Events(events, through, handed);
@@ -308,8 +308,8 @@ async fn received_api(State(state): State<Arc<AppState>>, body: Bytes) -> Respon
         let pending = request.through.saturating_sub(session.received);
         let removed = usize::try_from(pending)
             .unwrap_or(usize::MAX)
-            .min(session.channel.events.len());
-        session.channel.events.drain(..removed);
+            .min(session.state.channel.events.len());
+        session.state.channel.events.drain(..removed);
         session.received += removed as u64;
         removed
     };
@@ -340,16 +340,6 @@ enum WriteRequest {
     Message {
         #[serde(flatten)]
         content: WriteContent,
-    },
-}
-
-enum ContentWrite {
-    Reply {
-        comment_id: String,
-        content: ConversationContent,
-    },
-    Message {
-        content: ConversationContent,
     },
 }
 
@@ -395,7 +385,7 @@ async fn reply_api(
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
         if matches!(
-            *state.submit_state.lock().expect("submit poisoned"),
+            *state.stopping.submit_state.lock().expect("submit poisoned"),
             SubmitState::Claimed
         ) {
             return Err(ApiError::conflict(
@@ -421,53 +411,25 @@ async fn reply_api(
                 },
             })
             .collect();
-        validate_writes(&counted, &session.comments, &session.messages)
+        validate_writes(&counted, &session.state.comments, &session.state.messages)
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
-        let mut ids = Vec::new();
-        let mut touched: Vec<String> = Vec::new();
-        let mut messages = Vec::new();
-        for write in writes {
-            match write {
-                ContentWrite::Reply {
-                    comment_id,
-                    content,
-                } => {
-                    session.last_reply += 1;
-                    let reply = Reply {
-                        id: format!("r{}", session.last_reply),
-                        seq: session.next_seq(),
-                        author: Author::Agent,
-                        body: content,
-                    };
-                    ids.push(reply.id.clone());
-                    if let Some(comment) = session
-                        .comments
-                        .iter_mut()
-                        .find(|comment| comment.id == comment_id)
-                    {
-                        comment.replies.push(reply);
-                    }
-                    if !touched.contains(&comment_id) {
-                        touched.push(comment_id);
-                    }
-                }
-                ContentWrite::Message { content } => {
-                    session.last_message += 1;
-                    let message = Message {
-                        id: format!("m{}", session.last_message),
-                        seq: session.next_seq(),
-                        author: Author::Agent,
-                        body: content,
-                    };
-                    ids.push(message.id.clone());
-                    messages.push(page_message_json(&message));
-                    session.messages.push(message);
-                }
-            }
-        }
+        let applied = session.state.apply_agent_writes(writes);
+        let ids = applied.ids;
+        let touched = applied.touched;
+        let messages: Vec<Value> = applied
+            .message_indices
+            .iter()
+            .map(|&index| page_message_json(&session.state.messages[index]))
+            .collect();
         let threads: Vec<Value> = touched
             .iter()
-            .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
+            .filter_map(|id| {
+                session
+                    .state
+                    .comments
+                    .iter()
+                    .find(|comment| &comment.id == id)
+            })
             .map(page_comment_json)
             .collect();
         if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
@@ -477,13 +439,18 @@ async fn reply_api(
         // 返信のスレッドと発言の行を消し、状態を表のとおりに移す（R-AGENT-STATE, R-AGENT-HAND）。
         // セッションのロックの中で行う（ロックは session → agent の順）。外で行うと、その間に人間が
         // 同じスレッドを渡し直して受け取り待ちにした行を、この古い返信が消してしまう。
-        state.agent.lock().expect("agent poisoned").agent_wrote(
-            session.channel.called,
-            kemi_core::session::now_millis(),
-            &touched,
-            !messages.is_empty(),
-            &session.comments,
-        );
+        state
+            .agent
+            .link
+            .lock()
+            .expect("agent poisoned")
+            .agent_wrote(
+                session.state.channel.called,
+                kemi_core::session::now_millis(),
+                &touched,
+                !messages.is_empty(),
+                &session.state.comments,
+            );
         (ids, threads, messages)
     };
     persist(&state);

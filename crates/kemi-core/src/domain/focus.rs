@@ -1,6 +1,6 @@
 //! focus レイヤ（R-INPUT-5, R-FOCUS）。`--focus` の後付けと検証。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::Deserialize;
 
@@ -102,12 +102,18 @@ pub fn validate_focus(layer: &FocusLayer, targets: &FocusTargets) -> Result<(), 
 
 /// focus レイヤをレビューへ後付けする。照合は `validate_focus` で先に済ませる。
 pub fn apply_focus(review: &mut ReviewMeta, layer: &FocusLayer) {
+    let mut files_by_path = HashMap::new();
+    for entry in &layer.files {
+        // 同じパスの指定が重複したときは、最初の指定を優先する。
+        files_by_path.entry(entry.path.as_str()).or_insert(entry);
+    }
+
     for group in &mut review.groups {
         if let Some(overlay) = layer.groups.get(&group.id) {
             group.watch = overlay.watch.clone();
         }
         for file in &mut group.files {
-            if let Some(overlay) = layer.files.iter().find(|entry| entry.path == file.path) {
+            if let Some(overlay) = files_by_path.get(file.path.as_str()) {
                 file.focus = overlay.focus;
                 file.note = overlay.note.clone();
             }

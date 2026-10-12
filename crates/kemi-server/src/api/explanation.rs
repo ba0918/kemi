@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{ApiError, ensure_display_persisted};
-use crate::{AppState, Event, SubmitState};
+use crate::{AppState, Event, PersistGuarded, SubmitState};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,7 +154,50 @@ fn current_map(state: &AppState) -> Result<Vec<CodeReferenceEntry>, ApiError> {
     Ok(code)
 }
 
-fn pages(state: &AppState) -> Vec<String> {
+/// 説明の参照を確かめる相手。今のレビューの参照の一覧と、反対の単位がまだできて
+/// いないときに個別に引く `(単位, グループ, パス)` の要求。
+fn update_references(
+    review: &crate::units::ReviewState,
+    source: &dyn kemi_core::source::ReviewSource,
+    document: &ExplanationDocument,
+) -> (
+    Vec<CodeReferenceEntry>,
+    Vec<(ReferenceUnit, String, String)>,
+) {
+    let mut code = reference_map(&review.startup, review.startup_unit, source);
+    let mut requested = Vec::new();
+    if let Some(other) = &review.other {
+        match review.meta(Some(other.unit)) {
+            Ok((_, meta)) => code.extend(reference_map(&meta, Some(other.unit), source)),
+            Err(_) => {
+                let unit = match other.unit {
+                    GroupBy::File => ReferenceUnit::File,
+                    GroupBy::Commit => ReferenceUnit::Commit,
+                };
+                for reference in document
+                    .sections
+                    .iter()
+                    .flat_map(|s| &s.blocks)
+                    .flat_map(|b| &b.references)
+                {
+                    if let kemi_core::domain::explanation::ExplanationReference::Code {
+                        unit: Some(wanted),
+                        group_id,
+                        path,
+                        ..
+                    } = reference
+                        && *wanted == unit
+                    {
+                        requested.push((unit, group_id.clone(), path.clone()));
+                    }
+                }
+            }
+        }
+    }
+    (code, requested)
+}
+
+fn pages(state: &AppState, guarded: &PersistGuarded) -> Vec<String> {
     state.live.as_ref().map_or_else(Vec::new, |live| {
         std::iter::once(live.start.clone())
             .chain(
@@ -165,14 +208,7 @@ fn pages(state: &AppState) -> Vec<String> {
                     .iter()
                     .map(|s| s.record.page.clone()),
             )
-            .chain(
-                state
-                    .registered_pages
-                    .lock()
-                    .expect("registered pages poisoned")
-                    .iter()
-                    .cloned(),
-            )
+            .chain(guarded.registered_pages.iter().cloned())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -181,15 +217,15 @@ fn pages(state: &AppState) -> Vec<String> {
 
 pub(crate) async fn context(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
     ensure_display_persisted(&state)?;
-    let _gate = state.persist.lock().expect("persist poisoned");
+    let gate = state.persist.lock().expect("persist poisoned");
     let code = current_map(&state)?;
-    let pages = pages(&state);
+    let pages = pages(&state, &gate);
     let session = state.session.lock().expect("session poisoned");
-    let display = session.display.as_ref().expect("display assigned");
+    let display = session.state.display.as_ref().expect("display assigned");
     Ok(Json(
         json!({"kemi":3,"review":state.display_id,"diff_display_version":display.current,
-        "explanation_revision":session.explanation.as_ref().map_or(0, |h| h.current_revision),
-        "explanation":session.explanation.as_ref().and_then(|h| h.current()),
+        "explanation_revision":session.state.explanation.as_ref().map_or(0, |h| h.current_revision),
+        "explanation":session.state.explanation.as_ref().and_then(|h| h.current()),
         "references":{"code":code,"pages":pages.iter().map(|url| json!({"url":url})).collect::<Vec<_>>()}}),
     ))
 }
@@ -204,146 +240,9 @@ fn comment_revisions(comments: &[Comment]) -> Vec<u64> {
         .collect()
 }
 
-pub(crate) async fn explain(
-    State(state): State<Arc<AppState>>,
-    body: Bytes,
-) -> Result<Json<Value>, ApiError> {
-    let update: Update =
-        serde_json::from_slice(&body).map_err(|error| ApiError::bad_request(error.to_string()))?;
-    ensure_display_persisted(&state)?;
-    let document = ExplanationDocument {
-        sections: update.sections,
-    };
-    kemi_core::domain::explanation::validate_document(&document)
-        .map_err(|error| ApiError::bad_request(error.to_string()))?;
-    let (captured_token, mut code, source, requested) = {
-        let _gate = state.persist.lock().expect("persist poisoned");
-        let review = state.review.read().expect("review poisoned");
-        let session = state.session.lock().expect("session poisoned");
-        let token = session
-            .display
-            .as_ref()
-            .expect("display assigned")
-            .current
-            .clone();
-        let token = review.code_error.is_none().then_some(token);
-        let source = state.sources.current();
-        let mut code = Vec::new();
-        let mut requested = Vec::new();
-        if Some(update.base_display_version.as_str()) == token.as_deref() {
-            code = reference_map(&review.startup, review.startup_unit, source.as_ref());
-            if let Some(other) = &review.other {
-                match review.meta(Some(other.unit)) {
-                    Ok((_, meta)) => {
-                        code.extend(reference_map(&meta, Some(other.unit), source.as_ref()))
-                    }
-                    Err(_) => {
-                        let unit = match other.unit {
-                            GroupBy::File => ReferenceUnit::File,
-                            GroupBy::Commit => ReferenceUnit::Commit,
-                        };
-                        for reference in document
-                            .sections
-                            .iter()
-                            .flat_map(|s| &s.blocks)
-                            .flat_map(|b| &b.references)
-                        {
-                            if let kemi_core::domain::explanation::ExplanationReference::Code {
-                                unit: Some(wanted),
-                                group_id,
-                                path,
-                                ..
-                            } = reference
-                                && *wanted == unit
-                            {
-                                requested.push((unit, group_id.clone(), path.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        (token, code, source, requested)
-    };
-    if !requested.is_empty() {
-        code.extend(
-            tokio::task::spawn_blocking(move || source.select_references(&requested))
-                .await
-                .map_err(ApiError::internal)?
-                .map_err(ApiError::internal)?,
-        );
-    }
-    let _gate = state.persist.lock().expect("persist poisoned");
-    if *state.shutdown.borrow()
-        || matches!(
-            *state.submit_state.lock().expect("submit poisoned"),
-            SubmitState::Claimed
-        )
-    {
-        return Err(ApiError::conflict("the review is being submitted"));
-    }
-    let sink = state
-        .session_sink
-        .as_ref()
-        .filter(|_| state.agent_token.is_some())
-        .ok_or_else(|| {
-            ApiError::conflict("explanation requires a persistent session and agent endpoint")
-        })?;
-    let (code_available, range) = {
-        let review = state.review.read().expect("review poisoned");
-        (review.code_error.is_none(), review.startup_unit.is_some())
-    };
-    let mut session = state.session.lock().expect("session poisoned");
-    let display = session.display.as_ref().expect("display assigned");
-    let current_token = code_available.then_some(display.current.as_str());
-    if Some(update.base_display_version.as_str()) == current_token
-        && captured_token.as_deref() != current_token
-    {
-        return Err(ApiError::conflict(
-            "display version changed during reference validation; retrieve context and retry",
-        ));
-    }
-    let pages = pages(&state);
-    let revision = validate_update(
-        &document,
-        update.expected_revision,
-        session
-            .explanation
-            .as_ref()
-            .map_or(0, |h| h.current_revision),
-        &update.base_display_version,
-        &ReferenceContext {
-            review_id: &state.display_id,
-            current_token,
-            range,
-            issued_generation: display.issued,
-            code: &code,
-            pages: &pages,
-        },
-    )
-    .map_err(|error| match error {
-        kemi_core::domain::explanation::ExplanationError::RevisionConflict { .. } => {
-            ApiError::conflict(error.to_string())
-        }
-        kemi_core::domain::explanation::ExplanationError::Structure(_)
-        | kemi_core::domain::explanation::ExplanationError::DisplayVersion(_)
-        | kemi_core::domain::explanation::ExplanationError::RevisionLimit
-        | kemi_core::domain::explanation::ExplanationError::Reference { .. }
-        | kemi_core::domain::explanation::ExplanationError::UnknownBlock
-        | kemi_core::domain::explanation::ExplanationError::Capacity => {
-            ApiError::bad_request(error.to_string())
-        }
-    })?;
-    let incoming = ExplanationVersion {
-        revision,
-        base_display_version: update.base_display_version,
-        sections: document.sections,
-    };
-    validate_version(&incoming).map_err(|error| ApiError::bad_request(error.to_string()))?;
-    let comments = comment_revisions(&session.comments);
-    let events: Vec<_> = session
-        .channel
-        .events
+/// 渡したが受け取られていない説明へのコメントの版。古い版を外す候補から守る。
+fn event_revisions(events: &[AgentEvent]) -> Vec<u64> {
+    events
         .iter()
         .flat_map(|AgentEvent::Handed(event)| {
             event.comments.iter().filter_map(|change| match change {
@@ -356,23 +255,50 @@ pub(crate) async fn explain(
                 HandedComment::Deleted(_) => None,
             })
         })
-        .collect();
+        .collect()
+}
+
+/// 説明の更新の誤りを HTTP の応答にする。版の衝突だけを 409 にする。
+fn update_error(error: kemi_core::domain::explanation::ExplanationError) -> ApiError {
+    match error {
+        kemi_core::domain::explanation::ExplanationError::RevisionConflict { .. } => {
+            ApiError::conflict(error.to_string())
+        }
+        kemi_core::domain::explanation::ExplanationError::Structure(_)
+        | kemi_core::domain::explanation::ExplanationError::DisplayVersion(_)
+        | kemi_core::domain::explanation::ExplanationError::RevisionLimit
+        | kemi_core::domain::explanation::ExplanationError::Reference { .. }
+        | kemi_core::domain::explanation::ExplanationError::UnknownBlock
+        | kemi_core::domain::explanation::ExplanationError::Capacity => {
+            ApiError::bad_request(error.to_string())
+        }
+    }
+}
+
+/// 新しい版を足し、容量に収まるまで古い版を外した保存状態の候補。
+fn explanation_candidate(
+    guarded: &PersistGuarded,
+    session: &crate::session::Session,
+    incoming: &ExplanationVersion,
+    revision: u64,
+) -> Result<kemi_core::session::SessionState, ApiError> {
+    let comments = comment_revisions(&session.state.comments);
+    let events = event_revisions(&session.state.channel.events);
     let mut candidate = session.snapshot();
     candidate.explanation = Some(ExplanationHistory {
         current_revision: revision,
         versions: vec![],
     });
     let other_saved_bytes = kemi_core::session::additional_saved_size(&candidate);
-    let screens: Vec<_> = state
+    let screens: Vec<_> = guarded
         .explanation_holds
-        .lock()
-        .expect("holds poisoned")
         .values()
         .flatten()
         .copied()
         .collect();
     let versions = history_candidate(
         session
+            .state
             .explanation
             .as_ref()
             .map_or(&[], |h| h.versions.as_slice()),
@@ -392,10 +318,110 @@ pub(crate) async fn explain(
     candidate.refresh_explanation_comments();
     kemi_core::session::validate_additional(&candidate)
         .map_err(|error| ApiError::too_large(error.to_string()))?;
+    Ok(candidate)
+}
+
+pub(crate) async fn explain(
+    State(state): State<Arc<AppState>>,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let update: Update =
+        serde_json::from_slice(&body).map_err(|error| ApiError::bad_request(error.to_string()))?;
+    ensure_display_persisted(&state)?;
+    let document = ExplanationDocument {
+        sections: update.sections,
+    };
+    kemi_core::domain::explanation::validate_document(&document)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let (captured_token, mut code, source, requested) = {
+        let _gate = state.persist.lock().expect("persist poisoned");
+        let review = state.review.read().expect("review poisoned");
+        let session = state.session.lock().expect("session poisoned");
+        let token = session
+            .state
+            .display
+            .as_ref()
+            .expect("display assigned")
+            .current
+            .clone();
+        let token = review.code_error.is_none().then_some(token);
+        let source = state.sources.current();
+        let (code, requested) = if Some(update.base_display_version.as_str()) == token.as_deref() {
+            update_references(&review, source.as_ref(), &document)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        (token, code, source, requested)
+    };
+    if !requested.is_empty() {
+        code.extend(
+            tokio::task::spawn_blocking(move || source.select_references(&requested))
+                .await
+                .map_err(ApiError::internal)?
+                .map_err(ApiError::internal)?,
+        );
+    }
+    let gate = state.persist.lock().expect("persist poisoned");
+    if *state.stopping.shutdown.borrow()
+        || matches!(
+            *state.stopping.submit_state.lock().expect("submit poisoned"),
+            SubmitState::Claimed
+        )
+    {
+        return Err(ApiError::conflict("the review is being submitted"));
+    }
+    let sink = state
+        .session_sink
+        .as_ref()
+        .filter(|_| state.agent.token.is_some())
+        .ok_or_else(|| {
+            ApiError::conflict("explanation requires a persistent session and agent endpoint")
+        })?;
+    let (code_available, range) = {
+        let review = state.review.read().expect("review poisoned");
+        (review.code_error.is_none(), review.startup_unit.is_some())
+    };
+    let mut session = state.session.lock().expect("session poisoned");
+    let display = session.state.display.as_ref().expect("display assigned");
+    let current_token = code_available.then_some(display.current.as_str());
+    if Some(update.base_display_version.as_str()) == current_token
+        && captured_token.as_deref() != current_token
+    {
+        return Err(ApiError::conflict(
+            "display version changed during reference validation; retrieve context and retry",
+        ));
+    }
+    let pages = pages(&state, &gate);
+    let revision = validate_update(
+        &document,
+        update.expected_revision,
+        session
+            .state
+            .explanation
+            .as_ref()
+            .map_or(0, |h| h.current_revision),
+        &update.base_display_version,
+        &ReferenceContext {
+            review_id: &state.display_id,
+            current_token,
+            range,
+            issued_generation: display.issued,
+            code: &code,
+            pages: &pages,
+        },
+    )
+    .map_err(update_error)?;
+    let incoming = ExplanationVersion {
+        revision,
+        base_display_version: update.base_display_version,
+        sections: document.sections,
+    };
+    validate_version(&incoming).map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let candidate = explanation_candidate(&gate, &session, &incoming, revision)?;
     sink.save_explanation_state(candidate.clone())
         .map_err(ApiError::internal)?;
-    session.explanation = candidate.explanation;
-    session.comments = candidate.comments;
+    session.state.explanation = candidate.explanation;
+    session.state.comments = candidate.comments;
     let result = json!({"revision":revision,"base_display_version":incoming.base_display_version});
     let _ = state.events.send(Event::Explanation(result.clone()));
     Ok(Json(result))
@@ -413,6 +439,7 @@ pub(super) async fn get_version(
 ) -> Result<Json<Value>, ApiError> {
     let session = state.session.lock().expect("session poisoned");
     let history = session
+        .state
         .explanation
         .as_ref()
         .ok_or_else(|| ApiError::not_found("no explanation yet"))?;
@@ -437,9 +464,8 @@ pub(super) async fn hold_version(
     State(state): State<Arc<AppState>>,
     Json(request): Json<HoldRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let _gate = state.persist.lock().expect("persist poisoned");
+    let mut gate = state.persist.lock().expect("persist poisoned");
     let session = state.session.lock().expect("session poisoned");
-    let mut holds = state.explanation_holds.lock().expect("holds poisoned");
     match request {
         HoldRequest::RegisterPage { url } => {
             if state.live.is_none() {
@@ -458,17 +484,14 @@ pub(super) async fn hold_version(
                     "page must be a path and query in this live review",
                 ));
             }
-            state
-                .registered_pages
-                .lock()
-                .expect("registered pages poisoned")
-                .insert(url);
+            gate.registered_pages.insert(url);
         }
         HoldRequest::Hold { screen, revision } => {
             if screen.is_empty() {
                 return Err(ApiError::bad_request("screen identity is required"));
             }
             let exists = session
+                .state
                 .explanation
                 .as_ref()
                 .is_some_and(|h| h.versions.iter().any(|v| v.revision == revision));
@@ -477,9 +500,13 @@ pub(super) async fn hold_version(
                     "explanation revision is no longer available",
                 ));
             }
-            holds.entry(screen).or_default().insert(revision);
+            gate.explanation_holds
+                .entry(screen)
+                .or_default()
+                .insert(revision);
         }
         HoldRequest::Release { screen, revision } => {
+            let holds = &mut gate.explanation_holds;
             if let Some(held) = holds.get_mut(&screen) {
                 held.remove(&revision);
                 if held.is_empty() {

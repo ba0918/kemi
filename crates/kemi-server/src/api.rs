@@ -28,7 +28,7 @@ use futures_util::StreamExt;
 use kemi_core::domain::content;
 use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{FileEntry, GroupBy, ReviewMeta, Side};
-use kemi_core::source::{FileOrigin, SourceError};
+use kemi_core::source::{FileOrigin, ReviewSource, SourceError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -251,7 +251,7 @@ async fn source_content(
     state: &AppState,
     file_id: &str,
 ) -> Result<Option<kemi_core::source::FileContent>, ApiError> {
-    let source = state.source.clone();
+    let source: Arc<dyn ReviewSource> = state.sources.clone();
     let file_id = file_id.to_string();
     let result = tokio::task::spawn_blocking(move || source.content(&file_id))
         .await
@@ -367,11 +367,15 @@ async fn review(
         body["diff_display_version"] = if review.code_error.is_some() {
             Value::Null
         } else {
-            json!(session.display.as_ref().map(|d| &d.current))
+            json!(session.state.display.as_ref().map(|d| &d.current))
         };
         body["code_unavailable"] = json!(review.code_error);
-        body["explanation"] = json!(session.explanation);
-        (body, session.page_comment_saved, review.code_error.clone())
+        body["explanation"] = json!(session.state.explanation);
+        (
+            body,
+            session.state.page_comment_saved,
+            review.code_error.clone(),
+        )
     };
     body["agent"] = agent_json(&state);
     body["live"] = state.live.as_ref().map_or(Value::Null, |live| live.json());
@@ -443,16 +447,16 @@ fn review_json(review: &ReviewMeta, session: &Session) -> Value {
                 "focus": file.focus,
                 "note": file.note,
                 "noise": file.noise,
-                "seen": session.seen.contains(&file.id),
-                "collapsed": session
+                "seen": session.state.seen.contains(&file.id),
+                "collapsed": session.state
                     .collapsed
                     .get(&file.id)
                     .copied()
                     .unwrap_or(file.noise),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "comments": session.comments.iter().map(page_comment_json).collect::<Vec<_>>(),
-        "messages": session.messages.iter().map(page_message_json).collect::<Vec<_>>(),
+        "comments": session.state.comments.iter().map(page_comment_json).collect::<Vec<_>>(),
+        "messages": session.state.messages.iter().map(page_message_json).collect::<Vec<_>>(),
     })
 }
 
@@ -488,7 +492,7 @@ async fn origin(
 ) -> Result<Json<Value>, ApiError> {
     let (file, _) = find_file(&state, &id)?;
     let force = query.force.as_deref() == Some("1");
-    let source = state.source.clone();
+    let source: Arc<dyn ReviewSource> = state.sources.clone();
     let file_id = id.clone();
     let origin = match tokio::task::spawn_blocking(move || source.origin(&file_id, force)).await {
         Ok(Ok(origin)) => origin,
@@ -602,18 +606,21 @@ async fn state_api(
     let mut session = state.session.lock().expect("session poisoned");
     if let Some(seen) = request.seen {
         if seen {
-            session.seen.insert(request.file_id.clone());
+            session.state.seen.insert(request.file_id.clone());
         } else {
-            session.seen.remove(&request.file_id);
+            session.state.seen.remove(&request.file_id);
         }
     }
     if let Some(collapsed) = request.collapsed {
-        session.collapsed.insert(request.file_id.clone(), collapsed);
+        session
+            .state
+            .collapsed
+            .insert(request.file_id.clone(), collapsed);
     }
     let value = json!({
         "id": request.file_id,
-        "seen": session.seen.contains(&request.file_id),
-        "collapsed": session
+        "seen": session.state.seen.contains(&request.file_id),
+        "collapsed": session.state
             .collapsed
             .get(&request.file_id)
             .copied()
@@ -629,7 +636,7 @@ async fn events(
     Path(_token): Path<String>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     let receiver = state.events.subscribe();
-    let mut shutdown = state.shutdown.subscribe();
+    let mut shutdown = state.stopping.shutdown.subscribe();
     // submit 後の graceful shutdown は接続が閉じるまで待つので、SSE は停止通知で終端する。
     let stop = async move {
         loop {

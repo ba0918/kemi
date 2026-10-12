@@ -85,11 +85,6 @@ fn deserialize_content<'de, D: serde::Deserializer<'de>>(
     }
     deserializer.deserialize_map(ContentVisitor(fields))
 }
-pub fn decode_content(input: &str) -> Result<ConversationContent, ContentError> {
-    let value: InputContent = serde_json::from_str(input).map_err(ContentError::Json)?;
-    validate_content(value.0)
-}
-
 pub fn validate_content(content: ConversationContent) -> Result<ConversationContent, ContentError> {
     Ok(match content {
         ConversationContent::Plain(body) => {
@@ -109,6 +104,13 @@ pub fn validate_plain_body(body: &str) -> Result<(), ContentError> {
 
 #[cfg(test)]
 mod tests {
+    use super::{ContentError, ConversationContent, InputContent, validate_content};
+
+    fn decode_content(input: &str) -> Result<ConversationContent, ContentError> {
+        let value: InputContent = serde_json::from_str(input).map_err(ContentError::Json)?;
+        validate_content(value.0)
+    }
+
     #[test]
     fn grid_accepts_crlf_line_delimiters_without_changing_source() {
         roundtrip(
@@ -118,9 +120,8 @@ mod tests {
 
     #[test]
     fn invalid_part_field_reports_its_name() {
-        let error =
-            super::decode_content(r#"{"parts":[{"type":"text","body":"a","title":"extra"}]}"#)
-                .unwrap_err();
+        let error = decode_content(r#"{"parts":[{"type":"text","body":"a","title":"extra"}]}"#)
+            .unwrap_err();
         assert!(error.to_string().contains("title"), "{error}");
     }
 
@@ -140,14 +141,14 @@ mod tests {
             r#"{"parts":[{"type":"code","body":"a","language":"x","role":"invalid"}]}"#,
             r#"{"parts":[{"type":"sequence","title":"s","role":"example","participants":[{"id":"a","label":"A","x":null}],"events":[{"type":"message","from":"a","to":"a","label":"m","kind":"call"}]}]}"#,
         ] {
-            assert!(super::decode_content(input).is_err(), "{input}");
+            assert!(decode_content(input).is_err(), "{input}");
         }
     }
 
     #[test]
     fn omitted_and_explicit_defaults_are_distinct_content() {
-        let omitted = super::decode_content(r#"{"parts":[{"type":"sequence","title":"s","role":"example","participants":[{"id":"a","label":"A"}],"events":[{"type":"message","from":"a","to":"a","label":"m","kind":"call"}]}]}"#).unwrap();
-        let explicit = super::decode_content(r#"{"parts":[{"type":"sequence","title":"s","role":"example","layout":{"participant_gap":220},"participants":[{"id":"a","label":"A"}],"events":[{"type":"message","from":"a","to":"a","label":"m","kind":"call"}]}]}"#).unwrap();
+        let omitted = decode_content(r#"{"parts":[{"type":"sequence","title":"s","role":"example","participants":[{"id":"a","label":"A"}],"events":[{"type":"message","from":"a","to":"a","label":"m","kind":"call"}]}]}"#).unwrap();
+        let explicit = decode_content(r#"{"parts":[{"type":"sequence","title":"s","role":"example","layout":{"participant_gap":220},"participants":[{"id":"a","label":"A"}],"events":[{"type":"message","from":"a","to":"a","label":"m","kind":"call"}]}]}"#).unwrap();
         assert_ne!(omitted, explicit);
     }
 
@@ -155,7 +156,7 @@ mod tests {
     fn empty_parts_and_thirty_three_parts_are_refused() {
         for count in [0, 33] {
             let input = serde_json::json!({"parts":vec![serde_json::json!({"type":"text","body":""}); count]});
-            assert!(super::decode_content(&input.to_string()).is_err());
+            assert!(decode_content(&input.to_string()).is_err());
         }
     }
 
@@ -163,34 +164,34 @@ mod tests {
     fn text_limit_counts_unicode_scalars_instead_of_utf8_bytes() {
         let input =
             |n| serde_json::json!({"parts":[{"type":"text","body":"日".repeat(n)}]}).to_string();
-        assert!(super::decode_content(&input(16_384)).is_ok());
-        assert!(super::decode_content(&input(16_385)).is_err());
+        assert!(decode_content(&input(16_384)).is_ok());
+        assert!(decode_content(&input(16_385)).is_err());
     }
 
     #[test]
     fn plain_limit_counts_utf8_bytes_and_preserves_boundary() {
         let input = |s: String| serde_json::json!({"body":s}).to_string();
-        assert!(super::decode_content(&input("日".repeat(21_845) + "x")).is_ok());
-        assert!(super::decode_content(&input("日".repeat(21_845) + "xx")).is_err());
+        assert!(decode_content(&input("日".repeat(21_845) + "x")).is_ok());
+        assert!(decode_content(&input("日".repeat(21_845) + "xx")).is_err());
     }
 
     #[test]
     fn parts_budget_counts_repeated_roles_and_types_as_string_values() {
         let code = serde_json::json!({"type":"code","body":"a".repeat(32_768),"language":"x","role":"example"});
         let input = serde_json::json!({"parts":vec![code;16]});
-        assert!(super::decode_content(&input.to_string()).is_err());
+        assert!(decode_content(&input.to_string()).is_err());
     }
 
     #[test]
     fn decision_edges_without_nonblank_conditions_are_refused() {
         let input = serde_json::json!({"parts":[{"type":"flow","title":"f","role":"example","nodes":[{"id":"a","kind":"decision","label":"?"}],"edges":[{"from":"a","to":"a"}]}]});
-        assert!(super::decode_content(&input.to_string()).is_err());
+        assert!(decode_content(&input.to_string()).is_err());
     }
 
     #[test]
     fn messages_to_undefined_participants_are_refused() {
         let input = serde_json::json!({"parts":[{"type":"sequence","title":"s","role":"example","participants":[{"id":"a","label":"A"}],"events":[{"type":"message","from":"a","to":"b","label":"call","kind":"call"}]}]});
-        assert!(super::decode_content(&input.to_string()).is_err());
+        assert!(decode_content(&input.to_string()).is_err());
     }
 
     #[test]
@@ -205,16 +206,13 @@ mod tests {
             "unknown",
         ] {
             let input = serde_json::json!({"parts":[{"type":"diagram","source":source,"title":"g","role":"example"}]});
-            assert!(
-                super::decode_content(&input.to_string()).is_err(),
-                "{source:?}"
-            );
+            assert!(decode_content(&input.to_string()).is_err(), "{source:?}");
         }
     }
 
     fn roundtrip(part: serde_json::Value) {
         let input = serde_json::json!({"parts":[part.clone()]});
-        let content = super::decode_content(&input.to_string()).unwrap();
+        let content = decode_content(&input.to_string()).unwrap();
         assert_eq!(
             serde_json::to_value(content).unwrap(),
             serde_json::json!({"body":null,"parts":[part]})
@@ -251,7 +249,7 @@ mod tests {
 
     #[test]
     fn typed_text_parts_keep_their_content_and_order() {
-        let content = super::decode_content(
+        let content = decode_content(
             r#"{"parts":[{"type":"text","body":"**日本語**"},{"type":"text","body":""}]}"#,
         )
         .unwrap();
@@ -263,7 +261,7 @@ mod tests {
 
     #[test]
     fn old_plain_empty_body_is_preserved() {
-        let content = super::decode_content(r#"{"body":""}"#).unwrap();
+        let content = decode_content(r#"{"body":""}"#).unwrap();
         assert_eq!(
             serde_json::to_value(content).unwrap(),
             serde_json::json!({"body":"", "parts":null})

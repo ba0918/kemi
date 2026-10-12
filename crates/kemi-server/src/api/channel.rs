@@ -29,16 +29,16 @@ pub(super) async fn message_api(
         .map_err(|error| ApiError::too_large(error.to_string()))?;
     let value = {
         let mut session = state.session.lock().expect("session poisoned");
-        session.last_message += 1;
+        session.state.last_message += 1;
         let message = Message {
-            id: format!("m{}", session.last_message),
-            seq: session.next_seq(),
+            id: format!("m{}", session.state.last_message),
+            seq: session.state.next_seq(),
             author: Author::Reviewer,
             body: request.body.into(),
         };
-        session.channel.note_message(&message.id);
+        session.state.channel.note_message(&message.id);
         let value = page_message_json(&message);
-        session.messages.push(message);
+        session.state.messages.push(message);
         value
     };
     persist(&state);
@@ -60,17 +60,27 @@ pub(super) async fn hand_api(
             .hand(&candidate.comments, &candidate.messages);
         kemi_core::session::validate_additional(&candidate)
             .map_err(|e| ApiError::too_large(e.to_string()))?;
-        let handed = session.channel.hand(&session.comments, &session.messages);
+        let handed = session
+            .state
+            .channel
+            .hand(&session.state.comments, &session.state.messages);
         // 渡した 1 回分の行（R-AGENT-HAND）。ロックは session → agent の順。
-        if let (true, Some(AgentEvent::Handed(event))) = (handed, session.channel.events.last()) {
-            state.agent.lock().expect("agent poisoned").handed(event);
+        if let (true, Some(AgentEvent::Handed(event))) =
+            (handed, session.state.channel.events.last())
+        {
+            state
+                .agent
+                .link
+                .lock()
+                .expect("agent poisoned")
+                .handed(event);
         }
         handed
     };
     // 渡すものが無くても、書いて消したコメントの記録は片付いているので保存する。
     persist(&state);
     if handed {
-        state.wake.notify_waiters();
+        state.agent.wake.notify_waiters();
     }
     notify_agent_state(&state);
     Ok(Json(json!({ "handed": handed })))
@@ -78,18 +88,19 @@ pub(super) async fn hand_api(
 
 /// エージェントの状態・未渡しの件数・渡した 1 回分の行（R-AGENT-STATE, R-AGENT-HAND）。
 /// 行の形は画面とサーバの間だけのもの（`thread` が null なら発言だけの 1 回分の、並びの末尾の行）。
-/// `review` は画面が写す `kemi wait <id>` の id で、エージェント用の API が無いレビューでは null。
+/// `review` は画面が写す `kemi wait <id>` の id で、エージェント用の API が無いレビューでは null（画面はコマンドを写せない）。
 pub(crate) fn agent_json(state: &AppState) -> Value {
     // ロックは session → agent の順。行は今あるコメントで絞るので、両方を持って読む。
     let session = state.session.lock().expect("session poisoned");
-    let called = session.channel.called;
+    let called = session.state.channel.called;
     let unhanded = session
+        .state
         .channel
-        .unhanded_count(&session.comments, &session.messages);
-    let agent = state.agent.lock().expect("agent poisoned");
+        .unhanded_count(&session.state.comments, &session.state.messages);
+    let agent = state.agent.link.lock().expect("agent poisoned");
     let status = agent.status(called, kemi_core::session::now_millis());
     let lines: Vec<Value> = agent
-        .lines(&session.comments)
+        .lines(&session.state.comments)
         .into_iter()
         .map(|line| {
             let thread = match &line.at {
@@ -104,7 +115,7 @@ pub(crate) fn agent_json(state: &AppState) -> Value {
         "status": status.as_str(),
         "unhanded": unhanded,
         "lines": lines,
-        "review": state.review_id,
+        "review": state.agent.token.is_some().then_some(state.display_id.as_str()),
     })
 }
 
@@ -126,7 +137,7 @@ pub(crate) fn start_status_ticker(state: &Arc<AppState>) {
             let Some(state) = weak.upgrade() else {
                 return;
             };
-            if *state.shutdown.borrow() {
+            if *state.stopping.shutdown.borrow() {
                 return;
             }
             let agent = agent_json(&state);

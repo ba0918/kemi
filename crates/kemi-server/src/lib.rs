@@ -304,14 +304,19 @@ impl ServeControl {
             return false;
         };
         let _gate = state.persist.lock().expect("persist poisoned");
-        let waiting = state.agent.lock().expect("agent poisoned").is_waiting();
+        let waiting = state
+            .agent
+            .link
+            .lock()
+            .expect("agent poisoned")
+            .is_waiting();
         {
-            let mut stop = state.stop.lock().expect("stop poisoned");
+            let mut stop = state.stopping.stop.lock().expect("stop poisoned");
             if stop.is_none() {
                 *stop = Some(Stop::Suspended);
             }
         }
-        let _ = state.shutdown.send(true);
+        let _ = state.stopping.shutdown.send(true);
         state
             .initial_review
             .lock()
@@ -352,15 +357,39 @@ pub(crate) enum SubmitState {
     Claimed,
 }
 
+/// 停止理由と通知、submit の同時受理をまとめて扱うための状態。
+pub(crate) struct Stopping {
+    /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
+    pub(crate) shutdown: shutdown_watch::Sender<bool>,
+    pub(crate) stop: Mutex<Option<Stop>>,
+    pub(crate) submit_state: Mutex<SubmitState>,
+}
+
+/// エージェントとのつながり。メモリだけの状態、API のトークン、`kemi wait` を起こす通知。
+pub(crate) struct AgentChannel {
+    /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
+    /// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
+    pub(crate) link: Mutex<AgentLink>,
+    /// エージェント用の API のトークン。無ければその API を立てない。
+    pub(crate) token: Option<String>,
+    /// 待っている `kemi wait` を起こす（渡したとき）。
+    pub(crate) wake: tokio::sync::Notify,
+}
+
+/// 保存と説明の更新を同じ門で進めるための、登録ページと画面が保持する説明の版。
+pub(crate) struct PersistGuarded {
+    pub(crate) registered_pages: std::collections::BTreeSet<String>,
+    pub(crate) explanation_holds:
+        std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>,
+}
+
 pub(crate) struct AppState {
-    pub registered_pages: Mutex<std::collections::BTreeSet<String>>,
-    pub explanation_holds:
-        Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>>,
+    /// 内容の読み取り（`ReviewSource` として）と、公開中のソースの取得・差し替え
+    /// （`current` / `publish`）の両方に使う。
     pub sources: Arc<kemi_core::source::SourceSlot>,
     pub initial_review: Mutex<Option<session::FreezeInput>>,
     pub display_id: String,
     pub display_ready: std::sync::atomic::AtomicBool,
-    pub source: Arc<dyn ReviewSource>,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
     pub results: Option<Arc<dyn ResultSink>>,
@@ -373,22 +402,12 @@ pub(crate) struct AppState {
     /// 再取得を 1 つずつ行う。同じ単位を同時に作り直して計画が入れ替わらないように。
     pub refresh: tokio::sync::Mutex<()>,
     pub session: Mutex<Session>,
-    /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
-    pub persist: Mutex<()>,
+    /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。登録ページと画面が
+    /// 保持する説明の版も、この門の中身として守る。
+    pub(crate) persist: Mutex<PersistGuarded>,
     pub events: broadcast::Sender<Event>,
-    /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
-    /// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
-    pub agent: Mutex<AgentLink>,
-    /// エージェント用の API のトークン。無ければその API を立てない。
-    pub agent_token: Option<String>,
-    /// エージェント用の API を立てたレビューの id。立てていなければ None（画面はコマンドを写せない）。
-    pub review_id: Option<String>,
-    /// 待っている `kemi wait` を起こす（渡したとき）。
-    pub wake: tokio::sync::Notify,
-    /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
-    pub shutdown: shutdown_watch::Sender<bool>,
-    pub stop: Mutex<Option<Stop>>,
-    pub submit_state: Mutex<SubmitState>,
+    pub(crate) agent: AgentChannel,
+    pub(crate) stopping: Stopping,
     /// 凍結のタスクを 1 度だけ始めるための印（R-SESSION）。
     pub freeze_started: std::sync::atomic::AtomicBool,
     /// `--live` の中継の情報。トークンの URL で cookie を入れ、`api/review` に添える。
@@ -399,12 +418,12 @@ pub(crate) struct AppState {
 pub(crate) fn stop_with_error(state: &AppState, message: impl Into<String>) {
     let _gate = state.persist.lock().expect("persist poisoned");
     {
-        let mut stop = state.stop.lock().expect("stop poisoned");
+        let mut stop = state.stopping.stop.lock().expect("stop poisoned");
         if stop.is_none() {
             *stop = Some(Stop::Failed(message.into()));
         }
     }
-    let _ = state.shutdown.send(true);
+    let _ = state.stopping.shutdown.send(true);
 }
 
 type ServerFuture =
@@ -412,7 +431,7 @@ type ServerFuture =
 
 /// 停止の合図（R-SUBMIT）を待つ future。
 fn stopping(state: &AppState) -> impl std::future::Future<Output = ()> + use<> {
-    let mut receiver = state.shutdown.subscribe();
+    let mut receiver = state.stopping.shutdown.subscribe();
     async move {
         loop {
             if *receiver.borrow() {
@@ -423,6 +442,24 @@ fn stopping(state: &AppState) -> impl std::future::Future<Output = ()> + use<> {
             }
         }
     }
+}
+
+/// 起動時に取得したレビュー。
+struct BootstrapReview {
+    initial_source: Arc<dyn ReviewSource>,
+    review: kemi_core::domain::review::ReviewMeta,
+    units: Vec<kemi_core::domain::review::GroupBy>,
+    resumed: bool,
+    code_error: Option<String>,
+}
+
+/// 復元を反映した、起動時のセッションと単位の状態。
+struct InitialSessionState {
+    initial_source: Arc<dyn ReviewSource>,
+    initial_state: kemi_core::session::SessionState,
+    display_id: String,
+    review_state: units::ReviewState,
+    initial_review: Option<session::FreezeInput>,
 }
 
 pub async fn serve(
@@ -440,6 +477,13 @@ pub async fn serve(
     };
     let allowed = AllowedHosts::new(bind, params.share_address, address.port());
 
+    let bootstrap = bootstrap_review(&params)?;
+    let initial = initial_session_state(&params, bootstrap)?;
+    run_servers(listener, params, address, allowed, initial).await
+}
+
+/// ソースを分けて起動時のレビューを取得する。復元した `--live` では取得の誤りを許す。
+fn bootstrap_review(params: &ServeParams) -> Result<BootstrapReview, ServerError> {
     let resumed = params
         .session
         .as_ref()
@@ -486,6 +530,27 @@ pub async fn serve(
         sink.describe_review(&review.title, total_files);
     }
     let units = initial_source.units();
+    Ok(BootstrapReview {
+        initial_source,
+        review,
+        units,
+        resumed,
+        code_error,
+    })
+}
+
+/// 表示版・初期の解説・世代・凍結の入力を決める。
+fn initial_session_state(
+    params: &ServeParams,
+    bootstrap: BootstrapReview,
+) -> Result<InitialSessionState, ServerError> {
+    let BootstrapReview {
+        initial_source,
+        review,
+        units,
+        resumed,
+        code_error,
+    } = bootstrap;
     // 復元では、セッションの状態から見た・折りたたみ・コメント・解決を読み戻す（R-SESSION）。
     let mut initial_state = params
         .session
@@ -571,7 +636,6 @@ pub async fn serve(
     )
     .map_err(|e| ServerError::Stopped(e.to_string()))?;
     let mut review_state = units::ReviewState::new(&units, review);
-    review_state.generation = generation;
     review_state.code_error = code_error;
     if let Some(other) = &mut review_state.other {
         other.generation = generation;
@@ -593,6 +657,30 @@ pub async fn serve(
                 .current
                 .clone(),
         });
+    Ok(InitialSessionState {
+        initial_source,
+        initial_state,
+        display_id,
+        review_state,
+        initial_review,
+    })
+}
+
+/// 状態を組み立て、監視とサーバを動かし、止まり方を結果にする。
+async fn run_servers(
+    listener: TcpListener,
+    params: ServeParams,
+    address: SocketAddr,
+    allowed: AllowedHosts,
+    initial: InitialSessionState,
+) -> Result<ServeOutcome, ServerError> {
+    let InitialSessionState {
+        initial_source,
+        initial_state,
+        display_id,
+        review_state,
+        initial_review,
+    } = initial;
     let sources = Arc::new(kemi_core::source::SourceSlot::new(
         params.source,
         initial_source,
@@ -613,9 +701,6 @@ pub async fn serve(
         &initial_state.channel.events,
     );
     let state = Arc::new(AppState {
-        registered_pages: Mutex::new(std::collections::BTreeSet::new()),
-        explanation_holds: Mutex::new(std::collections::BTreeMap::new()),
-        source: sources.clone(),
         sources,
         initial_review: Mutex::new(initial_review),
         display_id,
@@ -630,15 +715,21 @@ pub async fn serve(
         review: RwLock::new(review_state),
         refresh: tokio::sync::Mutex::new(()),
         session: Mutex::new(Session::from_state(initial_state)),
-        persist: Mutex::new(()),
+        persist: Mutex::new(PersistGuarded {
+            registered_pages: std::collections::BTreeSet::new(),
+            explanation_holds: std::collections::BTreeMap::new(),
+        }),
         events,
-        agent: Mutex::new(agent),
-        agent_token: params.agent.as_ref().map(|agent| agent.token.clone()),
-        review_id: params.agent.as_ref().map(|agent| agent.review.clone()),
-        wake: tokio::sync::Notify::new(),
-        shutdown,
-        stop: Mutex::new(None),
-        submit_state: Mutex::new(SubmitState::Open),
+        agent: AgentChannel {
+            link: Mutex::new(agent),
+            token: params.agent.as_ref().map(|agent| agent.token.clone()),
+            wake: tokio::sync::Notify::new(),
+        },
+        stopping: Stopping {
+            shutdown,
+            stop: Mutex::new(None),
+            submit_state: Mutex::new(SubmitState::Open),
+        },
         freeze_started: std::sync::atomic::AtomicBool::new(false),
         live: live.as_ref().map(|(_, info, _)| info.clone()),
     });
@@ -648,8 +739,8 @@ pub async fn serve(
         agent.control.ready.notify_waiters();
     }
     watch::start(
-        state.source.watch_paths(),
-        state.source.work_tree(),
+        state.sources.watch_paths(),
+        state.sources.work_tree(),
         state.events.clone(),
         state.notices.clone(),
     );
@@ -689,7 +780,7 @@ pub async fn serve(
         .await
         .map_err(ServerError::Io)?;
 
-    let stop = state.stop.lock().expect("stop poisoned").take();
+    let stop = state.stopping.stop.lock().expect("stop poisoned").take();
     match stop {
         Some(Stop::Submitted(document)) => Ok(ServeOutcome::Submitted(document)),
         Some(Stop::Failed(message)) => Err(ServerError::Stopped(message)),

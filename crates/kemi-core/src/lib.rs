@@ -4,5 +4,6 @@
 pub mod domain;
 pub mod parts;
 pub mod render;
+pub mod result;
 pub mod session;
 pub mod source;

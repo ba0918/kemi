@@ -47,6 +47,25 @@ struct DiffEntry {
     content_skipped: bool,
 }
 
+/// 変更の状態から、旧側と新側の内容をどこから読むかを決める。旧側は改名前のパスを優先する。
+fn select_sides(
+    entry: &DiffEntry,
+    old_ref: impl FnOnce(&Path) -> SideRef,
+    new_ref: impl FnOnce(&Path) -> SideRef,
+) -> (SideRef, SideRef) {
+    let old = match entry.status {
+        Status::Add => SideRef::Absent,
+        Status::Delete | Status::Rename | Status::Modify => {
+            old_ref(entry.old_path.as_deref().unwrap_or(&entry.path))
+        }
+    };
+    let new = match entry.status {
+        Status::Delete => SideRef::Absent,
+        Status::Add | Status::Rename | Status::Modify => new_ref(&entry.path),
+    };
+    (old, new)
+}
+
 pub struct GitSource {
     repo: PathBuf,
     mode: GitMode,
@@ -177,20 +196,14 @@ impl GitSource {
         }
 
         let files = self.build_entries(&entries, &attributes, "worktree", |entry| {
-            let old = match entry.status {
-                Status::Add => SideRef::Absent,
-                Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
+            select_sides(
+                entry,
+                |path| SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: git_spec("HEAD:", entry.old_path.as_deref().unwrap_or(&entry.path)),
+                    spec: git_spec("HEAD:", path),
                 },
-            };
-            let new = match entry.status {
-                Status::Delete => SideRef::Absent,
-                Status::Add | Status::Rename | Status::Modify => {
-                    SideRef::Disk(self.repo.join(&entry.path))
-                }
-            };
-            (old, new)
+                |path| SideRef::Disk(self.repo.join(path)),
+            )
         });
 
         let group_id = "worktree".to_string();
@@ -216,21 +229,17 @@ impl GitSource {
         let attributes = read_attributes(&self.repo);
         let entries = diff_entries(&self.repo, &["--cached"])?;
         let files = self.build_entries(&entries, &attributes, "staged", |entry| {
-            let old = match entry.status {
-                Status::Add => SideRef::Absent,
-                Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
+            select_sides(
+                entry,
+                |path| SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: git_spec("HEAD:", entry.old_path.as_deref().unwrap_or(&entry.path)),
+                    spec: git_spec("HEAD:", path),
                 },
-            };
-            let new = match entry.status {
-                Status::Delete => SideRef::Absent,
-                Status::Add | Status::Rename | Status::Modify => SideRef::Git {
+                |path| SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: git_spec(":", &entry.path),
+                    spec: git_spec(":", path),
                 },
-            };
-            (old, new)
+            )
         });
 
         let group_id = "staged".to_string();
@@ -268,24 +277,17 @@ impl GitSource {
             let entries = diffs.remove(&commit.sha).unwrap_or_default();
             let sha = commit.sha.as_str();
             let files = self.build_entries(&entries, &attributes, sha, |entry| {
-                let old = match entry.status {
-                    Status::Add => SideRef::Absent,
-                    Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
+                select_sides(
+                    entry,
+                    |path| SideRef::Git {
                         repo: self.repo.clone(),
-                        spec: git_spec(
-                            &format!("{sha}^:"),
-                            entry.old_path.as_deref().unwrap_or(&entry.path),
-                        ),
+                        spec: git_spec(&format!("{sha}^:"), path),
                     },
-                };
-                let new = match entry.status {
-                    Status::Delete => SideRef::Absent,
-                    Status::Add | Status::Rename | Status::Modify => SideRef::Git {
+                    |path| SideRef::Git {
                         repo: self.repo.clone(),
-                        spec: git_spec(&format!("{sha}:"), &entry.path),
+                        spec: git_spec(&format!("{sha}:"), path),
                     },
-                };
-                (old, new)
+                )
             });
             plan_files.extend(files.1);
             groups.push(Group {
@@ -322,24 +324,17 @@ impl GitSource {
         let range = format!("{from_sha}...{to_sha}");
         let entries = diff_entries(&self.repo, &[&range])?;
         let files = self.build_entries(&entries, &attributes, "all", |entry| {
-            let old = match entry.status {
-                Status::Add => SideRef::Absent,
-                Status::Delete | Status::Rename | Status::Modify => SideRef::Git {
+            select_sides(
+                entry,
+                |path| SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: git_spec(
-                        &format!("{merge_base}:"),
-                        entry.old_path.as_deref().unwrap_or(&entry.path),
-                    ),
+                    spec: git_spec(&format!("{merge_base}:"), path),
                 },
-            };
-            let new = match entry.status {
-                Status::Delete => SideRef::Absent,
-                Status::Add | Status::Rename | Status::Modify => SideRef::Git {
+                |path| SideRef::Git {
                     repo: self.repo.clone(),
-                    spec: git_spec(&format!("{to_sha}:"), &entry.path),
+                    spec: git_spec(&format!("{to_sha}:"), path),
                 },
-            };
-            (old, new)
+            )
         });
         let origin_files: HashMap<String, OriginPaths> = files
             .1

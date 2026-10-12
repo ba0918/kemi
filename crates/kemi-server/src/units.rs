@@ -32,7 +32,6 @@ pub(crate) struct OtherUnit {
 
 pub(crate) struct ReviewState {
     pub code_error: Option<String>,
-    pub generation: u128,
     /// 起動時の単位。コミット範囲以外は None（単位は 1 つだけ）。
     pub startup_unit: Option<GroupBy>,
     pub startup: Arc<ReviewMeta>,
@@ -49,7 +48,6 @@ impl ReviewState {
     pub fn new(units: &[GroupBy], startup: ReviewMeta) -> Self {
         ReviewState {
             code_error: None,
-            generation: 1,
             startup_unit: units.first().copied(),
             startup: Arc::new(startup),
             other: units.get(1).map(|unit| OtherUnit {
@@ -180,7 +178,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
         }
         let result = tokio::task::spawn_blocking(move || source.review_unit(unit)).await;
         let _gate = state.persist.lock().expect("persist poisoned");
-        if *state.shutdown.borrow() {
+        if *state.stopping.shutdown.borrow() {
             state
                 .initial_review
                 .lock()
@@ -188,6 +186,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
                 .take();
             return;
         }
+        let result = result.map(|result| result.map(Arc::new));
         {
             let mut initial = state
                 .initial_review
@@ -199,7 +198,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
             {
                 match &result {
                     Ok(Ok(meta)) => {
-                        other.meta = Some(Arc::new(meta.clone()));
+                        other.meta = Some(Arc::clone(meta));
                         other.state = BuildState::Ready;
                     }
                     Ok(Err(error)) => other.state = BuildState::Failed(error.to_string()),
@@ -278,9 +277,9 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
     };
     let start_build = {
         let _gate = state.persist.lock().expect("persist poisoned");
-        if *state.shutdown.borrow()
+        if *state.stopping.shutdown.borrow()
             || matches!(
-                *state.submit_state.lock().expect("submit poisoned"),
+                *state.stopping.submit_state.lock().expect("submit poisoned"),
                 crate::SubmitState::Claimed
             )
         {
@@ -289,6 +288,7 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
         let mut review = state.review.write().expect("review lock poisoned");
         let mut session = state.session.lock().expect("session poisoned");
         let display = session
+            .state
             .display
             .as_ref()
             .expect("initial display assigned")
@@ -303,7 +303,6 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
         }
         state.sources.publish(source.clone());
         review.startup = Arc::new(startup);
-        review.generation = generation;
         review.code_error = None;
         let mut start = false;
         if let Some(current) = review.other.as_mut() {
@@ -316,7 +315,7 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
                 BuildState::Building
             };
         }
-        session.display = Some(display);
+        session.state.display = Some(display);
         start.then_some(generation)
     };
     if let Some(generation) = start_build {
@@ -329,11 +328,11 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
 /// 作成の結果を記録する。失敗してもレビューは終えない（R-UNIT, R-SUBMIT）。
 fn record(
     other: &mut OtherUnit,
-    result: Result<Result<ReviewMeta, SourceError>, tokio::task::JoinError>,
+    result: Result<Result<Arc<ReviewMeta>, SourceError>, tokio::task::JoinError>,
 ) {
     match result {
         Ok(Ok(meta)) => {
-            other.meta = Some(Arc::new(meta));
+            other.meta = Some(meta);
             other.state = BuildState::Ready;
         }
         Ok(Err(error)) => other.state = BuildState::Failed(error.to_string()),

@@ -174,6 +174,7 @@ pub(super) async fn comment_api(
             let mut session = state.session.lock().expect("session poisoned");
             let previous = session.clone();
             let comment = session
+                .state
                 .comments
                 .iter_mut()
                 .find(|comment| comment.id == id)
@@ -199,7 +200,7 @@ pub(super) async fn comment_api(
             }
             comment.body = body;
             let value = page_comment_json(comment);
-            session.channel.note_comment(&id);
+            session.state.channel.note_comment(&id);
             if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
                 *session = previous;
                 return Err(ApiError::too_large(error.to_string()));
@@ -212,20 +213,26 @@ pub(super) async fn comment_api(
         CommentRequest::Delete { id } => {
             let mut session = state.session.lock().expect("session poisoned");
             let index = session
+                .state
                 .comments
                 .iter()
                 .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
             // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
-            session.comments.remove(index);
-            session.channel.note_comment(&id);
+            session.state.comments.remove(index);
+            session.state.channel.note_comment(&id);
             // 返事を待っていたコメントが消えて残りの行が無くなったら、状態を移す（R-AGENT-STATE）。
             // ロックはほかと同じくセッション → エージェントの順に取る。
-            state.agent.lock().expect("agent poisoned").comment_deleted(
-                session.channel.called,
-                kemi_core::session::now_millis(),
-                &session.comments,
-            );
+            state
+                .agent
+                .link
+                .lock()
+                .expect("agent poisoned")
+                .comment_deleted(
+                    session.state.channel.called,
+                    kemi_core::session::now_millis(),
+                    &session.state.comments,
+                );
             drop(session);
             persist(&state);
             notify_agent_state(&state);
@@ -235,19 +242,20 @@ pub(super) async fn comment_api(
             let mut session = state.session.lock().expect("session poisoned");
             let previous = session.clone();
             let index = session
+                .state
                 .comments
                 .iter()
                 .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
-            session.last_reply += 1;
+            session.state.last_reply += 1;
             let reply = Reply {
-                id: format!("r{}", session.last_reply),
-                seq: session.next_seq(),
+                id: format!("r{}", session.state.last_reply),
+                seq: session.state.next_seq(),
                 author: Author::Reviewer,
                 body: body.into(),
             };
-            session.channel.note_reply(&id, &reply.id);
-            let comment = &mut session.comments[index];
+            session.state.channel.note_reply(&id, &reply.id);
+            let comment = &mut session.state.comments[index];
             comment.replies.push(reply);
             let value = page_comment_json(comment);
             if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
@@ -264,6 +272,7 @@ pub(super) async fn comment_api(
             let mut session = state.session.lock().expect("session poisoned");
             let previous = session.clone();
             let comment = session
+                .state
                 .comments
                 .iter_mut()
                 .find(|comment| comment.id == id)
@@ -319,10 +328,10 @@ async fn add_comment(
     let content_hash = comment::content_hash(&lines);
 
     let mut session = state.session.lock().expect("session poisoned");
-    session.last_comment += 1;
+    session.state.last_comment += 1;
     let comment = Comment {
-        id: format!("c{}", session.last_comment),
-        seq: session.next_seq(),
+        id: format!("c{}", session.state.last_comment),
+        seq: session.state.next_seq(),
         group_id: file.group_id.clone(),
         group_title,
         body,
@@ -340,8 +349,8 @@ async fn add_comment(
             suggestion: suggestion.map(|replacement| Suggestion { replacement }),
         }),
     };
-    session.channel.note_comment(&comment.id);
-    session.comments.push(comment.clone());
+    session.state.channel.note_comment(&comment.id);
+    session.state.comments.push(comment.clone());
     drop(session);
     persist(state);
     notify_agent_state(state);
@@ -377,8 +386,11 @@ fn add_page_comment(
 
     let (id, seq) = {
         let mut session = state.session.lock().expect("session poisoned");
-        session.last_comment += 1;
-        (format!("c{}", session.last_comment), session.next_seq())
+        session.state.last_comment += 1;
+        (
+            format!("c{}", session.state.last_comment),
+            session.state.next_seq(),
+        )
     };
     // 画像はセッションのロックの外で書く。書けなくてもコメントは画像なしで残す。
     // 書いてからコメントが入るまでは、スナップショットと別の画像の書き込みを止める。その間に
@@ -408,13 +420,14 @@ fn add_page_comment(
         }),
     };
     let mut session = state.session.lock().expect("session poisoned");
-    session.channel.note_comment(&comment.id);
-    session.page_comment_saved = true;
+    session.state.channel.note_comment(&comment.id);
+    session.state.page_comment_saved = true;
     // 画像を書く間に足されたコメントがあっても、作成順（通し番号の順）に並べる。
     let at = session
+        .state
         .comments
         .partition_point(|other| other.seq < comment.seq);
-    session.comments.insert(at, comment.clone());
+    session.state.comments.insert(at, comment.clone());
     drop(session);
     drop(saving);
     persist(state);
@@ -442,9 +455,9 @@ fn add_explanation_comment(
     selection: Option<ExplanationSelection>,
 ) -> Result<Json<Value>, ApiError> {
     let gate = state.persist.lock().expect("persist poisoned");
-    if *state.shutdown.borrow()
+    if *state.stopping.shutdown.borrow()
         || matches!(
-            *state.submit_state.lock().expect("submit poisoned"),
+            *state.stopping.submit_state.lock().expect("submit poisoned"),
             crate::SubmitState::Claimed
         )
     {
@@ -452,6 +465,7 @@ fn add_explanation_comment(
     }
     let mut session = state.session.lock().expect("session poisoned");
     let version = session
+        .state
         .explanation
         .as_ref()
         .and_then(|history| history.versions.iter().find(|v| v.revision == revision))
@@ -490,10 +504,10 @@ fn add_explanation_comment(
     kemi_core::session::validate_additional(&candidate)
         .map_err(|error| ApiError::too_large(error.to_string()))?;
     let value = page_comment_json(candidate.comments.last().expect("new comment appended"));
-    session.last_comment = candidate.last_comment;
-    session.last_seq = candidate.last_seq;
-    session.comments = candidate.comments;
-    session.channel = candidate.channel;
+    session.state.last_comment = candidate.last_comment;
+    session.state.last_seq = candidate.last_seq;
+    session.state.comments = candidate.comments;
+    session.state.channel = candidate.channel;
     drop(session);
     drop(gate);
     persist(state);

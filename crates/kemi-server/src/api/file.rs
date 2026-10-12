@@ -12,7 +12,7 @@ use kemi_core::domain::comment;
 use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
 use kemi_core::domain::review::{FileEntry, Side};
-use kemi_core::render::{self, IMAGE_MAX_BYTES, ImageKind, Target};
+use kemi_core::render::{self, InitialView, Target};
 use serde_json::{Value, json};
 
 use super::{ApiError, ExpandQuery, file_not_found, find_file, side_lines, source_content};
@@ -132,74 +132,26 @@ pub(super) async fn file_api(
     })))
 }
 
-/// ファイルが描画表示の対象か、切り替えを持つか、既定はどちらか、事前に分かる描画不可の
-/// 理由（R-RENDER）。理由の文言は契約ではなく、"Cannot render:" の前置はページが 1 か所で
-/// 付ける。
+/// 描画表示の可否（`kemi_core::render::render_info`）を応答の JSON にする。理由の文言は
+/// 契約ではなく、"Cannot render:" の前置はページが 1 か所で付ける。
 fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Value {
-    const TOO_LARGE: &str = "too large (over 10,000 lines or 1 MB on one side)";
-    // 上限超えで内容を読まなかった untracked（R-INPUT-3）は、内容が無いので描画できない。
-    const NOT_READ: &str = "the file exceeds the untracked limit and its content was not read";
-    let not_read = file.content_skipped.then(|| NOT_READ.to_string());
-    match render::target_of_file(file) {
-        Some(Target::Markdown) => {
-            let reason = not_read.or_else(|| {
-                (!content::within_auto_limit(old, new)).then_some(TOO_LARGE.to_string())
-            });
-            json!({ "target": "markdown", "toggle": true, "initial": "source", "reason": reason })
-        }
-        Some(Target::Table { delimiter }) => {
-            let reason = not_read.or_else(|| {
-                if !content::within_auto_limit(old, new) {
-                    Some(TOO_LARGE.to_string())
-                } else {
-                    [new, old]
-                        .into_iter()
-                        .flatten()
-                        .find_map(|text| render::unbalanced_line(text, delimiter))
-                        .map(|line| format!("unbalanced quote on line {line}"))
-                }
-            });
-            json!({ "target": "table", "toggle": true, "initial": "source", "reason": reason })
-        }
-        Some(Target::Image { .. }) => {
-            // 画像には行数・バイト数の描画不可を当てず、5 MB の規則だけが効く。内容を
-            // 読まなかったものは並べる画像が無いので、バイト数の増減だけになる。
-            let (old_bytes, new_bytes) = side_bytes(file, old, new);
-            let within = !file.content_skipped
-                && old_bytes <= IMAGE_MAX_BYTES
-                && new_bytes <= IMAGE_MAX_BYTES;
-            match render::image_kind(file) {
-                Some(kind) if within => json!({
-                    "target": "image",
-                    "toggle": kind == ImageKind::Svg,
-                    "initial": "rendered",
-                    "reason": null,
-                }),
-                _ => {
-                    json!({ "target": null, "toggle": false, "initial": "source", "reason": null })
-                }
-            }
-        }
-        _ => json!({ "target": null, "toggle": false, "initial": "source", "reason": null }),
-    }
-}
-
-/// 各側のバイト数。内容を読んだテキストはその長さ、読んでいないバイナリはエントリの
-/// サイズ。
-fn side_bytes(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> (u64, u64) {
-    if file.binary {
-        (file.old_size, file.new_size)
-    } else {
-        (
-            old.map_or(0, |text| text.len() as u64),
-            new.map_or(0, |text| text.len() as u64),
-        )
-    }
+    let info = render::render_info(file, old, new);
+    let target = info.target.map(|target| match target {
+        Target::Markdown => "markdown",
+        Target::Table { .. } => "table",
+        Target::Image { .. } => "image",
+    });
+    let initial = match info.initial {
+        InitialView::Source => "source",
+        InitialView::Rendered => "rendered",
+    };
+    json!({ "target": target, "toggle": info.toggle, "initial": initial, "reason": info.reason })
 }
 
 fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
     let session = state.session.lock().expect("session poisoned");
     session
+        .state
         .comments
         .iter()
         .filter(|comment| comment.file().is_some_and(|file| file.file_id == file_id))
@@ -212,6 +164,7 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
     let session = state.session.lock().expect("session poisoned");
     let (mut old, mut new) = (HashSet::new(), HashSet::new());
     for file in session
+        .state
         .comments
         .iter()
         .filter_map(|comment| comment.file())
@@ -231,15 +184,17 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
     let mut session = state.session.lock().expect("session poisoned");
-    for comment in session.comments.iter_mut() {
+    let mut old_hash = None;
+    let mut new_hash = None;
+    for comment in session.state.comments.iter_mut() {
         let Some(file) = comment.file().filter(|file| file.file_id == file_id) else {
             continue;
         };
-        let lines = match file.side {
-            Side::Old => old_lines,
-            Side::New => new_lines,
+        let current_hash = match file.side {
+            Side::Old => old_hash.get_or_insert_with(|| comment::content_hash(old_lines)),
+            Side::New => new_hash.get_or_insert_with(|| comment::content_hash(new_lines)),
         };
-        comment.outdated = comment::is_outdated(&file.content_hash, &comment::content_hash(lines));
+        comment.outdated = comment::is_outdated(&file.content_hash, current_hash);
     }
 }
 

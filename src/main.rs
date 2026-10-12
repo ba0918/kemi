@@ -3,7 +3,6 @@
 mod agent;
 mod local_time;
 mod notice;
-mod result;
 mod session;
 
 use std::io::IsTerminal;
@@ -15,6 +14,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
+use kemi_core::result;
 use kemi_core::session::{
     PageSnapshot, SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis,
 };
@@ -217,6 +217,39 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     }
     if cli.any && cli.workspace.is_some() {
         return Err("--any and --workspace cannot be used together".to_string());
+    }
+    Ok(())
+}
+
+/// 入力モードの誤り。モードが 1 つも無いときだけは、誤りの文でなく使い方を出す。
+enum InputModeError {
+    Usage,
+    Message(&'static str),
+}
+
+/// 入力モードはちょうど 1 つ。`--to` と `--group-by` はコミット範囲（`--from`）でだけ使える。
+fn validate_input_mode(cli: &Cli) -> Result<(), InputModeError> {
+    let modes = [
+        cli.manifest.is_some(),
+        cli.from.is_some(),
+        cli.worktree,
+        cli.staged,
+        cli.live.is_some(),
+    ]
+    .iter()
+    .filter(|present| **present)
+    .count();
+    if modes > 1 {
+        return Err(InputModeError::Message("specify exactly one input mode"));
+    }
+    if modes == 0 {
+        return Err(InputModeError::Usage);
+    }
+    if cli.to.is_some() && cli.from.is_none() {
+        return Err(InputModeError::Message("--to requires --from"));
+    }
+    if cli.group_by.is_some() && cli.from.is_none() {
+        return Err(InputModeError::Message("--group-by requires --from"));
     }
     Ok(())
 }
@@ -734,26 +767,24 @@ fn announce_review_url(url: &str) {
     eprintln!("kemi: {url}");
 }
 
-/// サーブして、submit・保留・実行時エラーのどれかで終わる。
-async fn run_review(
+/// サーブを始める前にそろえたもの。
+struct ReviewStartup {
+    listener: TcpListener,
+    params: ServeParams,
+    control: ServeControl,
+    endpoint: Option<EndpointFile>,
+    url: String,
+    browser_url: String,
+}
+
+/// 待ち受け・URL と警告・結果の置き場所・エージェント・`--live` を用意し、ブラウザを開く。
+async fn prepare_review(
     cli: &Cli,
     source: Arc<dyn ReviewSource>,
-    stored_session: Option<Arc<session::StoredSession>>,
+    stored_session: Option<&Arc<session::StoredSession>>,
     results_key: String,
-    live: Option<LiveRun>,
-) -> ! {
-    // --serve は互換のための受理のみ。既定で常にサーブする。
-    let _ = cli.serve;
-    // シグナルの受け口は URL を出す前に作る。URL を見てすぐ Ctrl+C しても、
-    // 保留として 130 で終われるように（R-SESSION）。
-    #[cfg(unix)]
-    let mut signals = {
-        use tokio::signal::unix::{SignalKind, signal};
-        (
-            signal(SignalKind::interrupt()).expect("install the SIGINT handler"),
-            signal(SignalKind::terminate()).expect("install the SIGTERM handler"),
-        )
-    };
+    live: Option<&LiveRun>,
+) -> ReviewStartup {
     let listener = match TcpListener::bind((cli.bind, cli.port)).await {
         Ok(listener) => listener,
         Err(error) => fail(&format!(
@@ -801,7 +832,7 @@ async fn run_review(
     }
     let control = ServeControl::new();
     let (agent, endpoint) = match start_agent_channel(
-        stored_session.as_deref(),
+        stored_session.map(Arc::as_ref),
         &control,
         cli.explanation.is_some(),
     )
@@ -813,14 +844,9 @@ async fn run_review(
     if cli.explanation.is_some() && agent.is_none() {
         fail("initial explanation requires a persistent session and agent endpoint");
     }
-    let live = match &live {
+    let live = match live {
         Some(live) => start_live(cli, live, session_host(cli.bind, share_address)).await,
         None => None,
-    };
-    let remove_endpoint = || {
-        if let Some(endpoint) = &endpoint {
-            endpoint.remove();
-        }
     };
     if !cli.no_open && cli.explanation.is_none() {
         open_browser(&browser_url);
@@ -832,12 +858,62 @@ async fn run_review(
         token,
         results: Some(Arc::new(results)),
         session: stored_session
-            .clone()
+            .cloned()
             .map(|session| session as Arc<dyn SessionSink>),
         notices: Arc::new(notice::StderrNotices),
         share_address,
         agent,
         live,
+    };
+    ReviewStartup {
+        listener,
+        params,
+        control,
+        endpoint,
+        url,
+        browser_url,
+    }
+}
+
+/// サーブして、submit・保留・実行時エラーのどれかで終わる。
+async fn run_review(
+    cli: &Cli,
+    source: Arc<dyn ReviewSource>,
+    stored_session: Option<Arc<session::StoredSession>>,
+    results_key: String,
+    live: Option<LiveRun>,
+) -> ! {
+    // --serve は互換のための受理のみ。既定で常にサーブする。
+    let _ = cli.serve;
+    // シグナルの受け口は URL を出す前に作る。URL を見てすぐ Ctrl+C しても、
+    // 保留として 130 で終われるように（R-SESSION）。
+    #[cfg(unix)]
+    let mut signals = {
+        use tokio::signal::unix::{SignalKind, signal};
+        (
+            signal(SignalKind::interrupt()).expect("install the SIGINT handler"),
+            signal(SignalKind::terminate()).expect("install the SIGTERM handler"),
+        )
+    };
+    let ReviewStartup {
+        listener,
+        params,
+        control,
+        endpoint,
+        url,
+        browser_url,
+    } = prepare_review(
+        cli,
+        source,
+        stored_session.as_ref(),
+        results_key,
+        live.as_ref(),
+    )
+    .await;
+    let remove_endpoint = || {
+        if let Some(endpoint) = &endpoint {
+            endpoint.remove();
+        }
     };
     // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
     // シグナルを受けても捨てない。
@@ -873,6 +949,16 @@ async fn run_review(
     });
     remove_endpoint();
 
+    finish_review(outcome, stored_session, &control, serving).await
+}
+
+/// 終わり方を stdout・セッションの片付け・終了コードにする。
+async fn finish_review(
+    outcome: Option<Result<ServeOutcome, kemi_server::ServerError>>,
+    stored_session: Option<Arc<session::StoredSession>>,
+    control: &ServeControl,
+    mut serving: tokio::task::JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
+) -> ! {
     match outcome {
         Some(Ok(ServeOutcome::Submitted(document))) => {
             match serde_json::to_string(&document) {
@@ -1106,28 +1192,13 @@ async fn main() {
         run_resume(&cli).await;
     }
 
-    let modes = [
-        cli.manifest.is_some(),
-        cli.from.is_some(),
-        cli.worktree,
-        cli.staged,
-        cli.live.is_some(),
-    ]
-    .iter()
-    .filter(|present| **present)
-    .count();
-    if modes > 1 {
-        fail("specify exactly one input mode");
-    }
-    if modes == 0 {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
-    }
-    if cli.to.is_some() && cli.from.is_none() {
-        fail("--to requires --from");
-    }
-    if cli.group_by.is_some() && cli.from.is_none() {
-        fail("--group-by requires --from");
+    match validate_input_mode(&cli) {
+        Ok(()) => {}
+        Err(InputModeError::Usage) => {
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+        Err(InputModeError::Message(message)) => fail(message),
     }
 
     let live = match cli.live.as_deref().map(live_target).transpose() {

@@ -83,15 +83,16 @@ pub fn history_candidate(
     let mut candidate = versions.to_vec();
     candidate.push(incoming);
     candidate.sort_by_key(|v| v.revision);
+    let mut sizes: Vec<_> = candidate
+        .iter()
+        .map(|v| {
+            canonical_size(
+                &serde_json::to_value(v).expect("ExplanationVersion contains only JSON values"),
+            )
+        })
+        .collect();
     loop {
-        let bytes = candidate
-            .iter()
-            .map(|v| {
-                canonical_size(
-                    &serde_json::to_value(v).expect("ExplanationVersion contains only JSON values"),
-                )
-            })
-            .fold(0usize, usize::saturating_add);
+        let bytes = sizes.iter().copied().fold(0usize, usize::saturating_add);
         if candidate.len() <= 128
             && bytes <= 8_388_608
             && bytes.saturating_add(held.other_saved_bytes) <= 16_777_216
@@ -106,6 +107,7 @@ pub fn history_candidate(
         });
         let index = removable.ok_or(ExplanationError::Capacity)?;
         candidate.remove(index);
+        sizes.remove(index);
     }
 }
 

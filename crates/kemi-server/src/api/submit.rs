@@ -33,7 +33,7 @@ pub(super) async fn submit_api(
     }
     {
         let _gate = state.persist.lock().expect("persist poisoned");
-        let mut submit_state = state.submit_state.lock().expect("submit poisoned");
+        let mut submit_state = state.stopping.submit_state.lock().expect("submit poisoned");
         match *submit_state {
             SubmitState::Open => *submit_state = SubmitState::Claimed,
             SubmitState::Claimed => return Err(ApiError::conflict("already submitted")),
@@ -43,7 +43,7 @@ pub(super) async fn submit_api(
     match build_submit_document(&state, &request.verdict).await {
         Ok(document) => {
             {
-                let mut stop = state.stop.lock().expect("stop poisoned");
+                let mut stop = state.stopping.stop.lock().expect("stop poisoned");
                 if matches!(*stop, Some(Stop::Failed(_) | Stop::Suspended)) {
                     return Err(ApiError::conflict("the review is already stopping"));
                 }
@@ -52,11 +52,11 @@ pub(super) async fn submit_api(
             let saved = save_result(&state, &document);
             // 結果を書いた後にセッションを消し、その後に停止する（R-SESSION）。
             delete_stored(&state);
-            let _ = state.shutdown.send(true);
+            let _ = state.stopping.shutdown.send(true);
             Ok(Json(json!({ "result": document, "saved": saved })))
         }
         Err(error) => {
-            *state.submit_state.lock().expect("submit poisoned") = SubmitState::Open;
+            *state.stopping.submit_state.lock().expect("submit poisoned") = SubmitState::Open;
             Err(error)
         }
     }
@@ -99,6 +99,7 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         let session = state.session.lock().expect("session poisoned");
         // ページへのコメントは内容ハッシュを持たず、outdated は常に false（R-SUBMIT）。
         session
+            .state
             .comments
             .iter()
             .filter_map(|comment| {
@@ -134,17 +135,17 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         );
     }
     let mut session = state.session.lock().expect("session poisoned");
-    for comment in session.comments.iter_mut() {
+    for comment in session.state.comments.iter_mut() {
         if let Some(is_outdated) = outdated.get(&comment.id) {
             comment.outdated = *is_outdated;
         }
     }
-    let comments: Vec<Value> = session.comments.iter().map(comment_json).collect();
-    let messages: Vec<Value> = session.messages.iter().map(message_json).collect();
+    let comments: Vec<Value> = session.state.comments.iter().map(comment_json).collect();
+    let messages: Vec<Value> = session.state.messages.iter().map(message_json).collect();
     Ok(json!({
         "kemi": 3,
-        "diff_display_version":session.display.as_ref().map(|d|&d.current),
-        "explanation":session.explanation,
+        "diff_display_version":session.state.display.as_ref().map(|d|&d.current),
+        "explanation":session.state.explanation,
         "title": review.title,
         "verdict": verdict,
         "approval": review.approval.iter().map(|approval| json!({

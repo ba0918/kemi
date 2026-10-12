@@ -1119,7 +1119,7 @@ async fn result_flag_with_a_broken_latest_file_exits_2_and_prints_nothing() {
 async fn result_keeps_twenty_across_repositories() {
     // Why not 最初の 1 件が消えたことまで見ない: どれを消すかは送信時刻で決まり、動かして
     // いる機械の時計が戻ると submit の順と食い違う。送信時刻の古い方から消すことは、
-    // 送信時刻を与える src/result.rs のテストで確かめる。
+    // 送信時刻を与える crates/kemi-core/src/result.rs のテストで確かめる。
     let first_repo = TempDir::new();
     let second_repo = TempDir::new();
     let state = TempDir::new();
