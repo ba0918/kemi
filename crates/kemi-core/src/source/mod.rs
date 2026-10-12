@@ -278,6 +278,14 @@ pub(crate) fn read_side(side: &SideRef) -> Result<Option<Vec<u8>>, SourceError> 
     }
 }
 
+/// `read_side` の所有版。手放してよい参照なら、manifest のインラインの内容を写さずに返す。
+fn read_owned_side(side: SideRef) -> Result<Option<Vec<u8>>, SourceError> {
+    match side {
+        SideRef::Inline(bytes) => Ok(Some(bytes)),
+        SideRef::Absent | SideRef::Disk(_) | SideRef::Git { .. } => read_side(&side),
+    }
+}
+
 fn read_file(path: &Path) -> Result<Vec<u8>, SourceError> {
     std::fs::read(path).map_err(|source| SourceError::Io {
         path: path.to_path_buf(),
@@ -387,8 +395,8 @@ impl PlanStore {
             .cloned()
             .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))?;
         Ok(FileContent {
-            old: read_side(&file.old)?,
-            new: read_side(&file.new)?,
+            old: read_owned_side(file.old)?,
+            new: read_owned_side(file.new)?,
         })
     }
 
