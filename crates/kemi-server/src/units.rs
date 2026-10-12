@@ -186,6 +186,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
                 .take();
             return;
         }
+        let result = result.map(|result| result.map(Arc::new));
         {
             let mut initial = state
                 .initial_review
@@ -197,7 +198,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
             {
                 match &result {
                     Ok(Ok(meta)) => {
-                        other.meta = Some(Arc::new(meta.clone()));
+                        other.meta = Some(Arc::clone(meta));
                         other.state = BuildState::Ready;
                     }
                     Ok(Err(error)) => other.state = BuildState::Failed(error.to_string()),
@@ -327,11 +328,11 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
 /// 作成の結果を記録する。失敗してもレビューは終えない（R-UNIT, R-SUBMIT）。
 fn record(
     other: &mut OtherUnit,
-    result: Result<Result<ReviewMeta, SourceError>, tokio::task::JoinError>,
+    result: Result<Result<Arc<ReviewMeta>, SourceError>, tokio::task::JoinError>,
 ) {
     match result {
         Ok(Ok(meta)) => {
-            other.meta = Some(Arc::new(meta));
+            other.meta = Some(meta);
             other.state = BuildState::Ready;
         }
         Ok(Err(error)) => other.state = BuildState::Failed(error.to_string()),
