@@ -144,9 +144,11 @@ open a comment or resolve one; only the person does that.
 
 ## Updating the explanation
 
-Use reply for an ordinary question or additional information in a thread. Use
-explain for a correction or an agreed change to the document itself. Updating
-the document does not resolve its threads; only the person resolves them.
+Use reply for an ordinary question or additional information in a thread. Update the
+explanation whenever changes make its description, judgment points, or caveats stale,
+keeping it aligned with what the review actually shows. Use explain for that update,
+a correction, or an agreed change to the document itself. Updating the document does
+not resolve its threads; only the person resolves them.
 
 ```text
 kemi explain <id> --context
@@ -164,8 +166,15 @@ contents nor updates a reader's Code display; it is refused with a reason
 while a required grouping is not ready.
 
 An update is `{expected_revision,base_display_version,sections}`. Use 0 for
-an absent explanation, otherwise the revision from context. Success prints
+an absent explanation, otherwise `explanation_revision` from context. For an explanation
+of the current review, use context's `diff_display_version` as `base_display_version`
+and replace the complete `sections` with the intended document. Success prints
 `{revision,base_display_version}` and exits 0. `--file` excludes `--context`.
+Confirm both the success JSON and exit code before reporting the update as saved; that
+confirmation is enough to share the review URL after adding a missing explanation.
+In a commit range, context is refused until the other grouping is built, which starts
+when the page is first opened. If context is refused for that reason before a handoff,
+ask the person to open the review page, then read context again and update.
 Invalid JSON, duplicate keys, references, limits, revision conflicts, or save
 failures print no success JSON, report a reason on stderr, and exit 2.
 Concurrent requests with the same expected revision accept only one. Submit

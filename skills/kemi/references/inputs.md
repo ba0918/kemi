@@ -145,11 +145,22 @@ with the other views. Without a document the explanation switch is disabled
 until a later update adds one; that update offers a notice without changing
 the reader's view. Final state / Per commit is a Code-only switch.
 
-For example, a complete initial file can be:
+For a human handoff, write the change and its reason, the requested judgment, and any
+unverified points or caveats before sharing the URL, as described in
+[the handoff procedure](../SKILL.md#prepare-the-explanation-before-handing-off).
+A small change can use one text block with a few lines. For example, save this as
+`explanation.json`:
 
 ```json
-{"sections":[{"id":"overview","title":"Review purpose","blocks":[{"id":"intent","part":{"type":"text","body":"Read the **reason** before the implementation."},"references":[]}]}]}
+{"sections":[{"id":"overview","title":"Review purpose","blocks":[{"id":"intent","part":{"type":"text","body":"Changed the button label from Save to Submit review so it describes the action.\nPlease judge whether the new wording makes the final submission clear.\nNot yet checked at narrow screen widths."},"references":[]}]}]}
 ```
+
+Start a new review with the file, for example `kemi --worktree --explanation explanation.json`.
+Keep the explanation file outside the reviewed working tree if it is only handoff material;
+otherwise `--worktree` includes it as an untracked file. A successful startup has already
+validated and saved the file, so no separate check is needed before sharing the review URL.
+An existing or resumed review uses [the update procedure](conversation.md#updating-the-explanation)
+instead of `--explanation`.
 
 ## Writing a manifest
 

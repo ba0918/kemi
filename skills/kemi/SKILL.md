@@ -33,11 +33,25 @@ presentation, adding focus marks, reviewing a running page with `--live`, or sur
 change with `--digest`. It also covers
 `--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
 reviewed work.
-Add an initial explanation with `--explanation <file>`; it reads a separate
-JSON file even when the manifest comes from stdin. Read the input reference
-for its section/block structure and exclusions.
 For approval, identify the exact bytes being approved; the manifest's `approval` field is
 returned unchanged, not checked by kemi.
+
+## Prepare the explanation before handing off
+
+When handing a review to a person for judgment or approval, include an explanation in the
+review before sharing its URL. State what changed and why, what the person should judge,
+and any unverified points or caveats. A few lines are enough for a small change; add a diagram
+only when it helps explain the decision. This requirement is for human review handoffs, not
+for inspecting a diff yourself, running `--digest`, or retrieving a stored result.
+
+For a new review, write the explanation file first and pass `--explanation <file>` with the
+chosen input mode; do not start a human review without it. It reads a separate JSON file even
+when the manifest comes from stdin. Startup validates and saves it: an invalid file exits `2`
+before any URL is printed, so once stderr prints `kemi: review <id>` the explanation is saved.
+Read [the input reference](references/inputs.md) for the section/block structure, a short
+example, and excluded flag combinations.
+For an already running or resumed review, add or update the explanation with the update
+procedure below; do not combine `--resume` with `--explanation`.
 
 ## Run and wait
 
@@ -46,7 +60,11 @@ method that keeps the process alive until the user submits the review. Retain th
 identifier and output paths. A tool that yields while the process keeps running is not the
 process ending.
 
-Read the `kemi: <url>` line from stderr and send the URL to the user in a progress message.
+Read the `kemi: <url>` line from stderr. Share it for a human handoff only when the run was
+started with `--explanation`, or after an explanation update printed its success JSON and exited
+`0`. If startup fails on the explanation, fix the file and start again; if an update fails, fix
+or report the failure rather than handing off a review without its explanation. Then send the
+review URL to the user in a progress message.
 stderr also reports the result storage directory, followed by `kemi: review <id>` when the
 review can hold a conversation (see below). Explain the groups, what needs judgment,
 any assumptions, and that **Approve** or **Request changes** submits the review.
@@ -104,8 +122,11 @@ explanation with an expected revision and known display base. These operations
 do not answer a handed thread or create wait events. `kemi reply` accepts old
 plain `body` or ordered typed `parts`, exactly one key. Read the conversation
 reference for the input rules, conflicts, and failure behavior.
-Answer ordinary questions with reply. Use explain for a correction or agreed
-change to the document itself; send a thread reply as well when one is needed.
+Answer ordinary questions with reply. Update the explanation with explain whenever a change
+makes its account of the review, judgment points, or caveats stale; also use it for a correction
+or agreed change to the document itself. Keep it aligned with what the review actually shows,
+not merely with newer files outside that review. Confirm the update's success JSON and exit
+code before reporting it as saved; send a thread reply as well when one is needed.
 Readers keep their current revision until they open the update notice, and
 their Code lists do not refresh just because an explanation changed.
 
