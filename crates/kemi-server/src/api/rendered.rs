@@ -1,7 +1,7 @@
 //! 描画表示と画像のエンドポイント（R-RENDER）。
 //!
 //! ルーティングは親の `api` が持ち、ファイルの応答に載せる描画表示の可否の判定は
-//! `api::file` の `render_info` が持つ。ここは `api/render` と `api/image/*` の
+//! `kemi_core::render::render_info` が持つ。ここは `api/render` と `api/image/*` の
 //! 応答の組み立てだけを持つ。
 
 use std::sync::Arc;

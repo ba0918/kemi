@@ -4,6 +4,7 @@
 //! ブロックの行レンジ・変更の印・重ねる判定は kemi の契約なので、描画器の出す属性には
 //! 頼らず、構文木の `Span` から kemi が求める。
 
+mod availability;
 mod inline;
 mod lines;
 mod markdown;
@@ -13,6 +14,8 @@ mod url;
 
 #[cfg(test)]
 mod tests;
+
+pub use availability::{InitialView, RenderInfo, render_info};
 
 use crate::domain::review::FileEntry;
 pub use crate::domain::review::Side;
