@@ -83,7 +83,7 @@ pub struct PageSnapshot {
     pub description: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct SnapshotDto {
     page: String,
     width: u32,
@@ -92,12 +92,21 @@ struct SnapshotDto {
     description: Option<Value>,
 }
 
+/// 書き出し用の `SnapshotDto`。HTML を写さずに JSON にするため借りる。
+#[derive(Serialize)]
+struct SnapshotRefDto<'a> {
+    page: &'a str,
+    width: u32,
+    html: &'a str,
+    description: Option<&'a Value>,
+}
+
 pub(crate) fn encode_snapshot(snapshot: &PageSnapshot) -> Result<Vec<u8>, String> {
-    let dto = SnapshotDto {
-        page: snapshot.page.clone(),
+    let dto = SnapshotRefDto {
+        page: &snapshot.page,
         width: snapshot.width,
-        html: snapshot.html.clone(),
-        description: snapshot.description.clone(),
+        html: &snapshot.html,
+        description: snapshot.description.as_ref(),
     };
     let json = serde_json::to_vec(&dto).map_err(|error| error.to_string())?;
     Ok(encoding::gzip(&json))
