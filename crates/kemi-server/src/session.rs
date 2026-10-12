@@ -158,13 +158,12 @@ pub fn message_json(message: &Message) -> serde_json::Value {
 pub fn page_comment_json(comment: &Comment) -> serde_json::Value {
     let mut value = comment_json(comment);
     value["seq"] = json!(comment.seq);
-    value["replies"] = comment.replies.iter().map(page_reply_json).collect();
-    value
-}
-
-fn page_reply_json(reply: &Reply) -> serde_json::Value {
-    let mut value = reply_json(reply);
-    value["seq"] = json!(reply.seq);
+    let replies = value["replies"]
+        .as_array_mut()
+        .expect("comment_json は replies を必ず配列として生成する");
+    for (value, reply) in replies.iter_mut().zip(&comment.replies) {
+        value["seq"] = json!(reply.seq);
+    }
     value
 }
 
