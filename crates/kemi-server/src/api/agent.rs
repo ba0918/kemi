@@ -64,7 +64,7 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
         .and_then(|rest| rest.split('/').next())
         .unwrap_or_default()
         .to_string();
-    let expected = state.agent_token.as_deref().unwrap_or_default();
+    let expected = state.agent.token.as_deref().unwrap_or_default();
     match peer {
         Some(peer) => {
             if let Err(error) = admit(peer, request.headers(), &token, expected) {
@@ -129,7 +129,7 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         }
     };
     {
-        let mut agent = state.agent.lock().expect("agent poisoned");
+        let mut agent = state.agent.link.lock().expect("agent poisoned");
         if agent.is_waiting() {
             return ApiError::conflict("another kemi wait is already waiting for this review")
                 .into_response();
@@ -148,7 +148,7 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         .map(|millis| tokio::time::Instant::now() + Duration::from_millis(millis));
     let mut shutdown = state.stopping.shutdown.subscribe();
     loop {
-        let notified = state.wake.notified();
+        let notified = state.agent.wake.notified();
         tokio::pin!(notified);
         // 確かめる前に通知を受ける用意をして、確かめた直後の通知を取りこぼさない。
         notified.as_mut().enable();
@@ -203,7 +203,7 @@ impl WaitGuard {
 impl Drop for WaitGuard {
     fn drop(&mut self) {
         {
-            let mut agent = self.state.agent.lock().expect("agent poisoned");
+            let mut agent = self.state.agent.link.lock().expect("agent poisoned");
             let now = kemi_core::session::now_millis();
             match &self.returned {
                 Some(handed) => agent.wait_returned(now, handed),
@@ -439,13 +439,18 @@ async fn reply_api(
         // 返信のスレッドと発言の行を消し、状態を表のとおりに移す（R-AGENT-STATE, R-AGENT-HAND）。
         // セッションのロックの中で行う（ロックは session → agent の順）。外で行うと、その間に人間が
         // 同じスレッドを渡し直して受け取り待ちにした行を、この古い返信が消してしまう。
-        state.agent.lock().expect("agent poisoned").agent_wrote(
-            session.state.channel.called,
-            kemi_core::session::now_millis(),
-            &touched,
-            !messages.is_empty(),
-            &session.state.comments,
-        );
+        state
+            .agent
+            .link
+            .lock()
+            .expect("agent poisoned")
+            .agent_wrote(
+                session.state.channel.called,
+                kemi_core::session::now_millis(),
+                &touched,
+                !messages.is_empty(),
+                &session.state.comments,
+            );
         (ids, threads, messages)
     };
     persist(&state);

@@ -304,7 +304,12 @@ impl ServeControl {
             return false;
         };
         let _gate = state.persist.lock().expect("persist poisoned");
-        let waiting = state.agent.lock().expect("agent poisoned").is_waiting();
+        let waiting = state
+            .agent
+            .link
+            .lock()
+            .expect("agent poisoned")
+            .is_waiting();
         {
             let mut stop = state.stopping.stop.lock().expect("stop poisoned");
             if stop.is_none() {
@@ -360,6 +365,17 @@ pub(crate) struct Stopping {
     pub(crate) submit_state: Mutex<SubmitState>,
 }
 
+/// エージェントとのつながり。メモリだけの状態、API のトークン、`kemi wait` を起こす通知。
+pub(crate) struct AgentChannel {
+    /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
+    /// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
+    pub(crate) link: Mutex<AgentLink>,
+    /// エージェント用の API のトークン。無ければその API を立てない。
+    pub(crate) token: Option<String>,
+    /// 待っている `kemi wait` を起こす（渡したとき）。
+    pub(crate) wake: tokio::sync::Notify,
+}
+
 pub(crate) struct AppState {
     pub registered_pages: Mutex<std::collections::BTreeSet<String>>,
     pub explanation_holds:
@@ -384,13 +400,7 @@ pub(crate) struct AppState {
     /// persist のスナップショットと保存を 1 つずつ進める（R-SESSION）。
     pub persist: Mutex<()>,
     pub events: broadcast::Sender<Event>,
-    /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が
-    /// 呼ばれたかどうかはセッション状態にあり、保留と復元をまたぐ。
-    pub agent: Mutex<AgentLink>,
-    /// エージェント用の API のトークン。無ければその API を立てない。
-    pub agent_token: Option<String>,
-    /// 待っている `kemi wait` を起こす（渡したとき）。
-    pub wake: tokio::sync::Notify,
+    pub(crate) agent: AgentChannel,
     pub(crate) stopping: Stopping,
     /// 凍結のタスクを 1 度だけ始めるための印（R-SESSION）。
     pub freeze_started: std::sync::atomic::AtomicBool,
@@ -704,9 +714,11 @@ async fn run_servers(
         session: Mutex::new(Session::from_state(initial_state)),
         persist: Mutex::new(()),
         events,
-        agent: Mutex::new(agent),
-        agent_token: params.agent.as_ref().map(|agent| agent.token.clone()),
-        wake: tokio::sync::Notify::new(),
+        agent: AgentChannel {
+            link: Mutex::new(agent),
+            token: params.agent.as_ref().map(|agent| agent.token.clone()),
+            wake: tokio::sync::Notify::new(),
+        },
         stopping: Stopping {
             shutdown,
             stop: Mutex::new(None),

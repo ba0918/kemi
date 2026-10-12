@@ -382,7 +382,7 @@ pub(crate) async fn explain(
     let sink = state
         .session_sink
         .as_ref()
-        .filter(|_| state.agent_token.is_some())
+        .filter(|_| state.agent.token.is_some())
         .ok_or_else(|| {
             ApiError::conflict("explanation requires a persistent session and agent endpoint")
         })?;

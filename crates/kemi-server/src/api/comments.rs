@@ -223,11 +223,16 @@ pub(super) async fn comment_api(
             session.state.channel.note_comment(&id);
             // 返事を待っていたコメントが消えて残りの行が無くなったら、状態を移す（R-AGENT-STATE）。
             // ロックはほかと同じくセッション → エージェントの順に取る。
-            state.agent.lock().expect("agent poisoned").comment_deleted(
-                session.state.channel.called,
-                kemi_core::session::now_millis(),
-                &session.state.comments,
-            );
+            state
+                .agent
+                .link
+                .lock()
+                .expect("agent poisoned")
+                .comment_deleted(
+                    session.state.channel.called,
+                    kemi_core::session::now_millis(),
+                    &session.state.comments,
+                );
             drop(session);
             persist(&state);
             notify_agent_state(&state);

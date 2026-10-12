@@ -68,14 +68,19 @@ pub(super) async fn hand_api(
         if let (true, Some(AgentEvent::Handed(event))) =
             (handed, session.state.channel.events.last())
         {
-            state.agent.lock().expect("agent poisoned").handed(event);
+            state
+                .agent
+                .link
+                .lock()
+                .expect("agent poisoned")
+                .handed(event);
         }
         handed
     };
     // 渡すものが無くても、書いて消したコメントの記録は片付いているので保存する。
     persist(&state);
     if handed {
-        state.wake.notify_waiters();
+        state.agent.wake.notify_waiters();
     }
     notify_agent_state(&state);
     Ok(Json(json!({ "handed": handed })))
@@ -92,7 +97,7 @@ pub(crate) fn agent_json(state: &AppState) -> Value {
         .state
         .channel
         .unhanded_count(&session.state.comments, &session.state.messages);
-    let agent = state.agent.lock().expect("agent poisoned");
+    let agent = state.agent.link.lock().expect("agent poisoned");
     let status = agent.status(called, kemi_core::session::now_millis());
     let lines: Vec<Value> = agent
         .lines(&session.state.comments)
@@ -110,7 +115,7 @@ pub(crate) fn agent_json(state: &AppState) -> Value {
         "status": status.as_str(),
         "unhanded": unhanded,
         "lines": lines,
-        "review": state.agent_token.is_some().then_some(state.display_id.as_str()),
+        "review": state.agent.token.is_some().then_some(state.display_id.as_str()),
     })
 }
 
