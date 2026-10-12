@@ -9,6 +9,7 @@
 use std::borrow::Cow;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -507,11 +508,18 @@ async fn the_review_tells_the_page_where_the_relay_listens() {
 
 // ---- 手元の HTML ファイル（R-PAGE-MODE の <ファイル>） ----
 
+static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 struct Scratch(std::path::PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("kemi-live-{name}-{}", std::process::id()));
+        // 同名のケースを並行に実行しても、互いの作業ディレクトリを消さないため。
+        let path = std::env::temp_dir().join(format!(
+            "kemi-live-{name}-{}-{}",
+            std::process::id(),
+            SCRATCH_COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         Scratch(std::fs::canonicalize(path).unwrap())
