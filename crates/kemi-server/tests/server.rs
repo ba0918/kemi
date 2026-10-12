@@ -5106,6 +5106,87 @@ async fn agent_request_head(
     stream
 }
 
+async fn agent_response_after_delayed_body(
+    server: &AgentServer,
+    token: &str,
+    action: &str,
+    extra_headers: &str,
+) -> (u16, Value) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.agent_port))
+        .await
+        .unwrap();
+    let body = b"{}";
+    let head = format!(
+        "POST /a/{token}/{action} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{extra_headers}\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+
+    // RST の有無は OS によるため、本文を送る前に応答・切断しないことを確かめる。
+    let mut first_byte = [0u8; 1];
+    let early =
+        tokio::time::timeout(Duration::from_millis(100), stream.read(&mut first_byte)).await;
+    assert!(
+        early.is_err(),
+        "{action} answered or closed before the request body arrived: {early:?}"
+    );
+
+    stream.write_all(body).await.unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("the agent API never finished the response after receiving the body")
+        .unwrap();
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("the agent API returned incomplete response headers");
+    let head = std::str::from_utf8(&response[..split]).unwrap();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let length: usize = head
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .expect("the JSON response has no content length")
+        .1
+        .trim()
+        .parse()
+        .unwrap();
+    let body = &response[split + 4..];
+    assert_eq!(body.len(), length, "{action} returned an incomplete body");
+    (status, serde_json::from_slice(body).unwrap())
+}
+
+#[tokio::test]
+async fn agent_context_waits_for_the_request_body_before_answering() {
+    let server = AgentServer::start().await;
+    assert_eq!(server.page.get("api/review").await.status(), 200);
+
+    let (status, context) =
+        agent_response_after_delayed_body(&server, &server.agent_token, "context", "").await;
+
+    assert_eq!(status, 200);
+    assert_eq!(context["kemi"], 3);
+    assert_eq!(context["review"], "01TESTREVIEW");
+    assert_eq!(context["explanation_revision"], 0);
+    assert!(context["explanation"].is_null());
+    assert!(context["references"]["code"].is_array());
+}
+
+#[tokio::test]
+async fn agent_token_rejection_waits_for_the_request_body_before_answering() {
+    let server = AgentServer::start().await;
+
+    for action in ["wait", "reply", "received", "context", "explain"] {
+        let (status, answer) =
+            agent_response_after_delayed_body(&server, "wrong-token", action, "").await;
+
+        assert_eq!(status, 403, "{action}: {answer}");
+        assert!(answer["error"].is_string(), "{action}: {answer}");
+    }
+}
+
 /// 接続が閉じるまで読んだ応答の状態コード。閉じないまま止まったら、待ち続けずに失敗させる。
 async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
     use tokio::io::AsyncReadExt;
