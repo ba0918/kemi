@@ -106,6 +106,8 @@ pub fn render_line(ranges: &HighlightedLine, segments: &[Segment]) -> String {
     let changed = changed_ranges(segments);
     let mut html = String::new();
     let mut offset = 0;
+    // changed は位置の順で重ならないので、断片ごとに全体を見直さずカーソルで進める。
+    let mut change_index = 0;
 
     for (style, text) in ranges {
         let start = offset;
@@ -114,8 +116,15 @@ pub fn render_line(ranges: &HighlightedLine, segments: &[Segment]) -> String {
         if text.is_empty() {
             continue;
         }
+        while change_index < changed.len() && changed[change_index].1 <= start {
+            change_index += 1;
+        }
+        let mut overlap_end = change_index;
+        while overlap_end < changed.len() && changed[overlap_end].0 < end {
+            overlap_end += 1;
+        }
         let mut boundaries = vec![start, end];
-        for (change_start, change_end) in &changed {
+        for (change_start, change_end) in &changed[change_index..overlap_end] {
             if *change_start > start && *change_start < end {
                 boundaries.push(*change_start);
             }
@@ -129,9 +138,12 @@ pub fn render_line(ranges: &HighlightedLine, segments: &[Segment]) -> String {
         for window in boundaries.windows(2) {
             let (left, right) = (window[0], window[1]);
             let piece = &text[left - start..right - start];
-            let is_changed = changed
-                .iter()
-                .any(|(change_start, change_end)| *change_start <= left && right <= *change_end);
+            while change_index < overlap_end && changed[change_index].1 <= left {
+                change_index += 1;
+            }
+            let is_changed = change_index < overlap_end
+                && changed[change_index].0 <= left
+                && right <= changed[change_index].1;
             html.push_str(&span(style, piece, is_changed));
         }
     }
