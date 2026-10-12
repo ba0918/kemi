@@ -26,53 +26,55 @@ use crate::domain::review::{
 };
 
 pub fn additional_saved_size(state: &SessionState) -> usize {
-    let value =
-        serde_json::to_value(StateDto::from(state)).expect("session DTO contains JSON values");
-    fn parts(value: &Value) -> bool {
-        value["parts"].is_array()
+    fn saved_bytes(value: impl Serialize) -> usize {
+        canonical_size(&serde_json::to_value(value).expect("session DTO contains JSON values"))
     }
-    fn new_comment(value: &Value) -> bool {
-        value["explanation"].is_object()
-            || value["replies"]
-                .as_array()
-                .is_some_and(|r| r.iter().any(parts))
+    fn new_comment(comment: &Comment) -> bool {
+        matches!(comment.target, CommentTarget::Explanation(_))
+            || comment
+                .replies
+                .iter()
+                .any(|reply| reply.body.parts().is_some())
     }
-    fn comment_bytes(value: &Value) -> usize {
-        if value["explanation"].is_object() {
-            canonical_size(value)
+    fn comment_bytes(comment: &Comment) -> usize {
+        if matches!(comment.target, CommentTarget::Explanation(_)) {
+            saved_bytes(CommentDto::from(comment))
         } else {
-            value["replies"].as_array().map_or(0, |r| {
-                r.iter().filter(|r| parts(r)).map(canonical_size).sum()
-            })
+            comment
+                .replies
+                .iter()
+                .filter(|reply| reply.body.parts().is_some())
+                .map(|reply| saved_bytes(ReplyDto::from(reply)))
+                .sum()
         }
     }
-    let mut bytes = state
-        .explanation
-        .as_ref()
-        .map_or(0, |_| canonical_size(&value["explanation"]));
-    for comment in value["comments"].as_array().expect("comments array") {
+    // 容量と保存形式がずれないよう、null と省略項目を保存 DTO に任せる。
+    let mut bytes = state.explanation.as_ref().map_or(0, saved_bytes);
+    for comment in &state.comments {
         bytes = bytes.saturating_add(comment_bytes(comment));
     }
-    for message in value["messages"]
-        .as_array()
-        .expect("messages array")
+    for message in state
+        .messages
         .iter()
-        .filter(|m| parts(m))
+        .filter(|message| message.body.parts().is_some())
     {
-        bytes = bytes.saturating_add(canonical_size(message));
+        bytes = bytes.saturating_add(saved_bytes(MessageDto::from(message)));
     }
-    for event in value["channel"]["events"].as_array().expect("events array") {
-        let new = event["comments"]
-            .as_array()
-            .is_some_and(|c| c.iter().any(|c| new_comment(&c["comment"])))
-            || event["replies"]
-                .as_array()
-                .is_some_and(|r| r.iter().any(|r| parts(&r["reply"])))
-            || event["messages"]
-                .as_array()
-                .is_some_and(|m| m.iter().any(parts));
+    for event in &state.channel.events {
+        let AgentEvent::Handed(handed) = event;
+        let new = handed.comments.iter().any(|change| match change {
+            HandedComment::Added(comment) | HandedComment::Edited(comment) => new_comment(comment),
+            HandedComment::Deleted(_) => false,
+        }) || handed
+            .replies
+            .iter()
+            .any(|reply| reply.reply.body.parts().is_some())
+            || handed
+                .messages
+                .iter()
+                .any(|message| message.body.parts().is_some());
         if new {
-            bytes = bytes.saturating_add(canonical_size(event));
+            bytes = bytes.saturating_add(saved_bytes(EventDto::from(event)));
         }
     }
     bytes
