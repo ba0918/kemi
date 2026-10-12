@@ -336,10 +336,36 @@ pub(crate) fn text_stats(
     (false, add, del, old_size, new_size)
 }
 
+/// 1 単位の計画と、ファイル id から引く索引。表示のたびに全ファイルを探さないため。
+struct IndexedPlan {
+    files: Vec<PlannedFile>,
+    file_positions: HashMap<String, usize>,
+}
+
+impl IndexedPlan {
+    fn new(plan: Plan) -> Self {
+        let mut file_positions = HashMap::with_capacity(plan.files.len());
+        for (position, file) in plan.files.iter().enumerate() {
+            // 同じ id が複数あっても、従来の Vec 探索と同じ先頭の参照を選ぶ。
+            file_positions.entry(file.id.clone()).or_insert(position);
+        }
+        Self {
+            files: plan.files,
+            file_positions,
+        }
+    }
+
+    fn planned(&self, file_id: &str) -> Option<&PlannedFile> {
+        self.file_positions
+            .get(file_id)
+            .map(|&position| &self.files[position])
+    }
+}
+
 /// `review()` が組み立てた内容参照の計画を保持する。コミット範囲では単位ごとに持ち、
 /// 片方を差し替えても、もう片方のファイル id は引けるままにする。
 pub(crate) struct PlanStore {
-    state: Mutex<HashMap<Option<GroupBy>, Plan>>,
+    state: Mutex<HashMap<Option<GroupBy>, IndexedPlan>>,
     metadata: Mutex<HashMap<String, ReferenceMetadata>>,
 }
 
@@ -381,7 +407,7 @@ impl PlanStore {
                 },
             );
         }
-        state.insert(unit, plan);
+        state.insert(unit, IndexedPlan::new(plan));
     }
 
     pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
@@ -390,8 +416,7 @@ impl PlanStore {
             .lock()
             .expect("plan store poisoned")
             .values()
-            .flat_map(|plan| plan.files.iter())
-            .find(|file| file.id == file_id)
+            .find_map(|plan| plan.planned(file_id))
             .cloned()
             .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))?;
         Ok(FileContent {
@@ -406,8 +431,7 @@ impl PlanStore {
             .lock()
             .expect("plan store poisoned")
             .values()
-            .flat_map(|plan| plan.files.iter())
-            .find(|file| file.id == file_id)
+            .find_map(|plan| plan.planned(file_id))
             .cloned()
     }
 
