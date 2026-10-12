@@ -498,6 +498,7 @@ impl TreeWatch {
 
         let mut changed = false;
         let mut created: Vec<PathBuf> = Vec::new();
+        let mut seen_created: HashSet<PathBuf> = HashSet::new();
         for Occurrence { path, settled, .. } in occurrences {
             if known.contains(&path) {
                 changed = true;
@@ -525,7 +526,10 @@ impl TreeWatch {
                 self.kept
                     .retain(|directory| !directory.starts_with(&canonical));
             }
-            if is_directory && !self.directories.contains(&path) && !created.contains(&path) {
+            if is_directory
+                && !self.directories.contains(&path)
+                && seen_created.insert(path.clone())
+            {
                 created.push(path);
             }
         }
