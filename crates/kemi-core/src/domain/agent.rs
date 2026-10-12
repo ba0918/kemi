@@ -1,6 +1,7 @@
 //! エージェントとの往復の続き（agent-channel.md）。人間が書いてまだ渡していない変化と、
 //! 渡したがまだ `kemi wait` が受け取っていない起きたこと。
 
+use super::conversation_content::ConversationContent;
 use super::review::{Author, Comment, Message, Reply};
 
 /// 往復の続き。セッション状態の一部として保存し、保留と復元をまたぐ（R-SESSION）。
@@ -482,6 +483,17 @@ fn thread_exists(at: &HandLineAt, comments: &[Comment]) -> bool {
 pub enum AgentWrite {
     Reply { comment_id: String, body: String },
     Message { body: String },
+}
+
+/// 検証を通った、エージェントの書き込み 1 件。
+pub enum ContentWrite {
+    Reply {
+        comment_id: String,
+        content: ConversationContent,
+    },
+    Message {
+        content: ConversationContent,
+    },
 }
 
 /// 1 つのコメントへのエージェントの返信の上限。

@@ -34,13 +34,13 @@ use std::path::{Path, PathBuf};
 
 use format::{decode_copy, encode_copy};
 
-use crate::domain::agent::{AgentEvent, Channel, HandedComment};
+use crate::domain::agent::{AgentEvent, Channel, ContentWrite, HandedComment};
 use crate::domain::conversation_content::ConversationContent;
 use crate::domain::display_version::DisplayVersions;
 use crate::domain::explanation::{ExplanationHistory, canonical_size};
 use crate::domain::live::LivePage;
 use crate::domain::parts_validation::validate_parts;
-use crate::domain::review::{Comment, CommentTarget, GroupBy, Message, ReviewMeta};
+use crate::domain::review::{Author, Comment, CommentTarget, GroupBy, Message, Reply, ReviewMeta};
 use crate::source::FileContent;
 
 /// コミット範囲の端を完全な sha に解決する（R-SESSION）。起動時に 1 度だけ呼ぶ。
@@ -141,11 +141,73 @@ pub struct SessionState {
     pub page_comment_saved: bool,
 }
 
+/// `apply_agent_writes` の結果。
+pub struct AppliedAgentWrites {
+    /// 振った id。書き込みの順。
+    pub ids: Vec<String>,
+    /// 返信したコメントの id。初めて現れた順で、重複しない。
+    pub touched: Vec<String>,
+    /// 足した発言の `messages` の中の位置。
+    pub message_indices: Vec<usize>,
+}
+
 impl SessionState {
     /// 次の書き込みの通し番号。画面とエージェントのどちらが書いても同じ列から振る。
     pub fn next_seq(&mut self) -> u32 {
         self.last_seq += 1;
         self.last_seq
+    }
+
+    /// エージェントの書き込みを会話に足す。途中まで書かれた会話を残さないよう、呼び出し側が
+    /// `validate_writes` で全件を確かめてから呼ぶ（R-AGENT-WRITE）。
+    pub fn apply_agent_writes(&mut self, writes: Vec<ContentWrite>) -> AppliedAgentWrites {
+        let mut ids = Vec::new();
+        let mut touched: Vec<String> = Vec::new();
+        let mut message_indices = Vec::new();
+        for write in writes {
+            match write {
+                ContentWrite::Reply {
+                    comment_id,
+                    content,
+                } => {
+                    self.last_reply += 1;
+                    let reply = Reply {
+                        id: format!("r{}", self.last_reply),
+                        seq: self.next_seq(),
+                        author: Author::Agent,
+                        body: content,
+                    };
+                    ids.push(reply.id.clone());
+                    if let Some(comment) = self
+                        .comments
+                        .iter_mut()
+                        .find(|comment| comment.id == comment_id)
+                    {
+                        comment.replies.push(reply);
+                    }
+                    if !touched.contains(&comment_id) {
+                        touched.push(comment_id);
+                    }
+                }
+                ContentWrite::Message { content } => {
+                    self.last_message += 1;
+                    let message = Message {
+                        id: format!("m{}", self.last_message),
+                        seq: self.next_seq(),
+                        author: Author::Agent,
+                        body: content,
+                    };
+                    ids.push(message.id.clone());
+                    message_indices.push(self.messages.len());
+                    self.messages.push(message);
+                }
+            }
+        }
+        AppliedAgentWrites {
+            ids,
+            touched,
+            message_indices,
+        }
     }
 
     /// コメント・返信・発言の id は再利用しないので、採番は
@@ -348,5 +410,108 @@ pub struct SessionSummary {
 impl SessionSummary {
     pub fn mode_label(&self) -> String {
         self.mode.label(&self.title)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::agent::ContentWrite;
+    use crate::domain::review::{Author, FileTarget, Reply, Side};
+
+    fn comment(id: &str) -> Comment {
+        Comment {
+            id: id.to_string(),
+            seq: 1,
+            group_id: "g1".to_string(),
+            group_title: "group".to_string(),
+            body: "comment".into(),
+            replies: Vec::new(),
+            resolved: false,
+            outdated: false,
+            target: CommentTarget::File(FileTarget {
+                file_id: "f1".to_string(),
+                path: "a.rs".to_string(),
+                side: Side::New,
+                start_line: Some(1),
+                end_line: Some(1),
+                quote: vec!["line".to_string()],
+                content_hash: "hash".to_string(),
+                suggestion: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn agent_writes_continue_ids_and_share_the_sequence_in_input_order() {
+        let existing_message = Message {
+            id: "m3".to_string(),
+            seq: 9,
+            author: Author::Reviewer,
+            body: "existing".into(),
+        };
+        let mut state = SessionState {
+            comments: vec![comment("c1"), comment("c2")],
+            messages: vec![existing_message.clone()],
+            last_reply: 4,
+            last_message: 3,
+            last_seq: 9,
+            ..SessionState::default()
+        };
+        let applied = state.apply_agent_writes(vec![
+            ContentWrite::Reply {
+                comment_id: "c2".to_string(),
+                content: "first".into(),
+            },
+            ContentWrite::Message {
+                content: "second".into(),
+            },
+            ContentWrite::Reply {
+                comment_id: "c1".to_string(),
+                content: "third".into(),
+            },
+            ContentWrite::Reply {
+                comment_id: "c2".to_string(),
+                content: "fourth".into(),
+            },
+            ContentWrite::Message {
+                content: "fifth".into(),
+            },
+        ]);
+
+        assert_eq!(applied.ids, ["r5", "m4", "r6", "r7", "m5"]);
+        assert_eq!(applied.touched, ["c2", "c1"]);
+        assert_eq!(applied.message_indices, [1, 2]);
+        assert_eq!(state.messages[0], existing_message);
+        for (comment_index, reply_index, id, seq, body) in [
+            (1, 0, "r5", 10, "first"),
+            (0, 0, "r6", 12, "third"),
+            (1, 1, "r7", 13, "fourth"),
+        ] {
+            assert_eq!(
+                state.comments[comment_index].replies[reply_index],
+                Reply {
+                    id: id.to_string(),
+                    seq,
+                    author: Author::Agent,
+                    body: body.into(),
+                }
+            );
+        }
+        for (index, id, seq, body) in [(1, "m4", 11, "second"), (2, "m5", 14, "fifth")] {
+            assert_eq!(
+                state.messages[index],
+                Message {
+                    id: id.to_string(),
+                    seq,
+                    author: Author::Agent,
+                    body: body.into(),
+                }
+            );
+        }
+        assert_eq!(
+            (state.last_reply, state.last_message, state.last_seq),
+            (7, 5, 14)
+        );
     }
 }
