@@ -13,6 +13,7 @@ use axum::response::{IntoResponse, Response};
 use kemi_core::domain::content;
 use kemi_core::domain::review::{FileEntry, Side, Status};
 use kemi_core::render::{self, IMAGE_MAX_BYTES, ImageRef, ReviewPaths, Target};
+use kemi_core::source::ReviewSource;
 use serde_json::{Value, json};
 
 use super::{
@@ -101,7 +102,7 @@ pub(super) async fn repository_image(
     if render::image_content_type(&path).is_none() {
         return Err(file_not_found());
     }
-    let source = state.source.clone();
+    let source: Arc<dyn ReviewSource> = state.sources.clone();
     let file_id = id.clone();
     let repository_path = path.clone();
     let bytes = tokio::task::spawn_blocking(move || {
@@ -239,7 +240,7 @@ async fn render_markdown_file(
             .then(|| file.old_path.as_deref().unwrap_or(&file.path)),
         new_path: (file.status != Status::Delete).then_some(file.path.as_str()),
         review_paths: review_paths_of(state, file),
-        repo_readable: state.source.reads_repository(),
+        repo_readable: state.sources.reads_repository(),
     };
     let rendered = render::render_markdown(&input, enabled.then_some(&highlight), &image_url)
         .map_err(|error| ApiError::unprocessable(error.to_string()))?;

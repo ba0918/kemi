@@ -28,7 +28,7 @@ use futures_util::StreamExt;
 use kemi_core::domain::content;
 use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{FileEntry, GroupBy, ReviewMeta, Side};
-use kemi_core::source::{FileOrigin, SourceError};
+use kemi_core::source::{FileOrigin, ReviewSource, SourceError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -251,7 +251,7 @@ async fn source_content(
     state: &AppState,
     file_id: &str,
 ) -> Result<Option<kemi_core::source::FileContent>, ApiError> {
-    let source = state.source.clone();
+    let source: Arc<dyn ReviewSource> = state.sources.clone();
     let file_id = file_id.to_string();
     let result = tokio::task::spawn_blocking(move || source.content(&file_id))
         .await
@@ -492,7 +492,7 @@ async fn origin(
 ) -> Result<Json<Value>, ApiError> {
     let (file, _) = find_file(&state, &id)?;
     let force = query.force.as_deref() == Some("1");
-    let source = state.source.clone();
+    let source: Arc<dyn ReviewSource> = state.sources.clone();
     let file_id = id.clone();
     let origin = match tokio::task::spawn_blocking(move || source.origin(&file_id, force)).await {
         Ok(Ok(origin)) => origin,

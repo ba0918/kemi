@@ -384,11 +384,12 @@ pub(crate) struct PersistGuarded {
 }
 
 pub(crate) struct AppState {
+    /// 内容の読み取り（`ReviewSource` として）と、公開中のソースの取得・差し替え
+    /// （`current` / `publish`）の両方に使う。
     pub sources: Arc<kemi_core::source::SourceSlot>,
     pub initial_review: Mutex<Option<session::FreezeInput>>,
     pub display_id: String,
     pub display_ready: std::sync::atomic::AtomicBool,
-    pub source: Arc<dyn ReviewSource>,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
     pub assets: Arc<dyn Assets>,
     pub results: Option<Arc<dyn ResultSink>>,
@@ -700,7 +701,6 @@ async fn run_servers(
         &initial_state.channel.events,
     );
     let state = Arc::new(AppState {
-        source: sources.clone(),
         sources,
         initial_review: Mutex::new(initial_review),
         display_id,
@@ -739,8 +739,8 @@ async fn run_servers(
         agent.control.ready.notify_waiters();
     }
     watch::start(
-        state.source.watch_paths(),
-        state.source.work_tree(),
+        state.sources.watch_paths(),
+        state.sources.work_tree(),
         state.events.clone(),
         state.notices.clone(),
     );
