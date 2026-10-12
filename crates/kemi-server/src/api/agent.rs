@@ -65,13 +65,15 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
         .unwrap_or_default()
         .to_string();
     let expected = state.agent.token.as_deref().unwrap_or_default();
-    match peer {
-        Some(peer) => {
-            if let Err(error) = admit(peer, request.headers(), &token, expected) {
-                return error.into_response();
-            }
-        }
-        None => return ApiError::forbidden("unknown peer").into_response(),
+    let admitted = match peer {
+        Some(peer) => admit(peer, request.headers(), &token, expected),
+        None => Err(ApiError::forbidden("unknown peer")),
+    };
+    if let Err(error) = admitted {
+        // 本文が後から届いても接続がリセットされず、拒否の応答を受け取れるようにする。
+        let mut body = request.into_body().into_data_stream();
+        while body.next().await.is_some() {}
+        return error.into_response();
     }
     next.run(request).await
 }

@@ -292,24 +292,25 @@ async fn wait_for_input(
                 .take();
             return None;
         }
-        let (ready, failed) = {
-            let initial = state
+        let failed = {
+            let mut initial = state
                 .initial_review
                 .lock()
                 .expect("initial review poisoned");
-            let initial = initial.as_ref()?;
-            (
-                initial
-                    .other
-                    .as_ref()
-                    .is_none_or(|other| other.state == crate::units::BuildState::Ready),
-                initial.other.as_ref().and_then(|other| match &other.state {
-                    crate::units::BuildState::Failed(reason) => Some(reason.clone()),
-                    crate::units::BuildState::Waiting
-                    | crate::units::BuildState::Building
-                    | crate::units::BuildState::Ready => None,
-                }),
-            )
+            let input = initial.as_ref()?;
+            if input
+                .other
+                .as_ref()
+                .is_none_or(|other| other.state == crate::units::BuildState::Ready)
+            {
+                return initial.take();
+            }
+            input.other.as_ref().and_then(|other| match &other.state {
+                crate::units::BuildState::Failed(reason) => Some(reason.clone()),
+                crate::units::BuildState::Waiting
+                | crate::units::BuildState::Building
+                | crate::units::BuildState::Ready => None,
+            })
         };
         if let Some(reason) = failed {
             state
@@ -324,16 +325,6 @@ async fn wait_for_input(
                 state.notices.notify(Notice::SessionNotSaved(error));
             }
             return None;
-        }
-        if ready {
-            return Some(
-                state
-                    .initial_review
-                    .lock()
-                    .expect("initial review poisoned")
-                    .take()
-                    .expect("freeze target present"),
-            );
         }
         // 現在版の他方の単位を待つと、更新後のメタデータを初回写しに混ぜることになる。
         tokio::select! {

@@ -23,8 +23,9 @@ use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
 use kemi_server::{
     AgentParams, Asset, Assets, LiveParams, LiveTarget, ResultSaveError, ResultSink, ServeControl,
-    ServeOutcome, ServeParams, SessionSink, bind_agent_listener, detect_share_address,
-    exposure_warning, live_exposure_warning, serve, session_host, session_url,
+    ServeOutcome, ServeParams, SessionSink, SuspendOutcome, bind_agent_listener,
+    detect_share_address, exposure_warning, live_exposure_warning, serve, session_host,
+    session_url,
 };
 use tokio::net::TcpListener;
 
@@ -934,12 +935,14 @@ async fn run_review(
     }
     #[cfg(unix)]
     let outcome = tokio::select! {
+        biased;
         outcome = &mut serving => Some(outcome),
         _ = signals.0.recv() => None,
         _ = signals.1.recv() => None,
     };
     #[cfg(not(unix))]
     let outcome = tokio::select! {
+        biased;
         outcome = &mut serving => Some(outcome),
         _ = tokio::signal::ctrl_c() => None,
     };
@@ -960,18 +963,7 @@ async fn finish_review(
     mut serving: tokio::task::JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
 ) -> ! {
     match outcome {
-        Some(Ok(ServeOutcome::Submitted(document))) => {
-            match serde_json::to_string(&document) {
-                Ok(json) => println!("{json}"),
-                Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
-            }
-            let code = match document.get("verdict").and_then(|value| value.as_str()) {
-                Some("approved") => 0,
-                Some("changes_requested") => 1,
-                _ => 2,
-            };
-            std::process::exit(code);
-        }
+        Some(Ok(ServeOutcome::Submitted(document))) => finish_submitted(document),
         Some(Err(error)) => {
             close_suspended(stored_session.as_deref());
             // 実行時エラーでも、復元できるセッションが残るなら案内を出す（R-SESSION）。
@@ -979,16 +971,30 @@ async fn finish_review(
             fail(&error.to_string());
         }
         None => {
-            // 待っている kemi wait があれば、保留で終わる理由を返し終えるまで待つ。無ければ
-            // 今までどおりすぐ終わる（R-AGENT-CLI）。
-            let finished = control.suspend()
-                && tokio::time::timeout(SUSPEND_GRACE, &mut serving)
-                    .await
-                    .is_ok();
-            if !finished {
+            let (submitted, waiting) = match control.suspend() {
+                SuspendOutcome::Submitted { document, waiting } => (Some(document), waiting),
+                SuspendOutcome::Suspended { waiting } => (None, waiting),
+            };
+            // submit と保留のどちらでも、待っている kemi wait の応答を返し終えるまで待つ。
+            let joined = if waiting {
+                match tokio::time::timeout(SUSPEND_GRACE, &mut serving).await {
+                    Ok(joined) => joined,
+                    Err(_) => {
+                        serving.abort();
+                        serving.await
+                    }
+                }
+            } else {
                 // サーバの状態がセッションを握ったままだと、下の drop でロックを解放できない。
                 serving.abort();
-                let _ = serving.await;
+                serving.await
+            };
+            // stop が既に取り出されていても、abort より先に完了した submit の結果は残る。
+            if let Ok(Ok(ServeOutcome::Submitted(document))) = joined {
+                finish_submitted(document);
+            }
+            if let Some(document) = submitted {
+                finish_submitted(document);
             }
             // 片付けた後のセッションは `<id>.files/` に書かない。abort しても接続ごとの
             // タスクは止まらず、処理中のスナップショットや画像が後から届くことがあるが、
@@ -999,6 +1005,19 @@ async fn finish_review(
             std::process::exit(130);
         }
     }
+}
+
+fn finish_submitted(document: serde_json::Value) -> ! {
+    match serde_json::to_string(&document) {
+        Ok(json) => println!("{json}"),
+        Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
+    }
+    let code = match document.get("verdict").and_then(|value| value.as_str()) {
+        Some("approved") => 0,
+        Some("changes_requested") => 1,
+        _ => 2,
+    };
+    std::process::exit(code);
 }
 
 /// 保留か実行時エラーで終わるとき、会話の無い `--live` のセッションの `<id>.files/` を消す

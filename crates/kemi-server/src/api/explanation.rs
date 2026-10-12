@@ -215,7 +215,11 @@ fn pages(state: &AppState, guarded: &PersistGuarded) -> Vec<String> {
     })
 }
 
-pub(crate) async fn context(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
+pub(crate) async fn context(
+    State(state): State<Arc<AppState>>,
+    // 本文が後から届いても接続がリセットされず、応答を受け取れるようにする。
+    _body: Bytes,
+) -> Result<Json<Value>, ApiError> {
     ensure_display_persisted(&state)?;
     let gate = state.persist.lock().expect("persist poisoned");
     let code = current_map(&state)?;

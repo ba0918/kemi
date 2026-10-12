@@ -4200,6 +4200,7 @@ struct AgentServer {
     agent_port: u16,
     agent_token: String,
     sink: Arc<RecordingSink>,
+    control: kemi_server::ServeControl,
 }
 
 impl AgentServer {
@@ -4230,6 +4231,7 @@ impl AgentServer {
         let agent_listener = bind_agent_listener().await.unwrap();
         let agent_port = agent_listener.local_addr().unwrap().port();
         let notices = Arc::new(RecordingNotices::default());
+        let control = kemi_server::ServeControl::new();
         let params = ServeParams {
             source,
             assets: Arc::new(FakeAssets),
@@ -4242,7 +4244,7 @@ impl AgentServer {
                 listener: agent_listener,
                 token: "agent-secret".to_string(),
                 review: "01TESTREVIEW".to_string(),
-                control: kemi_server::ServeControl::new(),
+                control: control.clone(),
             }),
             live: None,
         };
@@ -4259,6 +4261,7 @@ impl AgentServer {
             agent_port,
             agent_token: "agent-secret".to_string(),
             sink,
+            control,
         }
     }
 
@@ -4448,6 +4451,94 @@ async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
     assert_eq!(submitted["result"]["kemi"], 3);
     let document = server.page.finish().await;
     assert_eq!(document["verdict"], "changes_requested");
+}
+
+struct SuspendGatedSource {
+    inner: FakeSource,
+    gate: Arc<GenerationGate>,
+}
+
+impl ReviewSource for SuspendGatedSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.gate.entered.notify_one();
+        let _ = self.gate.release.lock().unwrap().recv();
+        self.inner.content(id)
+    }
+}
+
+#[tokio::test]
+async fn suspend_after_submit_returns_the_committed_document() {
+    for verdict in ["approved", "changes_requested"] {
+        let (release, receiver) = std::sync::mpsc::channel();
+        let gate = Arc::new(GenerationGate {
+            entered: tokio::sync::Notify::new(),
+            release: Mutex::new(receiver),
+        });
+        let source = Arc::new(SuspendGatedSource {
+            inner: FakeSource::new(),
+            gate: gate.clone(),
+        });
+        let sink = Arc::new(RecordingSink::default());
+        sink.copy_already_saved.store(true, Ordering::SeqCst);
+        let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
+        server.control.ready().await;
+        // 別のファイル取得が処理中なら、submit の応答後も serve は接続の終了を待つ。
+        let url = format!("{}api/file/f1", server.page.url);
+        let reading = tokio::spawn(async move { reqwest::get(url).await.unwrap() });
+        tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+            .await
+            .expect("file request did not reach the source");
+
+        let response = server
+            .page
+            .post("api/submit", json!({"verdict": verdict}))
+            .await;
+        assert_eq!(response.status(), 200);
+        let submitted: Value = response.json().await.unwrap();
+        assert_eq!(submitted["result"]["verdict"], verdict);
+        assert!(server.sink.deleted.load(Ordering::SeqCst));
+        assert!(!server.page.task.is_finished());
+
+        let outcome = server.control.suspend();
+        release.send(()).unwrap();
+        let kemi_server::SuspendOutcome::Submitted { document, .. } = outcome else {
+            panic!("suspend discarded the committed submit");
+        };
+        assert_eq!(document, submitted["result"]);
+        assert!(server.sink.deleted.load(Ordering::SeqCst));
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), reading)
+                .await
+                .unwrap()
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        assert_eq!(server.page.finish().await, document);
+    }
+}
+
+#[tokio::test]
+async fn suspend_before_submit_returns_suspended_without_a_waiter() {
+    let server = AgentServer::start().await;
+    server.control.ready().await;
+
+    assert!(matches!(
+        server.control.suspend(),
+        kemi_server::SuspendOutcome::Suspended { waiting: false }
+    ));
+    assert!(!server.sink.deleted.load(Ordering::SeqCst));
+    let error = tokio::time::timeout(Duration::from_secs(5), server.page.task)
+        .await
+        .expect("server did not stop")
+        .expect("server task panicked")
+        .expect_err("suspend must not produce a submit");
+    assert_eq!(error.to_string(), "the review was suspended");
 }
 
 #[tokio::test]
@@ -5104,6 +5195,87 @@ async fn agent_request_head(
     );
     stream.write_all(head.as_bytes()).await.unwrap();
     stream
+}
+
+async fn agent_response_after_delayed_body(
+    server: &AgentServer,
+    token: &str,
+    action: &str,
+    extra_headers: &str,
+) -> (u16, Value) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.agent_port))
+        .await
+        .unwrap();
+    let body = b"{}";
+    let head = format!(
+        "POST /a/{token}/{action} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{extra_headers}\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+
+    // RST の有無は OS によるため、本文を送る前に応答・切断しないことを確かめる。
+    let mut first_byte = [0u8; 1];
+    let early =
+        tokio::time::timeout(Duration::from_millis(100), stream.read(&mut first_byte)).await;
+    assert!(
+        early.is_err(),
+        "{action} answered or closed before the request body arrived: {early:?}"
+    );
+
+    stream.write_all(body).await.unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("the agent API never finished the response after receiving the body")
+        .unwrap();
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("the agent API returned incomplete response headers");
+    let head = std::str::from_utf8(&response[..split]).unwrap();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let length: usize = head
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .expect("the JSON response has no content length")
+        .1
+        .trim()
+        .parse()
+        .unwrap();
+    let body = &response[split + 4..];
+    assert_eq!(body.len(), length, "{action} returned an incomplete body");
+    (status, serde_json::from_slice(body).unwrap())
+}
+
+#[tokio::test]
+async fn agent_context_waits_for_the_request_body_before_answering() {
+    let server = AgentServer::start().await;
+    assert_eq!(server.page.get("api/review").await.status(), 200);
+
+    let (status, context) =
+        agent_response_after_delayed_body(&server, &server.agent_token, "context", "").await;
+
+    assert_eq!(status, 200);
+    assert_eq!(context["kemi"], 3);
+    assert_eq!(context["review"], "01TESTREVIEW");
+    assert_eq!(context["explanation_revision"], 0);
+    assert!(context["explanation"].is_null());
+    assert!(context["references"]["code"].is_array());
+}
+
+#[tokio::test]
+async fn agent_token_rejection_waits_for_the_request_body_before_answering() {
+    let server = AgentServer::start().await;
+
+    for action in ["wait", "reply", "received", "context", "explain"] {
+        let (status, answer) =
+            agent_response_after_delayed_body(&server, "wrong-token", action, "").await;
+
+        assert_eq!(status, 403, "{action}: {answer}");
+        assert!(answer["error"].is_string(), "{action}: {answer}");
+    }
 }
 
 /// 接続が閉じるまで読んだ応答の状態コード。閉じないまま止まったら、待ち続けずに失敗させる。

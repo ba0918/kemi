@@ -433,12 +433,14 @@ async fn the_page_script_is_served_on_the_relay_port_only_with_the_cookie() {
     assert_eq!(without.status(), StatusCode::FORBIDDEN);
 }
 
+// listen しないソケットへの接続拒否は Windows で未確認のため、Unix に限る。
+#[cfg(unix)]
 #[tokio::test]
-async fn an_unreachable_dev_server_shows_a_waiting_page() {
-    // 立ててすぐ閉じたポートには何も居ない。
-    let closed = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let authority = format!("127.0.0.1:{}", closed.local_addr().unwrap().port());
-    drop(closed);
+async fn a_dev_server_that_refuses_connections_shows_a_waiting_page() {
+    // 接続を拒否しつつ、並行する別のサーバにポートを取られないよう保持する。
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+    let authority = format!("127.0.0.1:{}", socket.local_addr().unwrap().port());
     let running = start_review(&authority).await;
 
     let response = reqwest::Client::new()
@@ -447,6 +449,38 @@ async fn an_unreachable_dev_server_shows_a_waiting_page() {
         .send()
         .await
         .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let body = response.text().await.unwrap();
+    assert!(body.contains(r#"<script src="/__kemi/page.js""#), "{body}");
+    drop(socket);
+}
+
+#[tokio::test]
+async fn a_dev_server_that_closes_without_responding_shows_a_waiting_page() {
+    // 並行する別のサーバにポートを取られないよう、応答しない相手を最後まで保持する。
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let authority = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let running = start_review(&authority).await;
+
+    let (_, response) = tokio::join!(
+        async {
+            let (stream, _) =
+                tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+                    .await
+                    .expect("the relay did not connect to the dev server within 3 seconds")
+                    .unwrap();
+            drop(stream);
+        },
+        async {
+            reqwest::Client::new()
+                .get(&running.live)
+                .header(header::COOKIE, relay_cookie(&running))
+                .send()
+                .await
+                .unwrap()
+        }
+    );
 
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let body = response.text().await.unwrap();
