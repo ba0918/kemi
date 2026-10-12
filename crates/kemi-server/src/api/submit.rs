@@ -33,7 +33,7 @@ pub(super) async fn submit_api(
     }
     {
         let _gate = state.persist.lock().expect("persist poisoned");
-        let mut submit_state = state.submit_state.lock().expect("submit poisoned");
+        let mut submit_state = state.stopping.submit_state.lock().expect("submit poisoned");
         match *submit_state {
             SubmitState::Open => *submit_state = SubmitState::Claimed,
             SubmitState::Claimed => return Err(ApiError::conflict("already submitted")),
@@ -43,7 +43,7 @@ pub(super) async fn submit_api(
     match build_submit_document(&state, &request.verdict).await {
         Ok(document) => {
             {
-                let mut stop = state.stop.lock().expect("stop poisoned");
+                let mut stop = state.stopping.stop.lock().expect("stop poisoned");
                 if matches!(*stop, Some(Stop::Failed(_) | Stop::Suspended)) {
                     return Err(ApiError::conflict("the review is already stopping"));
                 }
@@ -52,11 +52,11 @@ pub(super) async fn submit_api(
             let saved = save_result(&state, &document);
             // 結果を書いた後にセッションを消し、その後に停止する（R-SESSION）。
             delete_stored(&state);
-            let _ = state.shutdown.send(true);
+            let _ = state.stopping.shutdown.send(true);
             Ok(Json(json!({ "result": document, "saved": saved })))
         }
         Err(error) => {
-            *state.submit_state.lock().expect("submit poisoned") = SubmitState::Open;
+            *state.stopping.submit_state.lock().expect("submit poisoned") = SubmitState::Open;
             Err(error)
         }
     }

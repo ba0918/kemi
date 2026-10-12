@@ -245,7 +245,7 @@ pub(crate) fn start_freeze(state: &Arc<AppState>) {
 /// 両グループ単位のメタデータと内容がそろったら写しを保存する。そろわない間は待ち、
 /// 読み取りに失敗したら数回試してから復元不可の印を付ける。
 async fn freeze(state: Arc<AppState>) {
-    let mut shutdown = state.shutdown.subscribe();
+    let mut shutdown = state.stopping.shutdown.subscribe();
     let Some(input) = wait_for_input(&state, &mut shutdown).await else {
         return;
     };

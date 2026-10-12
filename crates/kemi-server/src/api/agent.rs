@@ -146,7 +146,7 @@ async fn wait_api(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     let deadline = request
         .timeout_ms
         .map(|millis| tokio::time::Instant::now() + Duration::from_millis(millis));
-    let mut shutdown = state.shutdown.subscribe();
+    let mut shutdown = state.stopping.shutdown.subscribe();
     loop {
         let notified = state.wake.notified();
         tokio::pin!(notified);
@@ -239,7 +239,7 @@ fn ready(state: &AppState) -> Ready {
         let through = session.received + events.len() as u64;
         (events, through, session.state.channel.events.clone())
     };
-    match &*state.stop.lock().expect("stop poisoned") {
+    match &*state.stopping.stop.lock().expect("stop poisoned") {
         Some(Stop::Submitted(document)) => {
             events.push(json!({ "type": "submitted", "result": document }));
             return Ready::Events(events, through, handed);
@@ -385,7 +385,7 @@ async fn reply_api(
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
         if matches!(
-            *state.submit_state.lock().expect("submit poisoned"),
+            *state.stopping.submit_state.lock().expect("submit poisoned"),
             SubmitState::Claimed
         ) {
             return Err(ApiError::conflict(

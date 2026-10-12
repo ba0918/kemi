@@ -178,7 +178,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
         }
         let result = tokio::task::spawn_blocking(move || source.review_unit(unit)).await;
         let _gate = state.persist.lock().expect("persist poisoned");
-        if *state.shutdown.borrow() {
+        if *state.stopping.shutdown.borrow() {
             state
                 .initial_review
                 .lock()
@@ -277,9 +277,9 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
     };
     let start_build = {
         let _gate = state.persist.lock().expect("persist poisoned");
-        if *state.shutdown.borrow()
+        if *state.stopping.shutdown.borrow()
             || matches!(
-                *state.submit_state.lock().expect("submit poisoned"),
+                *state.stopping.submit_state.lock().expect("submit poisoned"),
                 crate::SubmitState::Claimed
             )
         {

@@ -636,7 +636,7 @@ async fn events(
     Path(_token): Path<String>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     let receiver = state.events.subscribe();
-    let mut shutdown = state.shutdown.subscribe();
+    let mut shutdown = state.stopping.shutdown.subscribe();
     // submit 後の graceful shutdown は接続が閉じるまで待つので、SSE は停止通知で終端する。
     let stop = async move {
         loop {

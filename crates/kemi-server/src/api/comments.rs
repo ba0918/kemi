@@ -450,9 +450,9 @@ fn add_explanation_comment(
     selection: Option<ExplanationSelection>,
 ) -> Result<Json<Value>, ApiError> {
     let gate = state.persist.lock().expect("persist poisoned");
-    if *state.shutdown.borrow()
+    if *state.stopping.shutdown.borrow()
         || matches!(
-            *state.submit_state.lock().expect("submit poisoned"),
+            *state.stopping.submit_state.lock().expect("submit poisoned"),
             crate::SubmitState::Claimed
         )
     {

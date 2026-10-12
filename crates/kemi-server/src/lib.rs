@@ -306,12 +306,12 @@ impl ServeControl {
         let _gate = state.persist.lock().expect("persist poisoned");
         let waiting = state.agent.lock().expect("agent poisoned").is_waiting();
         {
-            let mut stop = state.stop.lock().expect("stop poisoned");
+            let mut stop = state.stopping.stop.lock().expect("stop poisoned");
             if stop.is_none() {
                 *stop = Some(Stop::Suspended);
             }
         }
-        let _ = state.shutdown.send(true);
+        let _ = state.stopping.shutdown.send(true);
         state
             .initial_review
             .lock()
@@ -352,6 +352,14 @@ pub(crate) enum SubmitState {
     Claimed,
 }
 
+/// 停止理由と通知、submit の同時受理をまとめて扱うための状態。
+pub(crate) struct Stopping {
+    /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
+    pub(crate) shutdown: shutdown_watch::Sender<bool>,
+    pub(crate) stop: Mutex<Option<Stop>>,
+    pub(crate) submit_state: Mutex<SubmitState>,
+}
+
 pub(crate) struct AppState {
     pub registered_pages: Mutex<std::collections::BTreeSet<String>>,
     pub explanation_holds:
@@ -383,10 +391,7 @@ pub(crate) struct AppState {
     pub agent_token: Option<String>,
     /// 待っている `kemi wait` を起こす（渡したとき）。
     pub wake: tokio::sync::Notify,
-    /// true で停止。SSE もこれを見て終端する（R-SUBMIT）。
-    pub shutdown: shutdown_watch::Sender<bool>,
-    pub stop: Mutex<Option<Stop>>,
-    pub submit_state: Mutex<SubmitState>,
+    pub(crate) stopping: Stopping,
     /// 凍結のタスクを 1 度だけ始めるための印（R-SESSION）。
     pub freeze_started: std::sync::atomic::AtomicBool,
     /// `--live` の中継の情報。トークンの URL で cookie を入れ、`api/review` に添える。
@@ -397,12 +402,12 @@ pub(crate) struct AppState {
 pub(crate) fn stop_with_error(state: &AppState, message: impl Into<String>) {
     let _gate = state.persist.lock().expect("persist poisoned");
     {
-        let mut stop = state.stop.lock().expect("stop poisoned");
+        let mut stop = state.stopping.stop.lock().expect("stop poisoned");
         if stop.is_none() {
             *stop = Some(Stop::Failed(message.into()));
         }
     }
-    let _ = state.shutdown.send(true);
+    let _ = state.stopping.shutdown.send(true);
 }
 
 type ServerFuture =
@@ -410,7 +415,7 @@ type ServerFuture =
 
 /// 停止の合図（R-SUBMIT）を待つ future。
 fn stopping(state: &AppState) -> impl std::future::Future<Output = ()> + use<> {
-    let mut receiver = state.shutdown.subscribe();
+    let mut receiver = state.stopping.shutdown.subscribe();
     async move {
         loop {
             if *receiver.borrow() {
@@ -702,9 +707,11 @@ async fn run_servers(
         agent: Mutex::new(agent),
         agent_token: params.agent.as_ref().map(|agent| agent.token.clone()),
         wake: tokio::sync::Notify::new(),
-        shutdown,
-        stop: Mutex::new(None),
-        submit_state: Mutex::new(SubmitState::Open),
+        stopping: Stopping {
+            shutdown,
+            stop: Mutex::new(None),
+            submit_state: Mutex::new(SubmitState::Open),
+        },
         freeze_started: std::sync::atomic::AtomicBool::new(false),
         live: live.as_ref().map(|(_, info, _)| info.clone()),
     });
@@ -755,7 +762,7 @@ async fn run_servers(
         .await
         .map_err(ServerError::Io)?;
 
-    let stop = state.stop.lock().expect("stop poisoned").take();
+    let stop = state.stopping.stop.lock().expect("stop poisoned").take();
     match stop {
         Some(Stop::Submitted(document)) => Ok(ServeOutcome::Submitted(document)),
         Some(Stop::Failed(message)) => Err(ServerError::Stopped(message)),

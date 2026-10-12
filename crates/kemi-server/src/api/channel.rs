@@ -132,7 +132,7 @@ pub(crate) fn start_status_ticker(state: &Arc<AppState>) {
             let Some(state) = weak.upgrade() else {
                 return;
             };
-            if *state.shutdown.borrow() {
+            if *state.stopping.shutdown.borrow() {
                 return;
             }
             let agent = agent_json(&state);
