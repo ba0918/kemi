@@ -221,6 +221,39 @@ fn validate_result_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// 入力モードの誤り。モードが 1 つも無いときだけは、誤りの文でなく使い方を出す。
+enum InputModeError {
+    Usage,
+    Message(&'static str),
+}
+
+/// 入力モードはちょうど 1 つ。`--to` と `--group-by` はコミット範囲（`--from`）でだけ使える。
+fn validate_input_mode(cli: &Cli) -> Result<(), InputModeError> {
+    let modes = [
+        cli.manifest.is_some(),
+        cli.from.is_some(),
+        cli.worktree,
+        cli.staged,
+        cli.live.is_some(),
+    ]
+    .iter()
+    .filter(|present| **present)
+    .count();
+    if modes > 1 {
+        return Err(InputModeError::Message("specify exactly one input mode"));
+    }
+    if modes == 0 {
+        return Err(InputModeError::Usage);
+    }
+    if cli.to.is_some() && cli.from.is_none() {
+        return Err(InputModeError::Message("--to requires --from"));
+    }
+    if cli.group_by.is_some() && cli.from.is_none() {
+        return Err(InputModeError::Message("--group-by requires --from"));
+    }
+    Ok(())
+}
+
 /// `--resume` と一緒に使えるのは `--port` / `--bind` / `--no-open` / `--serve` /
 /// `--live-port` だけ（R-INPUT-6）。
 fn validate_resume_flags(cli: &Cli) -> Result<(), String> {
@@ -1106,28 +1139,13 @@ async fn main() {
         run_resume(&cli).await;
     }
 
-    let modes = [
-        cli.manifest.is_some(),
-        cli.from.is_some(),
-        cli.worktree,
-        cli.staged,
-        cli.live.is_some(),
-    ]
-    .iter()
-    .filter(|present| **present)
-    .count();
-    if modes > 1 {
-        fail("specify exactly one input mode");
-    }
-    if modes == 0 {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
-    }
-    if cli.to.is_some() && cli.from.is_none() {
-        fail("--to requires --from");
-    }
-    if cli.group_by.is_some() && cli.from.is_none() {
-        fail("--group-by requires --from");
+    match validate_input_mode(&cli) {
+        Ok(()) => {}
+        Err(InputModeError::Usage) => {
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+        Err(InputModeError::Message(message)) => fail(message),
     }
 
     let live = match cli.live.as_deref().map(live_target).transpose() {
