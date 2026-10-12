@@ -63,6 +63,13 @@ pub struct HandedReply {
     pub reply: Reply,
 }
 
+/// 渡す 1 件のコメントの変化を、本文を写さずに指す。`preview` と `unhanded_count` が同じ選び方を使う。
+enum HandedCommentRef<'a> {
+    Added(&'a Comment),
+    Edited(&'a Comment),
+    Deleted(&'a str),
+}
+
 impl Channel {
     /// 人間がコメントを追加・編集・削除した。
     pub fn note_comment(&mut self, id: &str) {
@@ -88,40 +95,22 @@ impl Channel {
     /// コメントは、エージェントが一度も見ていないので届けない。消したコメントへの返信も
     /// 届けない。
     pub fn preview(&self, comments: &[Comment], messages: &[Message]) -> Handed {
-        let find = |id: &str| comments.iter().find(|comment| comment.id == id);
-        let handed_before = |id: &str| self.handed_comments.iter().any(|known| known == id);
         let changed = self
-            .unhanded
-            .comments
-            .iter()
-            .filter_map(|id| match (find(id), handed_before(id)) {
-                (Some(comment), false) => Some(HandedComment::Added(comment.clone())),
-                (Some(comment), true) => Some(HandedComment::Edited(comment.clone())),
-                (None, true) => Some(HandedComment::Deleted(id.clone())),
-                (None, false) => None,
+            .selected_comments(comments)
+            .map(|change| match change {
+                HandedCommentRef::Added(comment) => HandedComment::Added(comment.clone()),
+                HandedCommentRef::Edited(comment) => HandedComment::Edited(comment.clone()),
+                HandedCommentRef::Deleted(id) => HandedComment::Deleted(id.to_string()),
             })
             .collect();
         let replies = self
-            .unhanded
-            .replies
-            .iter()
-            .filter_map(|reference| {
-                let reply = find(&reference.comment_id)?
-                    .replies
-                    .iter()
-                    .find(|reply| reply.id == reference.reply_id)?;
-                Some(HandedReply {
-                    comment_id: reference.comment_id.clone(),
-                    reply: reply.clone(),
-                })
+            .selected_replies(comments)
+            .map(|(comment_id, reply)| HandedReply {
+                comment_id: comment_id.to_string(),
+                reply: reply.clone(),
             })
             .collect();
-        let messages = self
-            .unhanded
-            .messages
-            .iter()
-            .filter_map(|id| messages.iter().find(|message| &message.id == id).cloned())
-            .collect();
+        let messages = self.selected_messages(messages).cloned().collect();
         Handed {
             comments: changed,
             replies,
@@ -131,8 +120,51 @@ impl Channel {
 
     /// まだ渡していない件数（R-SUBMIT の確認と、画面の表示）。
     pub fn unhanded_count(&self, comments: &[Comment], messages: &[Message]) -> usize {
-        let preview = self.preview(comments, messages);
-        preview.comments.len() + preview.replies.len() + preview.messages.len()
+        self.selected_comments(comments).count()
+            + self.selected_replies(comments).count()
+            + self.selected_messages(messages).count()
+    }
+
+    fn selected_comments<'a>(
+        &'a self,
+        comments: &'a [Comment],
+    ) -> impl Iterator<Item = HandedCommentRef<'a>> + 'a {
+        let find = |id: &str| comments.iter().find(|comment| comment.id == id);
+        let handed_before = |id: &str| self.handed_comments.iter().any(|known| known == id);
+        self.unhanded
+            .comments
+            .iter()
+            .filter_map(move |id| match (find(id), handed_before(id)) {
+                (Some(comment), false) => Some(HandedCommentRef::Added(comment)),
+                (Some(comment), true) => Some(HandedCommentRef::Edited(comment)),
+                (None, true) => Some(HandedCommentRef::Deleted(id)),
+                (None, false) => None,
+            })
+    }
+
+    fn selected_replies<'a>(
+        &'a self,
+        comments: &'a [Comment],
+    ) -> impl Iterator<Item = (&'a str, &'a Reply)> + 'a {
+        self.unhanded.replies.iter().filter_map(|reference| {
+            let reply = comments
+                .iter()
+                .find(|comment| comment.id == reference.comment_id)?
+                .replies
+                .iter()
+                .find(|reply| reply.id == reference.reply_id)?;
+            Some((reference.comment_id.as_str(), reply))
+        })
+    }
+
+    fn selected_messages<'a>(
+        &'a self,
+        messages: &'a [Message],
+    ) -> impl Iterator<Item = &'a Message> + 'a {
+        self.unhanded
+            .messages
+            .iter()
+            .filter_map(|id| messages.iter().find(|message| &message.id == id))
     }
 
     /// 前に渡した後の変化を 1 回分にまとめて、受け取られるのを待つ起きたことに足す。
