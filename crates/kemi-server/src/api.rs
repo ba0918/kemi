@@ -367,11 +367,15 @@ async fn review(
         body["diff_display_version"] = if review.code_error.is_some() {
             Value::Null
         } else {
-            json!(session.display.as_ref().map(|d| &d.current))
+            json!(session.state.display.as_ref().map(|d| &d.current))
         };
         body["code_unavailable"] = json!(review.code_error);
-        body["explanation"] = json!(session.explanation);
-        (body, session.page_comment_saved, review.code_error.clone())
+        body["explanation"] = json!(session.state.explanation);
+        (
+            body,
+            session.state.page_comment_saved,
+            review.code_error.clone(),
+        )
     };
     body["agent"] = agent_json(&state);
     body["live"] = state.live.as_ref().map_or(Value::Null, |live| live.json());
@@ -443,16 +447,16 @@ fn review_json(review: &ReviewMeta, session: &Session) -> Value {
                 "focus": file.focus,
                 "note": file.note,
                 "noise": file.noise,
-                "seen": session.seen.contains(&file.id),
-                "collapsed": session
+                "seen": session.state.seen.contains(&file.id),
+                "collapsed": session.state
                     .collapsed
                     .get(&file.id)
                     .copied()
                     .unwrap_or(file.noise),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "comments": session.comments.iter().map(page_comment_json).collect::<Vec<_>>(),
-        "messages": session.messages.iter().map(page_message_json).collect::<Vec<_>>(),
+        "comments": session.state.comments.iter().map(page_comment_json).collect::<Vec<_>>(),
+        "messages": session.state.messages.iter().map(page_message_json).collect::<Vec<_>>(),
     })
 }
 
@@ -602,18 +606,21 @@ async fn state_api(
     let mut session = state.session.lock().expect("session poisoned");
     if let Some(seen) = request.seen {
         if seen {
-            session.seen.insert(request.file_id.clone());
+            session.state.seen.insert(request.file_id.clone());
         } else {
-            session.seen.remove(&request.file_id);
+            session.state.seen.remove(&request.file_id);
         }
     }
     if let Some(collapsed) = request.collapsed {
-        session.collapsed.insert(request.file_id.clone(), collapsed);
+        session
+            .state
+            .collapsed
+            .insert(request.file_id.clone(), collapsed);
     }
     let value = json!({
         "id": request.file_id,
-        "seen": session.seen.contains(&request.file_id),
-        "collapsed": session
+        "seen": session.state.seen.contains(&request.file_id),
+        "collapsed": session.state
             .collapsed
             .get(&request.file_id)
             .copied()

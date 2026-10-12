@@ -7,9 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use kemi_core::domain::agent::{AgentEvent, Channel, HandedComment};
-use kemi_core::domain::display_version::DisplayVersions;
-use kemi_core::domain::explanation::ExplanationHistory;
+use kemi_core::domain::agent::{AgentEvent, HandedComment};
 use kemi_core::domain::review::{Comment, CommentTarget, Message, PageTarget, Reply};
 use kemi_core::session::{FrozenUnit, SessionCopy, SessionState};
 use kemi_core::source::FileContent;
@@ -28,74 +26,25 @@ pub(crate) struct FreezeInput {
 
 #[derive(Default, Clone)]
 pub struct Session {
-    pub display: Option<DisplayVersions>,
-    pub explanation: Option<ExplanationHistory>,
-    pub comments: Vec<Comment>,
-    pub seen: BTreeSet<String>,
-    pub collapsed: BTreeMap<String, bool>,
-    pub last_comment: u32,
-    pub messages: Vec<Message>,
-    pub last_reply: u32,
-    pub last_message: u32,
-    pub last_seq: u32,
-    pub channel: Channel,
+    pub state: SessionState,
     /// `channel.events` からこれまでに外した起きたことの数。`kemi wait` の受け取りの
     /// 知らせ（何件目まで受け取ったか）を、重なっても二度外さないための起点。メモリだけに
     /// 置き、復元では 0 から数え直す（それより前の知らせは止まったサーバへのもので届かない）。
     pub received: u64,
-    /// `--live` のモックの割り当て（ページ → 配れる範囲の根からの相対パス）。状態と一緒に
-    /// 保存し、復元で戻す（live-compare.md の R-PAGE-MOCK）。
-    pub mocks: BTreeMap<String, String>,
-    /// ページへのコメントを一度でも保存したか。始め方の案内を出すかを決める
-    /// （live.md の R-PAGE-COMMENT）。コメントを消しても戻さない。
-    pub page_comment_saved: bool,
 }
 
 impl Session {
     /// 保存された状態から読み戻す。
     pub fn from_state(state: SessionState) -> Self {
-        let state = state.prepare_for_restore();
         Session {
-            display: state.display,
-            explanation: state.explanation,
-            comments: state.comments,
-            seen: state.seen,
-            collapsed: state.collapsed,
-            last_comment: state.last_comment,
-            messages: state.messages,
-            last_reply: state.last_reply,
-            last_message: state.last_message,
-            last_seq: state.last_seq,
-            channel: state.channel,
+            state: state.prepare_for_restore(),
             received: 0,
-            mocks: state.mocks,
-            page_comment_saved: state.page_comment_saved,
         }
-    }
-
-    /// 次の書き込みの通し番号。画面とエージェントのどちらが書いても同じ列から振る。
-    pub(crate) fn next_seq(&mut self) -> u32 {
-        self.last_seq += 1;
-        self.last_seq
     }
 
     /// 保存する状態の写し。
     pub(crate) fn snapshot(&self) -> SessionState {
-        SessionState {
-            display: self.display.clone(),
-            explanation: self.explanation.clone(),
-            comments: self.comments.clone(),
-            seen: self.seen.clone(),
-            collapsed: self.collapsed.clone(),
-            last_comment: self.last_comment,
-            messages: self.messages.clone(),
-            last_reply: self.last_reply,
-            last_message: self.last_message,
-            last_seq: self.last_seq,
-            channel: self.channel.clone(),
-            mocks: self.mocks.clone(),
-            page_comment_saved: self.page_comment_saved,
-        }
+        self.state.clone()
     }
 }
 
@@ -429,6 +378,7 @@ async fn freeze(state: Arc<AppState>) {
                     match sink.save_frozen_copy(prepared, snapshot) {
                         Ok(true) => {
                             session
+                                .state
                                 .display
                                 .as_mut()
                                 .expect("initial display assigned")

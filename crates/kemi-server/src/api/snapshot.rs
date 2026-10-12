@@ -112,6 +112,7 @@ pub(super) fn comment_ids(state: &AppState) -> BTreeSet<String> {
         .session
         .lock()
         .expect("session poisoned")
+        .state
         .comments
         .iter()
         .map(|comment| comment.id.clone())

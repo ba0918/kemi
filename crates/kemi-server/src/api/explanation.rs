@@ -185,11 +185,11 @@ pub(crate) async fn context(State(state): State<Arc<AppState>>) -> Result<Json<V
     let code = current_map(&state)?;
     let pages = pages(&state);
     let session = state.session.lock().expect("session poisoned");
-    let display = session.display.as_ref().expect("display assigned");
+    let display = session.state.display.as_ref().expect("display assigned");
     Ok(Json(
         json!({"kemi":3,"review":state.display_id,"diff_display_version":display.current,
-        "explanation_revision":session.explanation.as_ref().map_or(0, |h| h.current_revision),
-        "explanation":session.explanation.as_ref().and_then(|h| h.current()),
+        "explanation_revision":session.state.explanation.as_ref().map_or(0, |h| h.current_revision),
+        "explanation":session.state.explanation.as_ref().and_then(|h| h.current()),
         "references":{"code":code,"pages":pages.iter().map(|url| json!({"url":url})).collect::<Vec<_>>()}}),
     ))
 }
@@ -221,6 +221,7 @@ pub(crate) async fn explain(
         let review = state.review.read().expect("review poisoned");
         let session = state.session.lock().expect("session poisoned");
         let token = session
+            .state
             .display
             .as_ref()
             .expect("display assigned")
@@ -294,7 +295,7 @@ pub(crate) async fn explain(
         (review.code_error.is_none(), review.startup_unit.is_some())
     };
     let mut session = state.session.lock().expect("session poisoned");
-    let display = session.display.as_ref().expect("display assigned");
+    let display = session.state.display.as_ref().expect("display assigned");
     let current_token = code_available.then_some(display.current.as_str());
     if Some(update.base_display_version.as_str()) == current_token
         && captured_token.as_deref() != current_token
@@ -308,6 +309,7 @@ pub(crate) async fn explain(
         &document,
         update.expected_revision,
         session
+            .state
             .explanation
             .as_ref()
             .map_or(0, |h| h.current_revision),
@@ -340,8 +342,9 @@ pub(crate) async fn explain(
         sections: document.sections,
     };
     validate_version(&incoming).map_err(|error| ApiError::bad_request(error.to_string()))?;
-    let comments = comment_revisions(&session.comments);
+    let comments = comment_revisions(&session.state.comments);
     let events: Vec<_> = session
+        .state
         .channel
         .events
         .iter()
@@ -373,6 +376,7 @@ pub(crate) async fn explain(
         .collect();
     let versions = history_candidate(
         session
+            .state
             .explanation
             .as_ref()
             .map_or(&[], |h| h.versions.as_slice()),
@@ -394,8 +398,8 @@ pub(crate) async fn explain(
         .map_err(|error| ApiError::too_large(error.to_string()))?;
     sink.save_explanation_state(candidate.clone())
         .map_err(ApiError::internal)?;
-    session.explanation = candidate.explanation;
-    session.comments = candidate.comments;
+    session.state.explanation = candidate.explanation;
+    session.state.comments = candidate.comments;
     let result = json!({"revision":revision,"base_display_version":incoming.base_display_version});
     let _ = state.events.send(Event::Explanation(result.clone()));
     Ok(Json(result))
@@ -413,6 +417,7 @@ pub(super) async fn get_version(
 ) -> Result<Json<Value>, ApiError> {
     let session = state.session.lock().expect("session poisoned");
     let history = session
+        .state
         .explanation
         .as_ref()
         .ok_or_else(|| ApiError::not_found("no explanation yet"))?;
@@ -469,6 +474,7 @@ pub(super) async fn hold_version(
                 return Err(ApiError::bad_request("screen identity is required"));
             }
             let exists = session
+                .state
                 .explanation
                 .as_ref()
                 .is_some_and(|h| h.versions.iter().any(|v| v.revision == revision));

@@ -99,6 +99,7 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         let session = state.session.lock().expect("session poisoned");
         // ページへのコメントは内容ハッシュを持たず、outdated は常に false（R-SUBMIT）。
         session
+            .state
             .comments
             .iter()
             .filter_map(|comment| {
@@ -134,17 +135,17 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         );
     }
     let mut session = state.session.lock().expect("session poisoned");
-    for comment in session.comments.iter_mut() {
+    for comment in session.state.comments.iter_mut() {
         if let Some(is_outdated) = outdated.get(&comment.id) {
             comment.outdated = *is_outdated;
         }
     }
-    let comments: Vec<Value> = session.comments.iter().map(comment_json).collect();
-    let messages: Vec<Value> = session.messages.iter().map(message_json).collect();
+    let comments: Vec<Value> = session.state.comments.iter().map(comment_json).collect();
+    let messages: Vec<Value> = session.state.messages.iter().map(message_json).collect();
     Ok(json!({
         "kemi": 3,
-        "diff_display_version":session.display.as_ref().map(|d|&d.current),
-        "explanation":session.explanation,
+        "diff_display_version":session.state.display.as_ref().map(|d|&d.current),
+        "explanation":session.state.explanation,
         "title": review.title,
         "verdict": verdict,
         "approval": review.approval.iter().map(|approval| json!({

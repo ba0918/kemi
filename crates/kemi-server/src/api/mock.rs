@@ -78,6 +78,7 @@ pub(super) async fn assign_mock(
             .session
             .lock()
             .expect("session poisoned")
+            .state
             .mocks
             .remove(&request.page);
         persist(&state);
@@ -88,6 +89,7 @@ pub(super) async fn assign_mock(
         .session
         .lock()
         .expect("session poisoned")
+        .state
         .mocks
         .insert(request.page.clone(), path.clone());
     // 割り当ては保存するが、会話にはならない。会話の無いセッションは残らない（R-PAGE-SESSION）。
@@ -137,6 +139,7 @@ pub(super) async fn list_mocks(
         .session
         .lock()
         .expect("session poisoned")
+        .state
         .mocks
         .clone();
     Ok(Json(json!({

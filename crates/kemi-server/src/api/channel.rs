@@ -29,16 +29,16 @@ pub(super) async fn message_api(
         .map_err(|error| ApiError::too_large(error.to_string()))?;
     let value = {
         let mut session = state.session.lock().expect("session poisoned");
-        session.last_message += 1;
+        session.state.last_message += 1;
         let message = Message {
-            id: format!("m{}", session.last_message),
-            seq: session.next_seq(),
+            id: format!("m{}", session.state.last_message),
+            seq: session.state.next_seq(),
             author: Author::Reviewer,
             body: request.body.into(),
         };
-        session.channel.note_message(&message.id);
+        session.state.channel.note_message(&message.id);
         let value = page_message_json(&message);
-        session.messages.push(message);
+        session.state.messages.push(message);
         value
     };
     persist(&state);
@@ -60,9 +60,14 @@ pub(super) async fn hand_api(
             .hand(&candidate.comments, &candidate.messages);
         kemi_core::session::validate_additional(&candidate)
             .map_err(|e| ApiError::too_large(e.to_string()))?;
-        let handed = session.channel.hand(&session.comments, &session.messages);
+        let handed = session
+            .state
+            .channel
+            .hand(&session.state.comments, &session.state.messages);
         // 渡した 1 回分の行（R-AGENT-HAND）。ロックは session → agent の順。
-        if let (true, Some(AgentEvent::Handed(event))) = (handed, session.channel.events.last()) {
+        if let (true, Some(AgentEvent::Handed(event))) =
+            (handed, session.state.channel.events.last())
+        {
             state.agent.lock().expect("agent poisoned").handed(event);
         }
         handed
@@ -82,14 +87,15 @@ pub(super) async fn hand_api(
 pub(crate) fn agent_json(state: &AppState) -> Value {
     // ロックは session → agent の順。行は今あるコメントで絞るので、両方を持って読む。
     let session = state.session.lock().expect("session poisoned");
-    let called = session.channel.called;
+    let called = session.state.channel.called;
     let unhanded = session
+        .state
         .channel
-        .unhanded_count(&session.comments, &session.messages);
+        .unhanded_count(&session.state.comments, &session.state.messages);
     let agent = state.agent.lock().expect("agent poisoned");
     let status = agent.status(called, kemi_core::session::now_millis());
     let lines: Vec<Value> = agent
-        .lines(&session.comments)
+        .lines(&session.state.comments)
         .into_iter()
         .map(|line| {
             let thread = match &line.at {

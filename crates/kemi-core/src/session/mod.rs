@@ -142,6 +142,12 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    /// 次の書き込みの通し番号。画面とエージェントのどちらが書いても同じ列から振る。
+    pub fn next_seq(&mut self) -> u32 {
+        self.last_seq += 1;
+        self.last_seq
+    }
+
     /// コメント・返信・発言の id は再利用しないので、採番は
     /// 保存した最終番号と、残っているものの番号の大きい方から続ける。
     pub fn prepare_for_restore(mut self) -> Self {

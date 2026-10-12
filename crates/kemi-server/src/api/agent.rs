@@ -220,7 +220,7 @@ impl Drop for WaitGuard {
 fn mark_called(state: &AppState) {
     let changed = {
         let mut session = state.session.lock().expect("session poisoned");
-        !std::mem::replace(&mut session.channel.called, true)
+        !std::mem::replace(&mut session.state.channel.called, true)
     };
     if changed {
         persist(state);
@@ -231,13 +231,14 @@ fn ready(state: &AppState) -> Ready {
     let (mut events, through, handed): (Vec<Value>, u64, Vec<AgentEvent>) = {
         let session = state.session.lock().expect("session poisoned");
         let events: Vec<Value> = session
+            .state
             .channel
             .events
             .iter()
             .map(agent_event_json)
             .collect();
         let through = session.received + events.len() as u64;
-        (events, through, session.channel.events.clone())
+        (events, through, session.state.channel.events.clone())
     };
     match &*state.stop.lock().expect("stop poisoned") {
         Some(Stop::Submitted(document)) => {
@@ -308,8 +309,8 @@ async fn received_api(State(state): State<Arc<AppState>>, body: Bytes) -> Respon
         let pending = request.through.saturating_sub(session.received);
         let removed = usize::try_from(pending)
             .unwrap_or(usize::MAX)
-            .min(session.channel.events.len());
-        session.channel.events.drain(..removed);
+            .min(session.state.channel.events.len());
+        session.state.channel.events.drain(..removed);
         session.received += removed as u64;
         removed
     };
@@ -421,7 +422,7 @@ async fn reply_api(
                 },
             })
             .collect();
-        validate_writes(&counted, &session.comments, &session.messages)
+        validate_writes(&counted, &session.state.comments, &session.state.messages)
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
         let mut ids = Vec::new();
         let mut touched: Vec<String> = Vec::new();
@@ -432,15 +433,16 @@ async fn reply_api(
                     comment_id,
                     content,
                 } => {
-                    session.last_reply += 1;
+                    session.state.last_reply += 1;
                     let reply = Reply {
-                        id: format!("r{}", session.last_reply),
-                        seq: session.next_seq(),
+                        id: format!("r{}", session.state.last_reply),
+                        seq: session.state.next_seq(),
                         author: Author::Agent,
                         body: content,
                     };
                     ids.push(reply.id.clone());
                     if let Some(comment) = session
+                        .state
                         .comments
                         .iter_mut()
                         .find(|comment| comment.id == comment_id)
@@ -452,22 +454,28 @@ async fn reply_api(
                     }
                 }
                 ContentWrite::Message { content } => {
-                    session.last_message += 1;
+                    session.state.last_message += 1;
                     let message = Message {
-                        id: format!("m{}", session.last_message),
-                        seq: session.next_seq(),
+                        id: format!("m{}", session.state.last_message),
+                        seq: session.state.next_seq(),
                         author: Author::Agent,
                         body: content,
                     };
                     ids.push(message.id.clone());
                     messages.push(page_message_json(&message));
-                    session.messages.push(message);
+                    session.state.messages.push(message);
                 }
             }
         }
         let threads: Vec<Value> = touched
             .iter()
-            .filter_map(|id| session.comments.iter().find(|comment| &comment.id == id))
+            .filter_map(|id| {
+                session
+                    .state
+                    .comments
+                    .iter()
+                    .find(|comment| &comment.id == id)
+            })
             .map(page_comment_json)
             .collect();
         if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
@@ -478,11 +486,11 @@ async fn reply_api(
         // セッションのロックの中で行う（ロックは session → agent の順）。外で行うと、その間に人間が
         // 同じスレッドを渡し直して受け取り待ちにした行を、この古い返信が消してしまう。
         state.agent.lock().expect("agent poisoned").agent_wrote(
-            session.channel.called,
+            session.state.channel.called,
             kemi_core::session::now_millis(),
             &touched,
             !messages.is_empty(),
-            &session.comments,
+            &session.state.comments,
         );
         (ids, threads, messages)
     };

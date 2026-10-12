@@ -200,6 +200,7 @@ fn side_bytes(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> (u64, u
 fn comments_for(state: &AppState, file_id: &str) -> Vec<Value> {
     let session = state.session.lock().expect("session poisoned");
     session
+        .state
         .comments
         .iter()
         .filter(|comment| comment.file().is_some_and(|file| file.file_id == file_id))
@@ -212,6 +213,7 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
     let session = state.session.lock().expect("session poisoned");
     let (mut old, mut new) = (HashSet::new(), HashSet::new());
     for file in session
+        .state
         .comments
         .iter()
         .filter_map(|comment| comment.file())
@@ -231,7 +233,7 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
 
 fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
     let mut session = state.session.lock().expect("session poisoned");
-    for comment in session.comments.iter_mut() {
+    for comment in session.state.comments.iter_mut() {
         let Some(file) = comment.file().filter(|file| file.file_id == file_id) else {
             continue;
         };

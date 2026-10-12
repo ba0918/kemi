@@ -287,6 +287,7 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
         let mut review = state.review.write().expect("review lock poisoned");
         let mut session = state.session.lock().expect("session poisoned");
         let display = session
+            .state
             .display
             .as_ref()
             .expect("initial display assigned")
@@ -313,7 +314,7 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
                 BuildState::Building
             };
         }
-        session.display = Some(display);
+        session.state.display = Some(display);
         start.then_some(generation)
     };
     if let Some(generation) = start_build {
