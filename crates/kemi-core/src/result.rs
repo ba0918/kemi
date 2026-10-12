@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// 全リポジトリ合計で残す件数。
-pub const KEEP: usize = 20;
+const KEEP: usize = 20;
 
 /// 結果ファイルの置き場所。`XDG_STATE_HOME` が絶対パスなら全 OS でその下。それ以外は
 /// Windows では `LOCALAPPDATA`（絶対パス）の下、unix では `~/.local/state` の下。
@@ -111,7 +111,7 @@ fn sorted_results(names: &[String]) -> Vec<(u128, &str, &String)> {
 }
 
 /// 最新の結果。`key` があればそのリポジトリのものだけから選ぶ（None は `--any`）。
-pub fn latest<'a>(names: &'a [String], key: Option<&str>) -> Option<&'a String> {
+fn latest<'a>(names: &'a [String], key: Option<&str>) -> Option<&'a String> {
     sorted_results(names)
         .into_iter()
         .rev()
@@ -120,7 +120,7 @@ pub fn latest<'a>(names: &'a [String], key: Option<&str>) -> Option<&'a String> 
 }
 
 /// 新しい方から `keep` 件を残すときに消す名前（古い順）。
-pub fn to_prune(names: &[String], keep: usize) -> Vec<&String> {
+fn to_prune(names: &[String], keep: usize) -> Vec<&String> {
     let results = sorted_results(names);
     let excess = results.len().saturating_sub(keep);
     results

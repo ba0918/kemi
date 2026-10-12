@@ -3,7 +3,6 @@
 mod agent;
 mod local_time;
 mod notice;
-mod result;
 mod session;
 
 use std::io::IsTerminal;
@@ -15,6 +14,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
+use kemi_core::result;
 use kemi_core::session::{
     PageSnapshot, SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis,
 };
