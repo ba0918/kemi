@@ -571,7 +571,6 @@ pub async fn serve(
     )
     .map_err(|e| ServerError::Stopped(e.to_string()))?;
     let mut review_state = units::ReviewState::new(&units, review);
-    review_state.generation = generation;
     review_state.code_error = code_error;
     if let Some(other) = &mut review_state.other {
         other.generation = generation;
