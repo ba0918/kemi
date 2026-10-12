@@ -154,6 +154,49 @@ fn current_map(state: &AppState) -> Result<Vec<CodeReferenceEntry>, ApiError> {
     Ok(code)
 }
 
+/// 説明の参照を確かめる相手。今のレビューの参照の一覧と、反対の単位がまだできて
+/// いないときに個別に引く `(単位, グループ, パス)` の要求。
+fn update_references(
+    review: &crate::units::ReviewState,
+    source: &dyn kemi_core::source::ReviewSource,
+    document: &ExplanationDocument,
+) -> (
+    Vec<CodeReferenceEntry>,
+    Vec<(ReferenceUnit, String, String)>,
+) {
+    let mut code = reference_map(&review.startup, review.startup_unit, source);
+    let mut requested = Vec::new();
+    if let Some(other) = &review.other {
+        match review.meta(Some(other.unit)) {
+            Ok((_, meta)) => code.extend(reference_map(&meta, Some(other.unit), source)),
+            Err(_) => {
+                let unit = match other.unit {
+                    GroupBy::File => ReferenceUnit::File,
+                    GroupBy::Commit => ReferenceUnit::Commit,
+                };
+                for reference in document
+                    .sections
+                    .iter()
+                    .flat_map(|s| &s.blocks)
+                    .flat_map(|b| &b.references)
+                {
+                    if let kemi_core::domain::explanation::ExplanationReference::Code {
+                        unit: Some(wanted),
+                        group_id,
+                        path,
+                        ..
+                    } = reference
+                        && *wanted == unit
+                    {
+                        requested.push((unit, group_id.clone(), path.clone()));
+                    }
+                }
+            }
+        }
+    }
+    (code, requested)
+}
+
 fn pages(state: &AppState) -> Vec<String> {
     state.live.as_ref().map_or_else(Vec::new, |live| {
         std::iter::once(live.start.clone())
@@ -204,6 +247,89 @@ fn comment_revisions(comments: &[Comment]) -> Vec<u64> {
         .collect()
 }
 
+/// 渡したが受け取られていない説明へのコメントの版。古い版を外す候補から守る。
+fn event_revisions(events: &[AgentEvent]) -> Vec<u64> {
+    events
+        .iter()
+        .flat_map(|AgentEvent::Handed(event)| {
+            event.comments.iter().filter_map(|change| match change {
+                HandedComment::Added(comment) | HandedComment::Edited(comment) => {
+                    match &comment.target {
+                        CommentTarget::Explanation(target) => Some(target.revision),
+                        CommentTarget::File(_) | CommentTarget::Page(_) => None,
+                    }
+                }
+                HandedComment::Deleted(_) => None,
+            })
+        })
+        .collect()
+}
+
+/// 説明の更新の誤りを HTTP の応答にする。版の衝突だけを 409 にする。
+fn update_error(error: kemi_core::domain::explanation::ExplanationError) -> ApiError {
+    match error {
+        kemi_core::domain::explanation::ExplanationError::RevisionConflict { .. } => {
+            ApiError::conflict(error.to_string())
+        }
+        kemi_core::domain::explanation::ExplanationError::Structure(_)
+        | kemi_core::domain::explanation::ExplanationError::DisplayVersion(_)
+        | kemi_core::domain::explanation::ExplanationError::RevisionLimit
+        | kemi_core::domain::explanation::ExplanationError::Reference { .. }
+        | kemi_core::domain::explanation::ExplanationError::UnknownBlock
+        | kemi_core::domain::explanation::ExplanationError::Capacity => {
+            ApiError::bad_request(error.to_string())
+        }
+    }
+}
+
+/// 新しい版を足し、容量に収まるまで古い版を外した保存状態の候補。
+fn explanation_candidate(
+    state: &AppState,
+    session: &crate::session::Session,
+    incoming: &ExplanationVersion,
+    revision: u64,
+) -> Result<kemi_core::session::SessionState, ApiError> {
+    let comments = comment_revisions(&session.state.comments);
+    let events = event_revisions(&session.state.channel.events);
+    let mut candidate = session.snapshot();
+    candidate.explanation = Some(ExplanationHistory {
+        current_revision: revision,
+        versions: vec![],
+    });
+    let other_saved_bytes = kemi_core::session::additional_saved_size(&candidate);
+    let screens: Vec<_> = state
+        .explanation_holds
+        .lock()
+        .expect("holds poisoned")
+        .values()
+        .flatten()
+        .copied()
+        .collect();
+    let versions = history_candidate(
+        session
+            .state
+            .explanation
+            .as_ref()
+            .map_or(&[], |h| h.versions.as_slice()),
+        incoming.clone(),
+        &RetainedVersions {
+            comments: &comments,
+            events: &events,
+            screens: &screens,
+            other_saved_bytes,
+        },
+    )
+    .map_err(|error| ApiError::too_large(error.to_string()))?;
+    candidate.explanation = Some(ExplanationHistory {
+        current_revision: revision,
+        versions,
+    });
+    candidate.refresh_explanation_comments();
+    kemi_core::session::validate_additional(&candidate)
+        .map_err(|error| ApiError::too_large(error.to_string()))?;
+    Ok(candidate)
+}
+
 pub(crate) async fn explain(
     State(state): State<Arc<AppState>>,
     body: Bytes,
@@ -229,41 +355,11 @@ pub(crate) async fn explain(
             .clone();
         let token = review.code_error.is_none().then_some(token);
         let source = state.sources.current();
-        let mut code = Vec::new();
-        let mut requested = Vec::new();
-        if Some(update.base_display_version.as_str()) == token.as_deref() {
-            code = reference_map(&review.startup, review.startup_unit, source.as_ref());
-            if let Some(other) = &review.other {
-                match review.meta(Some(other.unit)) {
-                    Ok((_, meta)) => {
-                        code.extend(reference_map(&meta, Some(other.unit), source.as_ref()))
-                    }
-                    Err(_) => {
-                        let unit = match other.unit {
-                            GroupBy::File => ReferenceUnit::File,
-                            GroupBy::Commit => ReferenceUnit::Commit,
-                        };
-                        for reference in document
-                            .sections
-                            .iter()
-                            .flat_map(|s| &s.blocks)
-                            .flat_map(|b| &b.references)
-                        {
-                            if let kemi_core::domain::explanation::ExplanationReference::Code {
-                                unit: Some(wanted),
-                                group_id,
-                                path,
-                                ..
-                            } = reference
-                                && *wanted == unit
-                            {
-                                requested.push((unit, group_id.clone(), path.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let (code, requested) = if Some(update.base_display_version.as_str()) == token.as_deref() {
+            update_references(&review, source.as_ref(), &document)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         (token, code, source, requested)
     };
     if !requested.is_empty() {
@@ -323,79 +419,14 @@ pub(crate) async fn explain(
             pages: &pages,
         },
     )
-    .map_err(|error| match error {
-        kemi_core::domain::explanation::ExplanationError::RevisionConflict { .. } => {
-            ApiError::conflict(error.to_string())
-        }
-        kemi_core::domain::explanation::ExplanationError::Structure(_)
-        | kemi_core::domain::explanation::ExplanationError::DisplayVersion(_)
-        | kemi_core::domain::explanation::ExplanationError::RevisionLimit
-        | kemi_core::domain::explanation::ExplanationError::Reference { .. }
-        | kemi_core::domain::explanation::ExplanationError::UnknownBlock
-        | kemi_core::domain::explanation::ExplanationError::Capacity => {
-            ApiError::bad_request(error.to_string())
-        }
-    })?;
+    .map_err(update_error)?;
     let incoming = ExplanationVersion {
         revision,
         base_display_version: update.base_display_version,
         sections: document.sections,
     };
     validate_version(&incoming).map_err(|error| ApiError::bad_request(error.to_string()))?;
-    let comments = comment_revisions(&session.state.comments);
-    let events: Vec<_> = session
-        .state
-        .channel
-        .events
-        .iter()
-        .flat_map(|AgentEvent::Handed(event)| {
-            event.comments.iter().filter_map(|change| match change {
-                HandedComment::Added(comment) | HandedComment::Edited(comment) => {
-                    match &comment.target {
-                        CommentTarget::Explanation(target) => Some(target.revision),
-                        CommentTarget::File(_) | CommentTarget::Page(_) => None,
-                    }
-                }
-                HandedComment::Deleted(_) => None,
-            })
-        })
-        .collect();
-    let mut candidate = session.snapshot();
-    candidate.explanation = Some(ExplanationHistory {
-        current_revision: revision,
-        versions: vec![],
-    });
-    let other_saved_bytes = kemi_core::session::additional_saved_size(&candidate);
-    let screens: Vec<_> = state
-        .explanation_holds
-        .lock()
-        .expect("holds poisoned")
-        .values()
-        .flatten()
-        .copied()
-        .collect();
-    let versions = history_candidate(
-        session
-            .state
-            .explanation
-            .as_ref()
-            .map_or(&[], |h| h.versions.as_slice()),
-        incoming.clone(),
-        &RetainedVersions {
-            comments: &comments,
-            events: &events,
-            screens: &screens,
-            other_saved_bytes,
-        },
-    )
-    .map_err(|error| ApiError::too_large(error.to_string()))?;
-    candidate.explanation = Some(ExplanationHistory {
-        current_revision: revision,
-        versions,
-    });
-    candidate.refresh_explanation_comments();
-    kemi_core::session::validate_additional(&candidate)
-        .map_err(|error| ApiError::too_large(error.to_string()))?;
+    let candidate = explanation_candidate(&state, &session, &incoming, revision)?;
     sink.save_explanation_state(candidate.clone())
         .map_err(ApiError::internal)?;
     session.state.explanation = candidate.explanation;
