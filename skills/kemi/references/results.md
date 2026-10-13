@@ -141,8 +141,11 @@
 
 ## Fetching a result you missed
 
-Every accepted submit is also written to a result file, so losing stdout is not losing the
-review.
+An accepted submit attempts to save the same JSON to a result file. If saving fails, stderr
+and the completion screen warn, but the main process's stdout JSON and verdict exit code
+remain unchanged. Keep that stdout as the authoritative result. Before relying on `--result`
+for recovery, inspect persistence warnings: a failed save may leave no result or an older
+stored result, not this submit.
 
 ```text
 kemi --result                     # the latest result for the repository you are in
@@ -155,8 +158,8 @@ kemi --result --workspace ../app  # the latest result for another place
 belongs to the top of the git repository kemi was started in. Only the newest twenty results
 are kept across all repositories, so read a result soon after the review rather than assuming
 it will still be there. No result is written for an interrupted or failed run; the review
-itself is kept as a session instead when it has state or a copy to keep, and `kemi --resume`
-continues it once its copy completed within the size limit (see the input reference).
+itself is kept as a session instead when it has state or a copy to keep; see the
+[resume reference](resume.md) for eligibility and continuation.
 
 `--result` goes together only with `--any` or `--workspace`. Anything else beside it, including
 an input mode, is a usage error (exit `2`). `--any` and `--workspace` are alternatives to each

@@ -81,10 +81,6 @@ and, from `kemi wait`, the path of a PNG of the area with the places drawn on it
 [result reference](results.md) for the shape, and look at the image before changing the page:
 the body refers to a place as `#n`, the place whose `n` is that number.
 
-A `--live` review keeps no frozen copy. Resuming it reads the working tree as it is then,
-connects to the same URL again, and it is kept only when it holds a comment, a reply, a message, or an explanation.
-Its snapshots and mock assignments come back on resume too.
-
 ## Surveying a large change first
 
 `--digest` prints a bounded map of the review to stdout as one JSON document and exits without
@@ -94,73 +90,6 @@ per-directory counts, and the files with the most changed lines, with no line co
 so it stays small even for tens of thousands of files. `--digest-top <n>` sets how many top
 files it asks for (default `100`). For a commit range it follows `--group-by`, so it counts
 the change the same way the page will show it.
-
-## Continuing an interrupted review
-
-An interrupted run (exit `130`) keeps its comments, seen marks, folding, and resolutions in a
-session. Only a session whose copy completed within the size limit can be listed or resumed;
-one whose copy is unfinished or too large keeps the state alone, and a run with nothing to keep
-leaves no session. A `--live` review keeps no copy: it is kept only when it holds a comment, a
-reply, a message, or an explanation. Continue it instead of rebuilding the input:
-
-```text
-kemi --resume <id>   # the id is in the `kemi: resume with:` line on stderr
-kemi --resume        # in a terminal, choose from the list of sessions
-```
-
-The resumed page shows the diff as frozen when the review started, so the working tree or the
-repository may have moved on; only origin notes then read "Cannot determine". A `--live` review is
-the exception: resuming it reads the working tree as it is then and connects to the same page again
-([above](#reviewing-a-running-page)). `--resume` is not an input mode to combine with the others:
-it takes only `--port`, `--bind`, `--no-open`, `--serve`, and `--live-port`, and any input mode or
-`--digest` beside it is a usage error (exit `2`). Without an id and without a terminal it prints the resumable
-sessions as tab-separated lines (id, last update, workspace, mode, seen/total, newest first) and
-exits `0`, or exits `2` with nothing on stdout when there are none.
-
-Sessions write format 4 and read formats 2, 3, and 4. Old body strings stay plain text;
-typed parts, original explanation quotes, retained versions, and undelivered events keep
-their content. The original explanation file is not needed for resume. A non-live resume
-uses the frozen startup display version, retaining the highest issued generation and the
-explanation's original base. A live rescan publishes a new display version only after it
-succeeds and is saved; until a failed scan can be retried, Code is unavailable.
-
-## Adding an explanation
-
-An initial explanation is a separate file with `{sections:[...]}`, so it can
-accompany a manifest on stdin. Sections have `id`, plain `title`, and nonempty
-`blocks`. Each block has `id`, one typed `part`, and `references`. Section IDs
-are unique within the document; block IDs are unique across all sections.
-Use the [explanation contract](https://github.com/ba0918/kemi/blob/main/docs/spec/explanation.md) and
-[part fields and limits](https://github.com/ba0918/kemi/blob/main/docs/spec/content-parts.md) when creating
-these values. The server sets revision 1 and the initial metadata base. Valid
-whole-file references to the opposite range grouping are accepted before its
-full list is built; do not guess unknown total line counts from diff statistics.
-Invalid JSON/references or unavailable persistent storage exits 2 before the
-review is published. `--explanation` does not combine with `--digest`,
-`--result`, `--resume`, wait, reply, or explain.
-
-An initial document opens EXPLANATION instead of the mode's usual Code or
-Page start. Its left column is a contents list, and Conversation stays shared
-with the other views. Without a document the explanation switch is disabled
-until a later update adds one; that update offers a notice without changing
-the reader's view. Final state / Per commit is a Code-only switch.
-
-For a human handoff, write the change and its reason, the requested judgment, and any
-unverified points or caveats before sharing the URL, as described in
-[the handoff procedure](../SKILL.md#prepare-the-explanation-before-handing-off).
-A small change can use one text block with a few lines. For example, save this as
-`explanation.json`:
-
-```json
-{"sections":[{"id":"overview","title":"Review purpose","blocks":[{"id":"intent","part":{"type":"text","body":"Changed the button label from Save to Submit review so it describes the action.\nPlease judge whether the new wording makes the final submission clear.\nNot yet checked at narrow screen widths."},"references":[]}]}]}
-```
-
-Start a new review with the file, for example `kemi --worktree --explanation explanation.json`.
-Keep the explanation file outside the reviewed working tree if it is only handoff material;
-otherwise `--worktree` includes it as an untracked file. A successful startup has already
-validated and saved the file, so no separate check is needed before sharing the review URL.
-An existing or resumed review uses [the update procedure](conversation.md#updating-the-explanation)
-instead of `--explanation`.
 
 ## Writing a manifest
 

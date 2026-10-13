@@ -142,72 +142,7 @@ open a comment or resolve one; only the person does that.
    you were working, or the main `kemi` process exited). Then handle the result as usual: take
    it from the main process's stdout, or from `kemi --result`.
 
-## Updating the explanation
-
-Use reply for an ordinary question or additional information in a thread. Update the
-explanation whenever changes make its description, judgment points, or caveats stale,
-keeping it aligned with what the review actually shows. Use explain for that update,
-a correction, or an agreed change to the document itself. Updating the document does
-not resolve its threads; only the person resolves them.
-
-```text
-kemi explain <id> --context
-kemi explain <id> --file update.json
-kemi explain <id> < update.json
-```
-
-Context reads no stdin. It returns one version-3 JSON object with `review`,
-`diff_display_version`, `explanation_revision`, the current saved `explanation`
-or null, and `references:{code,pages}`. Code entries carry `unit`, `group_id`,
-`path`, side-presence booleans `old_present`/`new_present`, and nullable total
-line counts `old_lines`/`new_lines`. Pages are registered live `{url}` values.
-Context is one consistent server metadata read. It neither provides all file
-contents nor updates a reader's Code display; it is refused with a reason
-while a required grouping is not ready.
-
-An update is `{expected_revision,base_display_version,sections}`. Use 0 for
-an absent explanation, otherwise `explanation_revision` from context. For an explanation
-of the current review, use context's `diff_display_version` as `base_display_version`
-and replace the complete `sections` with the intended document. Success prints
-`{revision,base_display_version}` and exits 0. `--file` excludes `--context`.
-Confirm both the success JSON and exit code before reporting the update as saved; that
-confirmation is enough to share the review URL after adding a missing explanation.
-In a commit range, context is refused until the other grouping is built, which starts
-when the page is first opened. If context is refused for that reason before a handoff,
-ask the person to open the review page, then read context again and update.
-Invalid JSON, duplicate keys, references, limits, revision conflicts, or save
-failures print no success JSON, report a reason on stderr, and exit 2.
-Concurrent requests with the same expected revision accept only one. Submit
-and explanation updates are ordered; after submit claims the review, an
-update is refused. Successful updates are saved atomically before notifying
-readers.
-
-Current-base Code references must match an exact group/path/unit and existing
-side; line references need known total lines. A known older base accepts Code
-reference shapes without claiming historical existence. Page references must
-already be registered, even for an older base. Context and explain share the
-local same-user endpoint protection of wait/reply. They do not answer a hand,
-clear its working line, reset the response clock, or add conversation events.
-Reply to the question separately when a reply is needed.
-Code references use `unit: "file"` or `"commit"` in a commit range, and null
-otherwise, for old bases too. A known base can still be used to update an
-explanation while resumed Code is unavailable; context is refused until a
-successful scan provides metadata again. The first argument `explain` selects
-the subcommand; a manifest of that name is `./explain`.
-
-An explanation update sends a notice. A reader's open revision and reading
-position stay put until they open the notice. References use that screen's
-imported Code list or an already registered live Page; unavailable targets
-show a reason without automatically importing a newer Code list. Returning
-from a reference keeps the original explanation revision and position.
-The open revision's freshness and the new notice's freshness are compared
-separately with the screen's Code token. Matching bases offer an information
-detail about the lack of byte and correctness guarantees; different bases
-show a separate notice with both versions. Context always describes the
-server's current metadata, not any particular reader's Code display.
-The screen uses known side presence and total lines for a Code reference;
-status labels alone do not establish them. A failed target load or changed
-line range gives a reason rather than silently shortening the range.
+## Hand-over status
 
 The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
 is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your

@@ -6,174 +6,109 @@ license: MIT OR Apache-2.0
 
 # kemi
 
-kemi serves a review page, by default on `127.0.0.1` only. `--bind` can expose it to the
-LAN, and kemi then warns that the URL and the API are plain HTTP. The user can comment on
-changes and submit **Approve** or **Request changes**. It then prints one result JSON
-document to stdout and exits. It does not apply suggestions or edit the reviewed files.
-
-Complete the review handoff by collecting the exit code and result, reading the comments,
-and acting or reporting within the user's requested scope. Sharing the URL is an intermediate
-step. If the run fails or is interrupted, report that outcome instead of a verdict.
-Follow the environment's presentation conventions when provided.
+kemi serves a review page where the person comments and submits **Approve** or **Request
+changes**. It prints one result JSON to stdout and exits; it never applies suggestions or
+edits reviewed files. Sharing the URL is an intermediate step: collect the exit code and
+result, read the comments, then act or report within the requested scope. Failure or
+interruption is not a verdict. Follow the environment's presentation conventions.
 
 ## Choose the input
 
-Use one input mode per run:
+Use one input mode per run and leave out already reviewed work:
 
 | Review target | Command |
 |---|---|
 | Commits since a base | `kemi --from <base> [--to <head>]` |
 | Working tree, including untracked files | `kemi --worktree` |
 | Staged changes | `kemi --staged` |
-| A running page on a loopback dev server, or a local HTML file, with the working tree | `kemi --live <url\|file>` |
+| Running loopback page or local HTML, with the working tree | `kemi --live <url\|file>` |
 | Drafts or groups you define | `kemi <manifest.json>` or `kemi -` for stdin |
 
-Read [the input reference](references/inputs.md) when writing a manifest, choosing commit
-presentation, adding focus marks, reviewing a running page with `--live`, or surveying a large
-change with `--digest`. It also covers
-`--no-open`, `--port`, `--bind`, and `--base`. Choose a review scope that leaves out already
-reviewed work.
-For approval, identify the exact bytes being approved; the manifest's `approval` field is
-returned unchanged, not checked by kemi.
+Read [inputs](references/inputs.md) for manifests, commit grouping, focus marks, `--live`,
+`--digest`, or optional flags. Use `--no-open` when a browser should not appear on the
+person's machine. The default bind is `127.0.0.1`; use `--bind` only for intended network
+exposure (the URL and API are plain HTTP). For approval, identify the exact bytes; a
+manifest's `approval` is returned unchanged, not checked by kemi.
 
 ## Prepare the explanation before handing off
 
-When handing a review to a person for judgment or approval, include an explanation in the
-review before sharing its URL. State what changed and why, what the person should judge,
-and any unverified points or caveats. A few lines are enough for a small change; add a diagram
-only when it helps explain the decision. This requirement is for human review handoffs, not
-for inspecting a diff yourself, running `--digest`, or retrieving a stored result.
+For a human judgment or approval handoff, save an explanation in the review before sharing
+its URL. State what changed and why, what the person should judge, and unverified points or
+caveats. Separate independently judgeable points into commentable blocks; one short text
+block is enough for a small change. Use typed Code references where they help the person
+inspect evidence, not hashes as navigation. A diagram is optional, not a required chapter.
+This requirement does not apply to self-inspection, `--digest`, or stored-result retrieval.
 
-For a new review, write the explanation file first and pass `--explanation <file>` with the
-chosen input mode; do not start a human review without it. It reads a separate JSON file even
-when the manifest comes from stdin. Startup validates and saves it: an invalid file exits `2`
-before any URL is printed, so once stderr prints `kemi: review <id>` the explanation is saved.
-Read [the input reference](references/inputs.md) for the section/block structure, a short
-example, and excluded flag combinations.
-For an already running or resumed review, add or update the explanation with the update
-procedure below; do not combine `--resume` with `--explanation`.
+Read [explanation authoring](references/explanation.md#adding-an-explanation) before a new
+handoff: write a separate JSON file with only `sections`, then pass `--explanation <file>`
+with the input mode. Startup validates and saves it before publishing the review; failure
+exits `2` before any URL. Do not fetch context for a review that has not started.
+For an already running or resumed review, read [the update procedure](references/explanation.md#updating-the-explanation)
+instead; `--resume` cannot take `--explanation`.
 
 ## Run and wait
 
-Start `kemi` with stdout in its own file and stderr readable separately, choosing an execution
-method that keeps the process alive until the user submits the review. Retain the run's
-identifier and output paths. A tool that yields while the process keeps running is not the
-process ending.
+Start kemi with stdout in its own file and stderr readable separately. Use an execution
+method that keeps the main process alive until submit, and retain its identifier and output
+paths. A tool yielding while the process runs is not the process ending; empty stdout means
+no result yet. If the environment cannot preserve the process and collect its result, report
+that limitation rather than inventing a verdict.
 
-Read the `kemi: <url>` line from stderr. Share it for a human handoff only when the run was
-started with `--explanation`, or after an explanation update printed its success JSON and exited
-`0`. If startup fails on the explanation, fix the file and start again; if an update fails, fix
-or report the failure rather than handing off a review without its explanation. Then send the
-review URL to the user in a progress message.
-stderr also reports the result storage directory, followed by `kemi: review <id>` when the
-review can hold a conversation (see below). Explain the groups, what needs judgment,
-any assumptions, and that **Approve** or **Request changes** submits the review.
+Read `kemi: <url>` from stderr. Share it in a progress message only after successful startup
+with `--explanation`, or after an explanation update printed success JSON and exited `0`.
+Fix or report failures before handoff. Tell the person what needs judgment and that **Approve**
+or **Request changes** submits the review. stderr also reports the result storage directory
+and, when conversation is available, `kemi: review <id>`.
 
-Wait for the same process to exit using the execution environment's normal process lifecycle.
-Do not terminate or replace the run merely to check its status, and avoid rapid status checks.
-Keep the turn active unless completion notifications are confirmed to resume you automatically;
-otherwise retain the run's identifier and keep using the environment's wait and output
-mechanisms.
+Keep waiting for that same main process through the environment's normal wait/output
+mechanisms; do not terminate or replace it to check status, or check rapidly. Keep the turn
+active unless completion notifications are confirmed to resume you automatically.
 
-After the process exits, collect its exit code and stdout. For a submitted result, use
-[the result reference](references/results.md) to interpret the JSON and handle comments. A
-comment on a running page (`--live`) carries `page` (its URL, width, and numbered places) instead
-of a file and lines; the image of its places is a path only in what `kemi wait` returned.
-
-If the execution environment cannot preserve a long-running process and later collect its
-result, report that limitation instead of inventing a verdict.
-
-| Exit code | Outcome | What to read |
+| Exit code | Outcome | Read |
 |---|---|---|
-| `0` | Approved | Result JSON, including any comments |
-| `1` | Changes requested | Result JSON; this is not an execution failure |
+| `0` | Approved | Result JSON, including comments |
+| `1` | Changes requested, not execution failure | Result JSON |
 | `2` | Startup, usage, or runtime error | stderr; stdout is empty |
-| `130` | Interrupted before submit | No result; stderr may carry the resume line |
+| `130` | Interrupted before submit | No result; stderr may give a resume command |
 
-Keep the process alive while the user reads. An interrupted review is not lost: the comments,
-seen marks, folding, and resolutions are saved in a session, and stderr prints one line,
-`kemi: resume with: kemi --resume <id>`, when the session can be reopened. Only a session whose
-copy completed within the size limit can be reopened; one whose copy is unfinished or too large
-keeps the state alone and stays out of the list and `--resume`, and a review with nothing to
-keep leaves no session. A `--live` review keeps no copy: it is kept only when it holds a
-comment, a reply, a message, or an explanation. An empty stdout file while the process runs means no result has
-arrived yet.
-
-If the user approves in the conversation instead of submitting on the page, record it as a
-conversation decision. Stop only your own run by its retained identifier, never by process
-name; that path yields no review JSON. The review stays as a session when it has state or a
-copy to keep, so report the resume command if stderr printed one and the user may want to
-continue.
+If the user approves in chat rather than submitting, record a conversation decision, not a
+kemi verdict. Stop only your own run by its retained identifier, never by process name;
+that path yields no review JSON. Report any printed resume command if continuation matters.
 
 ## Talk with the person before the submit
 
-When stderr printed `kemi: review <id>`, the person can hand you comments, replies, and notes
-while the review is still open, and you can answer in the page. Run `kemi wait <id>` in the
-background; it returns what the person handed over (or the submit) as JSON. Address it, answer
-with `kemi reply <id>` (JSON on stdin), and wait again until the submit arrives. Keep waiting for
-the main `kemi` process as well: its exit code and stdout stay the result of the review. Read
-[the conversation reference](references/conversation.md) for the commands, the JSON, the exit
-codes, and the limits. Without the review line, or if you never call `kemi wait`, the review
-is submit-only as before.
+When stderr prints `kemi: review <id>`, read [conversation](references/conversation.md) and
+run `kemi wait <id>` in the background. Read handed comments, replies, and notes; address
+them within scope, answer with `kemi reply <id>` (JSON on stdin), then wait again until submit.
+This loop is independent of waiting for the main process: its exit code and stdout remain
+the review result. Without the review line or a call to wait, the review is submit-only.
 
-Use `kemi explain <id> --context` for the server's current metadata reference
-map, then `kemi explain <id> --file <file>` or stdin JSON to replace the whole
-explanation with an expected revision and known display base. These operations
-do not answer a handed thread or create wait events. `kemi reply` accepts old
-plain `body` or ordered typed `parts`, exactly one key. Read the conversation
-reference for the input rules, conflicts, and failure behavior.
-Answer ordinary questions with reply. Update the explanation with explain whenever a change
-makes its account of the review, judgment points, or caveats stale; also use it for a correction
-or agreed change to the document itself. Keep it aligned with what the review actually shows,
-not merely with newer files outside that review. Confirm the update's success JSON and exit
-code before reporting it as saved; send a thread reply as well when one is needed.
-Readers keep their current revision until they open the update notice, and
-their Code lists do not refresh just because an explanation changed.
+Reply to ordinary questions. When the explanation's account, judgment points, or caveats
+become stale, read [explanation updates](references/explanation.md#updating-the-explanation)
+and replace the document to match what the review actually shows, not merely newer files.
+Confirm success JSON and exit `0` before claiming it saved. Explain does not reply to or
+resolve a thread; send a reply separately when needed. Readers keep their open explanation
+until opening the notice, and displayed Code does not auto-refresh with an explanation update.
 
 ## Resume an interrupted review
 
-When a run ends without a submit and the user still wants that review, continue it instead
-of starting over:
-
-```text
-kemi --resume <id>     # from any directory; the id comes from the resume line
-kemi --resume          # in a terminal: choose from the list of sessions
-```
-
-Resuming shows the diff as it was when the review started, with the seen marks, folding,
-comments, and resolutions restored. The original input is not read again, so editing the
-working tree or moving away from the repository does not change the page; only origin notes
-read "Cannot determine" if the repository is gone. Live reload and its update badge are off.
-A `--live` review is the exception: resuming it reads the working tree as it is then, keeps live
-reload and the update badge, and connects to the same page again
-([the input reference](references/inputs.md)).
-Typed parts and complete original explanation quotes survive resume without the original
-explanation input file. A non-live resume uses the frozen startup display version; it does
-not attach an explanation to a different base. A live rescan issues a new display version
-only on success, and leaves Code unavailable after failure until a retry succeeds.
-Resuming continues the same session rather than creating one, and a submit that follows
-writes its result for the workspace the review was started from, with the manifest
-`approval` unchanged.
-
-Without an id and without a terminal, `kemi --resume` prints the resumable sessions as one
-tab-separated line each — id, last update, workspace, mode, seen/total, newest first — and
-exits `0`; with none it exits `2`. In a terminal, cancelling the chooser (Esc or Ctrl+C) also
-exits `130`; no review starts and no resume line is printed. `--resume` takes only `--port`,
-`--bind`, `--no-open`, `--serve`, and `--live-port`; pairing it with an input mode or `--digest` is a usage
-error (exit `2`), and `--digest` / `--result` never create sessions.
+When the user still wants an interrupted review, continue the same id with `kemi --resume <id>`
+from stderr's resume line, rather than rebuilding it. Read [resume](references/resume.md)
+for eligibility, chooser/flag rules, and restored versions. Non-live resume shows the frozen
+startup diff; `--live` is the exception and rereads the working tree and reconnects the page.
 
 ## Handle the result
 
-Check the JSON contract version (`kemi: 3` for new result/wait output) and that `verdict` agrees with the exit code. Do
-not guess at a version you do not know; a stored version 1 or 2 result is printed by
-`kemi --result` exactly as it was stored.
-Read comments on both approval and requests for changes. Before using an approval, compare
-its identities with the current bytes. Before applying a suggestion, compare its `quote`
-with the file; locate outdated comments by their text rather than trusting old line numbers.
-Use the result reference for field details and `kemi --result` recovery if stdout was lost.
-Keep typed `parts` intact when reading replies or messages. An explanation comment refers
-to an original revision and a complete block quote, rather than a file path. Its
-`selection` (the text the person selected, or null) is a hint to the place in the block;
-the block quote stays authoritative. The display
-version identifies metadata; it guarantees neither fixed file bytes nor explanation correctness.
-Recovery retrieves a stored result; it does not wait for the current review to finish.
+After the main process exits, collect its exit code and stdout and read
+[results](references/results.md) for field interpretation or `kemi --result` recovery.
+Check the contract version (`kemi: 3` for new result/wait output) and that `verdict` matches
+the exit code. Do not guess unknown versions; stored version 1 or 2 results are returned
+unchanged. Recovery retrieves a stored result, not the current review's eventual submit.
+
+Read comments on approvals as well as change requests. Compare approval identities with
+current bytes before using approval, and suggestion `quote` with the file before applying
+it. Locate outdated comments by their text rather than old line numbers. Keep typed `parts`
+intact. Explanation comments quote a complete original block/revision; `selection` is only
+a location hint. A display version identifies metadata, not fixed bytes or correctness.
+For `--live` page comments, read the numbered places and their image from wait before submit;
+the result does not retain that image path.
