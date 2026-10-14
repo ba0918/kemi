@@ -18,12 +18,19 @@ Actions画面の `Pages` から手動実行もできます。公開対象は `si
 JavaScript無効時は英語を表示します。file URLでの保存可否はブラウザに依存します。
 本文・操作・代替テキスト・文書言語・タイトルを揃えて切り替えます。
 製品UIの英語は元のまま、サンプルデータは日英それぞれを撮影しています。
-実画面は `web/` の未変更のフロントエンドに架空の読み取り専用データを渡して
-Chromeで撮影しました。製品の動作確認全般を代替するものではありません。
-JSONは説明用の抜粋であり、完全なスキーマはREADMEのSubmit contractを参照。
+実画面は公開 v0.3.2 のWindowsバイナリを起動し、架空のmanifestと初期Explanationを
+渡してChromiumで撮影しました。日英のデスクトップは1440×650、モバイルは390×780です。
+実際の `kemi wait`、Hand to agent、`kemi reply` で質問と返答を表示しています。
+デスクトップは差分とConversation、モバイルはConversationのシートを示します。
+製品の動作確認全般を代替するものではありません。
+JSONは形式3の説明用の抜粋です。省略された必須フィールドもあるため、完全な結果を
+処理する際は[結果の参照資料](../skills/kemi/references/results.md)を参照してください。
 
-確認元: リポジトリの README.md / PROJECT.md / web/、
-commit `3e57a20a8cbc8af138f0231638bf5a6c135f7472`。
+確認元: リポジトリの README.md / README-ja.md / PROJECT.md / web/、
+skills/kemi のExplanation・会話・結果の参照資料、docs/spec/ の現行契約。
+commit `436d362d7fb5145de085ff5bbd50735f3331314d` の実行コードとweb/はv0.3.2と一致します。
+初期Explanationは `--explanation <file>` で起動時に保存します。
+起動前に `explain --context` を呼ぶ手順はありません。
 `--resume` による新しい差分へのコメント引き継ぎは紹介していません。
 
 ページ中の開閉はブラウザ標準の details/summary、移動はアンカーです。
