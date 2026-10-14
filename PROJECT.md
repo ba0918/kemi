@@ -69,6 +69,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Install（利用者） | `mise use -g github:ba0918/kemi`（リリース後） |
 | Build | `cargo build --release` |
 | Test | `cargo test` / `node --test web` |
+| スキルの context 読み取り補助（Python 3.9+、標準ライブラリのみ） | `python3 -m unittest discover -s tests -p 'test_context_summary.py'` |
 | Lint | `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo fmt --all --check` / `npx tsc -p web --noEmit` |
 | スキルの形式 | `scripts/check-skill-format.sh`（uv が要る。skills-ref はハッシュ付きの `scripts/skills-ref-requirements.txt` から入れる） |
 | スキルの frontmatter（ASCII だけ・項目は 3 つ） | `scripts/check-skill-frontmatter.sh` |

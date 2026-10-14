@@ -183,3 +183,29 @@ keeps the original explanation revision/position. The open revision's freshness 
 notice's freshness are compared separately with that screen's Code version. Matching bases
 do not guarantee fixed file bytes or explanation correctness; context describes the server,
 not what every reader has imported.
+
+## Reading a large context
+
+Keep the complete context in a private, ignored file; do not commit it. To reduce model input,
+read an outline first and then select exact code paths or complete explanation blocks with
+the bundled Python 3.9+ helper. `<skill-directory>` is this installed skill's directory.
+
+```text
+kemi explain <id> --context > <private-context.json>
+python3 <skill-directory>/scripts/context_summary.py <private-context.json>
+python3 <skill-directory>/scripts/context_summary.py <private-context.json> --path src/a.rs --block intent
+```
+
+The default view reports identity, current display version/revision, available counts, and
+section/block IDs without bodies or full reference lists. Repeat `--path`, `--block`, or
+`--page` to read specific items. A path returns every matching group/unit, not an arbitrarily
+chosen match. Selected blocks retain complete typed parts and references. Missing selections
+or invalid input exit `2` with empty stdout; success exits `0` with one compact JSON object.
+
+`projection:true` marks a reading view, **not** the context contract or an update payload.
+The helper makes no requests and does not change the saved input. Build a complete replacement
+from the retained original `explanation.sections`, preserving unselected sections and blocks;
+never send only `selected_sections` as the replacement. Read all details needed for the change,
+and retrieve fresh context after a conflict. This reduces text loaded into the model, not the
+server's response size. Without Python, read the retained JSON selectively using the environment's
+existing tools rather than treating an incomplete view as the full document.

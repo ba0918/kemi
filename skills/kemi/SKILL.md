@@ -46,6 +46,10 @@ exits `2` before any URL. Do not fetch context for a review that has not started
 For an already running or resumed review, read [the update procedure](references/explanation.md#updating-the-explanation)
 instead; `--resume` cannot take `--explanation`.
 
+For large running-review contexts, use [selective context reading](references/explanation.md#reading-a-large-context)
+instead of loading every reference and explanation body. The optional bundled
+`scripts/context_summary.py` runs with Python 3.9+ (`python3`), using only its standard library.
+
 ## Run and wait
 
 Start kemi with stdout in its own file and stderr readable separately. Use an execution
