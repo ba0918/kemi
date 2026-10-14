@@ -11,11 +11,12 @@ use kemi_core::domain::explanation::{
     ExplanationVersion, ReferenceContext, ReferenceUnit, RetainedVersions, history_candidate,
     validate_update, validate_version,
 };
-use kemi_core::domain::review::{Comment, CommentTarget, GroupBy, ReviewMeta, Status};
+use kemi_core::domain::review::{Comment, CommentTarget, GroupBy};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{ApiError, ensure_display_persisted};
+use crate::explanation::reference_map;
 use crate::{AppState, Event, PersistGuarded, SubmitState};
 
 #[derive(Deserialize)]
@@ -24,118 +25,6 @@ pub(crate) struct Update {
     expected_revision: u64,
     base_display_version: String,
     sections: Vec<ExplanationSection>,
-}
-
-pub(crate) fn initial_history(
-    document: ExplanationDocument,
-    source: &dyn kemi_core::source::ReviewSource,
-    review: &ReviewMeta,
-    units: &[GroupBy],
-    display: &kemi_core::domain::display_version::DisplayVersions,
-    review_id: &str,
-    pages: &[String],
-) -> Result<ExplanationHistory, crate::ServerError> {
-    use kemi_core::domain::explanation::ExplanationReference;
-    let mut code = reference_map(review, units.first().copied(), source);
-    let requested: Vec<_> = document
-        .sections
-        .iter()
-        .flat_map(|section| &section.blocks)
-        .flat_map(|block| &block.references)
-        .filter_map(|reference| match reference {
-            ExplanationReference::Code {
-                unit: Some(unit),
-                group_id,
-                path,
-                ..
-            } if Some(match unit {
-                ReferenceUnit::File => GroupBy::File,
-                ReferenceUnit::Commit => GroupBy::Commit,
-            }) != units.first().copied() =>
-            {
-                Some((*unit, group_id.clone(), path.clone()))
-            }
-            ExplanationReference::Code { .. } | ExplanationReference::Page { .. } => None,
-        })
-        .collect();
-    code.extend(
-        source
-            .select_references(&requested)
-            .map_err(crate::ServerError::Source)?,
-    );
-    let revision = validate_update(
-        &document,
-        0,
-        0,
-        &display.current,
-        &ReferenceContext {
-            review_id,
-            current_token: Some(&display.current),
-            range: !units.is_empty(),
-            issued_generation: display.issued,
-            code: &code,
-            pages,
-        },
-    )
-    .map_err(|error| crate::ServerError::Stopped(error.to_string()))?;
-    let version = ExplanationVersion {
-        revision,
-        base_display_version: display.current.clone(),
-        sections: document.sections,
-    };
-    validate_version(&version).map_err(|error| crate::ServerError::Stopped(error.to_string()))?;
-    Ok(ExplanationHistory {
-        current_revision: revision,
-        versions: vec![version],
-    })
-}
-
-pub(crate) fn reference_map(
-    meta: &ReviewMeta,
-    unit: Option<GroupBy>,
-    source: &dyn kemi_core::source::ReviewSource,
-) -> Vec<CodeReferenceEntry> {
-    let unit = unit.map(|unit| match unit {
-        GroupBy::File => ReferenceUnit::File,
-        GroupBy::Commit => ReferenceUnit::Commit,
-    });
-    meta.groups
-        .iter()
-        .flat_map(|group| {
-            group.files.iter().map(move |file| {
-                let known = entry_reference_metadata(file, source);
-                CodeReferenceEntry {
-                    unit,
-                    group_id: group.id.clone(),
-                    path: file.path.clone(),
-                    old_present: known.old_present,
-                    new_present: known.new_present,
-                    old_lines: known.old_lines,
-                    new_lines: known.new_lines,
-                }
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn entry_reference_metadata(
-    file: &kemi_core::domain::review::FileEntry,
-    source: &dyn kemi_core::source::ReviewSource,
-) -> kemi_core::source::ReferenceMetadata {
-    let mut known =
-        source
-            .reference_metadata(&file.id)
-            .unwrap_or(kemi_core::source::ReferenceMetadata {
-                old_present: file.status != Status::Add,
-                new_present: file.status != Status::Delete,
-                old_lines: None,
-                new_lines: None,
-            });
-    if file.binary || file.content_skipped {
-        known.old_lines = None;
-        known.new_lines = None;
-    }
-    known
 }
 
 fn current_map(state: &AppState) -> Result<Vec<CodeReferenceEntry>, ApiError> {

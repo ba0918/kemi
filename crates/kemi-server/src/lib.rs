@@ -4,6 +4,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod api;
+mod explanation;
 mod highlight;
 mod lan;
 mod live;
@@ -622,7 +623,7 @@ fn initial_session_state(
                     vec![format!("/{}", kemi_core::domain::live::url_path(path))]
                 }
             });
-        initial_state.explanation = Some(api::explanation::initial_history(
+        initial_state.explanation = Some(explanation::initial_history(
             document,
             initial_source.as_ref(),
             &review,

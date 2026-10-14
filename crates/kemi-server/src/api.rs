@@ -370,7 +370,7 @@ async fn review(
                     .as_array_mut()
                     .expect("review files are arrays"),
             ) {
-                let known = explanation::entry_reference_metadata(file, source.as_ref());
+                let known = crate::explanation::entry_reference_metadata(file, source.as_ref());
                 output["old_present"] = json!(known.old_present);
                 output["new_present"] = json!(known.new_present);
                 output["old_lines"] = json!(known.old_lines);
