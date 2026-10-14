@@ -303,25 +303,7 @@ pub(crate) fn text_stats(
         crate::domain::content::lines(&String::from_utf8_lossy(old.as_deref().unwrap_or_default()));
     let new_lines =
         crate::domain::content::lines(&String::from_utf8_lossy(new.as_deref().unwrap_or_default()));
-    let rows = crate::domain::diff::align(&old_lines, &new_lines);
-    let add = rows
-        .iter()
-        .filter(|row| {
-            matches!(
-                row.kind,
-                crate::domain::diff::RowKind::Insert | crate::domain::diff::RowKind::Replace
-            )
-        })
-        .count() as u32;
-    let del = rows
-        .iter()
-        .filter(|row| {
-            matches!(
-                row.kind,
-                crate::domain::diff::RowKind::Delete | crate::domain::diff::RowKind::Replace
-            )
-        })
-        .count() as u32;
+    let (add, del) = crate::domain::diff::line_stats(&old_lines, &new_lines);
     (false, add, del, old_size, new_size)
 }
 

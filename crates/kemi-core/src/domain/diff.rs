@@ -194,6 +194,28 @@ pub fn align(old: &[String], new: &[String]) -> Vec<Row> {
     rows
 }
 
+pub(crate) fn line_stats(old: &[String], new: &[String]) -> (u32, u32) {
+    let old_refs: Vec<&str> = old.iter().map(String::as_str).collect();
+    let new_refs: Vec<&str> = new.iter().map(String::as_str).collect();
+    let diff = TextDiff::from_slices(&old_refs, &new_refs);
+    let mut added = 0;
+    let mut deleted = 0;
+    for op in diff.ops() {
+        match *op {
+            DiffOp::Equal { .. } => {}
+            DiffOp::Delete { old_len, .. } => deleted += old_len as u32,
+            DiffOp::Insert { new_len, .. } => added += new_len as u32,
+            DiffOp::Replace {
+                old_len, new_len, ..
+            } => {
+                deleted += old_len as u32;
+                added += new_len as u32;
+            }
+        }
+    }
+    (added, deleted)
+}
+
 /// 置換された 1 行の左右を単語単位で対応させ、強調する断片に分ける。
 pub fn diff_segments(old: &str, new: &str) -> (Vec<Segment>, Vec<Segment>) {
     let diff = TextDiff::from_words(old, new);
@@ -282,6 +304,44 @@ mod tests {
 
     fn numbered(prefix: &str, count: usize) -> Vec<String> {
         (0..count).map(|i| format!("{prefix}{i}")).collect()
+    }
+
+    #[test]
+    fn line_statistics_match_displayed_additions_and_deletions_for_short_sequences() {
+        let mut inputs = vec![Vec::new()];
+        for length in 1..=4 {
+            for bits in 0..(1 << length) {
+                inputs.push(
+                    (0..length)
+                        .map(|i| {
+                            if bits & (1 << i) == 0 {
+                                "a".to_string()
+                            } else {
+                                "b".to_string()
+                            }
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for old in &inputs {
+            for new in &inputs {
+                let rows = align(old, new);
+                let added = rows
+                    .iter()
+                    .filter(|row| matches!(row.kind, RowKind::Insert | RowKind::Replace))
+                    .count();
+                let deleted = rows
+                    .iter()
+                    .filter(|row| matches!(row.kind, RowKind::Delete | RowKind::Replace))
+                    .count();
+                assert_eq!(
+                    line_stats(old, new),
+                    (added as u32, deleted as u32),
+                    "{old:?} -> {new:?}"
+                );
+            }
+        }
     }
 
     #[test]
