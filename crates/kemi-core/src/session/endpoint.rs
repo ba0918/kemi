@@ -24,12 +24,12 @@ pub fn endpoint_path(dir: &Path, id: &str) -> PathBuf {
 
 /// `<id>.endpoint` を所有者だけが読める形で書く（unix は `0600`）。
 pub fn write_endpoint(dir: &Path, id: &str, endpoint: &Endpoint) -> Result<PathBuf, SessionError> {
-    super::store::checked_id(id)?;
+    super::checked_id(id)?;
     let bytes = serde_json::to_vec(endpoint).map_err(|error| SessionError::Encode {
         reason: error.to_string(),
     })?;
     let path = endpoint_path(dir, id);
-    super::store::write_atomic(dir, &path, &bytes)?;
+    super::storage_io::write_atomic(dir, &path, &bytes)?;
     Ok(path)
 }
 
@@ -39,7 +39,7 @@ pub fn write_endpoint(dir: &Path, id: &str, endpoint: &Endpoint) -> Result<PathB
     reason = "std::io::ErrorKind は non_exhaustive で、列挙しきれない"
 )]
 pub fn read_endpoint(dir: &Path, id: &str) -> Result<Option<Endpoint>, SessionError> {
-    super::store::checked_id(id)?;
+    super::checked_id(id)?;
     let path = endpoint_path(dir, id);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
@@ -63,6 +63,6 @@ pub fn read_endpoint(dir: &Path, id: &str) -> Result<Option<Endpoint>, SessionEr
 
 /// `<id>.endpoint` を消す。無いのは成功と同じ。
 pub fn remove_endpoint(dir: &Path, id: &str) -> Result<(), SessionError> {
-    super::store::checked_id(id)?;
-    super::store::remove_if_present(&endpoint_path(dir, id))
+    super::checked_id(id)?;
+    super::storage_io::remove_if_present(&endpoint_path(dir, id))
 }

@@ -17,7 +17,11 @@ use std::time::{Duration, SystemTime};
 use super::encoding;
 use super::files::{self, FILES_LIMIT, PageSnapshot};
 use super::format::{CopyMeta, MetaDto};
-use super::{CopyState, SessionCopy, SessionInfo, SessionState, SessionSummary};
+use super::storage_io::{
+    create_private_dir, list_files, open_lock_file, remove_dir_if_present, remove_if_present,
+    write_atomic, write_private_file,
+};
+use super::{CopyState, SessionCopy, SessionInfo, SessionState, SessionSummary, checked_id};
 
 /// 写しの上限（`<id>.payload` 全体のバイト数）。超えた写しは捨てて復元不可にする。
 pub const COPY_LIMIT: u64 = 20 * 1024 * 1024;
@@ -347,16 +351,6 @@ fn session_path(dir: &Path, id: &str) -> PathBuf {
 
 fn payload_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.payload"))
-}
-
-/// 公開の入口で id を検証する（R-SESSION）。ULID でない id は存在しない id と同じ
-/// 理由にし、保存領域の外へパスを組み立てない。
-pub(crate) fn checked_id(id: &str) -> Result<&str, SessionError> {
-    if super::is_valid_id(id) {
-        Ok(id)
-    } else {
-        Err(SessionError::NotFound { id: id.to_string() })
-    }
 }
 
 /// 開いているセッション。ロックを保持し、状態か写しが変わるたびに書き直す。
@@ -817,27 +811,6 @@ pub enum FileWritten {
     Failed(SessionError),
 }
 
-/// `<id>.files/` の中のファイルの名前と大きさ。ディレクトリが無ければ空。
-fn list_files(dir: &Path) -> Result<Vec<(String, u64)>, SessionError> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => {
-            return Err(SessionError::Io {
-                path: dir.to_path_buf(),
-                source,
-            });
-        }
-    };
-    Ok(entries
-        .flatten()
-        .filter_map(|entry| {
-            let metadata = entry.metadata().ok().filter(std::fs::Metadata::is_file)?;
-            Some((entry.file_name().into_string().ok()?, metadata.len()))
-        })
-        .collect())
-}
-
 /// セッションのロック。`File::try_lock` を使うので、プロセスが死ねば OS が解放する。
 pub struct SessionLock {
     /// 開いている限りロックが生きる。
@@ -879,51 +852,9 @@ impl Drop for SessionLock {
     }
 }
 
-/// 一時ファイルへ書いてから rename する。一時ファイルの名前は、掃除が見る接尾辞
-/// （`.session` と `.payload`）で終わらせない。
-pub(crate) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
-    create_private_dir(dir)?;
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let temporary = dir.join(format!(".{name}.tmp"));
-    let written =
-        write_private_file(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, path));
-    if let Err(source) = written {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(SessionError::Io {
-            path: temporary,
-            source,
-        });
-    }
-    Ok(())
-}
-
 /// セッションに添えたファイルの置き場所（`<id>.files/`）。
 fn files_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.files"))
-}
-
-/// ディレクトリを中身ごと消す。無ければ何もしない。
-fn remove_dir_if_present(path: &Path) -> Result<(), SessionError> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(SessionError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
-}
-
-/// あれば消す。無いのは成功と同じに扱う。
-pub(crate) fn remove_if_present(path: &Path) -> Result<(), SessionError> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(SessionError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
 }
 
 /// 上限を超えた分を最終更新の古い順に消す。ロック中のセッションは消さず、件数とバイト数にも
@@ -1114,80 +1045,6 @@ fn is_locked(dir: &Path, id: &str) -> bool {
         Err(std::fs::TryLockError::WouldBlock) => true,
         Err(std::fs::TryLockError::Error(_)) => false,
     }
-}
-
-#[cfg(unix)]
-fn create_private_dir(dir: &Path) -> Result<(), SessionError> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .map_err(|source| SessionError::Io {
-            path: dir.to_path_buf(),
-            source,
-        })?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|source| {
-        SessionError::Io {
-            path: dir.to_path_buf(),
-            source,
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn create_private_dir(dir: &Path) -> Result<(), SessionError> {
-    std::fs::create_dir_all(dir).map_err(|source| SessionError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })
-}
-
-/// 所有者だけが読み書きできるファイル（0600）を新しく作る。あれば中身を捨てて作り直す。
-#[cfg(unix)]
-fn open_lock_file(path: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(path)
-}
-
-#[cfg(not(unix))]
-fn open_lock_file(path: &Path) -> std::io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-}
-
-#[cfg(unix)]
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(bytes)
-}
-
-#[cfg(not(unix))]
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    file.write_all(bytes)
 }
 
 #[cfg(test)]

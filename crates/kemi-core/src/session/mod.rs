@@ -16,6 +16,7 @@ mod encoding;
 mod endpoint;
 pub(crate) mod files;
 mod format;
+mod storage_io;
 mod store;
 mod ulid;
 
@@ -42,6 +43,15 @@ use crate::domain::live::LivePage;
 use crate::domain::parts_validation::validate_parts;
 use crate::domain::review::{Author, Comment, CommentTarget, GroupBy, Message, Reply, ReviewMeta};
 use crate::source::FileContent;
+
+/// ULID でない id は存在しない id として拒否し、保存領域の外へパスを組み立てない。
+fn checked_id(id: &str) -> Result<&str, SessionError> {
+    if is_valid_id(id) {
+        Ok(id)
+    } else {
+        Err(SessionError::NotFound { id: id.to_string() })
+    }
+}
 
 /// コミット範囲の端を完全な sha に解決する（R-SESSION）。起動時に 1 度だけ呼ぶ。
 pub fn resolve_range(repo: &Path, from: &str, to: &str) -> Result<(String, String), SessionError> {
