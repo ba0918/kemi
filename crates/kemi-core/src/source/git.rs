@@ -1,5 +1,10 @@
 //! git を読む入力ソース（R-INPUT-2〜4）。
 
+mod sizes;
+#[cfg(test)]
+use sizes::side_size;
+use sizes::side_sizes;
+
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -386,15 +391,33 @@ impl GitSource {
     ) -> (Vec<FileEntry>, Vec<PlannedFile>) {
         let mut files = Vec::new();
         let mut planned = Vec::new();
+        let prepared: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.binary)
+            .map(&sides)
+            .collect();
+        let binary_sides: Vec<_> = prepared.iter().flat_map(|(old, new)| [old, new]).collect();
+        let sizes = side_sizes(&binary_sides);
+        let mut sizes = sizes.into_iter();
+        let mut prepared = prepared.into_iter();
         for entry in entries {
+            let (old, new) = if entry.binary {
+                prepared
+                    .next()
+                    .expect("references prepared for each binary entry")
+            } else {
+                sides(entry)
+            };
             let id = self
                 .ids
                 .lock()
                 .expect("file id lock poisoned")
                 .get(group_id, &entry.path);
-            let (old, new) = sides(entry);
             let (old_size, new_size) = if entry.binary {
-                (side_size(&old), side_size(&new))
+                (
+                    sizes.next().expect("two sizes per binary entry"),
+                    sizes.next().expect("two sizes per binary entry"),
+                )
             } else {
                 (0, 0)
             };
@@ -441,6 +464,69 @@ impl GitSource {
 mod candidate_tests {
     use super::*;
     use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn batched_side_sizes_preserve_missing_objects_and_unusual_paths() {
+        let repo = TempRepo::new();
+        #[cfg(unix)]
+        let raw_name = {
+            use std::os::unix::ffi::OsStrExt;
+            OsStr::from_bytes(b"binary-\xff.bin")
+        };
+        let names = [OsStr::new("plain.bin"), OsStr::new("with space.bin")];
+        for name in names {
+            std::fs::write(repo.path.join(name), [0, 1, 2]).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            std::fs::write(repo.path.join(raw_name), [0, 1, 2, 3]).unwrap();
+            std::fs::write(repo.path.join("with\nnewline.bin"), [0, 1, 2]).unwrap();
+        }
+        repo.add_and_commit("binary files");
+        let mut sides: Vec<_> = names
+            .iter()
+            .map(|name| SideRef::Git {
+                repo: repo.path.clone(),
+                spec: git_spec("HEAD:", Path::new(name)),
+            })
+            .collect();
+        #[cfg(unix)]
+        {
+            sides.push(SideRef::Git {
+                repo: repo.path.clone(),
+                spec: git_spec("HEAD:", Path::new(raw_name)),
+            });
+            sides.push(SideRef::Git {
+                repo: repo.path.clone(),
+                spec: git_spec("HEAD:", Path::new("with\nnewline.bin")),
+            });
+        }
+        sides.extend([
+            SideRef::Git {
+                repo: repo.path.clone(),
+                spec: OsString::from("HEAD:missing.bin"),
+            },
+            SideRef::Git {
+                repo: repo.path.clone(),
+                spec: OsString::from(":plain.bin"),
+            },
+            SideRef::Absent,
+            SideRef::Inline(vec![0; 7]),
+            SideRef::Disk(repo.path.join("plain.bin")),
+            SideRef::Disk(repo.path.join("missing.bin")),
+        ]);
+        let expected: Vec<_> = sides.iter().map(side_size).collect();
+        assert_eq!(side_sizes(&sides.iter().collect::<Vec<_>>()), expected);
+        let other = TempRepo::new();
+        std::fs::write(other.path.join("plain.bin"), [0; 5]).unwrap();
+        other.add_and_commit("other repository");
+        sides.push(SideRef::Git {
+            repo: other.path.clone(),
+            spec: OsString::from("HEAD:plain.bin"),
+        });
+        let expected: Vec<_> = sides.iter().map(side_size).collect();
+        assert_eq!(side_sizes(&sides.iter().collect::<Vec<_>>()), expected);
+    }
 
     #[test]
     fn unaccepted_candidate_cannot_replace_published_content_references() {
@@ -1382,25 +1468,6 @@ pub(crate) fn split_z(bytes: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-fn side_size(side: &SideRef) -> u64 {
-    match side {
-        SideRef::Absent => 0,
-        SideRef::Inline(bytes) => bytes.len() as u64,
-        SideRef::Disk(path) => std::fs::metadata(path).map_or(0, |meta| meta.len()),
-        SideRef::Git { repo, spec } => git_raw_os(
-            repo,
-            &[OsStr::new("cat-file"), OsStr::new("-s"), spec.as_os_str()],
-        )
-        .ok()
-        .and_then(|text| {
-            std::str::from_utf8(&text)
-                .ok()
-                .and_then(|text| text.trim().parse().ok())
-        })
-        .unwrap_or(0),
-    }
-}
-
 fn read_attributes(repo: &Path) -> String {
     std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default()
 }
@@ -1514,6 +1581,45 @@ mod tests {
     use super::*;
     use crate::domain::review::Side;
     use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn binary_metadata_keeps_old_and_new_sizes_across_worktree_index_and_range() {
+        let repo = TempRepo::new();
+        for i in 0..4 {
+            std::fs::write(repo.path.join(format!("file-{i}.bin")), vec![0; 1024]).unwrap();
+        }
+        let base = repo.add_and_commit("base");
+        for i in 0..4 {
+            std::fs::write(repo.path.join(format!("file-{i}.bin")), vec![0; 2048]).unwrap();
+        }
+        for mode in [
+            GitMode::Worktree,
+            GitMode::Staged,
+            GitMode::Range {
+                from: base,
+                to: "HEAD".into(),
+                group_by: GroupBy::File,
+            },
+        ] {
+            match mode {
+                GitMode::Worktree => {}
+                GitMode::Staged => {
+                    repo.git(&["add", "."]);
+                }
+                GitMode::Range { .. } => {
+                    repo.git(&["commit", "-q", "-m", "larger binaries"]);
+                }
+            }
+            let review = source(&repo, mode).review().unwrap();
+            assert_eq!(review.groups[0].files.len(), 4);
+            assert!(
+                review.groups[0]
+                    .files
+                    .iter()
+                    .all(|f| f.old_size == 1024 && f.new_size == 2048)
+            );
+        }
+    }
 
     fn source(repo: &TempRepo, mode: GitMode) -> GitSource {
         GitSource::new(repo.path.clone(), mode)
