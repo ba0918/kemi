@@ -308,7 +308,7 @@ impl SessionStore {
         payload_path(&self.dir, id)
     }
 
-    fn read_meta_of(&self, id: &str) -> Result<MetaDto, SessionError> {
+    fn read_meta_of(&self, id: &str) -> Result<MetaDto<'static>, SessionError> {
         match read_meta(&self.path(id)) {
             Err(SessionError::NotFound { .. }) => {
                 Err(SessionError::NotFound { id: id.to_string() })
@@ -963,7 +963,7 @@ fn read_version(path: &Path) -> Option<u8> {
     clippy::wildcard_enum_match_arm,
     reason = "std::io::ErrorKind は non_exhaustive で、列挙しきれない"
 )]
-fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
+fn read_meta(path: &Path) -> Result<MetaDto<'static>, SessionError> {
     let bytes = std::fs::read(path).map_err(|source| match source.kind() {
         std::io::ErrorKind::NotFound => SessionError::NotFound {
             id: path
@@ -1092,11 +1092,8 @@ mod tests {
         let store = SessionStore::new(scratch.dir());
         std::fs::create_dir_all(scratch.dir()).unwrap();
         let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
-        let meta = MetaDto::from_parts(
-            &info(id, 100),
-            &SessionState::default(),
-            &CopyState::Pending,
-        );
+        let state = SessionState::default();
+        let meta = MetaDto::from_parts(&info(id, 100), &state, &CopyState::Pending);
         let base = serde_json::to_value(meta).unwrap();
         let mut invalid = vec![serde_json::json!(false), serde_json::json!([])];
         for state in [

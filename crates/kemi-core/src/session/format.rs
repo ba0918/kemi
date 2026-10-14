@@ -2,6 +2,7 @@
 
 mod legacy;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -87,9 +88,9 @@ pub fn additional_saved_size(state: &SessionState) -> usize {
 /// `<id>.session` の中身。セッションの情報と状態だけを持ち、凍結したレビューの
 /// メタデータは `<id>.payload` にある（R-SESSION）。
 #[derive(Serialize, Deserialize)]
-pub(super) struct MetaDto {
+pub(super) struct MetaDto<'a> {
     info: InfoDto,
-    state: StateDto,
+    state: StateDto<'a>,
     copy: CopyMetaDto,
 }
 
@@ -132,7 +133,7 @@ enum PageDto {
 
 /// 版 2 に無い項目は `default` で空として読む。
 #[derive(Serialize, Deserialize)]
-struct StateDto {
+struct StateDto<'a> {
     #[serde(default)]
     diff_display_version: Option<String>,
     #[serde(default)]
@@ -140,10 +141,10 @@ struct StateDto {
     #[serde(default)]
     issued_display_generation: Option<String>,
     #[serde(default)]
-    explanation: Option<ExplanationHistory>,
+    explanation: Option<Cow<'a, ExplanationHistory>>,
     comments: Vec<CommentDto>,
-    seen: BTreeSet<String>,
-    collapsed: BTreeMap<String, bool>,
+    seen: Cow<'a, BTreeSet<String>>,
+    collapsed: Cow<'a, BTreeMap<String, bool>>,
     #[serde(default)]
     last_comment: u32,
     #[serde(default)]
@@ -158,7 +159,7 @@ struct StateDto {
     channel: ChannelDto,
     /// 割り当てが無ければ書かない（`--live` の前からある形のまま）。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    mocks: BTreeMap<String, String>,
+    mocks: Cow<'a, BTreeMap<String, String>>,
     /// 立っていなければ書かない（印を足す前の形のまま）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     page_comment_saved: bool,
@@ -377,8 +378,12 @@ pub(super) enum CopyMeta {
     Ready,
 }
 
-impl MetaDto {
-    pub(super) fn from_parts(info: &SessionInfo, state: &SessionState, copy: &CopyState) -> Self {
+impl<'a> MetaDto<'a> {
+    pub(super) fn from_parts(
+        info: &SessionInfo,
+        state: &'a SessionState,
+        copy: &CopyState,
+    ) -> Self {
         let copy = match copy {
             CopyState::Pending => CopyMetaDto::Pending,
             CopyState::Unusable(reason) => CopyMetaDto::Unusable {
@@ -501,29 +506,29 @@ impl From<ModeDto> for SessionMode {
     }
 }
 
-impl From<&SessionState> for StateDto {
-    fn from(state: &SessionState) -> Self {
+impl<'a> From<&'a SessionState> for StateDto<'a> {
+    fn from(state: &'a SessionState) -> Self {
         StateDto {
             diff_display_version: state.display.as_ref().map(|d| d.current.clone()),
             frozen_display_version: state.display.as_ref().and_then(|d| d.frozen.clone()),
             issued_display_generation: state.display.as_ref().map(|d| d.issued.to_string()),
-            explanation: state.explanation.clone(),
+            explanation: state.explanation.as_ref().map(Cow::Borrowed),
             comments: state.comments.iter().map(CommentDto::from).collect(),
-            seen: state.seen.clone(),
-            collapsed: state.collapsed.clone(),
+            seen: Cow::Borrowed(&state.seen),
+            collapsed: Cow::Borrowed(&state.collapsed),
             last_comment: state.last_comment,
             messages: state.messages.iter().map(MessageDto::from).collect(),
             last_reply: state.last_reply,
             last_message: state.last_message,
             last_seq: state.last_seq,
             channel: ChannelDto::from(&state.channel),
-            mocks: state.mocks.clone(),
+            mocks: Cow::Borrowed(&state.mocks),
             page_comment_saved: state.page_comment_saved,
         }
     }
 }
 
-impl StateDto {
+impl StateDto<'_> {
     fn into_parts(self) -> Result<SessionState, String> {
         let unnumbered = self.comments.iter().any(|comment| {
             comment.seq.is_none() || comment.replies.iter().any(|reply| reply.seq.is_none())
@@ -545,14 +550,14 @@ impl StateDto {
                 (None, None) => None,
                 _ => return Err("diff_display_version: incomplete generation state".into()),
             },
-            explanation: self.explanation,
+            explanation: self.explanation.map(Cow::into_owned),
             comments: self
                 .comments
                 .into_iter()
                 .map(CommentDto::into_comment)
                 .collect::<Result<Vec<_>, String>>()?,
-            seen: self.seen,
-            collapsed: self.collapsed,
+            seen: self.seen.into_owned(),
+            collapsed: self.collapsed.into_owned(),
             last_comment: self.last_comment,
             messages: self
                 .messages
@@ -563,7 +568,7 @@ impl StateDto {
             last_message: self.last_message,
             last_seq: self.last_seq,
             channel: self.channel.into_channel()?,
-            mocks: self.mocks,
+            mocks: self.mocks.into_owned(),
             page_comment_saved: self.page_comment_saved,
         };
         if unnumbered {
@@ -1151,7 +1156,7 @@ fn parse_unit(unit: Option<String>) -> Result<Option<GroupBy>, String> {
     }
 }
 
-impl MetaDto {
+impl MetaDto<'_> {
     /// `<id>.session` の meta を、セッション形式の版に合わせて読む。読み手のある版は
     /// `encoding::is_readable` が決め、ここに来るのはその版だけ。
     pub(super) fn decode(version: u8, meta: &[u8]) -> Result<Self, String> {
@@ -1181,5 +1186,57 @@ impl MetaDto {
 
     pub(super) fn is_resumable(&self) -> bool {
         matches!(self.info.mode, ModeDto::Live { .. }) || matches!(self.copy, CopyMetaDto::Ready)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_history_and_view_state_outlive_the_json_input_after_restoration() {
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let info = SessionInfo {
+            id: id.into(),
+            created: 1,
+            updated: 1,
+            workspace: PathBuf::from("."),
+            workspace_key: "workspace".into(),
+            mode: SessionMode::Worktree,
+            title: "review".into(),
+            total_files: 2,
+        };
+        let state = SessionState {
+            explanation: Some(ExplanationHistory {
+                current_revision: 1,
+                versions: vec![crate::domain::explanation::ExplanationVersion {
+                    revision: 1,
+                    base_display_version: format!("{id}:1"),
+                    sections: vec![crate::domain::explanation::ExplanationSection {
+                        id: "section".into(),
+                        title: "説明".into(),
+                        blocks: vec![crate::domain::explanation::ExplanationBlock {
+                            id: "block".into(),
+                            part: Part::Text {
+                                body: "日本語\n\"quoted\"".into(),
+                            },
+                            references: vec![],
+                        }],
+                    }],
+                }],
+            }),
+            seen: BTreeSet::from(["f1".into(), "f2".into()]),
+            collapsed: BTreeMap::from([("f1".into(), true)]),
+            mocks: BTreeMap::from([("/preview".into(), "mock.html".into())]),
+            ..SessionState::default()
+        };
+        let bytes = serde_json::to_vec(&MetaDto::from_parts(&info, &state, &CopyState::Pending))
+            .expect("serializable session");
+        let saved: MetaDto<'static> =
+            MetaDto::decode(encoding::VERSION, &bytes).expect("read saved session");
+        drop(bytes);
+        let (restored_info, restored_state, _) = saved.into_parts().expect("restore saved session");
+        assert_eq!(restored_info, info);
+        assert_eq!(restored_state, state);
     }
 }
