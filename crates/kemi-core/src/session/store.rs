@@ -150,8 +150,7 @@ impl SessionStore {
             info,
             state: SessionState::default(),
             copy: CopyState::Pending,
-            deleted: false,
-            suspended: false,
+            lifecycle: Lifecycle::Active,
             files_limit: self.files_limit,
             _lock: lock,
         })
@@ -184,8 +183,7 @@ impl SessionStore {
             info,
             state,
             copy,
-            deleted: false,
-            suspended: false,
+            lifecycle: Lifecycle::Active,
             files_limit: self.files_limit,
             _lock: lock,
         })
@@ -353,18 +351,21 @@ fn payload_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.payload"))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    Active,
+    Suspended,
+    Deleted,
+}
+
 /// 開いているセッション。ロックを保持し、状態か写しが変わるたびに書き直す。
 pub struct OpenSession {
     dir: PathBuf,
     info: SessionInfo,
     state: SessionState,
     copy: CopyState,
-    /// submit で消した後の保存を無視する印。凍結が submit と競争しても、消えた
-    /// セッションを作り直さない（R-SESSION）。
-    deleted: bool,
-    /// 保留で片付けた後に `<id>.files/` へ書かない印。処理中だった要求が後から届いても、
-    /// 消した `<id>.files/` を作り直さない（R-PAGE-SESSION）。
-    suspended: bool,
+    /// 停止後に届く保存で、submit や保留が片付けたファイルを作り直さない。
+    lifecycle: Lifecycle,
     files_limit: u64,
     /// このセッションのロック。フィールドとして持ち、Drop で解放する。
     _lock: SessionLock,
@@ -397,7 +398,7 @@ impl OpenSession {
     /// （R-PAGE-SESSION）。
     pub fn is_resumable(&self) -> bool {
         if self.info.mode.is_live() {
-            return !self.deleted && self.state.has_conversation();
+            return self.lifecycle != Lifecycle::Deleted && self.state.has_conversation();
         }
         matches!(self.copy, CopyState::Ready(_))
     }
@@ -421,7 +422,7 @@ impl OpenSession {
         state: SessionState,
         updated: u128,
     ) -> Result<(), SessionError> {
-        if self.deleted || self.suspended {
+        if self.lifecycle != Lifecycle::Active {
             return Err(SessionError::Unusable {
                 id: self.info.id.clone(),
                 reason: "the review is stopping".into(),
@@ -457,7 +458,7 @@ impl OpenSession {
         prepared: super::PreparedCopy,
         mut state: SessionState,
     ) -> Result<bool, SessionError> {
-        if self.deleted || self.suspended {
+        if self.lifecycle != Lifecycle::Active {
             return Err(SessionError::Unusable {
                 id: self.info.id.clone(),
                 reason: "the review is stopping".into(),
@@ -507,7 +508,7 @@ impl OpenSession {
 
     /// submit の確定後にセッションを消す。消した後の保存は無視する。
     pub fn delete(&mut self) -> Result<(), SessionError> {
-        self.deleted = true;
+        self.lifecycle = Lifecycle::Deleted;
         // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
         self.remove_file()?;
         self.remove_payload_file()?;
@@ -591,10 +592,10 @@ impl OpenSession {
     /// （開始時のスナップショットを、後で会話ができたときのために持っておく）。
     /// 片付けた後は `<id>.files/` に書かない。
     pub fn close_suspended(&mut self) -> Result<(), SessionError> {
-        self.suspended = true;
-        if self.deleted {
+        if self.lifecycle == Lifecycle::Deleted {
             return Ok(());
         }
+        self.lifecycle = Lifecycle::Suspended;
         if self.info.mode.is_live() && !self.state.has_conversation() {
             self.remove_file()?;
             self.remove_payload_file()?;
@@ -618,11 +619,11 @@ impl OpenSession {
             written: FileWritten::Failed(error),
             removed_snapshots,
         };
-        if self.deleted || self.suspended {
-            let reason = if self.deleted {
-                "the session is already deleted"
-            } else {
-                "the session is already suspended"
+        if self.lifecycle != Lifecycle::Active {
+            let reason = match self.lifecycle {
+                Lifecycle::Deleted => "the session is already deleted",
+                Lifecycle::Suspended => "the session is already suspended",
+                Lifecycle::Active => unreachable!("active sessions continue writing below"),
             };
             return failed(
                 SessionError::Io {
@@ -732,12 +733,12 @@ impl OpenSession {
     /// `<id>.session` だけを書く。写しのファイルは読みも書きもしないので、状態を
     /// 変える操作の費用が写しの大きさに左右されない（R-SESSION）。
     fn persist(&mut self) -> Result<(), SessionError> {
-        if self.deleted {
+        if self.lifecycle == Lifecycle::Deleted {
             return Ok(());
         }
         // 写しを作れなかった理由を残すためでも、状態が空ならセッションは残さない
         // （R-SESSION）。
-        let keep = if self.state.display.is_some() && !self.suspended {
+        let keep = if self.state.display.is_some() && self.lifecycle == Lifecycle::Active {
             true
         } else if self.info.mode.is_live() {
             // `--live` は見た・折りたたみだけでは残さない（R-PAGE-SESSION）。
@@ -763,7 +764,7 @@ impl OpenSession {
     /// 「使える」と覚えると、次に状態を書いたとき写しの無い `<id>.session` が
     /// 「使える」と主張してしまう。
     fn persist_with_copy(&mut self, copy: SessionCopy, payload: &[u8]) -> Result<(), SessionError> {
-        if self.deleted {
+        if self.lifecycle == Lifecycle::Deleted {
             self.copy = CopyState::Ready(copy);
             return Ok(());
         }
@@ -777,7 +778,7 @@ impl OpenSession {
     /// 写しを捨てた後のファイルをそろえる。`<id>.session` を書いて（残すものが無ければ
     /// 消して）から `<id>.payload` を消す。掃除を待たない（R-SESSION の書く順序）。
     fn persist_without_copy(&mut self) -> Result<(), SessionError> {
-        if self.deleted {
+        if self.lifecycle == Lifecycle::Deleted {
             return Ok(());
         }
         self.persist()?;
@@ -2755,6 +2756,26 @@ mod tests {
 
         assert!(matches!(result, Err(SessionError::NotFound { .. })));
         assert!(outside.exists());
+    }
+
+    #[test]
+    fn suspending_after_submit_does_not_allow_late_writes_to_recreate_the_session() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let mut open = store.create(info(id, 100)).unwrap();
+        open.save_state_at(state_with_comment(), 200).unwrap();
+        open.delete().unwrap();
+        open.close_suspended().unwrap();
+
+        open.save_state_at(state_with_comment(), 300).unwrap();
+        open.save_copy_with_limit(copy(), 400, COPY_LIMIT).unwrap();
+        let write = open.save_image("c1", b"image", &BTreeSet::new());
+
+        assert!(matches!(write.written, FileWritten::Failed(_)));
+        assert!(!session_path(&scratch.dir(), id).exists());
+        assert!(!payload_path(&scratch.dir(), id).exists());
+        assert!(!files_path(&scratch.dir(), id).exists());
     }
 
     #[test]
