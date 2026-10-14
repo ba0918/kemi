@@ -154,41 +154,112 @@ fn match_pattern(pattern: &str, path: &str) -> bool {
 }
 
 fn match_segments(patterns: &[&str], segments: &[&str]) -> bool {
-    match patterns.first() {
-        None => segments.is_empty(),
-        Some(&"**") => {
-            match_segments(&patterns[1..], segments)
-                || (!segments.is_empty() && match_segments(patterns, &segments[1..]))
-        }
-        Some(&pattern) => match segments.split_first() {
-            Some((segment, rest)) => {
-                match_segment(pattern, segment) && match_segments(&patterns[1..], rest)
+    let mut matched = vec![false; segments.len() + 1];
+    matched[0] = true;
+    for &pattern in patterns {
+        if pattern == "**" {
+            for end in 1..matched.len() {
+                matched[end] |= matched[end - 1];
             }
-            None => false,
-        },
+        } else {
+            for end in (1..matched.len()).rev() {
+                matched[end] = matched[end - 1] && match_segment(pattern, segments[end - 1]);
+            }
+            matched[0] = false;
+        }
     }
+    matched[segments.len()]
 }
 
 fn match_segment(pattern: &str, text: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
-    match_segment_inner(&pattern, &text)
-}
-
-fn match_segment_inner(pattern: &[char], text: &[char]) -> bool {
-    match pattern.first() {
-        None => text.is_empty(),
-        Some('*') => (0..=text.len()).any(|skip| match_segment_inner(&pattern[1..], &text[skip..])),
-        Some('?') => !text.is_empty() && match_segment_inner(&pattern[1..], &text[1..]),
-        Some(&literal) => {
-            text.first() == Some(&literal) && match_segment_inner(&pattern[1..], &text[1..])
+    // 再帰で * の長さを総当たりすると、失敗するパターンで同じ接尾辞を何度も調べる。
+    let mut matched = vec![false; text.len() + 1];
+    matched[0] = true;
+    for token in pattern.chars() {
+        if token == '*' {
+            for end in 1..matched.len() {
+                matched[end] |= matched[end - 1];
+            }
+        } else {
+            for end in (1..matched.len()).rev() {
+                matched[end] = matched[end - 1] && (token == '?' || token == text[end - 1]);
+            }
+            matched[0] = false;
         }
     }
+    matched[text.len()]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wildcard_matching_keeps_unicode_empty_segments_and_directory_semantics() {
+        for (pattern, path, expected) in [
+            ("", "", true),
+            ("*", "", true),
+            ("?", "", false),
+            ("?", "日", true),
+            ("*本?", "日本語", true),
+            ("a**b", "ab", true),
+            ("a**b", "axxb", true),
+            ("/a.rs", "src/a.rs", false),
+            ("a.rs", "src/a.rs", true),
+            ("generated/", "generated/a/b.rs", true),
+            ("**/a/**/b", "a/b", true),
+            ("**/a/**/b", "x/a/y/z/b", true),
+            ("**/**/missing", "a/b/c", false),
+            ("a/*/b", "a//b", true),
+            ("a/*/b", "a/x/y/b", false),
+            ("*a*a*a*a*a*a*a*ab", "aaaaaaaaaaaaaaaa", false),
+        ] {
+            assert_eq!(
+                match_pattern(pattern, path),
+                expected,
+                "{pattern} -> {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn wildcard_matching_agrees_with_short_exhaustive_reference_cases() {
+        fn reference(pattern: &[char], text: &[char]) -> bool {
+            match pattern.first() {
+                None => text.is_empty(),
+                Some('*') => (0..=text.len()).any(|skip| reference(&pattern[1..], &text[skip..])),
+                Some('?') => !text.is_empty() && reference(&pattern[1..], &text[1..]),
+                Some(&literal) => {
+                    text.first() == Some(&literal) && reference(&pattern[1..], &text[1..])
+                }
+            }
+        }
+        fn strings(alphabet: &[char], max: usize) -> Vec<String> {
+            let mut all = vec![String::new()];
+            let mut level = vec![String::new()];
+            for _ in 0..max {
+                level = level
+                    .iter()
+                    .flat_map(|prefix| alphabet.iter().map(move |c| format!("{prefix}{c}")))
+                    .collect();
+                all.extend(level.clone());
+            }
+            all
+        }
+        for pattern in strings(&['a', '日', '*', '?'], 4) {
+            for text in strings(&['a', '日'], 3) {
+                assert_eq!(
+                    match_segment(&pattern, &text),
+                    reference(
+                        &pattern.chars().collect::<Vec<_>>(),
+                        &text.chars().collect::<Vec<_>>()
+                    ),
+                    "{pattern} -> {text}"
+                );
+            }
+        }
+    }
 
     fn input<'a>(path: &'a str) -> NoiseInput<'a> {
         NoiseInput {
