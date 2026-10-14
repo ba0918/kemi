@@ -10,6 +10,10 @@ kemi never edits your files or applies suggestions. It runs as a single binary,
 with no browser extension. The name comes from the Japanese verb *kemi suru*,
 meaning "to review".
 
+![Code diff with a line comment and an agent's reply](docs/images/code-review.png)
+
+A sample diff review with a line comment and an agent's reply.
+
 ## Install
 
 On Linux or macOS, install with [mise](https://mise.jdx.dev/):
@@ -135,6 +139,10 @@ places and comment on them.
 
 The **Code changes** tab shows the working-tree diff when you start inside a
 Git repository. On a phone, the tabs are labelled **Page** and **Code**.
+
+![Saved snapshot and current page shown side by side with changed elements marked](docs/images/live-review.png)
+
+A sample page compared with its saved snapshot, with changed elements marked.
 
 The URL must use HTTP on `localhost` or an IPv4 loopback address such as
 `127.0.0.1`. A local HTML file must be inside the repository. Outside a
