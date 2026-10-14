@@ -5,6 +5,9 @@ use serde_json::Value;
 use crate::domain::review::Author;
 
 pub(super) fn upgrade(version: u8, value: &mut Value) -> Result<(), String> {
+    if !value.get("state").is_some_and(Value::is_object) {
+        return Err("state must be an object".into());
+    }
     if version == 2 {
         upgrade_version_2(value)?;
     }
@@ -23,14 +26,14 @@ pub(super) fn upgrade(version: u8, value: &mut Value) -> Result<(), String> {
         .and_then(Value::as_array_mut)
     {
         for event in events {
-            if let Some(changes) = event["comments"].as_array_mut() {
+            if let Some(changes) = event.get_mut("comments").and_then(Value::as_array_mut) {
                 for change in changes {
                     if let Some(comment) = change.get_mut("comment") {
                         legacy_comment(comment)?;
                     }
                 }
             }
-            if let Some(replies) = event["replies"].as_array_mut() {
+            if let Some(replies) = event.get_mut("replies").and_then(Value::as_array_mut) {
                 for reply in replies {
                     if let Some(post) = reply.get_mut("reply") {
                         legacy_post(post)?;

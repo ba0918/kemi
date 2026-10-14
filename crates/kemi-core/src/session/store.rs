@@ -1087,6 +1087,43 @@ mod tests {
     }
 
     #[test]
+    fn malformed_legacy_containers_are_reported_as_corrupt_instead_of_panicking() {
+        let scratch = Scratch::new();
+        let store = SessionStore::new(scratch.dir());
+        std::fs::create_dir_all(scratch.dir()).unwrap();
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let meta = MetaDto::from_parts(
+            &info(id, 100),
+            &SessionState::default(),
+            &CopyState::Pending,
+        );
+        let base = serde_json::to_value(meta).unwrap();
+        let mut invalid = vec![serde_json::json!(false), serde_json::json!([])];
+        for state in [
+            serde_json::json!(false),
+            serde_json::json!([]),
+            serde_json::json!(42),
+        ] {
+            let mut value = base.clone();
+            value["state"] = state;
+            invalid.push(value);
+        }
+        let mut value = base.clone();
+        value["state"]["channel"]["events"] = serde_json::json!([false]);
+        invalid.push(value);
+        for version in [2, 3] {
+            for value in &invalid {
+                let bytes = encoding::encode_session(version, &serde_json::to_vec(value).unwrap());
+                std::fs::write(session_path(&scratch.dir(), id), bytes).unwrap();
+                assert!(
+                    matches!(store.read(id), Err(SessionError::Corrupt { .. })),
+                    "version {version}: {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn old_format_ignores_new_field_names_and_opaque_extensions_under_its_original_contract() {
         let scratch = Scratch::new();
         let store = SessionStore::new(scratch.dir());
