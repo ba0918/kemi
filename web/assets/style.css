@@ -1442,8 +1442,10 @@ ul.files ul {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: 72ch;
+  max-width: min(72ch, 100%);
   height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
   padding: 0 10px 0 8px;
   border-radius: 999px;
   background: var(--note-bg);
@@ -1463,7 +1465,7 @@ ul.files ul {
 /* 畳んだスレッドの札。場所と 1 行目だけに縮め、目立たせない。 */
 .cchip.folded {
   height: 20px;
-  max-width: 48ch;
+  max-width: min(48ch, 100%);
   background: var(--panel);
   font-size: 11.5px;
 }
