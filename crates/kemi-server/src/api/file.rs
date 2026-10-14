@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::{IntoResponse, Response};
 use kemi_core::domain::comment;
 use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
@@ -16,7 +17,7 @@ use kemi_core::render::{self, InitialView, Target};
 use kemi_core::source::FileContent;
 use serde_json::{Value, json};
 
-use super::{ApiError, ExpandQuery, file_not_found, find_file, side_lines, source_content};
+use super::{ApiError, ExpandQuery, find_file, prepare_content, side_lines};
 use crate::AppState;
 use crate::highlight::{self, HighlightedLine, Highlighter};
 use crate::session::page_comment_json;
@@ -34,7 +35,7 @@ pub(super) async fn file_api(
     State(state): State<Arc<AppState>>,
     Path((_token, id)): Path<(String, String)>,
     Query(query): Query<ExpandQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let (file, _) = find_file(&state, &id)?;
 
     let dark = query.dark.as_deref() == Some("1");
@@ -49,18 +50,14 @@ pub(super) async fn file_api(
             "comments": comments_for(&state, &id),
             "highlight": { "capable": false, "enabled": false, "dark": dark },
             "render": render_info(&file, None, None),
-        })));
+        }))
+        .into_response());
     }
 
-    let permit = crate::preparation::acquire(&state.preparation).await;
-    let content = source_content(&state, &id)
-        .await?
-        .ok_or_else(file_not_found)?;
-    crate::preparation::run(permit, move || {
-        prepare_file(&state, &id, &file, &content, &query)
+    prepare_content(state, id, move |state, id, content| {
+        prepare_file(state, id, &file, content, &query).map(IntoResponse::into_response)
     })
     .await
-    .map_err(ApiError::internal)?
 }
 
 fn prepare_file(

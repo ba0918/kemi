@@ -141,12 +141,14 @@ pub(super) async fn render_file(
     State(state): State<Arc<AppState>>,
     Path((_token, id)): Path<(String, String)>,
     Query(query): Query<ExpandQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let (file, _) = find_file(&state, &id)?;
     match render::target_of_file(&file) {
         Some(Target::Markdown) => render_markdown_file(state, id, file, query).await,
         Some(Target::Table { delimiter }) => render_table_file(state, id, delimiter).await,
-        Some(Target::Image { .. }) => render_image_file(&state, &id, &file).await,
+        Some(Target::Image { .. }) => render_image_file(&state, &id, &file)
+            .await
+            .map(IntoResponse::into_response),
         None => Err(ApiError::bad_request("this file has no rendered view")),
     }
 }
@@ -155,14 +157,11 @@ async fn render_table_file(
     state: Arc<AppState>,
     id: String,
     delimiter: u8,
-) -> Result<Json<Value>, ApiError> {
-    let permit = crate::preparation::acquire(&state.preparation).await;
-    let content = source_content(&state, &id)
-        .await?
-        .ok_or_else(file_not_found)?;
-    crate::preparation::run(permit, move || prepare_table(&id, &content, delimiter))
-        .await
-        .map_err(ApiError::internal)?
+) -> Result<Response, ApiError> {
+    super::prepare_content(state, id, move |_, id, content| {
+        prepare_table(id, content, delimiter).map(IntoResponse::into_response)
+    })
+    .await
 }
 
 fn prepare_table(
@@ -216,16 +215,11 @@ async fn render_markdown_file(
     id: String,
     file: FileEntry,
     query: ExpandQuery,
-) -> Result<Json<Value>, ApiError> {
-    let permit = crate::preparation::acquire(&state.preparation).await;
-    let content = source_content(&state, &id)
-        .await?
-        .ok_or_else(file_not_found)?;
-    crate::preparation::run(permit, move || {
-        prepare_markdown(&state, &id, &file, &query, &content)
+) -> Result<Response, ApiError> {
+    super::prepare_content(state, id, move |state, id, content| {
+        prepare_markdown(state, id, &file, &query, content).map(IntoResponse::into_response)
     })
     .await
-    .map_err(ApiError::internal)?
 }
 
 fn prepare_markdown(

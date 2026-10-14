@@ -271,11 +271,40 @@ async fn source_content(
     let result = tokio::task::spawn_blocking(move || source.content(&file_id))
         .await
         .map_err(|error| runtime_error(state, error))?;
+    content_result(state, result)
+}
+
+fn content_result(
+    state: &AppState,
+    result: Result<kemi_core::source::FileContent, SourceError>,
+) -> Result<Option<kemi_core::source::FileContent>, ApiError> {
     match result {
         Ok(content) => Ok(Some(content)),
         Err(SourceError::UnknownFileId(_)) => Ok(None),
         Err(error) => Err(runtime_error(state, error)),
     }
+}
+
+async fn prepare_content<T: Send + 'static>(
+    state: Arc<AppState>,
+    file_id: String,
+    prepare: impl FnOnce(&AppState, &str, &kemi_core::source::FileContent) -> Result<T, ApiError>
+    + Send
+    + 'static,
+) -> Result<T, ApiError> {
+    let source = state.sources.clone();
+    let read_id = file_id.clone();
+    let computing_state = state.clone();
+    crate::preparation::prepare(
+        &state.preparation,
+        move || source.content(&read_id),
+        move |result| {
+            let content = content_result(&computing_state, result)?.ok_or_else(file_not_found)?;
+            prepare(&computing_state, &file_id, &content)
+        },
+    )
+    .await
+    .map_err(|error| runtime_error(&state, error))?
 }
 
 /// レビュー中の git・I/O 失敗はサーバを止め、CLI を終了コード 2 にする（R-SUBMIT）。
