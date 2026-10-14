@@ -1,5 +1,7 @@
 # kemi
 
+English | [日本語](README-ja.md)
+
 kemi lets you review changes in a browser and return comments to the terminal
 as JSON. You can comment on code, documents, and a running web page. An AI agent
 can read your feedback and reply while the review stays open.
