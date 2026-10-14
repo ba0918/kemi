@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -84,6 +84,61 @@ fn stop(child: &mut Child) {
 /// `Kemi` を通さずに起動した子プロセスを、捨てるときに止める。
 struct StopOnDrop(Child);
 
+#[path = "support/process.rs"]
+mod process;
+
+#[test]
+fn captured_process_output_can_exceed_pipe_capacity_without_blocking_exit() {
+    let bytes = vec![b'x'; 2 * 1024 * 1024];
+    let mut pipe = process::CapturedPipe::new(std::io::Cursor::new(bytes.clone()));
+    let mut captured = Vec::new();
+    pipe.read_to_end(&mut captured).unwrap();
+    assert_eq!(captured, bytes);
+}
+
+#[cfg(unix)]
+#[test]
+fn both_process_pipes_are_drained_while_waiting_for_large_output_to_finish() {
+    let mut child = StopOnDrop(
+        Command::new("sh")
+            .args([
+                "-c",
+                "head -c 2097152 /dev/zero; head -c 2097152 /dev/zero >&2",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
+    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+    assert!(
+        process::wait(&mut child.0, std::time::Duration::from_secs(20))
+            .unwrap()
+            .success()
+    );
+    for pipe in [&mut stdout, &mut stderr] {
+        let mut bytes = Vec::new();
+        pipe.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, vec![0; 2 * 1024 * 1024]);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_that_does_not_exit_is_bounded_and_reaped_by_its_owner() {
+    let mut child = StopOnDrop(
+        Command::new("sh")
+            .args(["-c", "exec sleep 60"])
+            .spawn()
+            .unwrap(),
+    );
+    let result = process::wait(&mut child.0, std::time::Duration::from_millis(30));
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+    stop(&mut child.0);
+    assert!(child.0.try_wait().unwrap().is_some());
+}
+
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
         stop(&mut self.0);
@@ -92,8 +147,8 @@ impl Drop for StopOnDrop {
 
 struct Kemi {
     child: Child,
-    stdout: ChildStdout,
-    stderr: BufReader<ChildStderr>,
+    stdout: process::CapturedPipe,
+    stderr: process::CapturedPipe,
     url: String,
     /// URL の行より前に stderr へ出た行。
     preamble: Vec<String>,
@@ -124,42 +179,46 @@ impl Kemi {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
+        let stdout = process::CapturedPipe::new(child.stdout.take().unwrap());
+        let stderr = process::CapturedPipe::new(child.stderr.take().unwrap());
+        let mut kemi = Kemi {
+            child,
+            stdout,
+            stderr,
+            url: String::new(),
+            preamble: Vec::new(),
+            _state: None,
+        };
         if let Some(input) = input {
-            child
+            kemi.child
                 .stdin
                 .take()
                 .unwrap()
                 .write_all(input.as_bytes())
                 .unwrap();
         }
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let mut reader = BufReader::new(stderr);
         let mut line = String::new();
-        let mut preamble = Vec::new();
-        let url = loop {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        kemi.url = loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "kemi did not announce a URL in time"
+            );
             line.clear();
-            let read = reader.read_line(&mut line).unwrap();
+            let read = kemi.stderr.read_line(&mut line).unwrap();
             if read == 0 {
-                let status = child.wait();
+                let status = process::wait(&mut kemi.child, std::time::Duration::from_secs(20));
                 panic!(
                     "kemi が URL を出さずに終了しました\n終了状態: {status:?}\nURL より前の stderr:\n{}",
-                    preamble.concat()
+                    kemi.preamble.concat()
                 );
             }
             if let Some(found) = line.strip_prefix("kemi: http") {
                 break format!("http{found}").trim().to_string();
             }
-            preamble.push(line.clone());
+            kemi.preamble.push(line.clone());
         };
-        Kemi {
-            child,
-            stdout,
-            stderr: reader,
-            url,
-            preamble,
-            _state: None,
-        }
+        kemi
     }
 
     fn origin(&self) -> String {
@@ -177,7 +236,7 @@ impl Kemi {
     }
 
     fn wait(mut self) -> (std::process::ExitStatus, String) {
-        let status = self.child.wait().unwrap();
+        let status = process::wait(&mut self.child, std::time::Duration::from_secs(20)).unwrap();
         let mut stdout = String::new();
         self.stdout.read_to_string(&mut stdout).unwrap();
         (status, stdout)
@@ -1742,7 +1801,7 @@ impl Kemi {
     /// 終了を待ち、stdout と stderr の全部を返す。
     #[cfg(unix)]
     fn wait_with_stderr(mut self) -> (std::process::ExitStatus, String, String) {
-        let status = self.child.wait().unwrap();
+        let status = process::wait(&mut self.child, std::time::Duration::from_secs(20)).unwrap();
         let mut stdout = String::new();
         self.stdout.read_to_string(&mut stdout).unwrap();
         let mut stderr = String::new();
@@ -2898,30 +2957,32 @@ fn run_agent(dir: &Path, state: &Path, args: &[&str], stdin: &str) -> std::proce
 }
 
 /// `kemi wait` を裏で待たせる。
-fn spawn_wait(dir: &Path, state: &Path, args: &[&str]) -> Child {
-    kemi_command(dir, state)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap()
+fn spawn_wait(dir: &Path, state: &Path, args: &[&str]) -> StopOnDrop {
+    StopOnDrop(
+        kemi_command(dir, state)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    )
 }
 
 /// 終わるのを待ち、(終了コード, stdout, stderr)。
-async fn finish_agent(child: Child) -> (Option<i32>, String, String) {
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        tokio::task::spawn_blocking(move || child.wait_with_output().unwrap()),
-    )
+async fn finish_agent(mut child: StopOnDrop) -> (Option<i32>, String, String) {
+    tokio::task::spawn_blocking(move || {
+        let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
+        let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+        let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
+        let mut out = String::new();
+        let mut err = String::new();
+        stdout.read_to_string(&mut out).unwrap();
+        stderr.read_to_string(&mut err).unwrap();
+        (status.code(), out, err)
+    })
     .await
-    .expect("the agent command did not finish")
-    .unwrap();
-    (
-        output.status.code(),
-        String::from_utf8(output.stdout).unwrap(),
-        String::from_utf8(output.stderr).unwrap(),
-    )
+    .unwrap()
 }
 
 /// worktree のレビューを起動し、review の id を読む。
