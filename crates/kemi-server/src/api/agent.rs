@@ -434,7 +434,7 @@ async fn reply_api(
             })
             .map(page_comment_json)
             .collect();
-        if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+        if let Err(error) = kemi_core::session::validate_additional(&session.state) {
             *session = previous;
             return Err(ApiError::too_large(error.to_string()));
         }

@@ -202,7 +202,7 @@ pub(super) async fn comment_api(
             comment.body = body;
             let value = page_comment_json(comment);
             session.state.channel.note_comment(&id);
-            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+            if let Err(error) = kemi_core::session::validate_additional(&session.state) {
                 *session = previous;
                 return Err(ApiError::too_large(error.to_string()));
             }
@@ -263,7 +263,7 @@ pub(super) async fn comment_api(
             let comment = &mut session.state.comments[index];
             comment.replies.push(reply);
             let value = page_comment_json(comment);
-            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+            if let Err(error) = kemi_core::session::validate_additional(&session.state) {
                 *session = previous;
                 return Err(ApiError::too_large(error.to_string()));
             }
@@ -286,7 +286,7 @@ pub(super) async fn comment_api(
                 .ok_or_else(comment_not_found)?;
             comment.resolved = resolved;
             let value = page_comment_json(comment);
-            if let Err(error) = kemi_core::session::validate_additional(&session.snapshot()) {
+            if let Err(error) = kemi_core::session::validate_additional(&session.state) {
                 *session = previous;
                 return Err(ApiError::too_large(error.to_string()));
             }

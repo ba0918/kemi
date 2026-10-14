@@ -58,15 +58,12 @@ pub(super) async fn hand_api(
         let mut session = state.session.lock().expect("session poisoned");
         let session = &mut *session;
         let mut candidate = session.snapshot();
-        candidate
+        let handed = candidate
             .channel
             .hand(&candidate.comments, &candidate.messages);
         kemi_core::session::validate_additional(&candidate)
             .map_err(|e| ApiError::too_large(e.to_string()))?;
-        let handed = session
-            .state
-            .channel
-            .hand(&session.state.comments, &session.state.messages);
+        session.state.channel = candidate.channel;
         // 渡した 1 回分の行（R-AGENT-HAND）。ロックは session → agent の順。
         if let (true, Some(AgentEvent::Handed(event))) =
             (handed, session.state.channel.events.last())
