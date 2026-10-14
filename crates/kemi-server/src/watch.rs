@@ -26,6 +26,28 @@ use crate::{Event, Notice, NoticeSink, WatchFallback};
 /// 短期間の複数書き込みを 1 回の通知にまとめる debounce 値（D6）。
 const DEBOUNCE: Duration = Duration::from_millis(500);
 
+enum WatchMessage {
+    Changed(notify::Result<notify::Event>),
+    Served(PathBuf),
+    Stop,
+}
+
+pub(crate) struct WatchTask {
+    sender: std::sync::mpsc::Sender<WatchMessage>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for WatchTask {
+    fn drop(&mut self) {
+        // watcher 自身が通知用 sender を持つので、所有者の sender を捨てるだけでは
+        // recv は終わらない。停止を送り、OS の見張りが解放されるまで回収する。
+        let _ = self.sender.send(WatchMessage::Stop);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// 新側の供給元を見張り、変われば `Event::Update` を送る。`tree` があれば作業ツリー全体を
 /// 見張り、見張れなければ `paths`（起動時の差分のファイル）だけに落として `notices` に 1 回
 /// 知らせる。登録は別スレッドで行い、起動の応答を待たせない。
@@ -34,13 +56,16 @@ pub(crate) fn start(
     tree: Option<WorkTree>,
     events: broadcast::Sender<Event>,
     notices: Arc<dyn NoticeSink>,
-) {
+) -> Option<WatchTask> {
     if paths.is_empty() && tree.is_none() {
-        return;
+        return None;
     }
-    std::thread::spawn(move || {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let Ok(mut watcher) = notify::recommended_watcher(sender) else {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let events_sender = sender.clone();
+    let thread = std::thread::spawn(move || {
+        let Ok(mut watcher) = notify::recommended_watcher(move |event| {
+            let _ = events_sender.send(WatchMessage::Changed(event));
+        }) else {
             return;
         };
 
@@ -85,12 +110,16 @@ pub(crate) fn start(
                 Some(wait) => receiver.recv_timeout(wait),
             };
             match received {
-                Ok(Ok(event)) => {
+                Ok(WatchMessage::Changed(Ok(event))) => {
                     // 溜まっているイベントをまとめて判定し、git を呼ぶのを 1 回にする。
                     // ブランチの切り替えやコード生成は数千のイベントを一度に出す。
                     let mut batch = vec![event];
                     while let Ok(next) = receiver.try_recv() {
-                        batch.extend(next.ok());
+                        match next {
+                            WatchMessage::Changed(event) => batch.extend(event.ok()),
+                            WatchMessage::Stop => return,
+                            WatchMessage::Served(_) => {}
+                        }
                     }
                     let mut changed = batch
                         .iter()
@@ -114,7 +143,9 @@ pub(crate) fn start(
                         debounce.note(Instant::now());
                     }
                 }
-                Ok(Err(_)) | Err(RecvTimeoutError::Timeout) => {}
+                Ok(WatchMessage::Changed(Err(_)) | WatchMessage::Served(_))
+                | Err(RecvTimeoutError::Timeout) => {}
+                Ok(WatchMessage::Stop) => return,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             if rules.take_due(Instant::now())
@@ -134,6 +165,10 @@ pub(crate) fn start(
             }
         }
     });
+    Some(WatchTask {
+        sender,
+        thread: Some(thread),
+    })
 }
 
 /// 作業ツリー全体の見張りをやめ、差分のファイルの見張りだけにして知らせる。
@@ -685,18 +720,13 @@ fn arrives(kind: &EventKind, position: usize) -> bool {
 /// されたら知らせる。範囲を再帰で見張れないとき（Linux の inotify の見張りの数の上限など）は、
 /// 配ったファイルの親ディレクトリだけを見張り、配ったファイルの変更だけを知らせる。
 pub(crate) struct ServedWatch {
-    sender: std::sync::mpsc::Sender<RangeMessage>,
-}
-
-enum RangeMessage {
-    Served(PathBuf),
-    Changed(notify::Result<notify::Event>),
+    task: WatchTask,
 }
 
 impl ServedWatch {
     /// 配ったファイル（実体の場所）を知らせる。範囲を再帰で見張れないときに見張りへ足す。
     pub(crate) fn served(&self, file: PathBuf) {
-        let _ = self.sender.send(RangeMessage::Served(file));
+        let _ = self.task.sender.send(WatchMessage::Served(file));
     }
 }
 
@@ -709,9 +739,9 @@ pub(crate) fn start_served(
 ) -> ServedWatch {
     let (sender, receiver) = std::sync::mpsc::channel();
     let events = sender.clone();
-    std::thread::spawn(move || {
+    let thread = std::thread::spawn(move || {
         let Ok(mut watcher) = notify::recommended_watcher(move |event| {
-            let _ = events.send(RangeMessage::Changed(event));
+            let _ = events.send(WatchMessage::Changed(event));
         }) else {
             return;
         };
@@ -731,8 +761,8 @@ pub(crate) fn start_served(
                 Some(wait) => receiver.recv_timeout(wait),
             };
             match received {
-                Ok(RangeMessage::Served(_)) if whole => {}
-                Ok(RangeMessage::Served(file)) => {
+                Ok(WatchMessage::Served(_)) if whole => {}
+                Ok(WatchMessage::Served(file)) => {
                     let file = canonical(file);
                     if let Some(parent) = file.parent()
                         && directories.insert(parent.to_path_buf())
@@ -745,13 +775,14 @@ pub(crate) fn start_served(
                     }
                     files.insert(file);
                 }
-                Ok(RangeMessage::Changed(Ok(event)))
+                Ok(WatchMessage::Changed(Ok(event)))
                     if (whole && changes_the_range(&event, &root))
                         || changes_a_watched_file(&event, &files) =>
                 {
                     debounce.note(Instant::now());
                 }
-                Ok(RangeMessage::Changed(_)) | Err(RecvTimeoutError::Timeout) => {}
+                Ok(WatchMessage::Changed(_)) | Err(RecvTimeoutError::Timeout) => {}
+                Ok(WatchMessage::Stop) => return,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             if debounce.take_due(Instant::now()) {
@@ -759,7 +790,12 @@ pub(crate) fn start_served(
             }
         }
     });
-    ServedWatch { sender }
+    ServedWatch {
+        task: WatchTask {
+            sender,
+            thread: Some(thread),
+        },
+    }
 }
 
 /// 範囲（`root` の下、`.git` の中を除く）のファイルを変えるイベントか。
@@ -836,6 +872,60 @@ fn canonical(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct SilentNotices;
+    impl NoticeSink for SilentNotices {
+        fn notify(&self, _: Notice) {}
+    }
+
+    #[test]
+    fn dropping_repeated_file_watchers_releases_their_threads_without_an_event() {
+        let root = std::env::current_dir().expect("test directory exists");
+        let mut receivers = Vec::new();
+        for _ in 0..8 {
+            let receiver = {
+                let (events, receiver) = broadcast::channel(1);
+                let _watch = start(
+                    vec![root.join("unwritten-watch-target")],
+                    None,
+                    events,
+                    Arc::new(SilentNotices),
+                );
+                receiver
+            };
+            receivers.push(receiver);
+        }
+        let retained = receivers
+            .iter()
+            .filter(|receiver| !receiver.is_closed())
+            .count();
+        assert_eq!(
+            retained, 0,
+            "watcher threads still retain {retained} event senders"
+        );
+    }
+
+    #[test]
+    fn dropping_repeated_served_watchers_releases_their_threads_without_an_event() {
+        let root = std::env::current_dir().expect("test directory exists");
+        let mut receivers = Vec::new();
+        for _ in 0..8 {
+            let receiver = {
+                let (reload, receiver) = broadcast::channel(1);
+                let _watch = start_served(root.clone(), reload, Arc::new(SilentNotices));
+                receiver
+            };
+            receivers.push(receiver);
+        }
+        let retained = receivers
+            .iter()
+            .filter(|receiver| !receiver.is_closed())
+            .count();
+        assert_eq!(
+            retained, 0,
+            "watcher threads still retain {retained} reload senders"
+        );
+    }
 
     const WINDOW: Duration = Duration::from_millis(500);
 

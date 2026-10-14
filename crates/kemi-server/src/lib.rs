@@ -756,7 +756,7 @@ async fn run_servers(
         let _ = agent.control.state.set(Arc::downgrade(&state));
         agent.control.ready.notify_waiters();
     }
-    watch::start(
+    let _watch = watch::start(
         state.sources.watch_paths(),
         state.sources.work_tree(),
         state.events.clone(),
