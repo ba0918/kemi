@@ -27,6 +27,7 @@ pub(super) async fn message_api(
 ) -> Result<Json<Value>, ApiError> {
     kemi_core::parts::validate_plain_body(&request.body)
         .map_err(|error| ApiError::too_large(error.to_string()))?;
+    let gate = super::mutation_gate(&state)?;
     let value = {
         let mut session = state.session.lock().expect("session poisoned");
         session.state.last_message += 1;
@@ -41,6 +42,7 @@ pub(super) async fn message_api(
         session.state.messages.push(message);
         value
     };
+    drop(gate);
     persist(&state);
     let _ = state.events.send(Event::Message(value.clone()));
     notify_agent_state(&state);
@@ -51,6 +53,7 @@ pub(super) async fn hand_api(
     State(state): State<Arc<AppState>>,
     Path(_token): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    let gate = super::mutation_gate(&state)?;
     let handed = {
         let mut session = state.session.lock().expect("session poisoned");
         let session = &mut *session;
@@ -77,6 +80,7 @@ pub(super) async fn hand_api(
         }
         handed
     };
+    drop(gate);
     // 渡すものが無くても、書いて消したコメントの記録は片付いているので保存する。
     persist(&state);
     if handed {

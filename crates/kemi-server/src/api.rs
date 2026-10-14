@@ -47,6 +47,21 @@ use crate::session::{Session, page_comment_json, page_message_json, persist, sta
 use crate::units::{self, Unavailable};
 use crate::{AppState, Event, Notice, ServerError, stop_with_error};
 
+fn mutation_gate(
+    state: &AppState,
+) -> Result<std::sync::MutexGuard<'_, crate::PersistGuarded>, ApiError> {
+    let gate = state.persist.lock().expect("persist poisoned");
+    if *state.stopping.shutdown.borrow()
+        || matches!(
+            *state.stopping.submit_state.lock().expect("submit poisoned"),
+            crate::SubmitState::Claimed
+        )
+    {
+        return Err(ApiError::conflict("the review is being submitted"));
+    }
+    Ok(gate)
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/s/{token}/", get(index))

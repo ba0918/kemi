@@ -171,6 +171,7 @@ pub(super) async fn comment_api(
             body,
             suggestion,
         } => {
+            let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
             let previous = session.clone();
             let comment = session
@@ -206,11 +207,13 @@ pub(super) async fn comment_api(
                 return Err(ApiError::too_large(error.to_string()));
             }
             drop(session);
+            drop(gate);
             persist(&state);
             notify_agent_state(&state);
             Ok(Json(value))
         }
         CommentRequest::Delete { id } => {
+            let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
             let index = session
                 .state
@@ -234,11 +237,13 @@ pub(super) async fn comment_api(
                     &session.state.comments,
                 );
             drop(session);
+            drop(gate);
             persist(&state);
             notify_agent_state(&state);
             Ok(Json(json!({ "id": id, "deleted": true })))
         }
         CommentRequest::Reply { id, body } => {
+            let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
             let previous = session.clone();
             let index = session
@@ -263,12 +268,14 @@ pub(super) async fn comment_api(
                 return Err(ApiError::too_large(error.to_string()));
             }
             drop(session);
+            drop(gate);
             persist(&state);
             let _ = state.events.send(Event::Thread(value.clone()));
             notify_agent_state(&state);
             Ok(Json(value))
         }
         CommentRequest::Resolve { id, resolved } => {
+            let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
             let previous = session.clone();
             let comment = session
@@ -284,6 +291,7 @@ pub(super) async fn comment_api(
                 return Err(ApiError::too_large(error.to_string()));
             }
             drop(session);
+            drop(gate);
             persist(&state);
             Ok(Json(value))
         }
@@ -327,6 +335,7 @@ async fn add_comment(
     };
     let content_hash = comment::content_hash(&lines);
 
+    let gate = super::mutation_gate(state)?;
     let mut session = state.session.lock().expect("session poisoned");
     session.state.last_comment += 1;
     let comment = Comment {
@@ -352,6 +361,7 @@ async fn add_comment(
     session.state.channel.note_comment(&comment.id);
     session.state.comments.push(comment.clone());
     drop(session);
+    drop(gate);
     persist(state);
     notify_agent_state(state);
 
@@ -384,6 +394,7 @@ fn add_page_comment(
     let places = comment::validate_places(places)
         .map_err(|error| ApiError::bad_request(place_error_message(error)))?;
 
+    let saving = super::mutation_gate(state)?;
     let (id, seq) = {
         let mut session = state.session.lock().expect("session poisoned");
         session.state.last_comment += 1;
@@ -396,7 +407,6 @@ fn add_page_comment(
     // 書いてからコメントが入るまでは、スナップショットと別の画像の書き込みを止める。その間に
     // 20 MB の規則が掛かると、まだ状態に無いこの画像を、削除したコメントの画像と見誤る
     // ことがある。ロックは persist → session → snapshots の順。
-    let saving = state.persist.lock().expect("persist poisoned");
     let image = image.map(|image| save_image(state, &id, &image));
     let image_unsaved = matches!(image, Some(ImageSaved::NoRoom));
     let image = match image {
@@ -454,15 +464,7 @@ fn add_explanation_comment(
     body: String,
     selection: Option<ExplanationSelection>,
 ) -> Result<Json<Value>, ApiError> {
-    let gate = state.persist.lock().expect("persist poisoned");
-    if *state.stopping.shutdown.borrow()
-        || matches!(
-            *state.stopping.submit_state.lock().expect("submit poisoned"),
-            crate::SubmitState::Claimed
-        )
-    {
-        return Err(ApiError::conflict("the review is being submitted"));
-    }
+    let gate = super::mutation_gate(state)?;
     let mut session = state.session.lock().expect("session poisoned");
     let version = session
         .state

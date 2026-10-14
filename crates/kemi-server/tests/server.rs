@@ -5319,6 +5319,67 @@ async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
 }
 
 #[tokio::test]
+async fn reviewer_writes_arriving_after_submit_are_rejected_instead_of_lost() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for (action, body) in [
+        ("message", json!({"body":"late"})),
+        (
+            "comment",
+            json!({"op":"add","file_id":"f1","side":"new","body":"late"}),
+        ),
+        ("comment", json!({"op":"edit","id":"c1","body":"late"})),
+        ("comment", json!({"op":"reply","id":"c1","body":"late"})),
+        ("comment", json!({"op":"resolve","id":"c1","resolved":true})),
+        ("comment", json!({"op":"delete","id":"c1"})),
+    ] {
+        let server = TestServer::start().await;
+        let accepted = server
+            .post(
+                "api/comment",
+                json!({"op":"add","file_id":"f1","side":"new","body":"accepted"}),
+            )
+            .await;
+        assert_eq!(accepted.status(), 200);
+        let body = body.to_string();
+        let mut late = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
+            .await
+            .unwrap();
+        let head = format!(
+            "POST /s/test-token/api/{action} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            server.port,
+            server.origin,
+            body.len()
+        );
+        late.write_all(head.as_bytes()).await.unwrap();
+        let mut first = [0];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), late.read(&mut first))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            server
+                .post("api/submit", json!({"verdict":"approved"}))
+                .await
+                .status(),
+            200
+        );
+        late.write_all(body.as_bytes()).await.unwrap();
+        assert_eq!(response_status(&mut late).await, 409, "{action}: {body}");
+        let result = server.finish().await;
+        assert_eq!(result["comments"][0]["body"], "accepted");
+        assert!(
+            result["comments"][0]["replies"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(result["comments"][0]["resolved"], false);
+        assert!(result["messages"].as_array().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn a_reply_arriving_after_the_submit_is_not_reported_as_written_when_missing_from_the_result()
 {
     use tokio::io::AsyncWriteExt;
