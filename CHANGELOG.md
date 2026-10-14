@@ -5,6 +5,14 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-14
+
+### 文書
+
+- README をインストールと初回のレビューから読める構成に整理し、日本語版と実画面の
+  スクリーンショットを追加した。詳細な契約は既存の参照資料へ案内する。
+- 紹介ページを、説明文書とエージェントとの対話を使う現在のレビュー画面に合わせて更新した。
+
 ### 修正
 
 - コメント札の場所表示が折り返され、札の外にはみ出すことがあった。
@@ -425,7 +433,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/ba0918/kemi/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/ba0918/kemi/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/ba0918/kemi/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ba0918/kemi/compare/v0.2.1...v0.3.0
