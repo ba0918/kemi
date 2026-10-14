@@ -13,6 +13,7 @@ use kemi_core::domain::content;
 use kemi_core::domain::diff::{self, DisplayRow, Line, Row, Segment};
 use kemi_core::domain::review::{FileEntry, Side};
 use kemi_core::render::{self, InitialView, Target};
+use kemi_core::source::FileContent;
 use serde_json::{Value, json};
 
 use super::{ApiError, ExpandQuery, file_not_found, find_file, side_lines, source_content};
@@ -51,9 +52,25 @@ pub(super) async fn file_api(
         })));
     }
 
+    let permit = crate::preparation::acquire(&state.preparation).await;
     let content = source_content(&state, &id)
         .await?
         .ok_or_else(file_not_found)?;
+    crate::preparation::run(permit, move || {
+        prepare_file(&state, &id, &file, &content, &query)
+    })
+    .await
+    .map_err(ApiError::internal)?
+}
+
+fn prepare_file(
+    state: &AppState,
+    id: &str,
+    file: &FileEntry,
+    content: &FileContent,
+    query: &ExpandQuery,
+) -> Result<Json<Value>, ApiError> {
+    let dark = query.dark.as_deref() == Some("1");
     let old_text = content
         .old
         .as_deref()
@@ -78,9 +95,9 @@ pub(super) async fn file_api(
     });
     let highlight_info = json!({ "capable": capable, "enabled": enabled, "dark": dark });
     // 描画表示の対象かと、事前に分かる描画不可は、ここで読んだ内容だけで決める（R-RENDER）。
-    let render_info = render_info(&file, old_text.as_deref(), new_text.as_deref());
+    let render_info = render_info(file, old_text.as_deref(), new_text.as_deref());
 
-    update_outdated(&state, &id, &old_lines, &new_lines);
+    update_outdated(state, id, &old_lines, &new_lines);
 
     if let (Some(from), Some(to)) = (query.from, query.to) {
         let from = from.min(rows.len());
@@ -96,7 +113,7 @@ pub(super) async fn file_api(
             "binary": false,
             "rows": slice,
             "next": next,
-            "comments": comments_for(&state, &id),
+            "comments": comments_for(state, id),
             "highlight": highlight_info,
             "render": render_info,
         })));
@@ -105,7 +122,7 @@ pub(super) async fn file_api(
     // 行コメントの付いた行は、変更の行と同じく畳まない。止まる場所と吹き出しは見えている
     // 行にしか置けないので、畳むと、展開したかどうかで止まる場所の数が変わり、コメント
     // 一覧からも移れなくなる（R-NAV, R-VIEW）。
-    let (old_commented, new_commented) = commented_lines(&state, &id);
+    let (old_commented, new_commented) = commented_lines(state, id);
     let display = diff::collapse(&rows, diff::DEFAULT_CONTEXT, |row| {
         row.old
             .as_ref()
@@ -126,7 +143,7 @@ pub(super) async fn file_api(
         "new_total": new_lines.len(),
         "context": diff::DEFAULT_CONTEXT,
         "rows": rows_json,
-        "comments": comments_for(&state, &id),
+        "comments": comments_for(state, id),
         "highlight": highlight_info,
         "render": render_info,
     })))

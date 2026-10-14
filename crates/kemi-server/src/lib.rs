@@ -8,6 +8,7 @@ mod explanation;
 mod highlight;
 mod lan;
 mod live;
+mod preparation;
 mod session;
 mod units;
 mod watch;
@@ -410,6 +411,8 @@ pub(crate) struct AppState {
     pub display_id: String,
     pub display_ready: std::sync::atomic::AtomicBool,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
+    /// blocking pool の既定の上限は CPU 計算には大きすぎるため、巨大な行データの同時保持も絞る。
+    pub preparation: Arc<tokio::sync::Semaphore>,
     pub assets: Arc<dyn Assets>,
     pub results: Option<Arc<dyn ResultSink>>,
     pub session_sink: Option<Arc<dyn SessionSink>>,
@@ -725,6 +728,9 @@ async fn run_servers(
         display_id,
         display_ready: std::sync::atomic::AtomicBool::new(false),
         highlighter: std::sync::OnceLock::new(),
+        preparation: Arc::new(tokio::sync::Semaphore::new(
+            std::thread::available_parallelism().map_or(1, |count| count.get().min(4)),
+        )),
         assets: params.assets,
         results: params.results,
         session_sink: params.session,

@@ -144,21 +144,32 @@ pub(super) async fn render_file(
 ) -> Result<Json<Value>, ApiError> {
     let (file, _) = find_file(&state, &id)?;
     match render::target_of_file(&file) {
-        Some(Target::Markdown) => render_markdown_file(&state, &id, &file, &query).await,
-        Some(Target::Table { delimiter }) => render_table_file(&state, &id, delimiter).await,
+        Some(Target::Markdown) => render_markdown_file(state, id, file, query).await,
+        Some(Target::Table { delimiter }) => render_table_file(state, id, delimiter).await,
         Some(Target::Image { .. }) => render_image_file(&state, &id, &file).await,
         None => Err(ApiError::bad_request("this file has no rendered view")),
     }
 }
 
 async fn render_table_file(
-    state: &AppState,
-    id: &str,
+    state: Arc<AppState>,
+    id: String,
     delimiter: u8,
 ) -> Result<Json<Value>, ApiError> {
-    let content = source_content(state, id)
+    let permit = crate::preparation::acquire(&state.preparation).await;
+    let content = source_content(&state, &id)
         .await?
         .ok_or_else(file_not_found)?;
+    crate::preparation::run(permit, move || prepare_table(&id, &content, delimiter))
+        .await
+        .map_err(ApiError::internal)?
+}
+
+fn prepare_table(
+    id: &str,
+    content: &kemi_core::source::FileContent,
+    delimiter: u8,
+) -> Result<Json<Value>, ApiError> {
     let old_text = side_text(&content.old);
     let new_text = side_text(&content.new);
     let rendered = render::render_table(&render::TableInput {
@@ -201,22 +212,41 @@ fn blocks_json(rendered: &render::Rendered) -> Vec<Value> {
 }
 
 async fn render_markdown_file(
+    state: Arc<AppState>,
+    id: String,
+    file: FileEntry,
+    query: ExpandQuery,
+) -> Result<Json<Value>, ApiError> {
+    let permit = crate::preparation::acquire(&state.preparation).await;
+    let content = source_content(&state, &id)
+        .await?
+        .ok_or_else(file_not_found)?;
+    crate::preparation::run(permit, move || {
+        prepare_markdown(&state, &id, &file, &query, &content)
+    })
+    .await
+    .map_err(ApiError::internal)?
+}
+
+fn prepare_markdown(
     state: &AppState,
     id: &str,
     file: &FileEntry,
     query: &ExpandQuery,
+    content: &kemi_core::source::FileContent,
 ) -> Result<Json<Value>, ApiError> {
-    let content = source_content(state, id)
-        .await?
-        .ok_or_else(file_not_found)?;
     let old_text = side_text(&content.old);
     let new_text = side_text(&content.new);
     let dark = query.dark.as_deref() == Some("1");
     let capable = Highlighter::capable(old_text.as_deref(), new_text.as_deref());
     let forced = query.highlight.as_deref() == Some("on");
     let enabled = forced || (capable && query.highlight.as_deref() != Some("off"));
-    let highlighter = state.highlighter.get_or_init(Highlighter::new);
-    let highlight = |lang: &str, code: &str| highlighter.highlight_code(lang, code, dark);
+    let highlight = |lang: &str, code: &str| {
+        state
+            .highlighter
+            .get_or_init(Highlighter::new)
+            .highlight_code(lang, code, dark)
+    };
     let file_id = id.to_string();
     let image_url = move |reference: &ImageRef| match reference {
         ImageRef::Review { file_id, side } => {

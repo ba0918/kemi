@@ -5319,6 +5319,34 @@ async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
 }
 
 #[tokio::test]
+async fn expanding_one_row_of_a_large_file_keeps_line_numbers_and_disabled_highlighting() {
+    let text = "abcdefghij abcdefghij abcdefghij abcdefghij\n".repeat(100_000);
+    let source = Arc::new(FakeSource::new().with_file(
+        file_entry("f20", "large.txt"),
+        FileContent {
+            old: Some(text.clone().into_bytes()),
+            new: Some(text.into_bytes()),
+        },
+    ));
+    let server = TestServer::start_source(source, Ipv4Addr::LOCALHOST, None).await;
+    let file: Value = server
+        .get("api/file/f20?highlight=off&from=0&to=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(file["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(file["rows"][0]["old"]["number"], 1);
+    assert_eq!(file["rows"][0]["new"]["number"], 1);
+    assert_eq!(file["highlight"]["enabled"], false);
+    assert!(file["next"].is_null());
+    server
+        .post("api/submit", json!({"verdict":"approved"}))
+        .await;
+    server.finish().await;
+}
+
+#[tokio::test]
 async fn submit_reads_each_commented_file_once_for_both_sides() {
     let server = TestServer::start().await;
     for side in ["old", "new", "new"] {
