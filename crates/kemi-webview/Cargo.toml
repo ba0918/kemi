@@ -10,4 +10,4 @@ description = "Embedded web assets for kemi"
 workspace = true
 
 [dependencies]
-rust-embed = "8.12.0"
+rust-embed = { version = "8.12.0", features = ["include-exclude"] }
