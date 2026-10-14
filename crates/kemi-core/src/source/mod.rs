@@ -72,18 +72,7 @@ pub(crate) fn known_lines(bytes: Option<&[u8]>) -> Option<u32> {
     if crate::domain::content::is_binary(bytes) {
         return None;
     }
-    if bytes.is_empty() {
-        return Some(0);
-    }
-    let separators = bytes
-        .iter()
-        .enumerate()
-        .filter(|(index, byte)| {
-            **byte == b'\r' || (**byte == b'\n' && (*index == 0 || bytes[*index - 1] != b'\r'))
-        })
-        .count();
-    let unterminated = usize::from(!matches!(bytes.last(), Some(b'\r' | b'\n')));
-    u32::try_from(separators + unterminated).ok()
+    u32::try_from(crate::domain::content::line_count(bytes)).ok()
 }
 
 /// 最終形の 1 ファイルの由来（R-ORIGIN）。

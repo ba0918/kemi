@@ -489,6 +489,19 @@ fn target_is_decided_by_the_new_path_for_renames_and_the_old_path_for_deletions(
 }
 
 #[test]
+fn cr_only_content_over_the_display_line_limit_is_not_rendered() {
+    let long = "x\r".repeat(10_001);
+    assert_eq!(
+        render_markdown(&input(None, Some(&long)), no_highlight(), &plain_url).unwrap_err(),
+        Unrenderable::TooLarge
+    );
+    assert_eq!(
+        render_table_pair(None, Some(&long), b',').unwrap_err(),
+        Unrenderable::TooLarge
+    );
+}
+
+#[test]
 fn a_side_over_the_line_or_byte_limit_is_not_rendered() {
     let long = "x\n".repeat(10_001);
     assert_eq!(

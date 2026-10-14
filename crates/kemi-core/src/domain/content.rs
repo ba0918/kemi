@@ -19,6 +19,19 @@ pub fn lines(content: &str) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn line_count(bytes: &[u8]) -> usize {
+    let separators = bytes
+        .iter()
+        .enumerate()
+        .filter(|(index, byte)| {
+            **byte == b'\r' || (**byte == b'\n' && (*index == 0 || bytes[*index - 1] != b'\r'))
+        })
+        .count();
+    let unterminated =
+        usize::from(!bytes.is_empty() && !matches!(bytes.last(), Some(b'\r' | b'\n')));
+    separators + unterminated
+}
+
 /// `lines` の各行が、git の数え方（LF だけで区切る）で何行目にあたるか（1 始まり）。
 /// 単独の CR は表示では行を分けるが、git blame などは分けない。git が返す行番号を
 /// 表示の行番号へ対応させるのに使う。
@@ -56,7 +69,7 @@ pub const AUTO_MAX_BYTES: usize = 1_048_576;
 /// 上限を超えたら false。無い側は数えない。
 pub fn within_auto_limit(old: Option<&str>, new: Option<&str>) -> bool {
     let within =
-        |text: &str| text.len() <= AUTO_MAX_BYTES && text.lines().count() <= AUTO_MAX_LINES;
+        |text: &str| text.len() <= AUTO_MAX_BYTES && line_count(text.as_bytes()) <= AUTO_MAX_LINES;
     old.is_none_or(within) && new.is_none_or(within)
 }
 
@@ -68,6 +81,33 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counting_lines_matches_display_splitting_without_normalizing_or_allocating() {
+        for text in [
+            "",
+            "a",
+            "\r",
+            "\n",
+            "\r\n",
+            "a\rb\nc\r\nd",
+            "\r\n\r\r\n\n",
+            "日本語\r\n次\r",
+        ] {
+            assert_eq!(line_count(text.as_bytes()), lines(text).len(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn auto_limits_count_cr_lf_and_crlf_as_displayed_lines() {
+        for newline in ["\r", "\n", "\r\n"] {
+            let at_limit = format!("x{newline}").repeat(AUTO_MAX_LINES);
+            let over_limit = format!("x{newline}").repeat(AUTO_MAX_LINES + 1);
+            assert!(within_auto_limit(None, Some(&at_limit)));
+            assert!(!within_auto_limit(None, Some(&over_limit)), "{newline:?}");
+            assert!(!within_auto_limit(Some(&over_limit), None), "{newline:?}");
+        }
+    }
 
     #[test]
     fn normalize_converts_crlf_and_cr_to_lf() {
