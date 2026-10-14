@@ -1,0 +1,147 @@
+use super::*;
+
+#[tokio::test]
+async fn live_worktree_change_sends_update() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    repo.write("a.txt", "initial change\n");
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    repo.write("a.txt", "two\n");
+    assert!(
+        sse.next_update(Duration::from_secs(2)).await,
+        "no update event"
+    );
+
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_manifest_path_change_sends_update() {
+    let dir = TempRepo::new();
+    dir.write("old.txt", "one\n");
+    dir.write("new.txt", "one\n");
+    let json =
+        r#"{"groups":[{"diffs":[{"path":"a.txt","old_path":"old.txt","new_path":"new.txt"}]}]}"#;
+    let source = Arc::new(ManifestSource::from_json(json, &dir.path).unwrap());
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    dir.write("new.txt", "two\n");
+    assert!(
+        sse.next_update(Duration::from_secs(2)).await,
+        "no update event"
+    );
+
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_ref_change_sends_update_and_other_git_writes_are_ignored() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    let base = repo.commit("base");
+    let source = Arc::new(GitSource::new(
+        repo.path.clone(),
+        GitMode::Range {
+            from: base,
+            to: "HEAD".to_string(),
+            group_by: GroupBy::Commit,
+        },
+    ));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+
+    // `--to`（HEAD）以外の ref、たとえば別ブランチの更新は監視対象ではない。
+    repo.git(&["branch", "other"]);
+    assert_eq!(
+        sse.count_updates(Duration::from_millis(1000)).await,
+        0,
+        "another branch ref sent an event"
+    );
+
+    // `.git` の他の書き込みも監視対象ではない。
+    std::fs::write(repo.path.join(".git/not-a-ref.txt"), "x").unwrap();
+    assert_eq!(
+        sse.count_updates(Duration::from_millis(1000)).await,
+        0,
+        "unrelated .git write sent an event"
+    );
+
+    // 対象の ref が進めば通知する。
+    repo.write("b.txt", "two\n");
+    repo.commit("second");
+    assert!(
+        sse.next_update(Duration::from_secs(2)).await,
+        "no update event for the new commit"
+    );
+
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_worktree_read_does_not_send_update() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.commit("base");
+    repo.write("a.txt", "initial change\n");
+    let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
+    let server = LiveServer::start(source).await;
+
+    let mut sse = SseStream::connect(server.port).await;
+    // api/review はファイルを読む。読み取り（Access）は更新ではない。
+    let response = reqwest::get(format!(
+        "http://127.0.0.1:{}/s/live-token/api/review",
+        server.port
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    let _ = response.text().await.unwrap();
+
+    assert!(
+        !sse.next_update(Duration::from_millis(700)).await,
+        "read-only access must not send an update"
+    );
+    server.stop();
+}
+
+#[tokio::test]
+async fn live_rewritten_history_comment_outdated_with_original_group() {
+    let (repo, base) = range_repo();
+    let server = LiveServer::start(Arc::new(range_source(
+        &repo,
+        &base,
+        "HEAD",
+        GroupBy::Commit,
+    )))
+    .await;
+    let per_commit = server.get_json("api/review").await;
+    let old_sha = per_commit["groups"][1]["id"].as_str().unwrap().to_string();
+    let file = file_in(&per_commit, 1, "a.txt")["id"].clone();
+    server
+        .post(
+            "api/comment",
+            json!({"op": "add", "file_id": file, "side": "new",
+                   "start_line": 1, "end_line": 1, "body": "書き換え前"}),
+        )
+        .await;
+
+    repo.git(&["commit", "--amend", "-q", "-m", "fix: three (amended)"]);
+    let refreshed = server.get_json("api/review?refresh=1").await;
+    assert_ne!(refreshed["groups"][1]["id"], old_sha.as_str());
+    let response = server
+        .post("api/submit", json!({"verdict": "changes_requested"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let document = server.finish().await;
+
+    let comment = &document["comments"][0];
+    assert_eq!(comment["group_id"], old_sha.as_str());
+    assert_eq!(comment["group_title"], "fix: three");
+    assert_eq!(comment["outdated"], true);
+}

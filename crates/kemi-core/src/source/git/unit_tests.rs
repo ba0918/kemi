@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::source::testutil::TempRepo;
 use crate::source::{FileContent, FocusSource};

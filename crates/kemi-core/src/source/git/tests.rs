@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::domain::review::Side;
 use crate::source::testutil::TempRepo;

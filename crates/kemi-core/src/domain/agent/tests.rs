@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::domain::review::{CommentTarget, FileTarget, Side};
 
