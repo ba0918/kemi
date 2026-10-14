@@ -13,6 +13,8 @@ use super::git::{git_raw, path_bytes, path_from_bytes, split_z};
 /// 1 レビューで見張るディレクトリの数の上限（R-LIVE）。
 pub const WATCH_DIRECTORY_LIMIT: usize = 10_000;
 
+const DIRECTORY_BATCH: usize = 1024;
+
 /// 見張る作業ツリー。根は git の作業ツリーの根。
 ///
 /// 追跡しているファイルの一覧は、索引のファイルが変わるまで覚えておく。
@@ -268,33 +270,45 @@ impl WorkTree {
         })
     }
 
-    /// `starts` から 1 段ずつ辿る。段ごとに子のディレクトリをまとめて git に聞き、無視される
-    /// ものの下には潜らない。git を呼ぶ回数は深さの分だけで、ディレクトリの数に比例しない。
+    /// 子を一定数ずつ git に聞き、無視されるものの下には潜らない。
     fn walk(&self, starts: Vec<PathBuf>, limit: usize) -> Result<WatchDirectories, SourceError> {
         let mut found = WatchDirectories::default();
         let mut level = starts;
+        if level.len() > limit {
+            level.truncate(limit.saturating_add(1));
+            found.directories = level;
+            found.over_limit = true;
+            return Ok(found);
+        }
         found.directories.extend(level.iter().cloned());
         while !level.is_empty() {
-            if found.directories.len() > limit {
-                found.over_limit = true;
-                return Ok(found);
-            }
-            let children: Vec<PathBuf> = level
-                .iter()
-                .flat_map(|parent| subdirectories(parent))
-                .collect();
-            let ignored = self.ignored(&children)?;
-            level = Vec::new();
-            for child in children {
-                if ignored.contains(&child) {
-                    found.ignored.push(child);
-                } else {
-                    found.directories.push(child.clone());
-                    level.push(child);
+            level = {
+                let mut children = level.iter().flat_map(|parent| subdirectories(parent));
+                let mut next = Vec::new();
+                loop {
+                    // 残りの枠だけで区切ると、枠を使い切った後の無視ディレクトリを
+                    // 一個ずつ Git に聞くことになる。入力の上限は枠とは独立させる。
+                    let batch: Vec<_> = children.by_ref().take(DIRECTORY_BATCH).collect();
+                    if batch.is_empty() {
+                        break;
+                    }
+                    let ignored = self.ignored(&batch)?;
+                    for child in batch {
+                        if ignored.contains(&child) {
+                            found.ignored.push(child);
+                        } else {
+                            found.directories.push(child.clone());
+                            if found.directories.len() > limit {
+                                found.over_limit = true;
+                                return Ok(found);
+                            }
+                            next.push(child);
+                        }
+                    }
                 }
-            }
+                next
+            };
         }
-        found.over_limit = found.directories.len() > limit;
         Ok(found)
     }
 }
@@ -319,16 +333,14 @@ fn git_path(relative: &Path) -> Vec<u8> {
 }
 
 /// `parent` の直下のディレクトリ（`.git` を除く）。symlink は辿らない。読めないものは飛ばす。
-fn subdirectories(parent: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(parent) else {
-        return Vec::new();
-    };
-    entries
+fn subdirectories(parent: &Path) -> impl Iterator<Item = PathBuf> {
+    std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .filter(|entry| entry.file_name() != ".git")
         .map(|entry| entry.path())
-        .collect()
 }
 
 /// `git check-ignore` の答え。
@@ -393,6 +405,42 @@ fn check_ignore(root: &Path, relatives: &[&[u8]]) -> Result<Answer, SourceError>
 mod tests {
     use super::*;
     use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn wide_directory_overflow_retains_only_the_limit_and_one_extra_directory() {
+        let repo = TempRepo::new();
+        for i in 0..128 {
+            std::fs::create_dir(repo.path.join(format!("dir-{i}"))).unwrap();
+        }
+        let tree = WorkTree::new(repo.path.clone());
+        let found = tree.directories(3).unwrap();
+        assert!(found.over_limit);
+        assert_eq!(found.directories.len(), 4);
+        let starts: Vec<_> = (0..128)
+            .map(|i| repo.path.join(format!("dir-{i}")))
+            .collect();
+        let found = tree.directories_under(&starts, 3).unwrap();
+        assert!(found.over_limit);
+        assert_eq!(found.directories.len(), 4);
+    }
+
+    #[test]
+    fn ignored_siblings_do_not_consume_the_directory_limit_even_across_batches() {
+        let repo = TempRepo::new();
+        repo.write(".gitignore", "ignored-*/\n");
+        for i in 0..1100 {
+            std::fs::create_dir(repo.path.join(format!("ignored-{i}"))).unwrap();
+        }
+        std::fs::create_dir(repo.path.join("visible")).unwrap();
+        let tree = WorkTree::new(repo.path.clone());
+        let found = tree.directories(2).unwrap();
+        assert!(!found.over_limit);
+        assert_eq!(
+            sorted(found.directories),
+            sorted(vec![repo.path.clone(), repo.path.join("visible")])
+        );
+        assert_eq!(found.ignored.len(), 1100);
+    }
 
     fn repo_with_ignored_build() -> TempRepo {
         let repo = TempRepo::new();
