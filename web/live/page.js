@@ -1022,18 +1022,17 @@
   // data: の URL に埋め込む。スナップショットを出す枠はレビュー画面の中の別のオリジンで、
   // 中継の cookie を持たず、中継のポートから何も読めないため。
 
-  /** 1 回の写しの中で読んだ URL。写すたびに作り直し、前の写しの後で変わった画像や CSS を読み直す。 */
-  /** @type {Map<string, Promise<string>>} */
-  let inlined = new Map();
+  /** @typedef {{ inlined: Map<string, Promise<string>>, failure: string | null }} CopyResources */
 
   /**
    * URL の中身を data: の URL にする。読めなければ元の URL のまま。
    * @param {string} url
+   * @param {CopyResources} resources
    * @returns {Promise<string>}
    */
-  function dataUrl(url) {
+  function dataUrl(url, resources) {
     if (url.startsWith('data:')) return Promise.resolve(url);
-    let pending = inlined.get(url);
+    let pending = resources.inlined.get(url);
     if (!pending) {
       pending = fetch(url, { credentials: 'same-origin' })
         .then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
@@ -1044,8 +1043,11 @@
           reader.readAsDataURL(blob);
         }))
         .then((value) => String(value))
-        .catch(() => url);
-      inlined.set(url, pending);
+        .catch(() => {
+          resources.failure ??= 'a page resource could not be embedded';
+          return url;
+        });
+      resources.inlined.set(url, pending);
     }
     return pending;
   }
@@ -1054,16 +1056,17 @@
    * CSS の url() を、基準の URL で解いて data: の URL に埋め込む。
    * @param {string} css
    * @param {string} base
+   * @param {CopyResources} resources
    * @returns {Promise<string>}
    */
-  async function inlineCss(css, base) {
+  async function inlineCss(css, base, resources) {
     const pattern = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
     const found = [...css.matchAll(pattern)];
     const replacements = await Promise.all(found.map(async (match) => {
       const target = match[2].trim();
       if (target.startsWith('data:') || target.startsWith('#')) return match[0];
       const absolute = new URL(target, base).href;
-      return `url("${await dataUrl(absolute)}")`;
+      return `url("${await dataUrl(absolute, resources)}")`;
     }));
     let index = 0;
     return css.replace(pattern, () => replacements[index++]);
@@ -1075,10 +1078,11 @@
    * 置けない）。シート自身の規則が読めない（別のオリジンの）ときは null。
    * @param {CSSStyleSheet} sheet
    * @param {string} base
+   * @param {CopyResources} resources
    * @returns {Promise<string | null>}
    */
-  async function sheetCss(sheet, base) {
-    const parts = await sheetParts(sheet, base);
+  async function sheetCss(sheet, base, resources) {
+    const parts = await sheetParts(sheet, base, resources);
     return parts && [...parts.imports, parts.body].join('\n');
   }
 
@@ -1087,18 +1091,20 @@
    * 展開したシートの中に残った import の行も、外側の先頭へ寄せるため。
    * @param {CSSStyleSheet} sheet
    * @param {string} base
+   * @param {CopyResources} resources
    * @returns {Promise<{ imports: string[], body: string } | null>}
    */
-  async function sheetParts(sheet, base) {
+  async function sheetParts(sheet, base, resources) {
     /** @type {CSSRule[]} */
     let rules;
     try {
       rules = [...sheet.cssRules];
     } catch {
+      resources.failure ??= 'stylesheet rules could not be read (the stylesheet may be cross-origin)';
       return null;
     }
     // 規則ごとの url() の取り寄せは中継との往復なので、順に待たず一度に始め、元の順に並べる。
-    const parts = await Promise.all(rules.map((rule) => ruleParts(rule, base)));
+    const parts = await Promise.all(rules.map((rule) => ruleParts(rule, base, resources)));
     return {
       imports: parts.flatMap((part) => part.imports),
       body: parts.map((part) => part.body).filter((text) => text !== null).join('\n'),
@@ -1109,16 +1115,18 @@
    * sheetParts の規則 1 つぶん。import の行と、本文に置く CSS（無ければ null）。
    * @param {CSSRule} rule
    * @param {string} base
+   * @param {CopyResources} resources
    * @returns {Promise<{ imports: string[], body: string | null }>}
    */
-  async function ruleParts(rule, base) {
+  async function ruleParts(rule, base, resources) {
     if (!(rule instanceof CSSImportRule)) {
-      return { imports: [], body: await inlineCss(rule.cssText, base) };
+      return { imports: [], body: await inlineCss(rule.cssText, base, resources) };
     }
     const href = new URL(rule.href, base).href;
     const media = rule.media.mediaText;
-    const imported = rule.styleSheet ? await sheetParts(rule.styleSheet, rule.styleSheet.href ?? href) : null;
+    const imported = rule.styleSheet ? await sheetParts(rule.styleSheet, rule.styleSheet.href ?? href, resources) : null;
     if (imported === null) {
+      resources.failure ??= 'an imported stylesheet could not be embedded';
       return { imports: [`@import url("${href}")${media ? ` ${media}` : ''};`], body: null };
     }
     return {
@@ -1143,9 +1151,10 @@
    * @param {Element} original
    * @param {Element} copy
    * @param {Map<Element, number>} indices 記述の要素の番号（写しの要素に目印として付ける）
+   * @param {CopyResources} resources
    * @returns {Promise<Element | null>}
    */
-  async function snapshotElement(original, copy, indices) {
+  async function snapshotElement(original, copy, indices, resources) {
     const owner = /** @type {Document} */ (copy.ownerDocument);
     const tag = original.localName;
     if (original === marksHost) return null;
@@ -1161,7 +1170,7 @@
       const rel = (original.getAttribute('rel') ?? '').toLowerCase().split(/\s+/);
       const sheet = /** @type {HTMLLinkElement} */ (original).sheet;
       if (rel.includes('stylesheet') && sheet) {
-        const css = await sheetCss(sheet, sheet.href ?? location.href);
+        const css = await sheetCss(sheet, sheet.href ?? location.href, resources);
         if (css !== null) return styleElement(owner, css);
         // 規則を読めない別のオリジンの CSS は、元の URL を指したまま残す。中継を通らないので、
         // スナップショットの枠からも読める。
@@ -1172,8 +1181,8 @@
     if (tag === 'style') {
       // 中身の文字列ではなく今の規則から写す。insertRule などで足した規則は文字列に出ない。
       const sheet = /** @type {HTMLStyleElement} */ (original).sheet;
-      const css = sheet ? await sheetCss(sheet, document.baseURI) : null;
-      copy.textContent = css ?? await inlineCss(original.textContent ?? '', document.baseURI);
+      const css = sheet ? await sheetCss(sheet, document.baseURI, resources) : null;
+      copy.textContent = css ?? await inlineCss(original.textContent ?? '', document.baseURI, resources);
       return copy;
     }
     // <picture> の <source> は外す。選ばれた画像は <img> の currentSrc として埋め込む。
@@ -1190,31 +1199,32 @@
         image.setAttribute('src', canvas.toDataURL());
       } catch {
         // 別のオリジンの画像を描いた canvas は読み出せない。大きさだけを保つ。
+        resources.failure ??= 'a canvas could not be read';
       }
       return image;
     }
     if (tag === 'img') {
       const image = /** @type {HTMLImageElement} */ (original);
       const source = image.currentSrc || image.src;
-      if (source) copy.setAttribute('src', await dataUrl(source));
+      if (source) copy.setAttribute('src', await dataUrl(source, resources));
       copy.removeAttribute('srcset');
       copy.removeAttribute('sizes');
       copy.removeAttribute('loading');
     }
     if (tag === 'video') {
       const poster = /** @type {HTMLVideoElement} */ (original).poster;
-      if (poster) copy.setAttribute('poster', await dataUrl(poster));
+      if (poster) copy.setAttribute('poster', await dataUrl(poster, resources));
     }
     if (tag === 'image' && original.namespaceURI === 'http://www.w3.org/2000/svg') {
       for (const namespace of [null, 'http://www.w3.org/1999/xlink']) {
         const value = original.getAttributeNS(namespace, 'href');
-        if (value) copy.setAttributeNS(namespace, 'href', await dataUrl(new URL(value, document.baseURI).href));
+        if (value) copy.setAttributeNS(namespace, 'href', await dataUrl(new URL(value, document.baseURI).href, resources));
       }
     }
     if (tag === 'input') {
       const input = /** @type {HTMLInputElement} */ (original);
       if (input.type === 'image' && input.src) {
-        copy.setAttribute('src', await dataUrl(input.src));
+        copy.setAttribute('src', await dataUrl(input.src, resources));
       }
       if (input.type === 'checkbox' || input.type === 'radio') {
         if (input.checked) copy.setAttribute('checked', '');
@@ -1236,21 +1246,21 @@
       if (/^on/i.test(attribute.name) || /^\s*javascript:/i.test(attribute.value) || attribute.name.toLowerCase() === 'referrerpolicy') {
         copy.removeAttribute(attribute.name);
       } else if (attribute.name.toLowerCase() === 'style' && /url\(/i.test(attribute.value)) {
-        copy.setAttribute(attribute.name, await inlineCss(attribute.value, document.baseURI));
+        copy.setAttribute(attribute.name, await inlineCss(attribute.value, document.baseURI, resources));
       }
     }
     if (tag !== 'textarea') {
-      await snapshotChildren(original, copy, indices);
+      await snapshotChildren(original, copy, indices, resources);
     }
     if (original.shadowRoot) {
       const template = owner.createElement('template');
       template.setAttribute('shadowrootmode', 'open');
       for (const child of [...original.shadowRoot.childNodes]) {
-        const copied = await snapshotNode(child, owner, indices);
+        const copied = await snapshotNode(child, owner, indices, resources);
         if (copied) template.content.append(copied);
       }
       for (const sheet of original.shadowRoot.adoptedStyleSheets) {
-        template.content.append(styleElement(owner, (await sheetCss(sheet, document.baseURI)) ?? ''));
+        template.content.append(styleElement(owner, (await sheetCss(sheet, document.baseURI, resources)) ?? ''));
       }
       copy.prepend(template);
     }
@@ -1262,14 +1272,15 @@
    * @param {Node} original
    * @param {Document} owner
    * @param {Map<Element, number>} indices 記述の要素の番号
+   * @param {CopyResources} resources
    * @returns {Promise<Node | null>}
    */
-  async function snapshotNode(original, owner, indices) {
+  async function snapshotNode(original, owner, indices, resources) {
     const copy = owner.importNode(original, false);
     if (!(original instanceof Element)) {
       return copy;
     }
-    const copied = await snapshotElement(original, /** @type {Element} */ (copy), indices);
+    const copied = await snapshotElement(original, /** @type {Element} */ (copy), indices, resources);
     if (copied) {
       // ページが同じ名前の属性を持っていても、目印と読み違えないよう外す。
       copied.removeAttribute(ELEMENT_STAMP);
@@ -1284,13 +1295,14 @@
    * @param {Element} original
    * @param {Element} copy
    * @param {Map<Element, number>} indices 記述の要素の番号
+   * @param {CopyResources} resources
    */
-  async function snapshotChildren(original, copy, indices) {
+  async function snapshotChildren(original, copy, indices, resources) {
     const owner = /** @type {Document} */ (copy.ownerDocument);
     const children = original instanceof HTMLTemplateElement ? original.content.childNodes : original.childNodes;
     const target = copy instanceof HTMLTemplateElement ? copy.content : copy;
     for (const child of [...children]) {
-      const copied = await snapshotNode(child, owner, indices);
+      const copied = await snapshotNode(child, owner, indices, resources);
       if (copied) target.append(copied);
     }
   }
@@ -1325,16 +1337,17 @@
    * @param {Map<Element, number>} indices 記述の要素の番号（写しの要素に目印として付ける）
    */
   async function copyDocument(indices) {
-    inlined = new Map();
+    /** @type {CopyResources} */
+    const resources = { inlined: new Map(), failure: null };
     const owner = document.implementation.createHTMLDocument('');
-    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner, indices));
+    const root = /** @type {Element} */ (await snapshotNode(document.documentElement, owner, indices, resources));
     const head = root.querySelector('head');
     if (head) {
       for (const sheet of document.adoptedStyleSheets) {
-        head.append(styleElement(owner, (await sheetCss(sheet, document.baseURI)) ?? ''));
+        head.append(styleElement(owner, (await sheetCss(sheet, document.baseURI, resources)) ?? ''));
       }
     }
-    return { owner, root, head };
+    return { owner, root, head, failure: resources.failure };
   }
 
   // ---- コメントの画像（R-PAGE-COMMENT） ----
@@ -1480,7 +1493,9 @@
    * @param {{ w: number, h: number }} screen 動いているページの画面の大きさ
    */
   async function drawPageCopy(context, area, width, height, screen) {
-    const { root } = await copyDocument(new Map());
+    const { root, failure } = await copyDocument(new Map());
+    // HTML は外部 URL を読めるが、SVG の画像は読めない。欠けた写しを PNG として渡さない。
+    if (failure !== null) throw new Error(`the page image could not be made: ${failure}`);
     flattenShadowRoots(root);
     const body = encodeURIComponent(new XMLSerializer().serializeToString(root));
     const end = encodeURIComponent('</foreignObject></svg>');

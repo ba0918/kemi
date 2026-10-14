@@ -7,6 +7,7 @@
 //   node scripts/test-live.mjs <kemi-bin> --compose-layout
 //   node scripts/test-live.mjs <kemi-bin> --page-surrounding
 //   node scripts/test-live.mjs <kemi-bin> --baseline-guide
+//   node scripts/test-live.mjs <kemi-bin> --comment-images
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -2733,7 +2734,6 @@ async function commentImagesLookLikeThePage(repository) {
         { n: 3, kind: 'pen', points: [{ x: 20, y: 90 }, { x: 260, y: 90 }, { x: 260, y: 140 }, { x: 20, y: 140 }, { x: 20, y: 90 }], elements: [] },
       ],
     },
-    { page: 'resources.html', rect: { x: 0, y: 0, w: 390, h: 200 }, places: [{ n: 1, kind: 'element', points: [], elements: [{ rect: { x: 10, y: 10, w: 80, h: 80 } }] }] },
   ];
   for (const { page, rect, places } of pages) {
     const dev = await startDevServer();
@@ -2790,6 +2790,68 @@ async function commentImagesLookLikeThePage(repository) {
       await stop(kemi);
       await dev.close();
     }
+  }
+}
+
+/** 埋め込めない資源があるとき、不完全な画像を返さず、本文と場所だけを保存する（R-PAGE-COMMENT）。 */
+async function unreadableResourcesMakeNoPartialCommentImage(repository, only = null) {
+  const cases = ['resources', 'import', 'link', 'background', 'image', 'canvas'];
+  assert.ok(only === null || cases.includes(only), 'unknown resource test case');
+  for (const resource of cases.filter((name) => only === null || name === only)) {
+    await unembeddedResourceMakesNoImage(repository, resource);
+  }
+}
+
+async function unembeddedResourceMakesNoImage(repository, resource) {
+  const dev = await startDevServer();
+  const cross = dev.url.replace('127.0.0.1', 'localhost');
+  const sources = {
+    import: `<style>@import url("${cross}cross-imported.css");</style>`,
+    link: `<link rel="stylesheet" href="${cross}cross.css">`,
+    background: '<style>.box { background: url("/missing.png"); }</style>',
+    image: '<img src="/missing.png" alt="missing resource">',
+    canvas: `<canvas id="tainted" width="80" height="80"></canvas><script>const image=new Image();image.onload=()=>{document.querySelector('#tainted').getContext('2d').drawImage(image,0,0);document.body.dataset.ready='true'};image.src='${cross}cross.svg';</script>`,
+  };
+  const page = resource === 'resources' ? 'resources.html' : 'other.html';
+  if (resource !== 'resources') {
+    await writeFile(join(dev.dir, page), `<!doctype html><html><head><style>body{margin:0}.box{width:80px;height:80px}</style>${sources[resource]}</head><body><div class="box cross cross-imported">Target</div></body></html>`);
+  }
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(repository, state, ['--live', `${dev.url}${page}`]);
+  try {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(showsSnapshot('Start'));
+    const snapshot = (await getJson(kemi.url, 'api/snapshots')).snapshots.find((entry) => entry.kind === 'start');
+    const html = (await getJson(kemi.url, `api/snapshot/${snapshot.id}`)).html;
+    if (resource !== 'canvas') {
+      const remaining = resource === 'resources' || resource === 'link' ? 'cross.css' : resource === 'import' ? 'cross-imported.css' : 'missing.png';
+      assert.ok(html.includes(remaining), 'the HTML snapshot retains the resource URL');
+    }
+    const made = await askImage({ x: 0, y: 0, w: 390, h: 200 }, []);
+    assert.ok(made.png === null, `${resource}: a resource that cannot be embedded must not produce a partial PNG`);
+    assert.ok(made.error?.length > 0, 'the missing resource has a reason');
+    await chooseTool('element');
+    await clickInPane(livePane, 40, 40);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await browser('fill', '#live-compose .lv-compose-body', 'Keep the body and the place');
+    await browser('click', '#live-compose .lv-compose-save');
+    await waitFor(`document.querySelector('#live-compose').hidden`);
+    const saved = (await getJson(kemi.url, 'api/review')).comments;
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].body, 'Keep the body and the place');
+    assert.equal(saved[0].page.places.length, 1);
+    assert.equal(saved[0].page.image, null);
+    assert.equal(await evaluate(`document.body.textContent.includes('The comment was saved without its image')`), true);
+    if (resource === 'resources') {
+      const shots = await mkdtemp(join(tmpdir(), 'kemi-live-image-refused-'));
+      await browser('screenshot', join(shots, 'saved-without-image.png'));
+      console.log(`CHECK incomplete image refused; saved comment and notice: ${join(shots, 'saved-without-image.png')}`);
+    }
+    console.log(`PASS ${resource}: image returns a reason without PNG, HTML snapshot remains available, and UI saves the body/place with a notice`);
+  } finally {
+    await stop(kemi);
+    await dev.close();
   }
 }
 
@@ -3984,6 +4046,7 @@ async function verifyLiveReview(repository) {
   await snapshotsAreTakenShownAndChosen(repository);
   await snapshotsCarryTheirResources(repository);
   await commentImagesLookLikeThePage(repository);
+  await unreadableResourcesMakeNoPartialCommentImage(repository);
   await commentImagesKeepTheLayoutOfTheViewport(repository);
   await mocksAreAssignedShownAndKeptApart(repository);
   await mockPanelListsTheFilesToChoose();
@@ -4052,6 +4115,10 @@ try {
   } else if (process.argv[3] === '--baseline-guide') {
     await changesFromStartExplainHowToCompareFromNow(repository);
     await recordingNowSwitchesTheReference(repository);
+  } else if (process.argv[3] === '--comment-images') {
+    await unreadableResourcesMakeNoPartialCommentImage(repository, process.argv[4] ?? null);
+    await commentImagesLookLikeThePage(repository);
+    await commentImagesKeepTheLayoutOfTheViewport(repository);
   } else {
     await verifyLiveReview(repository);
   }

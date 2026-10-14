@@ -1354,6 +1354,7 @@ async function savePageComment() {
   setSaving(true);
   const frame = shell.liveFrame.contentWindow;
   let image = null;
+  let imageError = "";
   if (frame) {
     // 狭い画面で比べる相手の側を見ていると、動いているページは並べられておらず画像を作れない。画像を決める値（ページ・
     // 表示幅・並べた画面の高さ・場所）は頼みに載せ、ページはそれだけで画像を作り、自分の場所や幅が違えば断る。
@@ -1366,6 +1367,7 @@ async function savePageComment() {
       }),
     );
     image = typeof answer.png === "string" ? answer.png : null;
+    if (image === null && typeof answer.error === "string") imageError = answer.error;
   }
   // 保存する場所の形は R-SUBMIT の `page.places`。
   const places = draft.places.map(({ n, kind, points, elements }) => ({ n, kind, points, elements }));
@@ -1382,7 +1384,7 @@ async function savePageComment() {
     const before = state.allComments;
     state.allComments = [...state.allComments, comment];
     live.pageCommentSaved = true;
-    const notice = imageUnsavedNotice(comment);
+    const notice = imageUnsavedNotice(comment) || (imageError ? `The comment was saved without its image: ${imageError}` : "");
     if (notice !== "") {
       live.refNotice = notice;
       renderReference();
