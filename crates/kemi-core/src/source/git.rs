@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::domain::content;
 use crate::domain::focus::FocusTargets;
-use crate::domain::noise::{NoiseInput, classify, linguist_generated};
+use crate::domain::noise::{GeneratedAttributes, NoiseInput, classify};
 use crate::domain::review::{FileEntry, Group, ReviewMeta, Side, Status};
 use crate::source::origin::{OriginPaths, OriginRange, file_origin};
 use crate::source::work_tree::WorkTree;
@@ -161,6 +161,7 @@ impl GitSource {
 
     fn review_worktree(&self) -> Result<(ReviewMeta, Plan), SourceError> {
         let attributes = read_attributes(&self.repo);
+        let generated = GeneratedAttributes::parse(&attributes);
         let mut entries = worktree_diff_entries(&self.repo)?;
 
         let untracked = git_raw(
@@ -200,7 +201,7 @@ impl GitSource {
             });
         }
 
-        let files = self.build_entries(&entries, &attributes, "worktree", |entry| {
+        let files = self.build_entries(&entries, &generated, "worktree", |entry| {
             select_sides(
                 entry,
                 |path| SideRef::Git {
@@ -232,8 +233,9 @@ impl GitSource {
 
     fn review_staged(&self) -> Result<(ReviewMeta, Plan), SourceError> {
         let attributes = read_attributes(&self.repo);
+        let generated = GeneratedAttributes::parse(&attributes);
         let entries = diff_entries(&self.repo, &["--cached"])?;
-        let files = self.build_entries(&entries, &attributes, "staged", |entry| {
+        let files = self.build_entries(&entries, &generated, "staged", |entry| {
             select_sides(
                 entry,
                 |path| SideRef::Git {
@@ -272,6 +274,7 @@ impl GitSource {
         verify_ref(&self.repo, from)?;
         verify_ref(&self.repo, to)?;
         let attributes = read_attributes(&self.repo);
+        let generated = GeneratedAttributes::parse(&attributes);
         let commits = range_messages(&self.repo, &format!("{from}..{to}"))?;
         let shas: Vec<String> = commits.iter().map(|commit| commit.sha.clone()).collect();
         let mut diffs = commit_diff_entries(&self.repo, &shas)?;
@@ -281,7 +284,7 @@ impl GitSource {
         for commit in commits {
             let entries = diffs.remove(&commit.sha).unwrap_or_default();
             let sha = commit.sha.as_str();
-            let files = self.build_entries(&entries, &attributes, sha, |entry| {
+            let files = self.build_entries(&entries, &generated, sha, |entry| {
                 select_sides(
                     entry,
                     |path| SideRef::Git {
@@ -320,6 +323,7 @@ impl GitSource {
         verify_ref(&self.repo, from)?;
         verify_ref(&self.repo, to)?;
         let attributes = read_attributes(&self.repo);
+        let generated = GeneratedAttributes::parse(&attributes);
         // 由来と内容が同じ版を指すよう、範囲の端を sha に解決して使う。
         let from_sha = resolve_ref(&self.repo, from)?;
         let to_sha = resolve_ref(&self.repo, to)?;
@@ -328,7 +332,7 @@ impl GitSource {
             .to_string();
         let range = format!("{from_sha}...{to_sha}");
         let entries = diff_entries(&self.repo, &[&range])?;
-        let files = self.build_entries(&entries, &attributes, "all", |entry| {
+        let files = self.build_entries(&entries, &generated, "all", |entry| {
             select_sides(
                 entry,
                 |path| SideRef::Git {
@@ -385,7 +389,7 @@ impl GitSource {
     fn build_entries(
         &self,
         entries: &[DiffEntry],
-        attributes: &str,
+        generated: &GeneratedAttributes<'_>,
         group_id: &str,
         sides: impl Fn(&DiffEntry) -> (SideRef, SideRef),
     ) -> (Vec<FileEntry>, Vec<PlannedFile>) {
@@ -425,7 +429,7 @@ impl GitSource {
             let display_path = entry.path.to_string_lossy().into_owned();
             let noise = classify(&NoiseInput {
                 path: &display_path,
-                linguist_generated: linguist_generated(attributes, &display_path),
+                linguist_generated: generated.matches(&display_path),
                 binary: entry.binary,
             })
             .is_some();

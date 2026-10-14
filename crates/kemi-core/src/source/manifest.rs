@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::noise::{NoiseInput, classify, linguist_generated};
+use crate::domain::noise::{GeneratedAttributes, NoiseInput, classify};
 use crate::domain::review::{Approval, FileEntry, Group, ReviewMeta, Status};
 use crate::source::{
     Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError, read_side, text_stats,
@@ -74,6 +74,7 @@ pub(crate) fn build_review(
     base: &Path,
 ) -> Result<(ReviewMeta, Plan), SourceError> {
     let attributes = std::fs::read_to_string(base.join(".gitattributes")).unwrap_or_default();
+    let generated = GeneratedAttributes::parse(&attributes);
 
     let mut groups = Vec::new();
     let mut plan = Plan::default();
@@ -88,7 +89,7 @@ pub(crate) fn build_review(
         for diff in &group.diffs {
             let file_id = format!("f{next_file}");
             next_file += 1;
-            let (entry, planned) = build_diff(diff, base, &file_id, &group_id, &attributes)?;
+            let (entry, planned) = build_diff(diff, base, &file_id, &group_id, &generated)?;
             files.push(entry);
             plan.files.push(planned);
         }
@@ -127,7 +128,7 @@ fn build_diff(
     base: &Path,
     file_id: &str,
     group_id: &str,
-    attributes: &str,
+    generated: &GeneratedAttributes<'_>,
 ) -> Result<(FileEntry, PlannedFile), SourceError> {
     let (old_ref, old_present) =
         resolve_side(diff.old.as_deref(), diff.old_path.as_deref(), base, "old")?;
@@ -152,7 +153,7 @@ fn build_diff(
     let (binary, add, del, old_size, new_size) = text_stats(&old_bytes, &new_bytes);
     let noise = classify(&NoiseInput {
         path: &diff.path,
-        linguist_generated: linguist_generated(attributes, &diff.path),
+        linguist_generated: generated.matches(&diff.path),
         binary,
     })
     .is_some();

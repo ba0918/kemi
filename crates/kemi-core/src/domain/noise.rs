@@ -98,26 +98,37 @@ pub fn classify(input: &NoiseInput) -> Option<NoiseReason> {
 
 /// `.gitattributes` の内容を先頭から評価し、`linguist-generated` の最後の一致を返す。
 pub fn linguist_generated(attributes: &str, path: &str) -> bool {
-    let mut generated = false;
-    for line in attributes.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut parts = line.split_whitespace();
-        let Some(pattern) = parts.next() else {
-            continue;
-        };
-        for attribute in parts {
-            let Some(value) = parse_attribute(attribute) else {
-                continue;
-            };
-            if match_pattern(pattern, path) {
-                generated = value;
-            }
-        }
+    GeneratedAttributes::parse(attributes).matches(path)
+}
+
+pub(crate) struct GeneratedAttributes<'a> {
+    rules: Vec<(&'a str, bool)>,
+}
+
+impl<'a> GeneratedAttributes<'a> {
+    pub(crate) fn parse(attributes: &'a str) -> Self {
+        let rules = attributes
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    return None;
+                }
+                let mut parts = line.split_whitespace();
+                let pattern = parts.next()?;
+                Some((pattern, parts.filter_map(parse_attribute).next_back()?))
+            })
+            .collect();
+        Self { rules }
     }
-    generated
+
+    pub(crate) fn matches(&self, path: &str) -> bool {
+        self.rules
+            .iter()
+            .rev()
+            .find(|(pattern, _)| match_pattern(pattern, path))
+            .is_some_and(|(_, value)| *value)
+    }
 }
 
 fn parse_attribute(attribute: &str) -> Option<bool> {
@@ -194,6 +205,21 @@ fn match_segment(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parsed_attribute_rules_keep_the_last_matching_value_and_ignore_unrelated_attributes() {
+        let attributes = "# *.rs linguist-generated\n*.rs diff linguist-generated -linguist-generated linguist-generated=true\nsrc/* eol=lf\nsrc/*.rs -linguist-generated\nsrc/keep.rs linguist-generated=false linguist-generated\n*.txt linguist-generated=unknown\n";
+        let rules = GeneratedAttributes::parse(attributes);
+        for (path, expected) in [
+            ("lib/a.rs", true),
+            ("src/a.rs", false),
+            ("src/keep.rs", true),
+            ("a.txt", false),
+        ] {
+            assert_eq!(rules.matches(path), expected, "{path}");
+        }
+        assert!(!GeneratedAttributes::parse("\n# comment\n* text\n").matches("a.rs"));
+    }
 
     #[test]
     fn wildcard_matching_keeps_unicode_empty_segments_and_directory_semantics() {
