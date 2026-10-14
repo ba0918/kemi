@@ -17,9 +17,10 @@ use std::time::{Duration, SystemTime};
 use super::encoding;
 use super::files::{self, FILES_LIMIT, PageSnapshot};
 use super::format::{CopyMeta, MetaDto};
+use super::lock::{SessionLock, is_locked};
 use super::storage_io::{
-    create_private_dir, list_files, open_lock_file, remove_dir_if_present, remove_if_present,
-    write_atomic, write_private_file,
+    create_private_dir, list_files, remove_dir_if_present, remove_if_present, write_atomic,
+    write_private_file,
 };
 use super::{CopyState, SessionCopy, SessionInfo, SessionState, SessionSummary, checked_id};
 
@@ -812,47 +813,6 @@ pub enum FileWritten {
     Failed(SessionError),
 }
 
-/// セッションのロック。`File::try_lock` を使うので、プロセスが死ねば OS が解放する。
-pub struct SessionLock {
-    /// 開いている限りロックが生きる。
-    file: Option<std::fs::File>,
-    path: PathBuf,
-}
-
-impl SessionLock {
-    fn acquire(dir: &Path, id: &str) -> Result<Self, SessionError> {
-        create_private_dir(dir)?;
-        let path = dir.join(format!("{id}.lock"));
-        let file = open_lock_file(&path).map_err(|source| SessionError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        match file.try_lock() {
-            Ok(()) => Ok(SessionLock {
-                file: Some(file),
-                path,
-            }),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                Err(SessionError::Locked { id: id.to_string() })
-            }
-            Err(std::fs::TryLockError::Error(source)) => Err(SessionError::Io { path, source }),
-        }
-    }
-}
-
-impl Drop for SessionLock {
-    fn drop(&mut self) {
-        // ロックファイルはプロセスの間だけのもの。名前を先に外してから閉じる（unix）。
-        // 閉じてから外すと、その隙に別のプロセスが古いファイルを掴むことがある。
-        // Windows は開いているファイルを消せないので、閉じてから試す。
-        #[cfg(unix)]
-        let _ = std::fs::remove_file(&self.path);
-        drop(self.file.take());
-        #[cfg(not(unix))]
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 /// セッションに添えたファイルの置き場所（`<id>.files/`）。
 fn files_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.files"))
@@ -1030,22 +990,6 @@ fn read_meta(path: &Path) -> Result<MetaDto, SessionError> {
         });
     }
     MetaDto::decode(version, meta).map_err(corrupt)
-}
-
-fn is_locked(dir: &Path, id: &str) -> bool {
-    let path = dir.join(format!("{id}.lock"));
-    let Ok(file) = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-    else {
-        return false;
-    };
-    match file.try_lock() {
-        Ok(()) => false,
-        Err(std::fs::TryLockError::WouldBlock) => true,
-        Err(std::fs::TryLockError::Error(_)) => false,
-    }
 }
 
 #[cfg(test)]
