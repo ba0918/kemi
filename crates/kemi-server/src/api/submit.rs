@@ -118,26 +118,32 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
             })
             .collect()
     };
+    let mut hashes = std::collections::HashMap::new();
     let mut outdated = std::collections::HashMap::new();
     for (id, file_id, side, created_hash) in snapshot {
-        // 再取得で一覧から消えたファイル（履歴の書き換えで消えたグループのものを含む）は
-        // 内容を引けないので古い扱いにする。
-        if find_file(state, &file_id).is_err() {
-            outdated.insert(id, true);
-            continue;
+        if !hashes.contains_key(&file_id) {
+            // 一覧から消えたファイルは内容を引けないので、全コメントを古い扱いにする。
+            let content = if find_file(state, &file_id).is_err() {
+                None
+            } else {
+                source_content(state, &file_id).await?
+            };
+            let pair = content.map(|content| {
+                (
+                    comment::content_hash(&side_lines(&content.old)),
+                    comment::content_hash(&side_lines(&content.new)),
+                )
+            });
+            hashes.insert(file_id.clone(), pair);
         }
-        let Some(content) = source_content(state, &file_id).await? else {
-            outdated.insert(id, true);
-            continue;
-        };
-        let lines = match side {
-            Side::Old => side_lines(&content.old),
-            Side::New => side_lines(&content.new),
-        };
-        outdated.insert(
-            id,
-            comment::is_outdated(&created_hash, &comment::content_hash(&lines)),
-        );
+        let is_outdated = hashes[&file_id].as_ref().is_none_or(|(old, new)| {
+            let current = match side {
+                Side::Old => old,
+                Side::New => new,
+            };
+            comment::is_outdated(&created_hash, current)
+        });
+        outdated.insert(id, is_outdated);
     }
     let mut session = state.session.lock().expect("session poisoned");
     for comment in session.state.comments.iter_mut() {

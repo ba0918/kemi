@@ -5319,6 +5319,30 @@ async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
 }
 
 #[tokio::test]
+async fn submit_reads_each_commented_file_once_for_both_sides() {
+    let server = TestServer::start().await;
+    for side in ["old", "new", "new"] {
+        let response = server.post("api/comment", json!({"op":"add","file_id":"f1","side":side,"start_line":1,"end_line":1,"body":side})).await;
+        assert_eq!(response.status(), 200);
+    }
+    server.source.reads.store(0, Ordering::SeqCst);
+    assert_eq!(
+        server
+            .post("api/submit", json!({"verdict":"approved"}))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(server.source.reads.load(Ordering::SeqCst), 1);
+    let result = server.finish().await;
+    let comments = result["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 3);
+    assert!(comments.iter().all(|comment| comment["outdated"] == false));
+    assert_eq!(comments[0]["side"], "old");
+    assert_eq!(comments[1]["side"], "new");
+}
+
+#[tokio::test]
 async fn reviewer_writes_arriving_after_submit_are_rejected_instead_of_lost() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for (action, body) in [
