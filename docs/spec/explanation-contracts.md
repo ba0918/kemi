@@ -219,7 +219,7 @@
 
 ### 成功条件
 
-- 版2・3の固定保存値を読み、旧bodyのプレーン表示と既存対象を保ち、次の状態保存で版4を書く。
+- 版2・3の固定保存値を読み、旧bodyの文字列と既存対象を保ち、次の状態保存で版4を書く。会話パネルの表示は [R-CONTENT-MARKDOWN](content-parts.md#r-content-markdown-textと画像) に従う。
 - 版1の図へのコメント、版2の説明、図付き返信、未配達handを保留し、元説明ファイルを除去して復元してもすべて読める。
 - 会話のないliveに説明だけを保存して保留し、元の説明入力ファイルを削除して復元すると、同じ説明版・図・基点を読める。
   同じreviewの新しいCode取り込み版とは不一致になる。説明も会話もないliveは従来どおり残さない。
@@ -251,7 +251,7 @@
 - `source/mod.rs::read_side` はDiskを読み直し、`web/assets/api.js::getFile` はfile_idと描画オプション等だけを送る。
   `web/assets/state.js::fileCacheKey` はfile_id、テーマ、ハイライト指定だけを鍵にする。
   現行の識別子にはレビュー全体の差分表示版や読み取りバイトの保証はない。
-- `web/assets/views/conversation.js` の会話は共通で、従来bodyをプレーンに表示する。
+- `web/assets/views/conversation.js` の会話は共通で、bodyもpartsも [共通パーツの表示規則](content-parts.md) に従う。
 - shoryoの説明型はpartのID・見出しを持たず、`web/components/explanation.js` はtextをplainに表示する。
   図の型・構造上限・描画失敗の元JSON・パン操作を実コードと説明referenceで照合した。
   公開出典は [ba0918/shoryo](https://github.com/ba0918/shoryo) 内の `crates/shoryo-core/src/explanation.rs`、`web/components/explanation.js`、`skills/shoryo/references/explanations.md`。

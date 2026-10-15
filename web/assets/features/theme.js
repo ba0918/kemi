@@ -9,6 +9,7 @@ import { saveTheme } from "../storage.js";
 import { isDarkTheme, nextTheme, resolveTheme } from "../model.js";
 import { scheduleRender } from "./display.js";
 import { selectEntry } from "./files.js";
+import { refreshPartHighlights } from './parts.js';
 
 export function applyTheme() {
   invalidateHorizontalWidth();
@@ -19,6 +20,7 @@ export function applyTheme() {
   state.dark = dark;
   state.rulerDirty = true;
   document.documentElement.dataset.theme = resolved;
+  if (changed) refreshPartHighlights();
   const current =
     THEME_LABELS[state.theme] || THEME_LABELS.auto;
   const next = THEME_LABELS[nextTheme(state.theme)] || "";

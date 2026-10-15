@@ -7,7 +7,7 @@ import { gridView } from './diagrams/grid.js';
 /** @param {string | {body: string|null, parts?: import('../diagrams/types.js').Part[]|null}} content */
 export function contentView(content) {
   if (typeof content === 'string' || !content.parts) {
-    return textEl('p', 'cv-text', typeof content === 'string' ? content : content.body ?? '');
+    return partView({ type: 'text', body: typeof content === 'string' ? content : content.body ?? '' });
   }
   const host = el('div', 'content-parts');
   for (const part of content.parts) {
@@ -38,14 +38,7 @@ export function partView(value, hooks = {}) {
     const frame = el('div', 'part-code-frame');
     const pre = el('pre', 'part-code');
     pre.append(textEl('code', '', body));
-    // コードを読む幅を削らないよう、コピーは独立した行にせずブロックの右上に重ねる。
-    const copy = iconButton('Copy code', COPY_ICON);
-    copy.classList.add('part-copy');
-    copy.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(body); labelCopy(copy, 'Copied', true); }
-      catch (error) { labelCopy(copy, `Could not copy: ${error}`, false); }
-    });
-    frame.append(pre, copy);
+    frame.append(pre, copyCodeButton(body));
     host.append(frame);
   } else if (value.type === 'sequence' || value.type === 'flow') {
     host.append(diagramViewport(value, false, { comment: hooks.onDiagramComment }));
@@ -55,6 +48,19 @@ export function partView(value, hooks = {}) {
     host.append(textEl('pre', 'part-original', JSON.stringify(value, null, 2)));
   }
   return host;
+}
+
+/** @param {string} body */
+function copyCodeButton(body) {
+  const copy = iconButton('Copy code', COPY_ICON);
+  copy.classList.add('part-copy');
+  // コピーのラベルは、Explanation の選択・引用する本文には含めない。
+  copy.setAttribute('data-explanation-injected', '');
+  copy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(body); labelCopy(copy, 'Copied', true); }
+    catch (error) { labelCopy(copy, `Could not copy: ${error}`, false); }
+  });
+  return copy;
 }
 
 /** @param {HTMLButtonElement} copy @param {string} label @param {boolean} copied */
@@ -73,6 +79,14 @@ function labelCopy(copy, label, copied) {
 export function showMarkdown(host, html) {
   const rendered = el('div', 'part-markdown');
   rendered.innerHTML = html;
+  for (const code of rendered.querySelectorAll('pre > code')) {
+    const pre = code.parentElement;
+    if (!pre) continue;
+    const frame = el('div', 'part-code-frame');
+    pre.classList.add('part-code');
+    pre.replaceWith(frame);
+    frame.append(pre, copyCodeButton(code.textContent ?? ''));
+  }
   host.replaceChildren(rendered);
 }
 

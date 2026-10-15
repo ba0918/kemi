@@ -528,3 +528,28 @@ async fn conversation_markdown_renders_without_image_requests_and_does_not_read_
     );
     assert!(!value["html"].as_str().unwrap().contains("<img"));
 }
+
+#[tokio::test]
+async fn conversation_code_fences_use_language_and_theme_with_a_plain_fallback() {
+    let server = TestServer::start().await;
+    let body = json!({"type":"text","body":"```js\nconst value = '<safe>';\n```\n\n```unknown-language\n<literal>\n```"});
+    let light: Value = server
+        .post("api/parts", body.clone())
+        .await
+        .json()
+        .await
+        .unwrap();
+    let dark: Value = server
+        .post("api/parts?dark=1", body)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let light = light["html"].as_str().unwrap();
+    let dark = dark["html"].as_str().unwrap();
+    assert!(light.contains("<span style=\"color:"));
+    assert!(dark.contains("<span style=\"color:"));
+    assert_ne!(light, dark);
+    assert!(light.contains("&lt;safe&gt;"));
+    assert!(light.contains("<code class=\"language-unknown-language\">&lt;literal&gt;</code>"));
+}

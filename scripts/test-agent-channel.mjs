@@ -60,6 +60,7 @@ const waitFor = async (code) => {
 };
 
 const LINES = (count) => Array.from({ length: count }, (_, i) => `line ${i + 1}\n`);
+const markdownMessage = 'Looking at it now.\n\n**変更点**\n\n- `example()` を更新\n- 安全に表示\n\n```js\nconst value = 1;\n```\n\n<script>window.__markdownExecuted = true</script>\n\n![sample](https://example.invalid/chat.png)\n\n[unsafe](javascript:alert(1))';
 
 /** 利用者の git の設定に左右されない git。 */
 function gitIn(dir) {
@@ -186,7 +187,7 @@ try {
   const review = await (await fetch(new URL('api/review', kemi.url))).json();
   const fileId = review.groups[0].files[0].id;
   // 3 行目と 100 行目にコメントを付けておく。どちらも渡さないまま submit まで残す。
-  await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 3, end_line: 3, body: 'rename this line' });
+  await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 3, end_line: 3, body: '**rename this line**' });
   await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 100, end_line: 100, body: 'and this one' });
 
   // (1b) で使う、起動の api/review の応答を止める仕掛け。sessionStorage に印があるときの
@@ -224,6 +225,7 @@ try {
   console.log('PASS kemi wait の前は、畳んだ帯に「Hand to agent」が押せないまま出て、そばの kemi wait <id> を写す操作で写したものがこのレビューの id のコマンド');
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
+  await waitFor(`document.querySelector('#cv-thread-body .cv-comment strong')?.textContent === 'rename this line'`);
   assert.equal(await evaluate(shown('#agent-status')), true);
   assert.equal(await evaluate(statusIs('not-connected')), true);
   assert.equal(await evaluate(`${shown('#btn-hand')} && document.querySelector('#btn-hand').disabled`), true);
@@ -277,7 +279,7 @@ try {
   }
   // 状態はサーバが時々知らせ直すことがあるが、発言は一度しか届かない。
   const early = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
-    writes: [{ type: 'message', body: 'Looking at it now.' }],
+    writes: [{ type: 'message', body: markdownMessage }],
   }));
   assert.equal(early.code, 0, early.stderr);
   await evaluate(`window.__kemiRelease(); true`);
@@ -286,6 +288,36 @@ try {
   assert.equal(await evaluate(shown('#btn-hand')), true);
   await waitFor(`!document.querySelector('#btn-hand').disabled && document.querySelector('#hand-note').hidden`);
   await waitFor(`${panelOpen} && ${agentMessage('Looking at it now.')}`);
+  await waitFor(`document.querySelector('#cv-items .cv-msg .part-markdown strong')?.textContent === '変更点'`);
+  assert.equal(await evaluate(`(() => {
+    const message = Array.from(document.querySelectorAll('#cv-items .cv-msg')).find(m => m.textContent.includes('Looking at it now.'));
+    return message.querySelectorAll('li').length === 2
+      && message.querySelector('li code')?.textContent === 'example()'
+      && message.querySelector('pre code')?.textContent.includes('const value = 1;')
+      && message.querySelector('script, img, a[href^="javascript:"]') === null
+      && message.textContent.includes('<script>')
+      && message.textContent.includes('Image not loaded')
+      && !window.__markdownExecuted;
+  })()`), true, 'bodyのMarkdownを描画し、生HTML・危険なリンク・画像を有効にしない');
+  await waitFor(`document.querySelector('#cv-items .part-code-frame .part-copy') !== null`);
+  assert.equal(await evaluate(`(() => {
+    const frame = document.querySelector('#cv-items .part-code-frame');
+    const pre = frame.querySelector('pre');
+    const style = getComputedStyle(pre);
+    return pre.querySelector('code span[style]') !== null
+      && style.backgroundColor !== getComputedStyle(frame.closest('.cv-post')).backgroundColor
+      && parseFloat(style.paddingTop) > 0
+      && frame.querySelector('.part-copy').getBoundingClientRect().right <= frame.getBoundingClientRect().right;
+  })()`), true, 'コードを配色し、背景と余白でブロックを区別する');
+  await evaluate(`window.__kemiCopied = []; navigator.clipboard.writeText = async (text) => { window.__kemiCopied.push(text); }; true`);
+  await browser('click', '#cv-items .part-code-frame .part-copy');
+  await waitFor(`window.__kemiCopied.at(-1) === document.querySelector('#cv-items .part-code-frame code').textContent`);
+  await waitFor(`document.querySelector('#cv-items .part-code-frame .part-copy').getAttribute('aria-label') === 'Copied'`);
+  const lightCode = await evaluate(`document.querySelector('#cv-items .part-code-frame code').innerHTML`);
+  await evaluate(`(async () => { const {state} = await import('./assets/state.js'); const {applyTheme} = await import('./assets/features/theme.js'); state.theme = 'dark'; applyTheme(); })()`);
+  await waitFor(`document.querySelector('#cv-items .part-code-frame code span[style]') !== null && document.querySelector('#cv-items .part-code-frame code').innerHTML !== ${JSON.stringify(lightCode)}`);
+  await evaluate(`(async () => { const {state} = await import('./assets/state.js'); const {applyTheme} = await import('./assets/features/theme.js'); state.theme = 'light'; applyTheme(); })()`);
+  await waitFor(`document.querySelector('#cv-items .part-code-frame code').innerHTML === ${JSON.stringify(lightCode)}`);
   const loadingWaited = await loadingWait;
   assert.equal(loadingWaited.code, 3, `the wait should time out: ${JSON.stringify(loadingWaited)}`);
   await waitFor(statusIs('working'));
@@ -312,7 +344,7 @@ try {
   const diffUnmoved = async () => assert.equal(await evaluate(`document.querySelector('#diff-viewport').scrollTop`), before, 'the diff must not move');
   const replied = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
     writes: [
-      { type: 'reply', comment_id: 'c1', body: 'Renamed it.' },
+      { type: 'reply', comment_id: 'c1', body: '**Renamed it.**' },
       { type: 'message', body: 'Both comments are addressed.' },
     ],
   }));
@@ -331,6 +363,7 @@ try {
   // (3b) 札からスレッドを開くと返信が見え、新着の印が消える。
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${threadOpen('rename this line')} && Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(r => r.textContent.includes('Renamed it.'))`);
+  await waitFor(`document.querySelector('#cv-thread-body .cv-post[data-author="agent"] strong')?.textContent === 'Renamed it.'`);
   await waitFor(`${chipC1}?.querySelector('.unread-mark') === null`);
   await diffUnmoved();
   console.log('PASS 畳んだまま返信が届くとパネルは開かず札と帯に新着が出て、スレッドを開くと消える');
@@ -368,9 +401,10 @@ try {
   await evaluate(`document.querySelector('#cv-items .cv-card[data-id="c1"]').click(); true`);
   await waitFor(`!document.querySelector('#cv-thread').hidden && document.querySelector('#cv-list').hidden && document.querySelector('#cv-thread-body .cv-comment').textContent.includes('rename this line')`);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="agent"]')).some(p => p.textContent.includes('Renamed it.'))`), true);
-  await browser('fill', '#cv-reply-text', 'Thanks, that works.');
+  await browser('fill', '#cv-reply-text', '**Thanks, that works.**');
   await browser('click', '#cv-reply button[type="submit"]');
   await waitFor(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="reviewer"]')).some(p => p.textContent.includes('Thanks, that works.')) && document.querySelector('#cv-reply-text').value === ''`);
+  await waitFor(`Array.from(document.querySelectorAll('#cv-thread-body .cv-post[data-author="reviewer"] strong')).some(p => p.textContent === 'Thanks, that works.')`);
   await browser('click', '#cv-thread-head .cv-back');
   await waitFor(`!document.querySelector('#cv-list').hidden`);
   console.log('PASS 一覧の項目からスレッドを開き、返信を書くとスレッドに出る');
@@ -409,9 +443,10 @@ try {
   const { code, stdout } = await kemi.exited;
   assert.equal(code, 0);
   const result = JSON.parse(stdout);
-  assert.deepEqual(result.comments.map((comment) => comment.body), ['rename this line', 'and this one']);
+  assert.deepEqual(result.comments.map((comment) => comment.body), ['**rename this line**', 'and this one']);
   assert.equal(result.comments[0].replies[0].author, 'agent');
-  assert.deepEqual(result.messages.map((message) => message.body), ['Looking at it now.', 'Both comments are addressed.', ...fillers, 'One more thing.']);
+  assert.deepEqual(result.comments[0].replies.map((reply) => reply.body), ['**Renamed it.**', '**Thanks, that works.**']);
+  assert.deepEqual(result.messages.map((message) => message.body), [markdownMessage, 'Both comments are addressed.', ...fillers, 'One more thing.']);
   console.log('PASS 未渡しを残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る');
 } finally {
   kemi.child.kill('SIGTERM');

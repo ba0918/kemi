@@ -642,7 +642,7 @@ fn a_change_inside_inline_code_gets_word_marks_inside_the_code_element() {
 #[test]
 fn parts_markdown_keeps_formatting_and_image_sources_without_loading_images_or_diff_marks() {
     let body = "**strong** [safe](https://example.com)\n\n![external](https://example.com/a.png) ![relative](a.png) ![data](data:image/png;base64,AA) ![ref][image]\n\n[image]: https://example.com/ref.png\n\n<img src=\"html.png\">\n\n|a|b|\n|-|-|\n|1|2|\n\n```rust\nlet x = 1;\n```";
-    let html = super::render_part_markdown(body).unwrap();
+    let html = super::render_part_markdown(body, None).unwrap();
     assert!(html.contains("<strong>strong</strong>"));
     assert!(html.contains("https://example.com/a.png"));
     assert!(html.contains("data:image/png;base64,AA"));

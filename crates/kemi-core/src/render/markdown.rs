@@ -802,7 +802,10 @@ fn write_checkbox(out: &mut String, item: &ListItem<'_>) {
     }
 }
 
-pub(super) fn render_part(body: &str) -> Result<String, Unrenderable> {
+pub(super) fn render_part(
+    body: &str,
+    highlight: Option<Highlight<'_>>,
+) -> Result<String, Unrenderable> {
     let prepared = prepare(body);
     let allocator = Allocator::new();
     let document = parse(&allocator, &prepared.body)?;
@@ -822,7 +825,7 @@ pub(super) fn render_part(body: &str) -> Result<String, Unrenderable> {
         part: true,
         out: String::new(),
         blocks: Vec::new(),
-        highlight: None,
+        highlight,
         image_url: &|_| String::new(),
         plain: 0,
         in_table: false,

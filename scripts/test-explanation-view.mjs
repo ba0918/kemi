@@ -92,8 +92,8 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await browser('find', 'role', 'button', 'click', '--name', 'Open the conversation');
   await wait(`document.body.textContent.includes('C survives')`);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='A begins')`), true);
-  assert.equal(await evaluate(`document.body.textContent.includes('**old plain stays**')`), true);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='old plain stays')`), false);
+  assert.equal(await evaluate(`document.body.textContent.includes('**old plain stays**')`), false);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='old plain stays')`), true);
   assert.equal(await evaluate(`document.body.textContent.includes('Image not loaded') && document.body.textContent.includes('https://example.invalid/ref.png')`), true);
   await browser('find', 'role', 'button', 'click', '--name', 'Copy code');
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.getAttribute('aria-label')==='Copied')`);

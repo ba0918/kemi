@@ -137,9 +137,9 @@ export function postComment(body) {
   return postJson("api/comment", body);
 }
 
-/** @param {{type: 'text', body: string}} part */
-export function renderPart(part) {
-  return postJson('api/parts', part);
+/** @param {{type: 'text', body: string}} part @param {boolean} [dark] */
+export function renderPart(part, dark = false) {
+  return postJson(`api/parts${dark ? '?dark=1' : ''}`, part);
 }
 
 /** @param {number|null} [revision] */

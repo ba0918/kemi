@@ -1,14 +1,15 @@
 # 本文・返信・発言の共通パーツ 仕様
 
 - Status: 承認済み。`55ba772` の [EXPLANATION](explanation.md) と [既存契約の改訂](explanation-contracts.md) と同じ承認対象。インラインの図のパンをドラッグと矢印キーで行う改訂も承認済み。
-- 変更対象: `Reply` / `Message` の文章のみの契約、説明本文の新規契約。コメント本文は従来plainのまま。
+- 変更対象: `Reply` / `Message` とコメント本文の表示、説明本文の新規契約。
 
 ## R-CONTENT-INPUT 入力と互換性
 
 ### 要件
 
 - 返信・発言は旧 `body: String` または新 `parts: Part[]` の片方を受け取る。
-  旧入力はプレーン表示を維持する。旧文字列をtextパーツへ変換してMarkdownとして解釈しない。
+  bodyは保存形式を変えず、会話パネルではコメント本文も含めMarkdownとして描画する。
+  保存・result・wait・復元では元の文字列を保ち、textパーツへの変換やHTMLの保存はしない。
   新partsは1〜32個で、EXPLANATION/Code/Pageの返信・発言すべてで同じ読み順と表示を使う。
   人間の従来の文章入力もbodyで保存する。図付き発言を受け取る経路も同じparts規則を使う。
 - 入力にbodyとpartsの両方がある場合、片方がnullでも拒否する。両方の省略、入力値nullも拒否する。
@@ -36,7 +37,7 @@
 {"writes":[{"type":"reply","comment_id":"c1","parts":[{"type":"text","body":"次は**構文の例**。"},{"type":"code","language":"pseudocode","role":"example","title":"更新の例","body":"if accepted:\n  replace_explanation()"}]}]}
 ```
 
-旧入力のJSON値の例。`**` もそのままプレーンに表示する。
+body入力のJSON値の例。会話パネルでは太字で表示する。
 
 ```json
 {"writes":[{"type":"message","body":"**これは旧文章**"}]}
@@ -45,27 +46,33 @@
 ### 成功条件
 
 - 同じparts返信を三つの対象のスレッドで同じ順・書式で表示し、result/wait/復元でも型を保つ。
-- 旧bodyの `**文字**` は装飾されず、新textの同じ値は太字で表示される。
+- bodyと新textの `**文字**` はどちらも太字で表示される。エージェントと人間の発言・返信、コメント本文で同じ描画を使う。
 - bodyとpartsの混在、一つの不正role、未知フィールドが書き込み全体を拒否する。
 
 ### 反例
 
-- 旧返信のHTMLやMarkdownを解釈する。Pageだけがpartsを失う。codeをsuggestionとして適用する。
+- bodyの生HTMLを実行する。保存したbodyを描画済みHTMLへ置き換える。Pageだけがpartsを失う。codeをsuggestionとして適用する。
 
 ## R-CONTENT-MARKDOWN textと画像
 
 ### 要件
 
-- 新text.bodyはkemi既存のMarkdown構文・安全なリンクの規則を使う。
+- 新text.bodyと会話パネルのbodyはkemi既存のMarkdown構文・安全なリンクの規則を使う。
   [R-RENDER](render.md#r-render-描画表示) の生HTMLを文字として扱う規則も引き継ぐ。
   ファイル差分の整列、行対応、変更の印は説明のtextには付けない。
-- 初版は外部画像の取り込みを行わない。新parts内のMarkdown画像は外部・相対パス・data URL等を問わずロードしない。
+- 初版は外部画像の取り込みを行わない。会話パネルのbodyと新parts内のMarkdown画像は外部・相対パス・data URL等を問わずロードしない。
   インライン画像と参照形式画像の双方を、`Image not loaded` とalt文字列・元の参照先を文字として読める非画像の枠にする。
   altのない画像も参照先を文字として示す。画像src/srcset、CSS背景、画像取得APIへの要求を生成しない。
   生HTMLのimgも文字表示でありロードしない。一般リンクは既存の安全なリンク規則に従い、自動では取得しない。
 - 既存rendererは画像を描画するため、その出力を無条件に流用しない。
   説明とparts返信・発言では画像無効の境界を設ける。ファイルのRenderedにある従来の画像表示契約は変更しない。
-- Markdown描画が失敗したパーツだけ理由と元bodyをプレーンに表示する。別のパーツや会話を失わない。
+- Markdown描画が失敗した本文・パーツだけ理由と元bodyをプレーンに表示する。別のパーツや会話を失わない。
+  bodyの入力上限は変えず、既存text描画の上限を超える本文もこのフォールバックで全文を読める。
+- Markdown内のコードブロックは背景・枠・余白で本文から区別し、言語指定が既存の構文ハイライトで認識できれば配色する。
+  言語未指定・未知言語ではコードを無地で全文表示する。明暗の切り替えに配色を追従させる。
+  各ブロック右上にキーボードで押せる `Copy code` アイコンを置き、そのブロックのコードだけをコピーする。
+  コピー成功・失敗をボタンのラベルで示す。インラインコードにはブロックの枠やコピー操作を付けない。
+  この表示と操作は会話とEXPLANATIONのtextパーツで共通にする。
 
 ### 成功条件
 

@@ -204,6 +204,9 @@ pub fn render_markdown(
     markdown::render(input, highlight, image_url)
 }
 
-pub fn render_part_markdown(body: &str) -> Result<String, Unrenderable> {
-    markdown::render_part(body)
+pub fn render_part_markdown(
+    body: &str,
+    highlight: Option<Highlight<'_>>,
+) -> Result<String, Unrenderable> {
+    markdown::render_part(body, highlight)
 }
