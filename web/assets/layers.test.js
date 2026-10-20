@@ -1,4 +1,5 @@
 // 層の規則（PROJECT.md「web/assets/ の層」）と index.html の modulepreload の一覧を、import 文から確かめる。
+// あわせて index.html の stylesheet の順を確かめる。
 // 読むのは行頭の import / export … from だけ。JSDoc の import("…") は型だけの参照で読み込みを生まず、
 // 字下げした動的 import（--live のモジュール）は modulepreload に載せない約束なので、どちらも数えない。
 import assert from "node:assert/strict";
@@ -172,4 +173,13 @@ test("modulepreload は app.js から静的にたどれるモジュールとち�
     "app.js から静的にたどれないのに modulepreload にあるモジュール",
   );
   assert.equal(new Set(preloaded).size, preloaded.length, "modulepreload の重複");
+});
+
+test("index.html は部品の stylesheet の後に style.css を読む", () => {
+  // parts.css の `.part-copy.iconbtn` と style.css の `.iconbtn:hover` のように、部品の規則と style.css の
+  // 規則は詳細度が同じで同じ要素に当たることがあり、後に読んだ方が勝つ。今の見た目（コードの写しのボタンに
+  // 乗せると .iconbtn:hover の色になる）は、この順で決まっている。
+  const html = readFileSync(join(web, "index.html"), "utf8");
+  const sheets = [...html.matchAll(/<link\s+rel="stylesheet"\s+href="assets\/([^"]+)"\s*\/?>/g)].map((match) => match[1]);
+  assert.deepEqual(sheets, ["parts.css", "explanation.css", "style.css"]);
 });
