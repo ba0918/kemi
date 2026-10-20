@@ -23,6 +23,15 @@ async fn run<T: Send + 'static>(
     .await
 }
 
+/// 読み込みの無い計算を、同じ枠で async ワーカーの外で行う。
+pub(crate) async fn compute<Output: Send + 'static>(
+    limit: &Arc<Semaphore>,
+    compute: impl FnOnce() -> Output + Send + 'static,
+) -> Result<Output, tokio::task::JoinError> {
+    let permit = acquire(limit).await;
+    run(permit, compute).await
+}
+
 pub(crate) async fn prepare<Input: Send + 'static, Output: Send + 'static>(
     limit: &Arc<Semaphore>,
     load: impl FnOnce() -> Input + Send + 'static,

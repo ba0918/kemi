@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use super::channel::notify_agent_state;
 use super::snapshot::{comment_ids, forget_removed};
-use super::{ApiError, file_not_found, find_file, parse_side, side_lines, source_content};
+use super::{ApiError, find_file, parse_side, side_lines};
 use crate::session::{page_comment_json, persist};
 use crate::{AppState, Event, Notice};
 
@@ -297,7 +297,7 @@ fn comment_index(comments: &[Comment], id: &str) -> Result<usize, ApiError> {
 }
 
 async fn add_comment(
-    state: &AppState,
+    state: &Arc<AppState>,
     file_id: String,
     side: &str,
     start_line: Option<u32>,
@@ -317,21 +317,23 @@ async fn add_comment(
     };
     let (file, group_title) = find_file(state, &file_id)?;
 
-    let content = source_content(state, &file_id)
-        .await?
-        .ok_or_else(file_not_found)?;
-    let lines = match side {
-        Side::Old => side_lines(&content.old),
-        Side::New => side_lines(&content.new),
-    };
-    comment::validate_comment(side, range, suggestion.as_deref())
-        .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
-    let quote = match range {
-        Some(range) => comment::quote_for(&lines, range)
-            .map_err(|error| ApiError::bad_request(comment_error_message(error)))?,
-        None => Vec::new(),
-    };
-    let content_hash = comment::content_hash(&lines);
+    // ファイル全体の行に分けてハッシュを求めるので、行データと同じ枠で async ワーカーの外で行う。
+    let (quote, content_hash, suggestion) =
+        super::prepare_content(state.clone(), file_id.clone(), move |_, _, content| {
+            let lines = match side {
+                Side::Old => side_lines(&content.old),
+                Side::New => side_lines(&content.new),
+            };
+            comment::validate_comment(side, range, suggestion.as_deref())
+                .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
+            let quote = match range {
+                Some(range) => comment::quote_for(&lines, range)
+                    .map_err(|error| ApiError::bad_request(comment_error_message(error)))?,
+                None => Vec::new(),
+            };
+            Ok((quote, comment::content_hash(&lines), suggestion))
+        })
+        .await?;
 
     let gate = super::mutation_gate(state)?;
     let mut session = state.session.lock().expect("session poisoned");

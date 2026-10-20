@@ -25,13 +25,20 @@ pub(super) async fn render_part(
             "only text parts use Markdown rendering",
         ));
     };
-    let highlight = |lang: &str, code: &str| {
-        state
-            .highlighter
-            .get_or_init(Highlighter::new)
-            .highlight_code(lang, code, query.dark.as_deref() == Some("1"))
-    };
-    let html = render_part_markdown(&body, Some(&highlight))
-        .map_err(|error| ApiError::unprocessable(error.to_string()))?;
+    let dark = query.dark.as_deref() == Some("1");
+    let rendering = state.clone();
+    // 構文の読み込みとハイライトは CPU を使うので、行データと同じ枠で async ワーカーの外で行う。
+    let html = crate::preparation::compute(&state.preparation, move || {
+        let highlight = |lang: &str, code: &str| {
+            rendering
+                .highlighter
+                .get_or_init(Highlighter::new)
+                .highlight_code(lang, code, dark)
+        };
+        render_part_markdown(&body, Some(&highlight))
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(|error| ApiError::unprocessable(error.to_string()))?;
     Ok(Json(json!({"html": html})))
 }

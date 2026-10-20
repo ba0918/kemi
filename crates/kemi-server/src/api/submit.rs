@@ -11,7 +11,7 @@ use kemi_core::domain::submit::{RESULT_CONTRACT_VERSION, Verdict};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{ApiError, find_file, side_lines, source_content};
+use super::{ApiError, find_file, side_lines};
 use crate::session::{comment_json, delete_stored, message_json};
 use crate::{AppState, Notice, Stop, SubmitState};
 
@@ -90,7 +90,7 @@ fn save_result(state: &AppState, document: &Value) -> Value {
     }
 }
 
-async fn build_submit_document(state: &AppState, verdict: Verdict) -> Result<Value, ApiError> {
+async fn build_submit_document(state: &Arc<AppState>, verdict: Verdict) -> Result<Value, ApiError> {
     let review = state
         .review
         .read()
@@ -112,24 +112,23 @@ async fn build_submit_document(state: &AppState, verdict: Verdict) -> Result<Val
     };
     for file_id in file_ids {
         // 一覧から消えたファイルは内容を引けないので、全コメントを古い扱いにする。
-        let content = if find_file(state, &file_id).is_err() {
-            None
-        } else {
-            source_content(state, &file_id).await?
-        };
-        let lines = content.map(|content| (side_lines(&content.old), side_lines(&content.new)));
-        comment::refresh_outdated(
-            &mut state
-                .session
-                .lock()
-                .expect("session poisoned")
-                .state
-                .comments,
-            &file_id,
-            lines
-                .as_ref()
-                .map(|(old, new)| (old.as_slice(), new.as_slice())),
-        );
+        if find_file(state, &file_id).is_err() {
+            refresh_outdated(state, &file_id, None);
+            continue;
+        }
+        // ファイル全体の行に分けてハッシュを求めるので、行データと同じ枠で async ワーカーの外で行う。
+        super::prepare_known_content(state.clone(), file_id, |state, file_id, content| {
+            let lines = content.map(|content| (side_lines(&content.old), side_lines(&content.new)));
+            refresh_outdated(
+                state,
+                file_id,
+                lines
+                    .as_ref()
+                    .map(|(old, new)| (old.as_slice(), new.as_slice())),
+            );
+            Ok(())
+        })
+        .await?;
     }
     let session = state.session.lock().expect("session poisoned");
     let comments: Vec<Value> = session.state.comments.iter().map(comment_json).collect();
@@ -147,4 +146,17 @@ async fn build_submit_document(state: &AppState, verdict: Verdict) -> Result<Val
         "comments": comments,
         "messages": messages,
     }))
+}
+
+fn refresh_outdated(state: &AppState, file_id: &str, current: Option<(&[String], &[String])>) {
+    comment::refresh_outdated(
+        &mut state
+            .session
+            .lock()
+            .expect("session poisoned")
+            .state
+            .comments,
+        file_id,
+        current,
+    );
 }

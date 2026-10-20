@@ -287,6 +287,25 @@ async fn prepare_content<T: Send + 'static>(
     + Send
     + 'static,
 ) -> Result<T, ApiError> {
+    prepare_known_content(state, file_id, move |state, file_id, content| {
+        prepare(state, file_id, content.ok_or_else(file_not_found)?)
+    })
+    .await
+}
+
+/// [`prepare_content`] と同じく内容を読んで計算するが、内容の側がその id をもう知らない
+/// ときも誤りにせず None を渡す（[`source_content`] と同じ扱い）。
+async fn prepare_known_content<T: Send + 'static>(
+    state: Arc<AppState>,
+    file_id: String,
+    prepare: impl FnOnce(
+        &AppState,
+        &str,
+        Option<&kemi_core::source::FileContent>,
+    ) -> Result<T, ApiError>
+    + Send
+    + 'static,
+) -> Result<T, ApiError> {
     let source = state.sources.clone();
     let read_id = file_id.clone();
     let computing_state = state.clone();
@@ -294,8 +313,8 @@ async fn prepare_content<T: Send + 'static>(
         &state.preparation,
         move || source.content(&read_id),
         move |result| {
-            let content = content_result(&computing_state, result)?.ok_or_else(file_not_found)?;
-            prepare(&computing_state, &file_id, &content)
+            let content = content_result(&computing_state, result)?;
+            prepare(&computing_state, &file_id, content.as_ref())
         },
     )
     .await
