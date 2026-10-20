@@ -541,12 +541,12 @@ impl Drop for Scratch {
     }
 }
 
-async fn start_file_review(root: &Scratch, path: &str) -> Running {
+async fn start_file_review(root: &std::path::Path, path: &str) -> Running {
     start_review_of(
         LiveTarget::File {
             path: path.to_string(),
         },
-        root.0.clone(),
+        root.to_path_buf(),
     )
     .await
 }
@@ -579,7 +579,7 @@ async fn a_file_page_is_served_with_the_page_script_and_its_css() {
         "<html><head><link rel=stylesheet href=style.css></head><body>file page</body></html>",
     );
     root.write("docs/style.css", "p { color: red; }");
-    let running = start_file_review(&root, "docs/page.html").await;
+    let running = start_file_review(&root.0, "docs/page.html").await;
 
     let page = open_as_page(&running, "/docs/page.html").await;
     let css = get_with_cookie(&running, "/docs/style.css").await;
@@ -603,7 +603,7 @@ async fn an_html_file_fetched_by_the_page_scripts_is_served_without_the_page_scr
     let root = Scratch::new("fetched");
     root.write("page.html", "<html><body>page</body></html>");
     root.write("part.html", "<p>part</p>");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
 
     let fetched = get_as(&running, "/part.html", "empty").await;
     let framed = get_as(&running, "/page.html", "iframe").await;
@@ -619,7 +619,7 @@ async fn an_html_file_fetched_by_the_page_scripts_is_served_without_the_page_scr
 async fn a_file_page_whose_name_needs_percent_encoding_opens_at_its_start_url() {
     let root = Scratch::new("encoded-page");
     root.write("50% #1 ページ.html", "<p>encoded page</p>");
-    let running = start_file_review(&root, "50% #1 ページ.html").await;
+    let running = start_file_review(&root.0, "50% #1 ページ.html").await;
     let review = get_review_json(&running, "api/review").await;
 
     let page = get_with_cookie(&running, review["live"]["start"].as_str().unwrap()).await;
@@ -636,7 +636,7 @@ async fn a_file_page_in_another_encoding_is_served_with_its_own_bytes_and_declar
     html.extend_from_slice(&[0x93, 0xfa, 0x96, 0x7b]);
     html.extend_from_slice(b"</body></html>");
     std::fs::write(root.0.join("page.html"), &html).unwrap();
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
 
     let page = get_with_cookie(&running, "/page.html").await;
 
@@ -659,7 +659,7 @@ async fn an_html_file_over_32_mb_opened_as_a_page_is_not_served_but_can_still_be
     let mut html = b"<html><body><p>large page</p>".to_vec();
     html.resize(32 * 1024 * 1024 + 1, b' ');
     std::fs::write(root.0.join("page.html"), &html).unwrap();
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
 
     let page = open_as_page(&running, "/page.html").await;
     let fetched = get_as(&running, "/page.html", "empty").await;
@@ -677,7 +677,7 @@ async fn an_html_file_over_32_mb_opened_as_a_page_is_not_served_but_can_still_be
 async fn a_file_review_needs_the_relay_cookie_too() {
     let root = Scratch::new("cookie");
     root.write("page.html", "<p>file page</p>");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
 
     let response = reqwest::get(format!("{}/page.html", running.live))
         .await
@@ -692,8 +692,7 @@ async fn paths_outside_the_range_and_inside_dot_git_are_not_served() {
     root.write("site/page.html", "<p>inside</p>");
     root.write("site/.git/config", "[core]");
     root.write("secret.html", "<p>secret</p>");
-    let range = Scratch(root.0.join("site"));
-    let running = start_file_review(&range, "page.html").await;
+    let running = start_file_review(&root.0.join("site"), "page.html").await;
 
     for path in [
         "/%2e%2e/secret.html",
@@ -709,7 +708,6 @@ async fn paths_outside_the_range_and_inside_dot_git_are_not_served() {
             "{path}: {body}"
         );
     }
-    std::mem::forget(range);
 }
 
 #[cfg(unix)]
@@ -719,19 +717,17 @@ async fn a_symlink_whose_target_is_outside_the_range_is_not_served() {
     root.write("site/page.html", "<p>inside</p>");
     root.write("secret.html", "<p>secret</p>");
     std::os::unix::fs::symlink(root.0.join("secret.html"), root.0.join("site/link.html")).unwrap();
-    let range = Scratch(root.0.join("site"));
-    let running = start_file_review(&range, "page.html").await;
+    let running = start_file_review(&root.0.join("site"), "page.html").await;
 
     let response = get_with_cookie(&running, "/link.html").await;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    std::mem::forget(range);
 }
 
 #[tokio::test]
 async fn a_missing_file_page_is_answered_as_not_found() {
     let root = Scratch::new("missing");
-    let running = start_file_review(&root, "gone.html").await;
+    let running = start_file_review(&root.0, "gone.html").await;
 
     let response = get_with_cookie(&running, "/gone.html").await;
 
@@ -884,7 +880,7 @@ async fn a_mock_inside_the_range_is_assigned_to_a_page_and_listed() {
     let root = Scratch::new("mock-assign");
     root.write("page.html", "<p>page</p>");
     root.write("mocks/next.html", "<p>mock</p>");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
 
     let assigned = post_review(
         &running,
@@ -907,8 +903,7 @@ async fn a_mock_outside_the_range_or_not_html_is_refused_with_the_reason() {
     root.write("site/page.html", "<p>page</p>");
     root.write("site/notes.txt", "notes");
     root.write("secret.html", "<p>secret</p>");
-    let range = Scratch(root.0.join("site"));
-    let running = start_file_review(&range, "page.html").await;
+    let running = start_file_review(&root.0.join("site"), "page.html").await;
 
     for path in ["../secret.html", "notes.txt", "missing.html"] {
         let refused = post_review(
@@ -926,7 +921,6 @@ async fn a_mock_outside_the_range_or_not_html_is_refused_with_the_reason() {
     }
     let list = get_review_json(&running, "api/mocks").await;
     assert_eq!(list["mocks"].as_array().unwrap().len(), 0);
-    std::mem::forget(range);
 }
 
 #[tokio::test]
@@ -934,7 +928,7 @@ async fn a_removed_mock_is_no_longer_listed() {
     let root = Scratch::new("mock-remove");
     root.write("page.html", "<p>page</p>");
     root.write("mock.html", "<p>mock</p>");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
     post_review(
         &running,
         "api/mock",
@@ -960,7 +954,7 @@ async fn a_mock_whose_name_needs_percent_encoding_is_served_at_its_url() {
     root.write("page.html", "<p>page</p>");
     root.write("mocks/50% #1.html", "<p>encoded mock</p>");
     root.write("mocks/50%25.html", "<p>other mock</p>");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
     let base = running
         .review
         .trim_end_matches("/s/test-token/")
@@ -996,7 +990,7 @@ async fn the_mock_file_list_shows_200_files_with_the_total_and_a_search_finds_th
         root.write(&format!("mocks/m{index:03}.html"), "<p>mock</p>");
     }
     root.write("mocks/notes.txt", "not html");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
 
     let all = get_review_json(&running, "api/mock-files?q=").await;
     let found = get_review_json(&running, "api/mock-files?q=PAGE").await;
@@ -1014,7 +1008,7 @@ async fn the_mock_file_list_shows_200_files_with_the_total_and_a_search_finds_th
 async fn the_mock_file_list_needs_the_page_token() {
     let root = Scratch::new("mock-files-token");
     root.write("page.html", "<p>page</p>");
-    let running = start_file_review(&root, "page.html").await;
+    let running = start_file_review(&root.0, "page.html").await;
     let without = running.review.replace("/s/test-token/", "/s/wrong-token/");
 
     let refused = reqwest::get(format!("{without}api/mock-files?q="))
@@ -1035,8 +1029,7 @@ async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_
     root.write("site/mock.css", "p { color: green; }");
     root.write("site/.git/config", "[core]");
     root.write("secret.html", "<p>secret</p>");
-    let range = Scratch(root.0.join("site"));
-    let running = start_file_review(&range, "page.html").await;
+    let running = start_file_review(&root.0.join("site"), "page.html").await;
     let base = running
         .review
         .trim_end_matches("/s/test-token/")
@@ -1064,7 +1057,6 @@ async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_
         let refused = reqwest::get(format!("{base}{path}")).await.unwrap();
         assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{path}");
     }
-    std::mem::forget(range);
 }
 
 // ---- ページへのコメント（live.md の R-PAGE-COMMENT、output.md の R-SUBMIT の `page`） ----
