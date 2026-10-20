@@ -346,13 +346,7 @@ pub(super) async fn hold_version(
                     "pages can be registered only in a live review",
                 ));
             }
-            if !url.starts_with('/')
-                || url.starts_with("//")
-                || url.contains('#')
-                || url.contains('\\')
-                || url.chars().any(char::is_control)
-                || url.chars().count() > 4096
-            {
+            if !kemi_core::domain::live::is_registrable_page(&url) {
                 return Err(ApiError::bad_request(
                     "page must be a path and query in this live review",
                 ));

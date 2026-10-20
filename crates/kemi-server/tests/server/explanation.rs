@@ -356,6 +356,25 @@ async fn explanation_comments_keep_the_original_block_and_old_versions_can_be_he
 }
 
 #[tokio::test]
+async fn pages_cannot_be_registered_outside_a_live_review() {
+    let server = TestServer::start().await;
+
+    let response = server
+        .post(
+            "api/explanation",
+            json!({"op":"register_page","url":"/next?state=1"}),
+        )
+        .await;
+
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(
+        body["error"],
+        "pages can be registered only in a live review"
+    );
+}
+
+#[tokio::test]
 async fn explanation_selections_reach_the_review_the_handed_wait_and_the_result() {
     let server = server_with_selectable_explanation().await;
     let text_selection = json!({"text":"intent","occurrence":1});

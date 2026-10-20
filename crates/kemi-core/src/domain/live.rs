@@ -166,6 +166,18 @@ pub fn url_path(path: &str) -> String {
     encoded
 }
 
+/// 説明の Page 参照に登録できるページか（explanation.md の Page 参照）。中継の上のパスと
+/// クエリだけを受け、別のホストに読める `//` で始まるもの・`#`・`\`・制御文字を含むもの・
+/// 4096 文字を超えるものは断る。
+pub fn is_registrable_page(url: &str) -> bool {
+    url.starts_with('/')
+        && !url.starts_with("//")
+        && !url.contains('#')
+        && !url.contains('\\')
+        && !url.chars().any(char::is_control)
+        && url.chars().count() <= 4096
+}
+
 /// `.html` か `.htm` か（大文字小文字を問わない）。
 pub fn is_html(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
@@ -280,6 +292,32 @@ mod tests {
         assert!(is_html("a/INDEX.HTM"));
         assert!(!is_html("notes.txt"));
         assert!(!is_html("page.html.txt"));
+    }
+
+    #[test]
+    fn a_page_registered_for_explanations_is_a_path_and_query_up_to_4096_characters() {
+        assert!(is_registrable_page("/"));
+        assert!(is_registrable_page("/next?state=1"));
+        // 上限は文字数で数える（バイト数ではない）。
+        let longest = format!("/{}", "あ".repeat(4095));
+        assert!(is_registrable_page(&longest));
+        assert!(!is_registrable_page(&format!("{longest}a")));
+    }
+
+    #[test]
+    fn a_page_that_is_not_a_path_in_this_live_review_cannot_be_registered() {
+        for url in [
+            "",
+            "next",
+            "http://127.0.0.1:5173/",
+            "//example.com/",
+            "/a#top",
+            "/a\\b",
+            "/a\nb",
+            "/a\u{7f}b",
+        ] {
+            assert!(!is_registrable_page(url), "{url:?}");
+        }
     }
 
     #[test]
