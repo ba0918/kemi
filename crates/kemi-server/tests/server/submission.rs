@@ -253,7 +253,7 @@ async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
         .await;
     assert_eq!(response.status(), 200);
 
-    let answer = tokio::time::timeout(Duration::from_secs(5), waiting)
+    let answer = tokio::time::timeout(WAIT_LIMIT, waiting)
         .await
         .unwrap()
         .unwrap();
@@ -397,7 +397,7 @@ async fn a_reply_arriving_after_the_submit_is_not_reported_as_written_when_missi
     let mut late = agent_request_head(&server, "reply", body.len()).await;
 
     let response = tokio::time::timeout(
-        Duration::from_secs(5),
+        WAIT_LIMIT,
         server
             .page
             .post("api/submit", json!({"verdict": "approved"})),

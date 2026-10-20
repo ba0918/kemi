@@ -30,17 +30,16 @@ async fn a_failed_opposite_unit_candidate_keeps_both_published_lists_and_the_gen
     )
     .await;
     let first: Value = server.page.get("api/review").await.json().await.unwrap();
-    let other: Value = tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
+    let (_, other) = eventually(
+        "the opposite unit being built",
+        async || {
             let response = server.page.get("api/review?unit=commit").await;
-            if response.status() == 200 {
-                break response.json().await.unwrap();
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
+            let status = response.status();
+            (status, response.json::<Value>().await.unwrap_or_default())
+        },
+        |(status, _)| *status == 200,
+    )
+    .await;
     repo.write("b.txt", "D2\n");
     repo.commit("D2");
     fail.store(true, Ordering::SeqCst);
@@ -82,7 +81,7 @@ async fn unit_background_first_review_does_not_wait_for_the_other_unit() {
     });
     let server = LiveServer::start(source).await;
 
-    let review = tokio::time::timeout(Duration::from_secs(2), server.get_json("api/review"))
+    let review = tokio::time::timeout(WAIT_LIMIT, server.get_json("api/review"))
         .await
         .expect("api/review must not wait for the other unit");
 
@@ -575,7 +574,7 @@ async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generati
             .await
             .unwrap()
     });
-    tokio::time::timeout(Duration::from_secs(3), sink.entered.notified())
+    tokio::time::timeout(WAIT_LIMIT, sink.entered.notified())
         .await
         .unwrap();
     let refresh_url = format!("{}api/review?refresh=1", server.url);
@@ -596,7 +595,7 @@ async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generati
     );
     sink.open_first_save();
     assert_eq!(message.await.unwrap().status(), 200);
-    let current = tokio::time::timeout(Duration::from_secs(3), refreshed)
+    let current = tokio::time::timeout(WAIT_LIMIT, refreshed)
         .await
         .unwrap()
         .unwrap();

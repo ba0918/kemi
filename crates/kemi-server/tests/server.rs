@@ -413,7 +413,7 @@ impl TestServer {
     }
 
     async fn finish(self) -> Value {
-        match tokio::time::timeout(Duration::from_secs(5), self.task)
+        match tokio::time::timeout(WAIT_LIMIT, self.task)
             .await
             .expect("server did not stop")
             .expect("server task panicked")
@@ -473,6 +473,31 @@ async fn post_json(url: &str, origin: &str, path: &str, body: Value) -> reqwest:
         .send()
         .await
         .unwrap()
+}
+
+/// 待ちの上限。止まらないためだけのもので、順序は決めない。通る実行の時間は変わらないので、
+/// 負荷で相手が遅れても偽に落ちないよう長めに取る。
+const WAIT_LIMIT: Duration = Duration::from_secs(10);
+
+/// `look` で読んだ値が `done` を満たすまで、間を置いて読み直す。`WAIT_LIMIT` を過ぎたら、
+/// 最後に読んだ値を出して失敗させる。
+async fn eventually<T: std::fmt::Debug>(
+    what: &str,
+    mut look: impl AsyncFnMut() -> T,
+    done: impl Fn(&T) -> bool,
+) -> T {
+    let deadline = std::time::Instant::now() + WAIT_LIMIT;
+    loop {
+        let seen = look().await;
+        if done(&seen) {
+            return seen;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what} did not happen within {WAIT_LIMIT:?}; last seen: {seen:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 // ---- R-LIVE（監視）の結合テスト ----
@@ -608,7 +633,7 @@ impl SseStream {
             buffer: String::new(),
         };
         let mut chunk = [0u8; 2048];
-        let read = tokio::time::timeout(Duration::from_secs(2), sse.stream.read(&mut chunk))
+        let read = tokio::time::timeout(WAIT_LIMIT, sse.stream.read(&mut chunk))
             .await
             .unwrap()
             .unwrap();
@@ -704,23 +729,16 @@ impl LiveServer {
 
     /// もう片方の単位が `state` になるまで api/review を読み直す。
     async fn wait_unit(&self, state: &str) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let review = self.get_json("api/review").await;
-            if review["units"][1]["state"] == state {
-                return review;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "unit never became {state}: {}",
-                review["units"]
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        eventually(
+            &format!("the other unit becoming {state}"),
+            async || self.get_json("api/review").await,
+            |review| review["units"][1]["state"] == state,
+        )
+        .await
     }
 
     async fn finish(self) -> Value {
-        match tokio::time::timeout(Duration::from_secs(5), self.task)
+        match tokio::time::timeout(WAIT_LIMIT, self.task)
             .await
             .expect("server did not stop")
             .expect("server task panicked")
@@ -876,12 +894,12 @@ async fn check_initial_copy_order(reverse: bool) {
     let sink = Arc::new(RecordingSink::default());
     let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink.clone()).await;
     let d1: Value = server.page.get("api/review").await.json().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(3), gates[0].entered.notified())
+    tokio::time::timeout(WAIT_LIMIT, gates[0].entered.notified())
         .await
         .unwrap();
     repo.write("b.txt", "D2\n");
     repo.commit("D2");
-    let d2: Value = tokio::time::timeout(Duration::from_secs(3), async {
+    let d2: Value = tokio::time::timeout(WAIT_LIMIT, async {
         server
             .page
             .get("api/review?refresh=1")
@@ -893,40 +911,34 @@ async fn check_initial_copy_order(reverse: bool) {
     .await
     .unwrap();
     assert_eq!(d2["diff_display_version"], "01TESTREVIEW:2");
-    tokio::time::timeout(Duration::from_secs(3), gates[1].entered.notified())
+    tokio::time::timeout(WAIT_LIMIT, gates[1].entered.notified())
         .await
         .unwrap();
     if reverse {
         release2.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                if server.page.get("api/review?unit=commit").await.status() == 200 {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
+        eventually(
+            "the D2 opposite unit becoming readable",
+            async || server.page.get("api/review?unit=commit").await.status(),
+            |status| *status == 200,
+        )
+        .await;
         assert!(sink.copies.lock().unwrap().is_empty());
     }
     release1.send(()).unwrap();
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if sink
-                .states
+    // D1 の写しは D2 のもう片方の単位を待たずに終わる。
+    eventually(
+        "the D1 copy finishing",
+        async || {
+            sink.states
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|s| s.display.as_ref().is_some_and(|d| d.frozen.is_some()))
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("D1 copy must finish without waiting for D2 opposite unit");
+                .filter_map(|s| s.display.clone())
+                .collect::<Vec<_>>()
+        },
+        |displays| displays.iter().any(|d| d.frozen.is_some()),
+    )
+    .await;
     let copies = sink.copies.lock().unwrap();
     let copy = copies.last().unwrap();
     assert_eq!(copy.units.len(), 2);
@@ -1343,16 +1355,17 @@ impl TestServer {
             task,
         }
     }
+}
 
-    async fn wait_for_copy(&self, sink: &RecordingSink) -> SessionCopy {
-        for _ in 0..200 {
-            if let Some(copy) = sink.copies.lock().unwrap().first().cloned() {
-                return copy;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        panic!("the session copy was never saved");
-    }
+/// 凍結した写しが保存されるまで待つ。
+async fn saved_copy(sink: &RecordingSink) -> SessionCopy {
+    eventually(
+        "the session copy being saved",
+        async || sink.copies.lock().unwrap().first().cloned(),
+        Option::is_some,
+    )
+    .await
+    .unwrap()
 }
 
 /// 2 つ目のグループ単位の作成が遅いソース。凍結は両方がそろうまで待つ。
@@ -1500,7 +1513,7 @@ fn changes(handed: &Handed) -> Vec<(&'static str, String, Option<String>)> {
 async fn next_sse_event(response: &mut reqwest::Response, name: &str) -> Value {
     let needle = format!("event: {name}\ndata: ");
     let mut buffer = String::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + WAIT_LIMIT;
     loop {
         if let Some(start) = buffer.find(&needle) {
             let rest = &buffer[start + needle.len()..];
@@ -1666,13 +1679,12 @@ impl AgentServer {
     }
 
     async fn wait_until_status(&self, expected: &str) {
-        for _ in 0..200 {
-            if self.agent_status().await == expected {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("the agent status never became {expected}");
+        eventually(
+            &format!("the agent status becoming {expected}"),
+            async || self.agent_status().await,
+            |status| status == expected,
+        )
+        .await;
     }
 }
 
@@ -1830,7 +1842,7 @@ async fn agent_response_after_delayed_body(
 
     stream.write_all(body).await.unwrap();
     let mut response = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+    tokio::time::timeout(WAIT_LIMIT, stream.read_to_end(&mut response))
         .await
         .expect("the agent API never finished the response after receiving the body")
         .unwrap();
@@ -1858,7 +1870,7 @@ async fn agent_response_after_delayed_body(
 async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
     use tokio::io::AsyncReadExt;
     let mut response = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+    tokio::time::timeout(WAIT_LIMIT, stream.read_to_end(&mut response))
         .await
         .expect("the agent API never closed the connection")
         .unwrap();

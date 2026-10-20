@@ -608,7 +608,7 @@ async fn initial_explanation_accepts_opposite_units_while_the_full_build_is_gate
             Some(explanation),
         )
         .await;
-        let first = tokio::time::timeout(Duration::from_secs(2), server.page.get("api/review"))
+        let first = tokio::time::timeout(WAIT_LIMIT, server.page.get("api/review"))
             .await
             .expect("initial response waited for all opposite metadata");
         assert_eq!(first.status(), 200);

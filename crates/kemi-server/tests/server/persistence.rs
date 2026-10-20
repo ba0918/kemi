@@ -66,7 +66,7 @@ async fn session_saves_keep_changes_made_while_a_save_is_slow() {
     tokio::select! {
         () = sink.entered.notified() => {}
         result = &mut first => panic!("最初の要求が保存に入る前に終了した: {result:?}"),
-        () = tokio::time::sleep(Duration::from_secs(10)) => {
+        () = tokio::time::sleep(WAIT_LIMIT) => {
             panic!("最初の要求が保存に入らなかった");
         }
     }
@@ -114,7 +114,7 @@ async fn session_copy_is_saved_after_the_first_review() {
 
     server.get("api/review").await;
 
-    let copy = server.wait_for_copy(&sink).await;
+    let copy = saved_copy(&sink).await;
     assert_eq!(copy.startup_unit, None);
     assert_eq!(copy.units.len(), 1);
     assert_eq!(copy.units[0].review.groups[0].id, "g1");
@@ -164,17 +164,7 @@ async fn session_copy_waits_for_both_units() {
 
     http().get(format!("{url}api/review")).send().await.unwrap();
 
-    let copy = {
-        let mut found = None;
-        for _ in 0..200 {
-            if let Some(copy) = sink.copies.lock().unwrap().first().cloned() {
-                found = Some(copy);
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        found.expect("the session copy was never saved")
-    };
+    let copy = saved_copy(&sink).await;
     assert_eq!(copy.startup_unit, Some(GroupBy::File));
     assert_eq!(copy.units.len(), 2);
     assert_eq!(copy.units[1].unit, Some(GroupBy::Commit));
@@ -203,17 +193,12 @@ async fn session_copy_failure_marks_the_session_unresumable() {
     let server = TestServer::start_with_session(Arc::new(source), sink.clone()).await;
 
     server.get("api/review").await;
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    loop {
-        if !sink.unusable.lock().unwrap().is_empty() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "never marked unusable"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    eventually(
+        "the session being marked unresumable",
+        async || sink.unusable.lock().unwrap().clone(),
+        |reasons| !reasons.is_empty(),
+    )
+    .await;
 
     assert!(sink.copies.lock().unwrap().is_empty());
     assert!(!sink.unusable.lock().unwrap()[0].is_empty());
@@ -343,19 +328,12 @@ async fn session_copy_over_the_limit_is_unresumable() {
     server.get("api/review").await;
 
     let id = "01HF7YAT00SERVER0000000000";
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(stored) = store.read(id)
-            && matches!(stored.copy, kemi_core::session::CopyState::Unusable(_))
-        {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "never became unusable"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let _ = eventually(
+        "the session becoming unusable",
+        async || store.read(id).map(|stored| stored.copy),
+        |copy| matches!(copy, Ok(kemi_core::session::CopyState::Unusable(_))),
+    )
+    .await;
     assert!(store.list().unwrap().is_empty());
     // 上限の判定は `<id>.payload` 全体で行い、超える写しはディスクに書かない
     // （R-SESSION）。
@@ -454,7 +432,7 @@ async fn suspend_after_submit_returns_the_committed_document() {
         // 別のファイル取得が処理中なら、submit の応答後も serve は接続の終了を待つ。
         let url = format!("{}api/file/f1", server.page.url);
         let reading = tokio::spawn(async move { http().get(url).send().await.unwrap() });
-        tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+        tokio::time::timeout(WAIT_LIMIT, gate.entered.notified())
             .await
             .expect("file request did not reach the source");
 
@@ -477,7 +455,7 @@ async fn suspend_after_submit_returns_the_committed_document() {
         assert!(server.sink.deleted.load(Ordering::SeqCst));
 
         assert!(
-            tokio::time::timeout(Duration::from_secs(5), reading)
+            tokio::time::timeout(WAIT_LIMIT, reading)
                 .await
                 .unwrap()
                 .unwrap()
@@ -498,7 +476,7 @@ async fn suspend_before_submit_returns_suspended_without_a_waiter() {
         kemi_server::SuspendOutcome::Suspended { waiting: false }
     ));
     assert!(!server.sink.deleted.load(Ordering::SeqCst));
-    let error = tokio::time::timeout(Duration::from_secs(5), server.page.task)
+    let error = tokio::time::timeout(WAIT_LIMIT, server.page.task)
         .await
         .expect("server did not stop")
         .expect("server task panicked")

@@ -445,7 +445,7 @@ async fn a_waiting_request_returns_when_the_reviewer_hands() {
 
     server.page.hand().await;
 
-    let answer = tokio::time::timeout(Duration::from_secs(5), waiting)
+    let answer = tokio::time::timeout(WAIT_LIMIT, waiting)
         .await
         .unwrap()
         .unwrap();
@@ -489,13 +489,12 @@ async fn received_events_are_not_returned_again() {
 
     assert_eq!(status, 200);
     assert_eq!(second["timeout"], true);
-    for _ in 0..100 {
-        if server.sink.last_state().channel.events.is_empty() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("the received events are still stored");
+    eventually(
+        "the received events leaving the stored state",
+        async || server.sink.last_state().channel.events,
+        Vec::is_empty,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -545,7 +544,7 @@ async fn a_runtime_error_ends_the_waiting_request_with_its_reason_and_serve_retu
 
     let _ = server.page.get("api/file/f1").await;
 
-    let (status, answer) = tokio::time::timeout(Duration::from_secs(5), waiting)
+    let (status, answer) = tokio::time::timeout(WAIT_LIMIT, waiting)
         .await
         .unwrap()
         .unwrap();
@@ -554,7 +553,7 @@ async fn a_runtime_error_ends_the_waiting_request_with_its_reason_and_serve_retu
         answer["error"].as_str().unwrap().contains("disk went away"),
         "{answer}"
     );
-    let outcome = tokio::time::timeout(Duration::from_secs(5), server.page.task)
+    let outcome = tokio::time::timeout(WAIT_LIMIT, server.page.task)
         .await
         .expect("serve did not return")
         .unwrap();
