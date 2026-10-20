@@ -39,6 +39,11 @@
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
   --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "IPAMincho", serif;
   --row-height: 24px;
+  /* 影と背面の幕は黒の透明度で付けるので、テーマごとに変えない。同じ値を使う所が 2 つ以上あるものだけを置く。 */
+  --shadow-float: 0 6px 18px rgba(0, 0, 0, 0.2);
+  --shadow-tip: 0 4px 14px rgba(0, 0, 0, 0.12);
+  --shadow-pop: 0 3px 10px rgba(0, 0, 0, 0.2);
+  --scrim: rgba(0, 0, 0, 0.45);
 }
 
 :root[data-theme="dark"] {
@@ -311,22 +316,27 @@ button:disabled {
   white-space: nowrap;
 }
 
-.iconbtn {
+/* アイコンのボタンと札の形の切り替え（.chip）は、角の丸みと左右の余白だけが違う。 */
+.iconbtn,
+.chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   height: 30px;
-  padding: 0 9px;
   background: var(--bg);
   color: var(--ink-2);
   border: 1px solid var(--line);
-  border-radius: 6px;
   font-size: 13px;
-  white-space: nowrap;
 }
 
-.iconbtn:hover {
+.iconbtn {
+  padding: 0 9px;
+  border-radius: 6px;
+}
+
+.iconbtn:hover,
+.chip:hover {
   background: var(--panel-2);
   color: var(--ink);
 }
@@ -361,22 +371,8 @@ button:disabled {
 }
 
 .chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 30px;
   padding: 0 10px;
-  background: var(--bg);
-  border: 1px solid var(--line);
   border-radius: 999px;
-  color: var(--ink-2);
-  font-size: 13px;
-}
-
-.chip:hover {
-  background: var(--panel-2);
-  color: var(--ink);
 }
 
 .chip[aria-pressed="true"] {
@@ -542,7 +538,7 @@ button:disabled {
   background: var(--ink);
   color: var(--bg);
   font-size: 12.5px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-float);
 }
 
 .navpill button {
@@ -583,7 +579,7 @@ button:disabled {
   background: var(--ink);
   color: var(--bg);
   font-size: 13px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-float);
 }
 
 kbd {
@@ -899,16 +895,8 @@ ul.files ul {
   color: var(--accent);
 }
 
-.badge-focus {
-  font-size: 11px;
-  color: var(--focus);
-  background: var(--focus-bg);
-  border: 1px solid var(--focus);
-  border-radius: 999px;
-  padding: 0 7px;
-  white-space: nowrap;
-}
-
+/* ツリーの項目の小さな丸い札（重要とノイズ）。 */
+.badge-focus,
 .badge-noise {
   font-size: 11px;
   color: var(--ink-3);
@@ -916,6 +904,12 @@ ul.files ul {
   border-radius: 999px;
   padding: 0 7px;
   white-space: nowrap;
+}
+
+.badge-focus {
+  color: var(--focus);
+  background: var(--focus-bg);
+  border-color: var(--focus);
 }
 
 /* ---------- グループヘッダーとファイルヘッダー ---------- */
@@ -1452,22 +1446,26 @@ ul.files ul {
   color: var(--ink-2);
 }
 
-.badge-suggest {
+/* コメントの小さな丸い札（suggestion、古いコメント、返信の数、解決済み）。色と線の種類は各規則で変える。 */
+.badge-suggest,
+.t-outdated-mark,
+.reply-count,
+.t-resolved-mark {
   flex: 0 0 auto;
   font-size: 11px;
-  color: var(--note-ink);
-  border: 1px solid var(--note-line);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 6px;
 }
 
+.badge-suggest {
+  color: var(--note-ink);
+  border-color: var(--note-line);
+}
+
 .t-outdated-mark {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--ink-2);
-  border: 1px dashed var(--line);
-  border-radius: 999px;
-  padding: 0 6px;
+  border-style: dashed;
 }
 
 /* 範囲の行には、行番号の欄の左端にコメントの色の線を付ける。 */
@@ -1564,7 +1562,7 @@ ul.files ul {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1629,7 +1627,7 @@ ul.files ul {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
   z-index: 40;
 }
 
@@ -2126,16 +2124,6 @@ ul.files ul {
   font-weight: 600;
 }
 
-.reply-count,
-.t-resolved-mark {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 6px;
-}
-
 .t-resolved-mark {
   color: var(--add-ink);
   border-color: var(--add-ink);
@@ -2227,7 +2215,7 @@ ul.files ul {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--bg);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+  box-shadow: var(--shadow-tip);
   font-size: 11.5px;
 }
 
@@ -3091,10 +3079,10 @@ ul.files ul {
     border: 1px solid var(--line);
     border-radius: 6px;
     background: var(--bg);
-    box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+    box-shadow: var(--shadow-tip);
   }
 
   #hand-float {
-    box-shadow: 0 6px 18px rgb(0 0 0 / 20%);
+    box-shadow: var(--shadow-float);
   }
 }
