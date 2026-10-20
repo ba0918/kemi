@@ -45,9 +45,11 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `features/` の中の順番は
    `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
-- `features/live/` は `live` の部品で、親の `features/live.js` が import する。部品の順は state、channel で、
-  部品は自分より前の部品だけを import し、親は import しない。`features/live/state.js` は画面を開いている
-  間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と親が読み書きする。
+- `features/live/` は `live` の部品で、親の `features/live.js` が import する。部品の順は state、channel、
+  stage で、部品は自分より前の部品だけを import し、親は import しない。`features/live/state.js` は画面を
+  開いている間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と親が読み書きする。部品から親の
+  関数（描き直し、見方・側・表示幅・ページの切り替え）を呼ぶときは `state.js` の `liveActions` を通す。中身は
+  親が `startLive` の最初に `bindLiveActions` で 1 回だけ入れる。
 - `state.js` は `storage.js` と `model.js` を import してよい。`diagrams/` の中のファイルは互いに import してよい。
   ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、

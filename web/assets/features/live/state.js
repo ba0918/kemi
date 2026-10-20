@@ -183,3 +183,26 @@ export function currentReference() {
     chosen: live.chosen.get(live.page),
   });
 }
+
+/**
+ * 部品から呼ぶ入口（features/live.js）の関数。描き直しと、見方・側・表示幅・ページの切り替えは入口が持ち、部品は
+ * 入口を import しないので、ここを通して呼ぶ。
+ * @typedef {{
+ *   render: () => void,
+ *   renderBand: () => void,
+ *   setSide: (side: "live" | "ref") => void,
+ * }} LiveActions
+ */
+
+/**
+ * 入口の関数の入れ物。中身は startLive が最初に bindLiveActions で 1 回だけ入れる。
+ * @type {LiveActions}
+ */
+export const liveActions = /** @type {LiveActions} */ ({});
+
+/**
+ * @param {LiveActions} bound
+ */
+export function bindLiveActions(bound) {
+  Object.assign(liveActions, bound);
+}
