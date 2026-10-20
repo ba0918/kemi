@@ -5,8 +5,8 @@ import * as api from "../api.js";
 import { actions } from '../actions.js';
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
-import { commentLabel, draftKey, shownLineNumbers, tapSelection } from "../model.js";
-import { firstLine } from "../conversation-model.js";
+import { commentLabel, draftKey, hasLines, shownLineNumbers, tapSelection } from "../model.js";
+import { firstLine, replaceComment } from "../conversation-model.js";
 import {
   recomputeThreads,
   remeasure,
@@ -191,7 +191,7 @@ export function openCommentEditor(comment) {
   if (!entry || state.submitted) {
     return;
   }
-  const wide = comment.start_line === null || comment.start_line === undefined;
+  const wide = !hasLines(comment);
   state.selection = null;
   state.editor = {
     fileId: entry.file.id,
@@ -269,14 +269,13 @@ export async function addComment(payload) {
         refreshRendered();
       }
     }
-    const selection =
-      payload.start_line === null || payload.start_line === undefined
-        ? null
-        : {
-            side: payload.side,
-            start: payload.start_line,
-            end: payload.end_line,
-          };
+    const selection = hasLines(payload)
+      ? {
+          side: payload.side,
+          start: payload.start_line,
+          end: payload.end_line,
+        }
+      : null;
     clearDraft(draftKey(payload.file_id, selection));
   } catch (error) {
     showOverlay("could not add the comment", String(error));
@@ -290,9 +289,7 @@ export async function editComment(payload) {
   try {
     const updated = await api.postComment(payload);
     state.editor = null;
-    updateComments((comments) =>
-      comments.map((item) => (item.id === updated.id ? updated : item)),
-    );
+    updateComments((comments) => replaceComment(comments, updated));
   } catch (error) {
     showOverlay("could not edit the comment", String(error));
   }

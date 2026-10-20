@@ -16,7 +16,8 @@ import {
   state,
 } from "../state.js";
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
-import { followsNewest, threadLastSeq } from "../conversation-model.js";
+import { followsNewest, replaceComment, threadLastSeq } from "../conversation-model.js";
+import { hasLines } from "../model.js";
 import { onResize, remeasureAndRender } from "./display.js";
 import { jumpToEntry } from "./files.js";
 import { refreshRendered } from "./rendered.js";
@@ -152,7 +153,7 @@ export function openThread(id) {
  */
 async function loadThreadLines(comment) {
   const entry = comment.outdated ? null : entryOfComment(comment);
-  if (!entry || comment.start_line === null || comment.start_line === undefined) {
+  if (!entry || !hasLines(comment)) {
     return;
   }
   const key = fileCacheKey(entry);
@@ -256,7 +257,7 @@ export async function savePageCommentBody(comment, body) {
     const updated = await api.postComment({ op: "edit", id: comment.id, body });
     state.conversation.editing = null;
     state.conversation.editDraft = null;
-    updateComments((comments) => comments.map((item) => (item.id === updated.id ? updated : item)));
+    updateComments((comments) => replaceComment(comments, updated));
   } catch (error) {
     showToast(`could not edit the comment: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -329,10 +330,7 @@ export async function goToComment(comment, unit) {
     actions.showExplanationComment(comment);return;
   }
   actions.selectView('code');
-  const line =
-    comment.start_line === null || comment.start_line === undefined
-      ? null
-      : Number(comment.start_line);
+  const line = hasLines(comment) ? Number(comment.start_line) : null;
   if (state.narrow) {
     closeSheet();
   }

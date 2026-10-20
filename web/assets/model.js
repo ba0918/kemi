@@ -551,7 +551,7 @@ export function commentLabel(comment) {
     const count = comment.page.places.length;
     return `${comment.page.width}px · ${count} ${count === 1 ? "place" : "places"}`;
   }
-  if (comment.start_line === null || comment.start_line === undefined) {
+  if (!hasLines(comment)) {
     return "Whole file";
   }
   const side = comment.side === "new" ? "New side" : "Old side";
@@ -652,7 +652,7 @@ export function commitTypeBox(subject) {
  * @param {any} comment
  * @returns {boolean}
  */
-function hasLines(comment) {
+export function hasLines(comment) {
   return comment.start_line !== null && comment.start_line !== undefined;
 }
 
@@ -823,9 +823,7 @@ export function hasStops(file, comments, collapsedMap) {
   if (file.add + file.del > 0) {
     return true;
   }
-  return comments.some(
-    (comment) => comment.start_line !== null && comment.start_line !== undefined,
-  );
+  return comments.some(hasLines);
 }
 
 /**
@@ -1008,9 +1006,7 @@ export function seenProgress(files) {
 export function commentedLines(display, comments) {
   /** @type {Set<number>} */
   const covered = new Set();
-  const ranges = comments.filter(
-    (comment) => comment.start_line !== null && comment.start_line !== undefined,
-  );
+  const ranges = comments.filter(hasLines);
   if (ranges.length === 0) {
     return covered;
   }

@@ -2,22 +2,31 @@
 // 内部 API の薄いラッパ（D7 の形はサーバが決める）。
 
 /**
+ * 断られた応答の本文が持つ理由（`error`）。JSON でないか理由が無ければ `fallback`。
+ * @param {Response} response
+ * @param {string} fallback
+ * @returns {Promise<string>}
+ */
+async function errorMessage(response, fallback) {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload.error === "string") {
+      return payload.error;
+    }
+  } catch {
+    // JSON でないエラーは status のまま
+  }
+  return fallback;
+}
+
+/**
  * @param {string} path
  * @returns {Promise<any>}
  */
 async function getJson(path) {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
-    let message = `${path}: HTTP ${response.status}`;
-    try {
-      const payload = await response.json();
-      if (payload && typeof payload.error === "string") {
-        message = payload.error;
-      }
-    } catch {
-      // JSON でないエラーは status のまま
-    }
-    throw new Error(message);
+    throw new Error(await errorMessage(response, `${path}: HTTP ${response.status}`));
   }
   return response.json();
 }
@@ -37,15 +46,7 @@ async function postJson(path, body) {
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const payload = await response.json();
-      if (payload && typeof payload.error === "string") {
-        message = payload.error;
-      }
-    } catch {
-      // JSON でないエラーは status のまま
-    }
+    const message = await errorMessage(response, `HTTP ${response.status}`);
     // 断られた理由で振る舞いを変える呼び手のために、status も持たせる。
     throw Object.assign(new Error(message), { status: response.status });
   }
@@ -77,6 +78,20 @@ export function retryUnit(unit) {
 }
 
 /**
+ * 表示の引数（暗いテーマの配色と、ハイライトの上書き）を足す。
+ * @param {URLSearchParams} params
+ * @param {{dark?: boolean, highlight?: string}} options
+ */
+function setDisplayParams(params, options) {
+  if (options.dark) {
+    params.set("dark", "1");
+  }
+  if (options.highlight) {
+    params.set("highlight", options.highlight);
+  }
+}
+
+/**
  * @param {string} id
  * @param {{from?: number, to?: number}|null} [range]
  * @param {{dark?: boolean, highlight?: string}} [options]
@@ -87,12 +102,7 @@ export function getFile(id, range, options = {}) {
     params.set("from", String(range.from));
     params.set("to", String(range.to));
   }
-  if (options.dark) {
-    params.set("dark", "1");
-  }
-  if (options.highlight) {
-    params.set("highlight", options.highlight);
-  }
+  setDisplayParams(params, options);
   const query = params.toString();
   return getJson(`api/file/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);
 }
@@ -104,12 +114,7 @@ export function getFile(id, range, options = {}) {
  */
 export function getRender(id, options = {}) {
   const params = new URLSearchParams();
-  if (options.dark) {
-    params.set("dark", "1");
-  }
-  if (options.highlight) {
-    params.set("highlight", options.highlight);
-  }
+  setDisplayParams(params, options);
   const query = params.toString();
   return getJson(`api/render/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);
 }

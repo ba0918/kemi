@@ -17,8 +17,11 @@ let liveView = ()=>{};
 let contentsWidth = 280;
 let closeSelection = ()=>{};
 
+/** 説明の下書きを覚える鍵（版とブロック）。 @param {number} revision @param {string} blockId */
+function explanationDraftKey(revision,blockId) {return `${revision}:${blockId}`;}
+
 /** @param {number} revision @param {string} blockId @param {string} body */
-function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(`${revision}:${blockId}`,body);}
+function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(explanationDraftKey(revision,blockId),body);}
 
 /**
  * 入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の今の画面上の矩形を測る。
@@ -40,7 +43,7 @@ export function openExplanationEditor(request) {
   const section = version.sections.find((/** @type {any} */ s)=>s.blocks.some((/** @type {any} */ b)=>b.id===request.blockId));
   const block = section?.blocks.find((/** @type {any} */ b)=>b.id===request.blockId);
   if (!section || !block) return;
-  const draftKey = `${version.revision}:${block.id}`;
+  const draftKey = explanationDraftKey(version.revision,block.id);
   const scope = request.selection ? 'Selected text' : block.part.type === 'text' || block.part.type === 'code' ? 'Whole block' : 'Whole diagram';
   const {form,input,save,cancel} = explanationEditor({sectionTitle:section.title,scope,quote:request.quote,draft:state.explanation.drafts.get(draftKey) ?? ''});
   const area = dom.explanationDocument;
@@ -217,7 +220,7 @@ async function commentOnExplanation(block,body,revision,selection=null) {
   if (!body.trim() || state.explanation.reading?.revision !== revision) return false;
   try {
     const comment=await api.postComment({op:'add_explanation',explanation_revision:revision,block_id:block.id,body,selection});
-    const draftKey = `${revision}:${block.id}`;
+    const draftKey = explanationDraftKey(revision,block.id);
     if (state.explanation.drafts.get(draftKey) === body) state.explanation.drafts.delete(draftKey);
     updateComments(comments=>[...comments,comment]);
     renderExplanationComments();return true;
