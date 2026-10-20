@@ -171,6 +171,24 @@ fn files_of(review: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// レビューの読み取り（`review`）を、読み終えたときに数える。
+struct ReviewCountingSource {
+    inner: FakeSource,
+    reviews: AtomicUsize,
+}
+
+impl ReviewSource for ReviewCountingSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        let review = self.inner.review();
+        self.reviews.fetch_add(1, Ordering::SeqCst);
+        review
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(file_id)
+    }
+}
+
 impl TestServer {
     /// もう片方の単位が `state` になるまで api/review を読み直す。
     async fn wait_unit(&self, state: &str) -> Value {
@@ -742,11 +760,15 @@ async fn manifest_refresh_save_failure_keeps_published_token_sides_lines_and_sta
 async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generation() {
     let sink = Arc::new(SlowSink::new());
     let _release_on_drop = FirstSaveGuard(sink.clone());
-    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    let source = Arc::new(ReviewCountingSource {
+        inner: FakeSource::new(),
+        reviews: AtomicUsize::new(0),
+    });
+    let server = TestServer::start_with_session(source.clone(), sink.clone()).await;
     let initial: Value = server.get("api/review").await.json().await.unwrap();
     let message_url = format!("{}api/message", server.url);
     let origin = server.origin.clone();
-    let message = tokio::spawn(async move {
+    let mut message = tokio::spawn(async move {
         http()
             .post(message_url)
             .header("Origin", origin)
@@ -755,9 +777,13 @@ async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generati
             .await
             .unwrap()
     });
-    tokio::time::timeout(WAIT_LIMIT, sink.entered.notified())
-        .await
-        .unwrap();
+    until_reached(
+        "the message entering the save",
+        sink.entered.notified(),
+        &mut message,
+    )
+    .await;
+    let read_before_refresh = source.reviews.load(Ordering::SeqCst);
     let refresh_url = format!("{}api/review?refresh=1", server.url);
     let refreshed = tokio::spawn(async move {
         http()
@@ -769,6 +795,16 @@ async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generati
             .await
             .unwrap()
     });
+    // 取り直しは入力を保存の門（persist）の外で読む。読み終えるまで最初の保存を開けない。
+    // 開けるのが先だと、保存が順に進むだけで、遅い保存が新しい世代を上書きしないことは
+    // 確かめられない。残る隙間は、読み終えてから門に着くまでの I/O の無い区間だけで、
+    // 決定的にするには門を待ち始めたことを知らせる観測点が製品に要る。
+    eventually(
+        "the refresh reading the review",
+        async || source.reviews.load(Ordering::SeqCst),
+        |reviews| *reviews > read_before_refresh,
+    )
+    .await;
     let before: Value = server.get("api/review").await.json().await.unwrap();
     assert_eq!(
         before["diff_display_version"],
