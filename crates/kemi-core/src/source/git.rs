@@ -182,11 +182,8 @@ impl GitSource {
                 if content::is_binary(&bytes) {
                     (0, true, None)
                 } else {
-                    (
-                        content::lines(&String::from_utf8_lossy(&bytes)).len() as u64,
-                        false,
-                        super::known_lines(Some(&bytes)),
-                    )
+                    let lines = content::line_count(&bytes);
+                    (lines as u64, false, u32::try_from(lines).ok())
                 }
             };
             entries.push(DiffEntry {
