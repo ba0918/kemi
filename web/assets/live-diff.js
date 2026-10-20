@@ -140,11 +140,14 @@ export function diffDescriptions(before, now) {
   /** @type {Change[]} */
   const changes = [];
   const styleDiffs = new Map();
+  // 手がかり（clueOf）は変化のあった要素ごとに 1 回だけ作り、その要素の変化どうしで使い回す（変化ごとに文字の始まりを
+  // 探して部分木をたどり直さない）。
   right.elements.forEach((element, index) => {
     const partner = pairs.nowToBefore[index];
     if (partner === -1) {
       if (element.parent === -1 || pairs.nowToBefore[element.parent] !== -1) {
-        changes.push(change("added", null, index, right, { is: excerpt(right, index) }));
+        const clue = clueOf(right, index);
+        changes.push(change("added", null, index, clue, { is: clue.excerpt }));
       }
       return;
     }
@@ -155,20 +158,25 @@ export function diffDescriptions(before, now) {
     }
     /** @type {{ property: string, was: string, is: string }[]} */
     const visual = styleDiffs.get(key);
-    for (const difference of visual) {
-      changes.push(change("visual", partner, index, right, difference));
-    }
     const textChanged = left.texts[partner] !== right.texts[index];
-    if (textChanged) {
-      changes.push(change("text", partner, index, right, { was: left.texts[partner], is: right.texts[index] }));
+    if (visual.length === 0 && !textChanged) {
+      if (!NEVER_SHIFTED.has(element.tag) && moved(was.box, element.box)) {
+        changes.push(change("shifted", partner, index, clueOf(right, index), {}));
+      }
+      return;
     }
-    if (visual.length === 0 && !textChanged && !NEVER_SHIFTED.has(element.tag) && moved(was.box, element.box)) {
-      changes.push(change("shifted", partner, index, right, {}));
+    const clue = clueOf(right, index);
+    for (const difference of visual) {
+      changes.push(change("visual", partner, index, clue, difference));
+    }
+    if (textChanged) {
+      changes.push(change("text", partner, index, clue, { was: left.texts[partner], is: right.texts[index] }));
     }
   });
   left.elements.forEach((element, index) => {
     if (pairs.beforeToNow[index] === -1 && (element.parent === -1 || pairs.beforeToNow[element.parent] !== -1)) {
-      changes.push(change("removed", index, null, left, { was: excerpt(left, index) }));
+      const clue = clueOf(left, index);
+      changes.push(change("removed", index, null, clue, { was: clue.excerpt }));
     }
   });
   // 今のページにある主な変化を文書の順に、その後に消えたもの、最後にずれただけ。
@@ -470,22 +478,35 @@ function moved(was, is) {
 }
 
 /**
+ * 一覧に出す要素の手がかり: タグ、中の文字の始まり、位置の手がかり。
+ * @typedef {{ tag: string, excerpt: string, label: string }} Clue
+ */
+
+/**
+ * @param {ReturnType<typeof prepare>} side 手がかりを読む側
+ * @param {number} index
+ * @returns {Clue}
+ */
+function clueOf(side, index) {
+  return { tag: side.elements[index].tag, excerpt: excerpt(side, index), label: label(side, index) };
+}
+
+/**
  * @param {Change["kind"]} kind
  * @param {number | null} before
  * @param {number | null} now
- * @param {ReturnType<typeof prepare>} side 手がかりを読む側
+ * @param {Clue} clue 消えた要素は比べる相手の側の、ほかは今の側の要素の手がかり
  * @param {{ property?: string, was?: string, is?: string }} values
  * @returns {Change}
  */
-function change(kind, before, now, side, values) {
-  const index = /** @type {number} */ (now ?? before);
+function change(kind, before, now, clue, values) {
   return {
     kind,
     before,
     now,
-    tag: side.elements[index].tag,
-    excerpt: excerpt(side, index),
-    label: label(side, index),
+    tag: clue.tag,
+    excerpt: clue.excerpt,
+    label: clue.label,
     property: values.property ?? "",
     was: values.was ?? "",
     is: values.is ?? "",
