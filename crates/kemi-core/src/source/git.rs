@@ -741,17 +741,10 @@ fn read_tree_file(
         }
     }
     let spec = git_spec(&format!("{revision}:"), path);
-    let size = git_raw_os(
-        repo,
-        &[OsStr::new("cat-file"), OsStr::new("-s"), spec.as_os_str()],
-    );
-    let Ok(size) = size else {
+    let Ok(size) = object_size(repo, &spec) else {
         return Ok(None);
     };
-    let size: u64 = std::str::from_utf8(&size)
-        .ok()
-        .and_then(|text| text.trim().parse().ok())
-        .unwrap_or(u64::MAX);
+    let size = size.unwrap_or(u64::MAX);
     if size > limit {
         return Ok(None);
     }
@@ -1141,28 +1134,10 @@ fn parse_diff_tree(bytes: &[u8]) -> Vec<(String, Vec<NameStatus>, Vec<Numstat>)>
 
 /// 標準入力を渡して git を呼ぶ。
 fn git_with_input(repo: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, SourceError> {
-    use std::io::Write;
-    use std::process::Stdio;
-
-    let io_error = |source| SourceError::Io {
+    let (output, _) = git_with_stdin(repo, args, input).map_err(|source| SourceError::Io {
         path: repo.to_path_buf(),
         source,
-    };
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(io_error)?;
-    // 出力が詰まって書き込みが止まらないよう、入力は別スレッドで書く。
-    let mut stdin = child.stdin.take().expect("stdin is piped");
-    let input = input.to_vec();
-    let writer = std::thread::spawn(move || stdin.write_all(&input));
-    let output = child.wait_with_output().map_err(io_error)?;
-    let _ = writer.join();
+    })?;
     if !output.status.success() {
         return Err(SourceError::Git(format!(
             "git {} failed: {}",
@@ -1171,6 +1146,45 @@ fn git_with_input(repo: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, S
         )));
     }
     Ok(output.stdout)
+}
+
+/// 標準入力に `input` を書きながら git の終わりを待つ。終了コードの解釈は呼び出し側に
+/// 任せ、出力と、入力を書き終えられたかを返す。
+pub(crate) fn git_with_stdin(
+    repo: &Path,
+    args: &[&str],
+    input: &[u8],
+) -> std::io::Result<(std::process::Output, std::io::Result<()>)> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    std::thread::scope(|scope| {
+        // 要求と応答がどちらもパイプ容量を超えうるので、書き込み中も応答を回収する。
+        let writer = scope.spawn(move || stdin.write_all(input));
+        let output = child.wait_with_output()?;
+        let written = writer
+            .join()
+            .unwrap_or_else(|_| Err(std::io::Error::other("writing to git stdin panicked")));
+        Ok((output, written))
+    })
+}
+
+/// `git cat-file -s` でオブジェクトの大きさを読む。git が失敗したら Err、出力を数として
+/// 読めなければ Ok(None)。
+fn object_size(repo: &Path, spec: &OsStr) -> Result<Option<u64>, SourceError> {
+    let output = git_raw_os(repo, &[OsStr::new("cat-file"), OsStr::new("-s"), spec])?;
+    Ok(std::str::from_utf8(&output)
+        .ok()
+        .and_then(|text| text.trim().parse().ok()))
 }
 
 struct Numstat {

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use super::SourceError;
-use super::git::{git_raw, path_bytes, path_from_bytes, split_z};
+use super::git::{git_raw, git_with_stdin, path_bytes, path_from_bytes, split_z};
 
 /// 1 レビューで見張るディレクトリの数の上限（R-LIVE）。
 pub const WATCH_DIRECTORY_LIMIT: usize = 10_000;
@@ -356,33 +356,21 @@ enum Answer {
 ///
 /// パスは `./` を付けて渡す。付けないと `:(glob)x` のような名前を pathspec の指定として読む。
 fn check_ignore(root: &Path, relatives: &[&[u8]]) -> Result<Answer, SourceError> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    let io_error = |source| SourceError::Io {
-        path: root.to_path_buf(),
-        source,
-    };
     let mut input = Vec::new();
     for relative in relatives {
         input.extend_from_slice(b"./");
         input.extend_from_slice(relative);
         input.push(0);
     }
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["check-ignore", "-z", "--stdin", "--no-index"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(io_error)?;
-    // 出力が詰まって書き込みが止まらないよう、入力は別スレッドで書く。
-    let mut stdin = child.stdin.take().expect("stdin is piped");
-    let writer = std::thread::spawn(move || stdin.write_all(&input));
-    let output = child.wait_with_output().map_err(io_error)?;
-    let _ = writer.join();
+    let (output, _) = git_with_stdin(
+        root,
+        &["check-ignore", "-z", "--stdin", "--no-index"],
+        &input,
+    )
+    .map_err(|source| SourceError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
     match output.status.code() {
         Some(0) => Ok(Answer::Matched(
             split_z(&output.stdout)

@@ -2,11 +2,9 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
-use super::{git_raw_os, path_bytes};
+use super::{git_with_stdin, object_size, path_bytes};
 use crate::source::SideRef;
 
 pub(super) fn side_sizes(sides: &[&SideRef]) -> Vec<u64> {
@@ -47,44 +45,35 @@ fn batch_sizes(repo: &Path, specs: &[&OsStr]) -> Option<Vec<u64>> {
         input.extend(path_bytes(Path::new(spec)));
         input.push(0);
     }
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["cat-file", "--batch-check=%(objectsize)", "--buffer", "-Z"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let mut stdin = child.stdin.take()?;
-    std::thread::scope(|scope| {
-        // 要求と応答がどちらもパイプ容量を超えうるので、書き込み中も応答を回収する。
-        let writing = scope.spawn(move || stdin.write_all(&input));
-        let output = child.wait_with_output().ok()?;
-        writing.join().ok()?.ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let records: Vec<_> = output
-            .stdout
-            .split(|byte| *byte == 0)
-            .filter(|record| !record.is_empty())
-            .collect();
-        if records.len() != specs.len() {
-            return None;
-        }
-        Some(
-            records
-                .into_iter()
-                .map(|record| {
-                    std::str::from_utf8(record)
-                        .ok()
-                        .and_then(|text| text.parse().ok())
-                        .unwrap_or(0)
-                })
-                .collect(),
-        )
-    })
+    let (output, written) = git_with_stdin(
+        repo,
+        &["cat-file", "--batch-check=%(objectsize)", "--buffer", "-Z"],
+        &input,
+    )
+    .ok()?;
+    written.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let records: Vec<_> = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .collect();
+    if records.len() != specs.len() {
+        return None;
+    }
+    Some(
+        records
+            .into_iter()
+            .map(|record| {
+                std::str::from_utf8(record)
+                    .ok()
+                    .and_then(|text| text.parse().ok())
+                    .unwrap_or(0)
+            })
+            .collect(),
+    )
 }
 
 pub(super) fn side_size(side: &SideRef) -> u64 {
@@ -92,16 +81,6 @@ pub(super) fn side_size(side: &SideRef) -> u64 {
         SideRef::Absent => 0,
         SideRef::Inline(bytes) => bytes.len() as u64,
         SideRef::Disk(path) => std::fs::metadata(path).map_or(0, |meta| meta.len()),
-        SideRef::Git { repo, spec } => git_raw_os(
-            repo,
-            &[OsStr::new("cat-file"), OsStr::new("-s"), spec.as_os_str()],
-        )
-        .ok()
-        .and_then(|text| {
-            std::str::from_utf8(&text)
-                .ok()
-                .and_then(|text| text.trim().parse().ok())
-        })
-        .unwrap_or(0),
+        SideRef::Git { repo, spec } => object_size(repo, spec).ok().flatten().unwrap_or(0),
     }
 }
