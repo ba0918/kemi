@@ -234,7 +234,7 @@ async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
     let waiting = {
         let url = server.agent_url(&server.agent_token, "wait");
         tokio::spawn(async move {
-            reqwest::Client::new()
+            http()
                 .post(url)
                 .json(&json!({ "timeout_ms": null }))
                 .send()

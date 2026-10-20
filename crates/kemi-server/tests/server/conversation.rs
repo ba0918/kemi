@@ -3,8 +3,8 @@ use super::*;
 #[tokio::test]
 async fn two_clients_share_comments_and_seen_without_an_author_field() {
     let server = TestServer::start().await;
-    let first = reqwest::Client::new();
-    let second = reqwest::Client::new();
+    let first = http();
+    let second = http();
 
     let response = first
         .post(format!("{}api/comment", server.url))
@@ -430,7 +430,7 @@ async fn a_waiting_request_returns_when_the_reviewer_hands() {
     let waiting = {
         let url = server.agent_url(&server.agent_token, "wait");
         tokio::spawn(async move {
-            reqwest::Client::new()
+            http()
                 .post(url)
                 .json(&json!({ "timeout_ms": null }))
                 .send()
@@ -504,7 +504,7 @@ async fn a_second_concurrent_wait_is_refused() {
     let _first = {
         let url = server.agent_url(&server.agent_token, "wait");
         tokio::spawn(async move {
-            reqwest::Client::new()
+            http()
                 .post(url)
                 .json(&json!({ "timeout_ms": null }))
                 .send()
@@ -528,7 +528,7 @@ async fn a_runtime_error_ends_the_waiting_request_with_its_reason_and_serve_retu
     let waiting = {
         let url = server.agent_url(&server.agent_token, "wait");
         tokio::spawn(async move {
-            let response = reqwest::Client::new()
+            let response = http()
                 .post(url)
                 .json(&json!({ "timeout_ms": null }))
                 .send()
@@ -802,7 +802,7 @@ async fn the_status_goes_from_not_connected_to_waiting_to_working() {
     let waiting = {
         let url = server.agent_url(&server.agent_token, "wait");
         tokio::spawn(async move {
-            reqwest::Client::new()
+            http()
                 .post(url)
                 .json(&json!({ "timeout_ms": 300 }))
                 .send()

@@ -22,6 +22,9 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+mod common;
+use common::http;
+
 struct FakeSource {
     meta: ReviewMeta,
     contents: HashMap<String, FileContent>,
@@ -394,7 +397,7 @@ impl TestServer {
     }
 
     async fn get(&self, path: &str) -> reqwest::Response {
-        reqwest::Client::new()
+        http()
             .get(format!("{}{path}", self.url))
             .send()
             .await
@@ -463,7 +466,7 @@ fn raw_post_with_host(
 }
 
 async fn post_json(url: &str, origin: &str, path: &str, body: Value) -> reqwest::Response {
-    reqwest::Client::new()
+    http()
         .post(format!("{url}{path}"))
         .header("Origin", origin)
         .json(&body)
@@ -680,7 +683,11 @@ impl LiveServer {
     }
 
     async fn get_json(&self, path: &str) -> Value {
-        let response = reqwest::get(format!("{}{path}", self.url())).await.unwrap();
+        let response = http()
+            .get(format!("{}{path}", self.url()))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(response.status(), 200, "GET {path}");
         response.json().await.unwrap()
     }
@@ -1634,7 +1641,7 @@ impl AgentServer {
     }
 
     async fn agent_post(&self, action: &str, body: Value) -> reqwest::Response {
-        reqwest::Client::new()
+        http()
             .post(self.agent_url(&self.agent_token, action))
             .json(&body)
             .send()
@@ -1672,7 +1679,7 @@ impl AgentServer {
 /// `kemi wait` と同じに、待って、起きたことを受け取りきったら受け取りを知らせる。
 /// 応答の (状態コード, JSON)。
 async fn wait_like_the_cli(port: u16, token: String, timeout_ms: Option<u64>) -> (u16, Value) {
-    let client = reqwest::Client::new();
+    let client = http();
     let response = client
         .post(format!("http://127.0.0.1:{port}/a/{token}/wait"))
         .json(&json!({ "timeout_ms": timeout_ms }))

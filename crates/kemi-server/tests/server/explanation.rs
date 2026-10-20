@@ -700,7 +700,7 @@ async fn explanation_updates_are_atomic_under_concurrency_and_storage_failure() 
 #[tokio::test]
 async fn the_page_explanation_api_needs_the_page_token() {
     let server = AgentServer::start().await;
-    let wrong_page = reqwest::Client::new()
+    let wrong_page = http()
         .post(format!(
             "{}api/explanation",
             server.page.url.replace("test-token", "wrong")
@@ -868,7 +868,7 @@ async fn explanation_and_parts_inputs_refuse_duplicate_keys_before_mutating_stat
             r#"{"writes":[{"type":"message","parts":[{"type":"text","body":"one","body":"two"}]}]}"#,
         ),
     ] {
-        let response = reqwest::Client::new()
+        let response = http()
             .post(server.agent_url(&server.agent_token, action))
             .header("Content-Type", "application/json")
             .body(body.to_string())
@@ -940,14 +940,7 @@ async fn submit_started_after_the_explanation_save_began_includes_the_explanatio
     *sink.explanation_gate.lock().unwrap() = Some(gate.clone());
     let url = server.agent_url(&server.agent_token, "explain");
     let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
-    let explain = tokio::spawn(async move {
-        reqwest::Client::new()
-            .post(url)
-            .json(&update)
-            .send()
-            .await
-            .unwrap()
-    });
+    let explain = tokio::spawn(async move { http().post(url).json(&update).send().await.unwrap() });
     gate.entered.notified().await;
     // 説明の保存が始まってから submit を出す。submit が保存の門に着いて待っていることは外から
     // 観測できず、門はすぐ開けるので、ほとんどの実行で submit は保存が終わった後に届く。保存と

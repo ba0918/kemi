@@ -25,6 +25,9 @@ use kemi_server::{
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+mod common;
+use common::http;
+
 const RELAY: &str = "relay-secret";
 const MOCK_SECRET: &str = "mock-secret";
 
@@ -207,7 +210,7 @@ async fn opening_the_review_url_sets_an_http_only_strict_relay_cookie() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
 
-    let response = reqwest::get(&running.review).await.unwrap();
+    let response = http().get(&running.review).send().await.unwrap();
 
     let cookie = response
         .headers()
@@ -225,7 +228,7 @@ async fn opening_the_review_url_sets_an_http_only_strict_relay_cookie() {
 async fn a_request_without_the_relay_cookie_is_refused() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
-    let client = reqwest::Client::new();
+    let client = http();
 
     let without = client.get(&running.live).send().await.unwrap();
     let wrong = client
@@ -247,7 +250,7 @@ async fn the_relay_cookie_is_removed_before_the_dev_server_sees_the_request() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
 
-    let body = reqwest::Client::new()
+    let body = http()
         .get(format!("{}/cookies", running.live))
         .header(
             header::COOKIE,
@@ -271,7 +274,7 @@ async fn other_cookies_with_non_ascii_bytes_keep_the_relay_open_and_reach_the_de
     let mut cookie = "name=caf\u{e9}; ".as_bytes().to_vec();
     cookie.extend_from_slice(relay_cookie(&running).as_bytes());
 
-    let response = reqwest::Client::new()
+    let response = http()
         .get(format!("{}/cookies", running.live))
         .header(
             header::COOKIE,
@@ -326,7 +329,7 @@ async fn a_page_that_refuses_frames_is_rewritten_and_gets_the_page_script() {
 
 /// `headers` を付けて中継の `path` を取る。
 async fn get_with(running: &Running, path: &str, headers: &[(&str, &str)]) -> String {
-    let mut request = reqwest::Client::new()
+    let mut request = http()
         .get(format!("{}{path}", running.live))
         .header(header::COOKIE, relay_cookie(running));
     for (name, value) in headers {
@@ -418,7 +421,7 @@ async fn a_page_that_allows_scripts_by_nonce_lets_the_page_script_run_by_its_own
 async fn the_page_script_is_served_on_the_relay_port_only_with_the_cookie() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
-    let client = reqwest::Client::new();
+    let client = http();
 
     let with = client
         .get(format!("{}/__kemi/page.js", running.live))
@@ -447,7 +450,7 @@ async fn a_dev_server_that_refuses_connections_shows_a_waiting_page() {
     let authority = format!("127.0.0.1:{}", socket.local_addr().unwrap().port());
     let running = start_review(&authority).await;
 
-    let response = reqwest::Client::new()
+    let response = http()
         .get(&running.live)
         .header(header::COOKIE, relay_cookie(&running))
         .send()
@@ -477,7 +480,7 @@ async fn a_dev_server_that_closes_without_responding_shows_a_waiting_page() {
             drop(stream);
         },
         async {
-            reqwest::Client::new()
+            http()
                 .get(&running.live)
                 .header(header::COOKIE, relay_cookie(&running))
                 .send()
@@ -496,7 +499,9 @@ async fn the_review_tells_the_page_where_the_relay_listens() {
     let (authority, _dev) = start_dev_server().await;
     let running = start_review(&authority).await;
 
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", running.review))
+    let review: serde_json::Value = http()
+        .get(format!("{}api/review", running.review))
+        .send()
         .await
         .unwrap()
         .json()
@@ -553,7 +558,7 @@ async fn start_file_review(root: &std::path::Path, path: &str) -> Running {
 
 /// ブラウザが文書として開くときと同じく `Sec-Fetch-Dest: document` を付けて取る。
 async fn open_as_page(running: &Running, path: &str) -> reqwest::Response {
-    reqwest::Client::new()
+    http()
         .get(format!("{}{path}", running.live))
         .header(header::COOKIE, relay_cookie(running))
         .header("sec-fetch-dest", "document")
@@ -563,7 +568,7 @@ async fn open_as_page(running: &Running, path: &str) -> reqwest::Response {
 }
 
 async fn get_with_cookie(running: &Running, path: &str) -> reqwest::Response {
-    reqwest::Client::new()
+    http()
         .get(format!("{}{path}", running.live))
         .header(header::COOKIE, relay_cookie(running))
         .send()
@@ -679,7 +684,9 @@ async fn a_file_review_needs_the_relay_cookie_too() {
     root.write("page.html", "<p>file page</p>");
     let running = start_file_review(&root.0, "page.html").await;
 
-    let response = reqwest::get(format!("{}/page.html", running.live))
+    let response = http()
+        .get(format!("{}/page.html", running.live))
+        .send()
         .await
         .unwrap();
 
@@ -741,7 +748,7 @@ async fn post_review(running: &Running, path: &str, body: serde_json::Value) -> 
         .review
         .trim_end_matches("/s/test-token/")
         .to_string();
-    reqwest::Client::new()
+    http()
         .post(format!("{}{path}", running.review))
         .header(header::ORIGIN, origin)
         .json(&body)
@@ -751,7 +758,9 @@ async fn post_review(running: &Running, path: &str, body: serde_json::Value) -> 
 }
 
 async fn get_review_json(running: &Running, path: &str) -> serde_json::Value {
-    reqwest::get(format!("{}{path}", running.review))
+    http()
+        .get(format!("{}{path}", running.review))
+        .send()
         .await
         .unwrap()
         .json()
@@ -973,7 +982,9 @@ async fn a_mock_whose_name_needs_percent_encoding_is_served_at_its_url() {
         .json()
         .await
         .unwrap();
-        let mock = reqwest::get(format!("{base}{}", assigned["url"].as_str().unwrap()))
+        let mock = http()
+            .get(format!("{base}{}", assigned["url"].as_str().unwrap()))
+            .send()
             .await
             .unwrap();
 
@@ -1011,7 +1022,9 @@ async fn the_mock_file_list_needs_the_page_token() {
     let running = start_file_review(&root.0, "page.html").await;
     let without = running.review.replace("/s/test-token/", "/s/wrong-token/");
 
-    let refused = reqwest::get(format!("{without}api/mock-files?q="))
+    let refused = http()
+        .get(format!("{without}api/mock-files?q="))
+        .send()
         .await
         .unwrap();
 
@@ -1035,10 +1048,14 @@ async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_
         .trim_end_matches("/s/test-token/")
         .to_string();
 
-    let page = reqwest::get(format!("{base}/m/{MOCK_SECRET}/mock.html"))
+    let page = http()
+        .get(format!("{base}/m/{MOCK_SECRET}/mock.html"))
+        .send()
         .await
         .unwrap();
-    let css = reqwest::get(format!("{base}/m/{MOCK_SECRET}/mock.css"))
+    let css = http()
+        .get(format!("{base}/m/{MOCK_SECRET}/mock.css"))
+        .send()
         .await
         .unwrap();
 
@@ -1054,7 +1071,7 @@ async fn mock_files_are_served_without_the_token_or_the_cookie_inside_the_range_
         format!("/m/{MOCK_SECRET}/.git/config"),
         "/m/wrong-secret/mock.html".to_string(),
     ] {
-        let refused = reqwest::get(format!("{base}{path}")).await.unwrap();
+        let refused = http().get(format!("{base}{path}")).send().await.unwrap();
         assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{path}");
     }
 }
@@ -1405,7 +1422,7 @@ async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_
                 .build()
                 .unwrap();
             let status = runtime.block_on(async {
-                reqwest::Client::new()
+                http()
                     .post(format!("{review}api/snapshot"))
                     .header(header::ORIGIN, origin)
                     .json(&serde_json::json!({
@@ -1525,7 +1542,7 @@ async fn resumed_code_failure_case(update_explanation: bool) {
         clock: kemi_server::system_clock(),
     };
     let task = tokio::spawn(serve(listener, params));
-    let response = reqwest::get(format!("{url}api/review")).await.unwrap();
+    let response = http().get(format!("{url}api/review")).send().await.unwrap();
     assert_eq!(response.status(), 200);
     let body: serde_json::Value = response.json().await.unwrap();
     assert!(body["diff_display_version"].is_null());
@@ -1533,14 +1550,16 @@ async fn resumed_code_failure_case(update_explanation: bool) {
     assert!(body["code_unavailable"].as_str().is_some());
     assert_eq!(body["explanation"]["current_revision"], 1);
     if update_explanation {
-        let response=reqwest::Client::new().post(format!("http://127.0.0.1:{agent_port}/a/agent-token/explain")).json(&serde_json::json!({"expected_revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"updated"},"references":[{"type":"code","unit":null,"group_id":"old","path":"old.txt","side":"new","start_line":1,"end_line":2}]}]}]})).send().await.unwrap();
+        let response=http().post(format!("http://127.0.0.1:{agent_port}/a/agent-token/explain")).json(&serde_json::json!({"expected_revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"updated"},"references":[{"type":"code","unit":null,"group_id":"old","path":"old.txt","side":"new","start_line":1,"end_line":2}]}]}]})).send().await.unwrap();
         assert_eq!(response.status(), 200);
     }
     assert_eq!(store.read(&id).unwrap().state.display.unwrap().issued, 1);
     source
         .fail
         .store(false, std::sync::atomic::Ordering::SeqCst);
-    let restored: serde_json::Value = reqwest::get(format!("{url}api/review?refresh=1"))
+    let restored: serde_json::Value = http()
+        .get(format!("{url}api/review?refresh=1"))
+        .send()
         .await
         .unwrap()
         .json()
@@ -1749,7 +1768,9 @@ async fn a_comment_image_that_pushes_a_snapshot_out_tells_the_page_to_read_the_c
     let running = start_stored_review(&authority, &sessions, 2500, Vec::new()).await;
     take_snapshot(&running, "start", &incompressible_text(900, 1)).await;
     let manual = take_snapshot(&running, "manual", &incompressible_text(900, 2)).await;
-    let mut events = reqwest::get(format!("{}api/events", running.review))
+    let mut events = http()
+        .get(format!("{}api/events", running.review))
+        .send()
         .await
         .unwrap();
 

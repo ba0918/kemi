@@ -162,7 +162,7 @@ async fn session_copy_waits_for_both_units() {
     };
     tokio::spawn(serve(listener, params));
 
-    reqwest::get(format!("{url}api/review")).await.unwrap();
+    http().get(format!("{url}api/review")).send().await.unwrap();
 
     let copy = {
         let mut found = None;
@@ -453,7 +453,7 @@ async fn suspend_after_submit_returns_the_committed_document() {
         server.control.ready().await;
         // 別のファイル取得が処理中なら、submit の応答後も serve は接続の終了を待つ。
         let url = format!("{}api/file/f1", server.page.url);
-        let reading = tokio::spawn(async move { reqwest::get(url).await.unwrap() });
+        let reading = tokio::spawn(async move { http().get(url).send().await.unwrap() });
         tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
             .await
             .expect("file request did not reach the source");

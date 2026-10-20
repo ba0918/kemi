@@ -63,7 +63,7 @@ async fn content_reads_happen_on_file_request() {
 #[tokio::test]
 async fn token_required_rejects_unknown_token() {
     let server = TestServer::start().await;
-    let response = reqwest::Client::new()
+    let response = http()
         .get(format!(
             "http://127.0.0.1:{}/s/wrong-token/api/review",
             server.port
@@ -92,7 +92,7 @@ async fn cross_origin_rejected_on_comment_post() {
 #[tokio::test]
 async fn post_without_origin_rejected() {
     let server = TestServer::start().await;
-    let response = reqwest::Client::new()
+    let response = http()
         .post(format!("{}api/state", server.url))
         .json(&json!({"file_id": "f1"}))
         .send()
@@ -204,7 +204,7 @@ async fn seen_state_kept_on_server() {
 async fn an_agent_request_with_an_origin_is_forbidden() {
     let server = AgentServer::start().await;
 
-    let response = reqwest::Client::new()
+    let response = http()
         .post(server.agent_url(&server.agent_token, "reply"))
         .header("Origin", "http://127.0.0.1:3000")
         .json(&json!({ "writes": [{ "type": "message", "body": "x" }] }))
@@ -220,7 +220,7 @@ async fn an_agent_request_with_an_origin_is_forbidden() {
 async fn an_agent_request_with_a_wrong_token_is_refused() {
     let server = AgentServer::start().await;
 
-    let response = reqwest::Client::new()
+    let response = http()
         .post(server.agent_url("test-token", "reply"))
         .json(&json!({ "writes": [{ "type": "message", "body": "x" }] }))
         .send()

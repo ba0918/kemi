@@ -91,7 +91,7 @@ async fn highlight_cap_can_be_overridden_for_one_file() {
 #[tokio::test]
 async fn render_requires_the_token() {
     let server = TestServer::start().await;
-    let response = reqwest::Client::new()
+    let response = http()
         .get(format!(
             "http://127.0.0.1:{}/s/wrong-token/api/render/f5",
             server.port
@@ -296,7 +296,7 @@ async fn review_image_bytes_carry_the_content_type_nosniff_and_sandbox_headers()
 #[tokio::test]
 async fn review_image_is_refused_without_the_token_and_for_unknown_or_non_image_ids() {
     let server = TestServer::start().await;
-    let without_token = reqwest::Client::new()
+    let without_token = http()
         .get(format!(
             "http://127.0.0.1:{}/s/wrong-token/api/image/review/f2/new",
             server.port
@@ -451,7 +451,7 @@ async fn relative_images_the_source_cannot_serve_are_404_from_the_repository_url
 
     assert_eq!(sources.len(), 2, "{sources:?}");
     assert_eq!(server.get(&sources[1]).await.status(), 404);
-    let without_token = reqwest::Client::new()
+    let without_token = http()
         .get(format!(
             "http://127.0.0.1:{}/s/wrong-token/{}",
             server.port, sources[1]

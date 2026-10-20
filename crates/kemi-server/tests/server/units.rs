@@ -108,7 +108,9 @@ async fn the_unit_event_carries_the_units_of_the_review() {
         gate: std::sync::Mutex::new(gate),
     });
     let server = LiveServer::start(source).await;
-    let mut events = reqwest::get(format!("{}api/events", server.url()))
+    let mut events = http()
+        .get(format!("{}api/events", server.url()))
+        .send()
         .await
         .unwrap();
     let first = server.get_json("api/review").await;
@@ -142,7 +144,9 @@ async fn unit_failure_keeps_review_and_retries() {
     let reason = failed["units"][1]["error"].as_str().unwrap();
     assert!(!reason.is_empty());
     let file_id = review["groups"][0]["files"][0]["id"].as_str().unwrap();
-    let file = reqwest::get(format!("{}api/file/{file_id}", server.url()))
+    let file = http()
+        .get(format!("{}api/file/{file_id}", server.url()))
+        .send()
         .await
         .unwrap();
     assert_eq!(file.status(), 200, "the review must go on");
@@ -563,7 +567,7 @@ async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generati
     let message_url = format!("{}api/message", server.url);
     let origin = server.origin.clone();
     let message = tokio::spawn(async move {
-        reqwest::Client::new()
+        http()
             .post(message_url)
             .header("Origin", origin)
             .json(&json!({"body":"new"}))
@@ -576,7 +580,9 @@ async fn a_slow_general_save_cannot_overwrite_a_later_published_display_generati
         .unwrap();
     let refresh_url = format!("{}api/review?refresh=1", server.url);
     let refreshed = tokio::spawn(async move {
-        reqwest::get(refresh_url)
+        http()
+            .get(refresh_url)
+            .send()
             .await
             .unwrap()
             .json::<Value>()

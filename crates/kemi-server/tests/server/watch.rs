@@ -94,12 +94,14 @@ async fn live_worktree_read_does_not_send_update() {
 
     let mut sse = SseStream::connect(server.port).await;
     // api/review はファイルを読む。読み取り（Access）は更新ではない。
-    let response = reqwest::get(format!(
-        "http://127.0.0.1:{}/s/live-token/api/review",
-        server.port
-    ))
-    .await
-    .unwrap();
+    let response = http()
+        .get(format!(
+            "http://127.0.0.1:{}/s/live-token/api/review",
+            server.port
+        ))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 200);
     let _ = response.text().await.unwrap();
 
