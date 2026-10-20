@@ -457,6 +457,42 @@ export function draftSavable(draft, url, width) {
   return draft.places.length > 0 && draft.body.trim() !== "" && strayRefs(draft).length === 0 && draftElsewhere(draft, url, width) === null;
 }
 
+/**
+ * ページに描かせる場所の組。`look` は描き方で、保存したコメントの `saved`（番号の無い小さな印）と `focus`（番号付き）、
+ * 書いているコメントの `draft`。
+ * @typedef {{ places: unknown[], look: "saved" | "focus" | "draft", comment?: string }} PlaceSet
+ */
+
+/**
+ * ページの上に描かせる場所の組（R-PAGE-COMMENT）。保存したコメントの場所は、そのコメントの URL と表示幅で見ている
+ * ときだけで、開いているスレッドのものは番号付き、ほかは番号の無い小さな印。書いているコメントの場所も、その URL と
+ * 表示幅で見ているときだけ、最後に置く。
+ * @param {{
+ *   comments: { id: string, page: { url: string, width: number, places: unknown[] } }[],
+ *   draft: PlaceDraft,
+ *   page: string,
+ *   width: number,
+ *   thread: string | null,
+ * }} input
+ *   comments はページへのコメント、page と width は見ている URL と表示幅、thread は開いているスレッドのコメント
+ * @returns {PlaceSet[]}
+ */
+export function placeSets({ comments, draft, page, width, thread }) {
+  const here = (/** @type {string} */ url, /** @type {number} */ at) => url === page && at === width;
+  /** @type {PlaceSet[]} */
+  const sets = comments
+    .filter((comment) => here(comment.page.url, comment.page.width))
+    .map((comment) => ({
+      places: comment.page.places,
+      look: thread === comment.id ? "focus" : "saved",
+      comment: comment.id,
+    }));
+  if (here(draft.url, draft.width) && draft.places.length > 0) {
+    sets.push({ places: draft.places, look: "draft" });
+  }
+  return sets;
+}
+
 /** 保存したコメントの短い名前の長さの上限（文字数）。 */
 const SHORT_NAME_LIMIT = 40;
 

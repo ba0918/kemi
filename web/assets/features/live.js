@@ -23,6 +23,7 @@ import {
   liveOrigin,
   overlayPlacement,
   pageKey,
+  placeSets,
   draftElsewhere,
   draftSavable,
   editBody,
@@ -1181,28 +1182,19 @@ function pageComments() {
 /** 最後にページへ送った描き込み。同じなら送り直さない（会話が描き直されるたびに呼ばれる）。 */
 let sentPlaces = "";
 
-/**
- * ページの上に場所を描かせる。保存したコメントの場所は、そのコメントの URL と表示幅で見ているときに控えめな
- * 印で、開いているスレッドのものは目立たせる。書いているコメントの場所も、そのページ・その幅を見ているときだけ。
- */
+/** ページの上に場所を描かせる（描かせる組は live-model.js の placeSets）。 */
 function sendPlaces() {
   const frame = shell?.liveFrame.contentWindow;
   if (!frame) {
     return;
   }
-  const here = (/** @type {string} */ url, /** @type {number} */ width) => url === live.page && width === live.width;
-  /** @type {{ places: unknown[], look: string, comment?: string }[]} */
-  const sets = pageComments()
-    .filter((comment) => here(comment.page.url, comment.page.width))
-    .map((comment) => ({
-      places: comment.page.places,
-      look: state.conversation.thread === comment.id ? "focus" : "saved",
-      comment: comment.id,
-    }));
-  const draft = live.draft;
-  if (here(draft.url, draft.width) && draft.places.length > 0) {
-    sets.push({ places: draft.places, look: "draft" });
-  }
+  const sets = placeSets({
+    comments: pageComments(),
+    draft: live.draft,
+    page: live.page,
+    width: live.width,
+    thread: state.conversation.thread,
+  });
   const message = JSON.stringify(sets);
   if (message === sentPlaces) {
     return;

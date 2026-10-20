@@ -25,6 +25,7 @@ import {
   liveOrigin,
   pageKey,
   parseWidth,
+  placeSets,
   revealScrollLeft,
   snapshotLabel,
   startSnapshotDue,
@@ -540,6 +541,26 @@ test("a draft is saved only with a place, some text, no stray reference, and at 
   // 保存は書きかけの URL と表示幅に戻ってから。
   assert.equal(draftSavable(draft, "/other", 390), false);
   assert.equal(draftSavable(draft, "/", 1280), false);
+});
+
+test("saved places are drawn only at their URL and width, numbered only while their thread is open, and the draft comes last", () => {
+  /** @param {string} id @param {string} url @param {number} width */
+  const saved = (id, url, width) => ({ id, page: { url, width, places: [{ n: 1, id }] } });
+  const comments = [saved("c1", "/", 390), saved("c2", "/", 1280), saved("c3", "/cart", 390), saved("c4", "/", 390)];
+  const draft = addPlace(emptyDraft("/", 390), place("element", "#a"), "/", 390);
+  // 保存したコメントの場所は、スレッドを開いている間だけ番号付きで、それ以外は番号の無い小さな印（R-PAGE-COMMENT）。
+  assert.deepEqual(placeSets({ comments, draft, page: "/", width: 390, thread: "c4" }), [
+    { places: [{ n: 1, id: "c1" }], look: "saved", comment: "c1" },
+    { places: [{ n: 1, id: "c4" }], look: "focus", comment: "c4" },
+    { places: draft.places, look: "draft" },
+  ]);
+  assert.deepEqual(placeSets({ comments, draft, page: "/", width: 1280, thread: null }), [
+    { places: [{ n: 1, id: "c2" }], look: "saved", comment: "c2" },
+  ]);
+  assert.deepEqual(placeSets({ comments, draft: emptyDraft("/", 390), page: "/cart", width: 390, thread: null }), [
+    { places: [{ n: 1, id: "c3" }], look: "saved", comment: "c3" },
+  ]);
+  assert.deepEqual(placeSets({ comments: [], draft: emptyDraft("/", 390), page: "/", width: 390, thread: null }), []);
 });
 
 test("the start snapshot waits until the saved snapshots are known, and is not taken again after resuming", () => {
