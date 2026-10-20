@@ -150,6 +150,9 @@ pub fn string_bytes(value: &serde_json::Value) -> usize {
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
     }
 }
+/// 1 つの返信・発言の parts の文字列値の合計バイト数。説明の上限とは別の項目。
+const MAX_PARTS_STRING_BYTES: usize = 524_288;
+
 pub fn validate_parts(parts: &[Part]) -> Checked {
     bound("parts", parts.len(), 1, 32)?;
     let mut budget = 0;
@@ -159,7 +162,7 @@ pub fn validate_parts(parts: &[Part]) -> Checked {
             &serde_json::to_value(part)
                 .expect("Part contains only JSON strings, integers and lists"),
         );
-        bound("parts UTF-8 bytes", budget, 0, 524_288)?;
+        bound("parts UTF-8 bytes", budget, 0, MAX_PARTS_STRING_BYTES)?;
     }
     Ok(())
 }

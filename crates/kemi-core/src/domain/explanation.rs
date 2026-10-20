@@ -8,6 +8,18 @@ use std::collections::HashSet;
 
 pub const MAX_REVISION: u64 = 9_007_199_254_740_991;
 
+// 説明の容量の上限（content-parts.md の上限の表）。更新時と保存・復元時で同じ値を使う。
+/// 保持中の説明の版数。
+pub(crate) const MAX_RETAINED_VERSIONS: usize = 128;
+/// 説明本文の履歴の正準 JSON の合計バイト数。
+pub(crate) const MAX_HISTORY_JSON_BYTES: usize = 8_388_608;
+/// 説明・引用・parts の会話・未配達イベントの追加保存部分の正準 JSON の合計バイト数。
+pub(crate) const MAX_ADDITIONAL_SAVED_JSON_BYTES: usize = 16_777_216;
+/// 1 つの説明の文字列値の合計バイト数。
+const MAX_EXPLANATION_STRING_BYTES: usize = 524_288;
+/// 1 つの説明の正準 JSON のバイト数。
+const MAX_EXPLANATION_JSON_BYTES: usize = 1_048_576;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExplanationHistory {
@@ -70,12 +82,21 @@ pub fn validate_version(version: &ExplanationVersion) -> Result<(), ExplanationE
     })?;
     let value =
         serde_json::to_value(version).expect("ExplanationVersion contains only JSON values");
-    bound("explanation UTF-8 bytes", string_bytes(&value), 0, 524_288)?;
+    validate_explanation_size(&value)
+}
+
+fn validate_explanation_size(value: &serde_json::Value) -> Result<(), ExplanationError> {
+    bound(
+        "explanation UTF-8 bytes",
+        string_bytes(value),
+        0,
+        MAX_EXPLANATION_STRING_BYTES,
+    )?;
     bound(
         "explanation canonical JSON bytes",
-        canonical_size(&value),
+        canonical_size(value),
         0,
-        1_048_576,
+        MAX_EXPLANATION_JSON_BYTES,
     )?;
     Ok(())
 }
@@ -112,9 +133,9 @@ pub fn history_candidate(
         .collect();
     loop {
         let bytes = sizes.iter().copied().fold(0usize, usize::saturating_add);
-        if candidate.len() <= 128
-            && bytes <= 8_388_608
-            && bytes.saturating_add(held.other_saved_bytes) <= 16_777_216
+        if candidate.len() <= MAX_RETAINED_VERSIONS
+            && bytes <= MAX_HISTORY_JSON_BYTES
+            && bytes.saturating_add(held.other_saved_bytes) <= MAX_ADDITIONAL_SAVED_JSON_BYTES
         {
             return Ok(candidate);
         }
@@ -393,14 +414,7 @@ pub fn validate_document(document: &ExplanationDocument) -> Result<(), Explanati
     bound("blocks", blocks.len(), 1, 512)?;
     let value =
         serde_json::to_value(document).expect("ExplanationDocument contains only JSON values");
-    bound("explanation UTF-8 bytes", string_bytes(&value), 0, 524_288)?;
-    bound(
-        "explanation canonical JSON bytes",
-        canonical_size(&value),
-        0,
-        1_048_576,
-    )?;
-    Ok(())
+    validate_explanation_size(&value)
 }
 fn reference_failure(path: &str, reason: ReferenceFailure) -> ExplanationError {
     ExplanationError::Reference {

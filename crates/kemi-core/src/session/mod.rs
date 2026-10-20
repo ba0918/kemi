@@ -37,7 +37,10 @@ use format::{decode_copy, encode_copy};
 use crate::domain::agent::{AgentEvent, Channel, ContentWrite, HandedComment};
 use crate::domain::conversation_content::ConversationContent;
 use crate::domain::display_version::DisplayVersions;
-use crate::domain::explanation::{ExplanationHistory, canonical_size};
+use crate::domain::explanation::{
+    ExplanationHistory, MAX_ADDITIONAL_SAVED_JSON_BYTES, MAX_HISTORY_JSON_BYTES,
+    MAX_RETAINED_VERSIONS, canonical_size,
+};
 use crate::domain::live::LivePage;
 use crate::domain::parts_validation::validate_parts;
 use crate::domain::review::{Author, Comment, CommentTarget, GroupBy, Message, Reply, ReviewMeta};
@@ -330,7 +333,7 @@ pub fn validate_additional(state: &SessionState) -> Result<(), SessionError> {
             "explanation.versions",
             history.versions.len(),
             1,
-            128,
+            MAX_RETAINED_VERSIONS,
         )
         .map_err(|e| SessionError::Encode {
             reason: e.to_string(),
@@ -344,7 +347,7 @@ pub fn validate_additional(state: &SessionState) -> Result<(), SessionError> {
             "explanation history canonical JSON bytes",
             bytes,
             0,
-            8_388_608,
+            MAX_HISTORY_JSON_BYTES,
         )
         .map_err(|e| SessionError::Encode {
             reason: e.to_string(),
@@ -354,7 +357,7 @@ pub fn validate_additional(state: &SessionState) -> Result<(), SessionError> {
         "additional saved content canonical JSON bytes",
         additional_saved_size(state),
         0,
-        16_777_216,
+        MAX_ADDITIONAL_SAVED_JSON_BYTES,
     )
     .map_err(|e| SessionError::Encode {
         reason: e.to_string(),
