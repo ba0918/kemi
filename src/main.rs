@@ -15,8 +15,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use cli::{
-    Cli, InputModeError, parse_args, validate_input_mode, validate_live_flags,
-    validate_result_flags, validate_resume_flags,
+    Cli, InputModeError, parse_args, validate_explanation_flags, validate_input_mode,
+    validate_live_flags, validate_removed_flags, validate_result_flags, validate_resume_flags,
 };
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
 use kemi_core::domain::submit::Verdict;
@@ -926,14 +926,11 @@ async fn main() {
     if let Err(message) = validate_live_flags(&cli) {
         fail(&message);
     }
-    if cli.explanation.is_some() && cli.digest {
-        fail("--explanation cannot be used with --digest");
+    if let Err(message) = validate_explanation_flags(&cli) {
+        fail(&message);
     }
-
-    if let Some(out) = &cli.out {
-        fail(&format!(
-            "--out is removed; static files are no longer written ({out} will not be written)"
-        ));
+    if let Err(message) = validate_removed_flags(&cli) {
+        fail(&message);
     }
 
     if cli.resume.is_some() {

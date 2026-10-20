@@ -149,13 +149,11 @@ pub(crate) fn validate_result_flags(cli: &Cli) -> Result<(), String> {
         }
         return Ok(());
     }
-    let others = cli
-        .flags
-        .iter()
-        .any(|flag| !matches!(flag.as_str(), "--result" | "--any" | "--workspace"));
-    if others || cli.manifest.is_some() {
-        return Err("--result accepts only --any and --workspace".to_string());
-    }
+    only_flags(
+        cli,
+        &["--result", "--any", "--workspace"],
+        "--result accepts only --any and --workspace",
+    )?;
     if cli.any && cli.workspace.is_some() {
         return Err("--any and --workspace cannot be used together".to_string());
     }
@@ -197,24 +195,18 @@ pub(crate) fn validate_resume_flags(cli: &Cli) -> Result<(), String> {
     if cli.resume.is_none() {
         return Ok(());
     }
-    let allowed = [
-        "--resume",
-        "--port",
-        "--bind",
-        "--no-open",
-        "--serve",
-        "--live-port",
-    ];
-    let others = cli
-        .flags
-        .iter()
-        .any(|flag| !allowed.contains(&flag.as_str()));
-    if others || cli.manifest.is_some() {
-        return Err(
-            "--resume accepts only --port, --bind, --no-open, --serve and --live-port".to_string(),
-        );
-    }
-    Ok(())
+    only_flags(
+        cli,
+        &[
+            "--resume",
+            "--port",
+            "--bind",
+            "--no-open",
+            "--serve",
+            "--live-port",
+        ],
+        "--resume accepts only --port, --bind, --no-open, --serve and --live-port",
+    )
 }
 
 pub(crate) fn validate_live_flags(cli: &Cli) -> Result<(), String> {
@@ -224,22 +216,48 @@ pub(crate) fn validate_live_flags(cli: &Cli) -> Result<(), String> {
         }
         return Ok(());
     }
-    let allowed = [
-        "--live",
-        "--explanation",
-        "--port",
-        "--bind",
-        "--no-open",
-        "--live-port",
-        "--focus",
-        "--serve",
-    ];
+    only_flags(
+        cli,
+        &[
+            "--live",
+            "--explanation",
+            "--port",
+            "--bind",
+            "--no-open",
+            "--live-port",
+            "--focus",
+            "--serve",
+        ],
+        "--live accepts only --port, --bind, --no-open, --live-port, --focus, --explanation and --serve",
+    )
+}
+
+/// 起動時の説明は、ページを出さない `--digest` とは組まない（R-EXPLANATION-CLI）。
+pub(crate) fn validate_explanation_flags(cli: &Cli) -> Result<(), String> {
+    if cli.explanation.is_some() && cli.digest {
+        return Err("--explanation cannot be used with --digest".to_string());
+    }
+    Ok(())
+}
+
+/// 廃止したフラグ。黙って無視せず理由を出す（R-INPUT-6）。
+pub(crate) fn validate_removed_flags(cli: &Cli) -> Result<(), String> {
+    if let Some(out) = &cli.out {
+        return Err(format!(
+            "--out is removed; static files are no longer written ({out} will not be written)"
+        ));
+    }
+    Ok(())
+}
+
+/// `allowed` 以外のフラグと manifest を断る。モードごとに組めるものを限るときに使う。
+fn only_flags(cli: &Cli, allowed: &[&str], message: &str) -> Result<(), String> {
     let others = cli
         .flags
         .iter()
         .any(|flag| !allowed.contains(&flag.as_str()));
     if others || cli.manifest.is_some() {
-        return Err("--live accepts only --port, --bind, --no-open, --live-port, --focus, --explanation and --serve".to_string());
+        return Err(message.to_string());
     }
     Ok(())
 }
