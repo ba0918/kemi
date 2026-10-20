@@ -220,9 +220,17 @@ function threadFolded(comment, folded) {
   return folded.get(comment.id) ?? Boolean(comment.resolved);
 }
 
+/** @typedef {string | {body: string|null, parts?: {type: string, body?: string}[]|null}} Content */
+
 /**
- * コメントの札に出す、本文の最初の空でない行。
- * @param {string | {body: string|null, parts?: unknown[]|null}} body
+ * text パーツの無い parts の 1 行目に出す、最初のパーツの種類の呼び名（R-VIEW）。図はどの型も Diagram。
+ * @type {Record<string, string>}
+ */
+const PART_LABELS = { code: "Code", diagram: "Diagram", sequence: "Diagram", flow: "Diagram" };
+
+/**
+ * コメントの札と会話パネルの項目に出す、本文の最初の空でない行。
+ * @param {Content} body
  * @returns {string}
  */
 export function firstLine(body) {
@@ -230,13 +238,18 @@ export function firstLine(body) {
 }
 
 /**
- * @param {string | {body: string|null, parts?: unknown[]|null}} content
+ * 1 行目を取り出す元の文字列（R-VIEW）。parts だけの書き込みは最初の text パーツの本文で、
+ * text パーツが無ければ最初のパーツの種類の呼び名。
+ * @param {Content} content
  * @returns {string}
  */
 function conversationText(content) {
   if (typeof content === "string") return content;
   if (content.body !== null) return content.body;
-  return content.parts ? JSON.stringify(content.parts, null, 2) : "";
+  const parts = content.parts ?? [];
+  const text = parts.find((part) => part.type === "text");
+  if (text) return text.body ?? "";
+  return parts.length > 0 ? (PART_LABELS[parts[0].type] ?? parts[0].type) : "";
 }
 
 /**

@@ -24,6 +24,26 @@ test("会話の旧plain本文は装飾せず最初の行を示す", () => {
   assert.equal(firstLine({body:"",parts:null}),"");
 });
 
+test("最後の書き込みが parts だけなら、最初の text パーツの本文の 1 行目を示す", () => {
+  const code = { type: "code", body: "x = 1", language: "python", role: "example" };
+  const reply = { author: "agent", body: null, parts: [code, { type: "text", body: "\n**Done**\nmore" }, { type: "text", body: "later" }] };
+
+  assert.equal(firstLine(reply), "**Done**");
+});
+
+test("text パーツの無い parts は、最初のパーツの種類の呼び名を示す", () => {
+  const code = { type: "code", body: "x = 1", language: "python", role: "example" };
+  const sequence = { type: "sequence", title: "Calls", role: "example", participants: [], events: [] };
+  const flow = { type: "flow", title: "Steps", role: "proposal", nodes: [], edges: [] };
+  const grid = { type: "diagram", title: "Grid", role: "example", source: "a = A" };
+
+  assert.equal(firstLine({ body: null, parts: [code, sequence] }), "Code");
+  assert.deepEqual(
+    [sequence, flow, grid].map((part) => firstLine({ body: null, parts: [part, code] })),
+    ["Diagram", "Diagram", "Diagram"],
+  );
+});
+
 test("chip_shows_the_first_line_of_the_body", () => {
   assert.equal(firstLine("一行目\n二行目"), "一行目");
   assert.equal(firstLine("\n\n本文"), "本文");
