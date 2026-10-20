@@ -1,37 +1,20 @@
 //! セッションの保存のテストが共有する補助。
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::super::*;
 use crate::domain::content::FileContent;
-use crate::domain::review::{Author, GroupBy, Reply, ReviewMeta, Side, Suggestion};
+use crate::domain::review::{Author, GroupBy, Reply, ReviewMeta, Suggestion};
 use crate::session::files::{PageSnapshot, SnapshotKind};
 use crate::session::{FrozenUnit, SessionMode};
+use crate::testutil::{file_comment, file_entry, file_target};
 
-static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-pub(in crate::session) struct Scratch(pub(in crate::session) PathBuf);
+pub(super) use crate::testutil::Scratch;
 
 impl Scratch {
-    pub(in crate::session) fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "kemi-session-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::SeqCst)
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        Scratch(path)
-    }
-
+    /// セッションの置き場所。一時ディレクトリの下の `sessions/` で、まだ作らない。
     pub(in crate::session) fn dir(&self) -> PathBuf {
         self.0.join("sessions")
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -50,8 +33,6 @@ pub(super) fn info(id: &str, updated: u128) -> SessionInfo {
 
 pub(in crate::session) fn comment() -> crate::domain::review::Comment {
     crate::domain::review::Comment {
-        id: "c1".to_string(),
-        seq: 0,
         group_id: "all".to_string(),
         group_title: "final".to_string(),
         body: "please change".to_string(),
@@ -62,19 +43,15 @@ pub(in crate::session) fn comment() -> crate::domain::review::Comment {
             body: "done".into(),
         }],
         resolved: true,
-        outdated: false,
         target: crate::domain::review::CommentTarget::File(crate::domain::review::FileTarget {
-            file_id: "f1".to_string(),
-            path: "src/a.rs".to_string(),
-            side: Side::New,
-            start_line: Some(1),
             end_line: Some(2),
             quote: vec!["one".to_string(), "two".to_string()],
-            content_hash: "hash".to_string(),
             suggestion: Some(Suggestion {
                 replacement: "replaced".to_string(),
             }),
+            ..file_target()
         }),
+        ..file_comment("c1")
     }
 }
 
@@ -100,21 +77,13 @@ pub(super) fn review() -> ReviewMeta {
             why: "why".to_string(),
             watch: "watch".to_string(),
             files: vec![crate::domain::review::FileEntry {
-                id: "f1".to_string(),
                 group_id: "all".to_string(),
-                path: "src/a.rs".to_string(),
-                old_path: None,
-                status: crate::domain::review::Status::Modify,
                 add: 1,
                 del: 1,
-                binary: false,
-                old_size: 0,
-                new_size: 0,
-                focus: false,
                 note: "note".to_string(),
-                noise: false,
                 // 復元でも「内容を読まなかった」判定が同じになるよう、写しに残る。
                 content_skipped: true,
+                ..file_entry("src/a.rs")
             }],
         }],
         approval: vec![crate::domain::review::Approval {

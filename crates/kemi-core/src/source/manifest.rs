@@ -317,6 +317,7 @@ impl ReviewSource for ManifestSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::workspace_root;
     use serde_json::json;
 
     #[test]
@@ -342,12 +343,8 @@ mod tests {
         }
     }
 
-    fn repo_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
-
     fn fixture(name: &str) -> PathBuf {
-        repo_root().join("tests/fixtures").join(name)
+        workspace_root().join("tests/fixtures").join(name)
     }
 
     fn meta_json(review: &ReviewMeta) -> Value {
@@ -379,7 +376,7 @@ mod tests {
     #[test]
     fn manifest_compatible_keys_match_expected_metadata() {
         let source =
-            ManifestSource::from_path(&fixture("legacy-manifest.json"), &repo_root()).unwrap();
+            ManifestSource::from_path(&fixture("legacy-manifest.json"), &workspace_root()).unwrap();
         let review = source.review().unwrap();
 
         let expected: Value = serde_json::from_str(

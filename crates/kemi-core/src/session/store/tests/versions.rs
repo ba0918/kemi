@@ -7,7 +7,7 @@ use crate::domain::review::{Author, Reply};
 
 #[test]
 fn malformed_legacy_containers_are_reported_as_corrupt_instead_of_panicking() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     std::fs::create_dir_all(scratch.dir()).unwrap();
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
@@ -41,7 +41,7 @@ fn malformed_legacy_containers_are_reported_as_corrupt_instead_of_panicking() {
 
 #[test]
 fn old_format_ignores_new_field_names_and_opaque_extensions_under_its_original_contract() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     drop(store.create(info(id, 100)).unwrap());
@@ -72,7 +72,7 @@ fn old_format_ignores_new_field_names_and_opaque_extensions_under_its_original_c
 fn fixed_version_three_plain_session_is_supplemented_and_first_written_as_four_without_timestamp_or_payload_changes()
  {
     const META: &str = r#"{"info":{"id":"01HF7YAT00AAAAAAAAAAAAAAAA","created":111,"updated":222,"workspace":"/tmp/fixture","workspace_key":"00000000000000aa","mode":{"kind":"worktree"},"title":"Working tree changes","total_files":1},"state":{"comments":[],"seen":[],"collapsed":{},"messages":[{"id":"m1","author":"agent","body":"**plain**"}]},"copy":{"state":"ready"}}"#;
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     drop(store.create(info(id, 222)).unwrap());
@@ -109,7 +109,7 @@ fn fixed_version_three_plain_session_is_supplemented_and_first_written_as_four_w
 
 #[test]
 fn malformed_parts_are_rejected_from_version_four_instead_of_becoming_plain() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     drop(store.create(info(id, 100)).unwrap());
@@ -199,7 +199,7 @@ fn code_block() -> serde_json::Value {
 
 #[test]
 fn version_four_restores_parts_full_explanation_quotes_and_generation_without_rewriting() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     let open = store.create(info(id, 100)).unwrap();
@@ -244,7 +244,7 @@ type Corruption = fn(&mut serde_json::Value, &str);
 #[test]
 fn version_four_with_a_broken_generation_or_explanation_history_is_corrupt() {
     use serde_json::{Value, json};
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     drop(store.create(info(id, 100)).unwrap());
@@ -350,7 +350,7 @@ fn version_four_with_a_broken_generation_or_explanation_history_is_corrupt() {
 
 #[test]
 fn version_four_keeps_the_saved_selection_of_an_explanation_comment() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     drop(store.create(info(id, 100)).unwrap());
@@ -374,7 +374,7 @@ fn version_four_keeps_the_saved_selection_of_an_explanation_comment() {
 
 #[test]
 fn version_four_refuses_a_selection_the_creation_rules_would_refuse() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     drop(store.create(info(id, 100)).unwrap());
@@ -405,7 +405,7 @@ fn version_four_refuses_a_selection_the_creation_rules_would_refuse() {
 
 #[test]
 fn only_sessions_of_an_unreadable_version_are_reported() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
 
     // セッションを 1 つも保留していない（ディレクトリが無い）。
@@ -469,7 +469,7 @@ fn place_version_2_session(scratch: &Scratch) {
 
 #[test]
 fn version_2_session_reads_its_string_replies_as_reviewer_replies() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     place_version_2_session(&scratch);
 
@@ -509,7 +509,7 @@ fn version_2_session_reads_its_string_replies_as_reviewer_replies() {
 
 #[test]
 fn version_2_session_numbers_each_comment_then_its_replies_in_creation_order() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     place_version_2_session(&scratch);
 
@@ -528,7 +528,7 @@ fn version_2_session_numbers_each_comment_then_its_replies_in_creation_order() {
 
 #[test]
 fn version_2_session_is_listed_and_resumable() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     place_version_2_session(&scratch);
     // 写しのファイルは版を持たないので、今の書き方で置いてよい。
@@ -556,7 +556,7 @@ fn version_2_session_is_listed_and_resumable() {
 
 #[test]
 fn session_of_a_version_without_a_reader_is_unsupported_and_reported() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     std::fs::create_dir_all(scratch.dir()).unwrap();
     let id = "01HF7YAT00BBBBBBBBBBBBBBBB";
@@ -575,7 +575,7 @@ fn session_of_a_version_without_a_reader_is_unsupported_and_reported() {
 
 #[test]
 fn version_3_session_written_before_the_page_comment_mark_reads_as_never_saved() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))

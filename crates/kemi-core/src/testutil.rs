@@ -1,11 +1,103 @@
-//! テスト用の一時 git リポジトリ。決定的な日付でコミットし、Drop で消す。
+//! テストの補助。一時ディレクトリと一時 git リポジトリ、レビューの値（ファイル・コメント）の
+//! 組み立て、ワークスペースの根、パスでファイルを探すこと。値の組み立ては既定の値を返すので、
+//! テストは確かめたい項目だけを構造体更新記法で上書きする。
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::domain::review::{
+    Comment, CommentTarget, FileEntry, FileTarget, ReviewMeta, Side, Status,
+};
+
 static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// 一時ディレクトリの場所。名前は接頭辞・PID・通し番号で、並行するテストとも、別のテストの
+/// プロセスとも重ならない。作らずに場所だけを決め（前回の残りは消す）、Drop で消す。
+pub(crate) struct Scratch(pub(crate) PathBuf);
+
+impl Scratch {
+    pub(crate) fn new(prefix: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "kemi-{prefix}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        Scratch(path)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// 一覧の 1 ファイル（変更、増減 0、id は f1、グループは g1）。
+pub(crate) fn file_entry(path: &str) -> FileEntry {
+    FileEntry {
+        id: "f1".to_string(),
+        group_id: "g1".to_string(),
+        path: path.to_string(),
+        old_path: None,
+        status: Status::Modify,
+        add: 0,
+        del: 0,
+        binary: false,
+        old_size: 0,
+        new_size: 0,
+        focus: false,
+        note: String::new(),
+        noise: false,
+        content_skipped: false,
+    }
+}
+
+/// f1（src/a.rs）の新側の 1 行目を指す対象。suggestion は無い。
+pub(crate) fn file_target() -> FileTarget {
+    FileTarget {
+        file_id: "f1".to_string(),
+        path: "src/a.rs".to_string(),
+        side: Side::New,
+        start_line: Some(1),
+        end_line: Some(1),
+        quote: vec!["one".to_string()],
+        content_hash: "hash".to_string(),
+        suggestion: None,
+    }
+}
+
+/// [`file_target`] へのコメント。返信は無く、未解決。
+pub(crate) fn file_comment(id: &str) -> Comment {
+    Comment {
+        id: id.to_string(),
+        seq: 0,
+        group_id: "g1".to_string(),
+        group_title: "group".to_string(),
+        body: "comment".into(),
+        replies: Vec::new(),
+        resolved: false,
+        outdated: false,
+        target: CommentTarget::File(file_target()),
+    }
+}
+
+/// ワークスペースの根。`tests/fixtures/` をここから引く。
+pub(crate) fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// レビューの中のパス `path` のファイル。無ければテストを止める。
+pub(crate) fn find_file<'a>(review: &'a ReviewMeta, path: &str) -> &'a FileEntry {
+    review
+        .groups
+        .iter()
+        .flat_map(|group| group.files.iter())
+        .find(|file| file.path == path)
+        .unwrap_or_else(|| panic!("file not found: {path}"))
+}
 
 pub struct TempRepo {
     pub path: PathBuf,

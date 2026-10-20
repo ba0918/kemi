@@ -160,7 +160,7 @@ mod tests {
     use super::*;
     use crate::session::FrozenUnit;
     use crate::source::git::{GitMode, GitSource};
-    use crate::source::testutil::TempRepo;
+    use crate::testutil::TempRepo;
 
     fn fixture() -> (TempRepo, String, String) {
         let repo = TempRepo::new();

@@ -129,13 +129,10 @@ impl ReviewSource for FocusSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::review::{FileEntry, Group, Status};
-    use crate::source::{git, testutil};
+    use crate::domain::review::{FileEntry, Group};
+    use crate::source::git;
+    use crate::testutil;
     use serde_json::json;
-
-    fn base_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
 
     fn review_with_file(path: &str) -> ReviewMeta {
         ReviewMeta {
@@ -148,20 +145,9 @@ mod tests {
                 why: String::new(),
                 watch: "manifest".to_string(),
                 files: vec![FileEntry {
-                    id: "f1".to_string(),
-                    group_id: "g1".to_string(),
-                    path: path.to_string(),
-                    old_path: None,
-                    status: Status::Modify,
                     add: 1,
                     del: 1,
-                    binary: false,
-                    old_size: 0,
-                    new_size: 0,
-                    focus: false,
-                    note: String::new(),
-                    noise: false,
-                    content_skipped: false,
+                    ..testutil::file_entry(path)
                 }],
             }],
             approval: Vec::new(),
@@ -202,9 +188,12 @@ mod tests {
         let inner = Box::new(StaticSource {
             meta: review_with_file("src/a.rs"),
         });
-        let source =
-            FocusSource::from_path(inner, Path::new("tests/fixtures/focus.json"), &base_dir())
-                .unwrap();
+        let source = FocusSource::from_path(
+            inner,
+            Path::new("tests/fixtures/focus.json"),
+            &testutil::workspace_root(),
+        )
+        .unwrap();
 
         let review = source.review().unwrap();
         assert_eq!(review.groups[0].watch, "focus の watch");
@@ -220,7 +209,7 @@ mod tests {
         let source = FocusSource::from_path(
             inner,
             Path::new("tests/fixtures/focus-unknown.json"),
-            &base_dir(),
+            &testutil::workspace_root(),
         )
         .unwrap();
 

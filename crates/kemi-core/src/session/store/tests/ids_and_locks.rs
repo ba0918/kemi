@@ -5,7 +5,7 @@ use super::fixtures::*;
 
 #[test]
 fn session_lock_is_exclusive_until_dropped() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let first = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -24,7 +24,7 @@ fn session_lock_is_exclusive_until_dropped() {
 
 #[test]
 fn session_open_rejects_an_id_that_is_not_a_ulid_and_keeps_the_lock_alone() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     std::fs::create_dir_all(&scratch.0).unwrap();
     let sentinel = scratch.0.join("sentinel.lock");
@@ -38,7 +38,7 @@ fn session_open_rejects_an_id_that_is_not_a_ulid_and_keeps_the_lock_alone() {
 
 #[test]
 fn session_read_rejects_an_id_that_is_not_a_ulid() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -58,7 +58,7 @@ fn session_read_rejects_an_id_that_is_not_a_ulid() {
 #[test]
 fn endpoint_is_removed_with_the_session() {
     use crate::session::{Endpoint, endpoint_path, write_endpoint};
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -79,7 +79,7 @@ fn endpoint_is_removed_with_the_session() {
 
 #[test]
 fn a_running_session_is_told_apart_from_a_dead_one() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let open = store.create(info(id, 100)).unwrap();

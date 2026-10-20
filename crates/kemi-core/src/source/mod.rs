@@ -16,9 +16,6 @@ pub use frozen::FrozenSource;
 pub use live::LiveSource;
 pub(crate) use plan::{Plan, PlanStore, PlannedFile, SideRef, read_side};
 
-#[cfg(test)]
-pub(crate) mod testutil;
-
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 

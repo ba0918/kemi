@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::explanation::ReferenceUnit;
-use crate::source::testutil::TempRepo;
+use crate::testutil::TempRepo;
 
 #[test]
 fn opposite_unit_references_keep_group_path_and_side_without_building_a_plan() {

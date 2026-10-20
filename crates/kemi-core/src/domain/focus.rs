@@ -124,25 +124,16 @@ pub fn apply_focus(review: &mut ReviewMeta, layer: &FocusLayer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::review::{FileEntry, Group, ReviewMeta, Status};
+    use crate::domain::review::{FileEntry, Group, ReviewMeta};
+    use crate::testutil::file_entry;
     use serde_json::json;
 
     fn file(path: &str) -> FileEntry {
         FileEntry {
             id: format!("f-{path}"),
-            group_id: "g1".to_string(),
-            path: path.to_string(),
-            old_path: None,
-            status: Status::Modify,
             add: 1,
             del: 1,
-            binary: false,
-            old_size: 0,
-            new_size: 0,
-            focus: false,
-            note: String::new(),
-            noise: false,
-            content_skipped: false,
+            ..file_entry(path)
         }
     }
 

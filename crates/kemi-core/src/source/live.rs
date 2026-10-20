@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn live_reference_metadata_keeps_the_line_count_already_read_for_untracked_files() {
-        let repo = crate::source::testutil::TempRepo::new();
+        let repo = crate::testutil::TempRepo::new();
         repo.write("page.html", "page\n");
         repo.add_and_commit("base");
         repo.write("new.txt", "one\ntwo\n");
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn the_code_view_watches_the_work_tree_it_reads() {
-        let repo = crate::source::testutil::TempRepo::new();
+        let repo = crate::testutil::TempRepo::new();
         repo.write("a.txt", "a\n");
         repo.add_and_commit("base");
 
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn files_whose_names_differ_only_in_invalid_utf8_bytes_keep_their_own_ids_and_contents() {
         use std::os::unix::ffi::OsStrExt;
-        let repo = crate::source::testutil::TempRepo::new();
+        let repo = crate::testutil::TempRepo::new();
         repo.write("a.txt", "a\n");
         repo.add_and_commit("base");
         let first = std::ffi::OsStr::from_bytes(b"b\xffad.txt");

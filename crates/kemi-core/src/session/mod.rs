@@ -426,28 +426,18 @@ impl SessionSummary {
 mod tests {
     use super::*;
     use crate::domain::agent::ContentWrite;
-    use crate::domain::review::{Author, FileTarget, Reply, Side};
+    use crate::domain::review::{Author, FileTarget, Reply};
+    use crate::testutil::{file_comment, file_target};
 
     fn comment(id: &str) -> Comment {
         Comment {
-            id: id.to_string(),
             seq: 1,
-            group_id: "g1".to_string(),
-            group_title: "group".to_string(),
-            body: "comment".into(),
-            replies: Vec::new(),
-            resolved: false,
-            outdated: false,
             target: CommentTarget::File(FileTarget {
-                file_id: "f1".to_string(),
                 path: "a.rs".to_string(),
-                side: Side::New,
-                start_line: Some(1),
-                end_line: Some(1),
                 quote: vec!["line".to_string()],
-                content_hash: "hash".to_string(),
-                suggestion: None,
+                ..file_target()
             }),
+            ..file_comment(id)
         }
     }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::source::testutil::TempRepo;
+use crate::testutil::TempRepo;
 
 #[test]
 fn worktree_watch_paths_lists_new_side_files() {

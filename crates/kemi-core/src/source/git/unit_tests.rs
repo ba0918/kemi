@@ -1,6 +1,6 @@
 use super::*;
-use crate::source::testutil::TempRepo;
 use crate::source::{FileContent, FocusSource};
+use crate::testutil::TempRepo;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

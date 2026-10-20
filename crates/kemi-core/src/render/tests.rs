@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::review::{FileEntry, Status};
+use crate::testutil::file_entry;
 
 fn no_highlight() -> Option<Highlight<'static>> {
     None
@@ -459,20 +460,10 @@ fn a_code_block_change_is_shown_as_old_and_new_blocks_stacked() {
 
 fn entry(status: Status, path: &str, old_path: Option<&str>) -> FileEntry {
     FileEntry {
-        id: "f1".to_string(),
         group_id: "g".to_string(),
-        path: path.to_string(),
         old_path: old_path.map(str::to_string),
         status,
-        add: 0,
-        del: 0,
-        binary: false,
-        old_size: 0,
-        new_size: 0,
-        focus: false,
-        note: String::new(),
-        noise: false,
-        content_skipped: false,
+        ..file_entry(path)
     }
 }
 

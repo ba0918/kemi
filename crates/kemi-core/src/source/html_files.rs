@@ -87,28 +87,26 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::source::testutil::TempRepo;
+    use crate::testutil::{Scratch, TempRepo};
 
-    /// git の外の一時ディレクトリ。Drop で消す。
-    struct Plain(PathBuf);
+    /// git の外の一時ディレクトリ。作って、正規化したパスで持つ。Drop で消す。
+    struct Plain {
+        root: PathBuf,
+        _scratch: Scratch,
+    }
 
     impl Plain {
         fn new(name: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("kemi-html-files-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Plain(std::fs::canonicalize(path).expect("canonicalize temp dir"))
+            let scratch = Scratch::new(&format!("html-files-{name}"));
+            std::fs::create_dir_all(&scratch.0).expect("create temp dir");
+            Plain {
+                root: std::fs::canonicalize(&scratch.0).expect("canonicalize temp dir"),
+                _scratch: scratch,
+            }
         }
 
         fn write(&self, relative: &str) {
-            write_under(&self.0, relative);
-        }
-    }
-
-    impl Drop for Plain {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            write_under(&self.root, relative);
         }
     }
 
@@ -160,8 +158,11 @@ mod tests {
         outside.write("secret.html");
         let repo = TempRepo::new();
         repo.write("page.html", "<p>page</p>");
-        std::os::unix::fs::symlink(outside.0.join("secret.html"), repo.path.join("link.html"))
-            .expect("symlink");
+        std::os::unix::fs::symlink(
+            outside.root.join("secret.html"),
+            repo.path.join("link.html"),
+        )
+        .expect("symlink");
 
         assert_eq!(
             html_files(&root_of(&repo)).expect("list html files"),
@@ -178,7 +179,7 @@ mod tests {
         root.write(".git/inside.html");
 
         assert_eq!(
-            html_files(&root.0).expect("list html files"),
+            html_files(&root.root).expect("list html files"),
             ["index.html", "sub/Other.HTM"]
         );
     }
@@ -188,10 +189,11 @@ mod tests {
     fn outside_a_git_work_tree_a_symlinked_directory_is_not_followed() {
         let root = Plain::new("plain-link");
         root.write("sub/page.html");
-        std::os::unix::fs::symlink(root.0.join("sub"), root.0.join("linked")).expect("symlink");
+        std::os::unix::fs::symlink(root.root.join("sub"), root.root.join("linked"))
+            .expect("symlink");
 
         assert_eq!(
-            html_files(&root.0).expect("list html files"),
+            html_files(&root.root).expect("list html files"),
             ["sub/page.html"]
         );
     }

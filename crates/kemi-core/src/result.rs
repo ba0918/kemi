@@ -178,29 +178,7 @@ pub fn load_latest(dir: &Path, key: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "kemi-result-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::SeqCst)
-            ));
-            let _ = std::fs::remove_dir_all(&path);
-            Scratch(path)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::testutil::Scratch;
 
     fn names(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
@@ -264,7 +242,7 @@ mod tests {
 
     #[test]
     fn result_save_in_the_same_millisecond_does_not_collide() {
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("result");
 
         let first = save(&scratch.0, A, "{\"n\":1}\n", 1234, 7).unwrap();
         let second = save(&scratch.0, A, "{\"n\":2}\n", 1234, 7).unwrap();
@@ -276,7 +254,7 @@ mod tests {
 
     #[test]
     fn result_save_removes_the_oldest_beyond_the_limit() {
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("result");
         for index in 0..=KEEP {
             let key = if index % 2 == 0 { A } else { B };
             save(

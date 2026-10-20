@@ -6,7 +6,7 @@ use crate::session::files::{PageSnapshot, SnapshotKind};
 
 #[test]
 fn a_session_file_is_written_into_its_files_directory_for_the_owner_only() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -29,7 +29,7 @@ fn a_session_file_is_written_into_its_files_directory_for_the_owner_only() {
 
 #[test]
 fn deleting_a_session_removes_its_files_directory() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -45,7 +45,7 @@ fn deleting_a_session_removes_its_files_directory() {
 
 #[test]
 fn a_live_session_whose_conversation_is_gone_removes_its_files_directory_when_suspended() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -63,7 +63,7 @@ fn a_live_session_whose_conversation_is_gone_removes_its_files_directory_when_su
 
 #[test]
 fn a_snapshot_reads_back_the_same_from_another_open_session() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -92,7 +92,7 @@ fn a_snapshot_reads_back_the_same_from_another_open_session() {
 
 #[test]
 fn a_snapshot_is_written_into_its_files_directory_for_the_owner_only() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -115,7 +115,7 @@ fn a_snapshot_is_written_into_its_files_directory_for_the_owner_only() {
 
 #[test]
 fn an_unreadable_snapshot_file_does_not_hide_the_others() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -139,7 +139,7 @@ fn an_unreadable_snapshot_file_does_not_hide_the_others() {
 fn the_last_snapshot_number_counts_snapshot_files_that_cannot_be_read() {
     // 強制終了で途中まで書いたファイルも番号を持つ。復元後の新しいスナップショットが
     // その番号を使うと、20 MB の規則がそのファイルを消したときに取り違える（R-PAGE-SESSION）。
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -159,7 +159,7 @@ fn the_last_snapshot_number_counts_snapshot_files_that_cannot_be_read() {
 
 #[test]
 fn writing_into_a_full_files_directory_removes_files_by_the_rule_first() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir()).with_files_limit(3000);
     let open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -191,7 +191,7 @@ fn writing_into_a_full_files_directory_removes_files_by_the_rule_first() {
 
 #[test]
 fn a_snapshot_that_does_not_fit_beside_the_start_snapshot_and_current_images_is_not_written() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir()).with_files_limit(3000);
     let open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -212,7 +212,7 @@ fn a_snapshot_that_does_not_fit_beside_the_start_snapshot_and_current_images_is_
 
 #[test]
 fn a_comment_image_makes_room_by_removing_images_of_deleted_comments() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir()).with_files_limit(2500);
     let open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -233,7 +233,7 @@ fn a_comment_image_makes_room_by_removing_images_of_deleted_comments() {
 
 #[test]
 fn snapshots_of_a_live_session_without_a_conversation_stay_until_it_is_suspended() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -258,7 +258,7 @@ fn snapshots_of_a_live_session_without_a_conversation_stay_until_it_is_suspended
 fn a_suspended_live_session_writes_nothing_more_into_its_files_directory() {
     // 保留で片付けた後に、まだ処理中だった要求のスナップショットや画像が届いても、
     // 消した `<id>.files/` を作り直さない（R-PAGE-SESSION）。
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -282,7 +282,7 @@ fn a_suspended_live_session_writes_nothing_more_into_its_files_directory() {
 
 #[test]
 fn snapshots_of_a_live_session_with_a_conversation_stay_after_it_is_suspended() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))

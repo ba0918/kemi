@@ -1,5 +1,5 @@
 use super::*;
-use crate::source::testutil::TempRepo;
+use crate::testutil::TempRepo;
 
 #[test]
 fn unaccepted_candidate_cannot_replace_published_content_references() {

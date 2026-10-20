@@ -1,26 +1,10 @@
 use super::*;
-use crate::domain::review::{CommentTarget, FileTarget, Side};
+use crate::testutil::file_comment;
 
 fn comment(id: &str, body: &str) -> Comment {
     Comment {
-        id: id.to_string(),
-        seq: 0,
-        group_id: "g1".to_string(),
-        group_title: "group".to_string(),
         body: body.into(),
-        replies: Vec::new(),
-        resolved: false,
-        outdated: false,
-        target: CommentTarget::File(FileTarget {
-            file_id: "f1".to_string(),
-            path: "src/a.rs".to_string(),
-            side: Side::New,
-            start_line: Some(1),
-            end_line: Some(1),
-            quote: vec!["one".to_string()],
-            content_hash: "hash".to_string(),
-            suggestion: None,
-        }),
+        ..file_comment(id)
     }
 }
 

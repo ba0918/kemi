@@ -69,12 +69,12 @@ pub fn remove_endpoint(dir: &Path, id: &str) -> Result<(), SessionError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::session::store::tests::fixtures::Scratch;
+    use crate::testutil::Scratch;
 
     #[test]
     fn endpoint_roundtrips_and_is_owner_only() {
         use crate::session::{Endpoint, read_endpoint, write_endpoint};
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("session");
         let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
         let endpoint = Endpoint {
             port: 41234,

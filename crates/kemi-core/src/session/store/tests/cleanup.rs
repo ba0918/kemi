@@ -9,7 +9,7 @@ use crate::session::files::SnapshotKind;
 
 #[test]
 fn a_session_removed_by_the_cleanup_loses_its_files_directory() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     for (id, updated) in [
         ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
@@ -29,7 +29,7 @@ fn a_session_removed_by_the_cleanup_loses_its_files_directory() {
 
 #[test]
 fn session_cleanup_keeps_the_newest_sessions() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     for (id, updated) in [
         ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
@@ -53,7 +53,7 @@ fn session_cleanup_keeps_the_newest_sessions() {
 
 #[test]
 fn session_cleanup_keeps_the_total_size() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     // 古い方が大きく、新しい方が小さい。合計の上限で古い方だけが消える。
     let mut old = store
@@ -90,7 +90,7 @@ fn session_cleanup_keeps_the_total_size() {
 
 #[test]
 fn session_cleanup_keeps_a_locked_session_out_of_the_count() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     for (id, updated) in [
         ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
@@ -118,7 +118,7 @@ fn session_cleanup_keeps_a_locked_session_out_of_the_count() {
 
 #[test]
 fn session_cleanup_keeps_a_locked_session_out_of_the_total_size() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     for (id, updated) in [
         ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
@@ -160,7 +160,7 @@ fn session_cleanup_keeps_a_locked_session_out_of_the_total_size() {
 
 #[test]
 fn sessions_updated_at_the_same_time_are_ordered_by_the_larger_id() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     for id in ["01HF7YAT00AAAAAAAAAAAAAAAA", "01HF7YAT00BBBBBBBBBBBBBBBB"] {
         let mut held = store.create(info(id, 100)).unwrap();
@@ -189,7 +189,7 @@ fn sessions_updated_at_the_same_time_are_ordered_by_the_larger_id() {
 
 #[test]
 fn session_cleanup_removes_a_payload_without_its_session() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let held = store
         .create(info("01HF7YAT00DDDDDDDDDDDDDDDD", 100))
@@ -221,7 +221,7 @@ fn session_cleanup_removes_a_payload_without_its_session() {
 
 #[test]
 fn session_cleanup_counts_the_files_directory_in_the_total_size() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut old = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -253,7 +253,7 @@ fn session_cleanup_counts_the_files_directory_in_the_total_size() {
 
 #[test]
 fn session_cleanup_removes_a_files_directory_without_its_session() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let held = store
         .create(live_info("01HF7YAT00DDDDDDDDDDDDDDDD", 100))
@@ -280,7 +280,7 @@ fn session_cleanup_removes_a_files_directory_without_its_session() {
 
 #[test]
 fn session_cleanup_evicts_a_stale_pair_by_the_limits() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut stale = store.create(info(id, 100)).unwrap();
@@ -310,7 +310,7 @@ fn session_cleanup_evicts_a_stale_pair_by_the_limits() {
 
 #[test]
 fn session_list_orders_by_updated_and_skips_unusable() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     // 新しい方の id を小さくして、id の順に並べても通らないようにする。
     let mut older = store
@@ -348,7 +348,7 @@ fn session_list_orders_by_updated_and_skips_unusable() {
 
 #[test]
 fn session_cleanup_removes_orphan_lock_files() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     std::fs::create_dir_all(scratch.dir()).unwrap();
     let lock_path = scratch.dir().join("01HF7YAT00AAAAAAAAAAAAAAAA.lock");
     std::fs::write(&lock_path, b"").unwrap();
@@ -375,7 +375,7 @@ fn session_cleanup_removes_orphan_lock_files() {
 
 #[test]
 fn session_cleanup_removes_an_orphan_lock_even_within_the_limits() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -404,7 +404,7 @@ fn modified(path: &Path) -> SystemTime {
 #[test]
 fn cleanup_removes_an_endpoint_left_by_a_review_that_is_gone() {
     use crate::session::{Endpoint, endpoint_path, write_endpoint};
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let endpoint = Endpoint {
         port: 1,

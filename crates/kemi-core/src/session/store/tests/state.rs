@@ -11,7 +11,7 @@ use crate::domain::review::{Author, Message};
 fn saved_parts_capacity_counts_the_whole_hand_event_and_keeps_rejected_state_unchanged() {
     use crate::domain::conversation_content::ConversationContent;
     use crate::domain::parts::{Part, Role};
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     let mut state = state_with_comment();
@@ -86,7 +86,7 @@ fn saved_parts_capacity_counts_the_whole_hand_event_and_keeps_rejected_state_unc
 #[test]
 fn issued_generation_is_persisted_without_changing_timestamp_or_payload_and_io_failure_rolls_back()
 {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -129,7 +129,7 @@ fn explanation_state(id: &str) -> SessionState {
 
 #[test]
 fn explanation_state_saving_advances_updated_time_only_after_atomic_success_without_payload_io() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -152,7 +152,7 @@ fn explanation_state_saving_advances_updated_time_only_after_atomic_success_with
 #[test]
 fn explanation_state_arriving_after_delete_writes_nothing() {
     // submit を確定してセッションを消した後に、処理中だった説明の保存が届く。
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -172,7 +172,7 @@ fn explanation_state_arriving_after_delete_writes_nothing() {
 fn issued_state_arriving_after_a_live_review_was_suspended_writes_nothing() {
     // 会話の無い `--live` のレビューは、保留で `<id>.session` を消す。その後に届いた世代の
     // 保存が書くと、写しを見ずに復元できるとされる空の `--live` のセッションが一覧に出る。
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
     let mut open = store.create(live_info(id, 100)).unwrap();
@@ -199,7 +199,7 @@ fn issued_state_arriving_after_a_live_review_was_suspended_writes_nothing() {
 
 #[test]
 fn session_roundtrips_info_state_and_copy() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -224,7 +224,7 @@ fn session_roundtrips_info_state_and_copy() {
 
 #[test]
 fn session_file_holds_no_frozen_review_paths() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -253,7 +253,7 @@ fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut states = Vec::new();
     for (files, generation) in [(2, 1), (10_000, 4098)] {
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("session");
         let store = SessionStore::new(scratch.dir());
         let mut metadata = info(id, 100);
         metadata.total_files = files;
@@ -309,7 +309,7 @@ fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
 
 #[test]
 fn session_file_is_not_left_empty() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -325,7 +325,7 @@ fn session_file_is_not_left_empty() {
 
 #[test]
 fn session_atomic_replace_ignores_a_leftover_temporary() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -347,7 +347,7 @@ fn session_atomic_replace_ignores_a_leftover_temporary() {
 
 #[test]
 fn session_delete_removes_the_file() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -367,7 +367,7 @@ fn session_delete_removes_the_file() {
 
 #[test]
 fn suspending_after_submit_does_not_allow_late_writes_to_recreate_the_session() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -392,7 +392,7 @@ fn suspending_after_submit_does_not_allow_late_writes_to_recreate_the_session() 
 #[test]
 fn session_files_are_owner_only() {
     use std::os::unix::fs::PermissionsExt;
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -470,7 +470,7 @@ fn state_with_agent_channel() -> SessionState {
 
 #[test]
 fn session_roundtrips_replies_messages_and_the_agent_channel() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))

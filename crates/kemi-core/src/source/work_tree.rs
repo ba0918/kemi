@@ -392,7 +392,7 @@ fn check_ignore(root: &Path, relatives: &[&[u8]]) -> Result<Answer, SourceError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::testutil::TempRepo;
+    use crate::testutil::TempRepo;
 
     #[test]
     fn wide_directory_overflow_retains_only_the_limit_and_one_extra_directory() {

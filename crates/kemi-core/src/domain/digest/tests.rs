@@ -1,23 +1,14 @@
 use super::*;
-use crate::domain::review::{FileEntry, Group, ReviewMeta, Status};
+use crate::domain::review::{FileEntry, Group, ReviewMeta};
+use crate::testutil::file_entry;
 use serde_json::json;
 
 fn file(path: &str, add: u32, del: u32) -> FileEntry {
     FileEntry {
         id: format!("f-{path}"),
-        group_id: "g1".to_string(),
-        path: path.to_string(),
-        old_path: None,
-        status: Status::Modify,
         add,
         del,
-        binary: false,
-        old_size: 0,
-        new_size: 0,
-        focus: false,
-        note: String::new(),
-        noise: false,
-        content_skipped: false,
+        ..file_entry(path)
     }
 }
 

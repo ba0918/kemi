@@ -51,7 +51,7 @@ fn page_comment() -> crate::domain::review::Comment {
 
 #[test]
 fn session_roundtrips_a_page_comment_with_its_places_and_image() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -72,7 +72,7 @@ fn session_roundtrips_a_page_comment_with_its_places_and_image() {
 
 #[test]
 fn live_session_is_listed_and_opened_without_a_copy() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -94,7 +94,7 @@ fn live_session_is_listed_and_opened_without_a_copy() {
 
 #[test]
 fn live_session_without_a_comment_or_a_message_is_not_kept() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -119,7 +119,7 @@ fn live_session_without_a_comment_or_a_message_is_not_kept() {
 
 #[test]
 fn live_session_with_only_a_message_is_kept() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -149,7 +149,7 @@ fn live_session_with_only_a_message_is_kept() {
 
 #[test]
 fn live_session_roundtrips_its_mock_assignments() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -174,7 +174,7 @@ fn live_session_roundtrips_its_mock_assignments() {
 
 #[test]
 fn live_session_roundtrips_that_a_page_comment_was_once_saved() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -194,7 +194,7 @@ fn live_session_roundtrips_that_a_page_comment_was_once_saved() {
 
 #[test]
 fn live_session_roundtrips_a_file_page_and_its_root() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut info = live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100);
     info.mode = SessionMode::Live {

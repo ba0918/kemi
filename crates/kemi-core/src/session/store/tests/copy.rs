@@ -5,7 +5,7 @@ use super::fixtures::*;
 
 #[test]
 fn session_without_a_copy_is_not_resumable() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -24,7 +24,7 @@ fn session_without_a_copy_is_not_resumable() {
 
 #[test]
 fn session_without_its_copy_file_is_not_listed_and_cannot_be_opened() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -45,7 +45,7 @@ fn session_without_its_copy_file_is_not_listed_and_cannot_be_opened() {
 
 #[test]
 fn session_copy_is_stored_as_gzip() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -65,7 +65,7 @@ fn session_copy_is_stored_as_gzip() {
 
 #[test]
 fn session_state_write_leaves_the_copy_file_untouched() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -97,7 +97,7 @@ fn frozen_state(id: &str) -> SessionState {
 
 #[test]
 fn frozen_copy_is_saved_with_its_state_without_advancing_the_updated_time() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -128,7 +128,7 @@ fn frozen_copy_is_saved_with_its_state_without_advancing_the_updated_time() {
 #[cfg(unix)]
 #[test]
 fn frozen_copy_that_cannot_be_written_does_not_become_resumable() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut open = store.create(info(id, 100)).unwrap();
@@ -152,7 +152,7 @@ fn frozen_copy_that_cannot_be_written_does_not_become_resumable() {
 
 #[test]
 fn frozen_copy_arriving_after_the_review_stopped_writes_nothing() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     // submit と競争した凍結が、セッションを消した後に届く。
@@ -185,7 +185,7 @@ fn frozen_copy_over_the_limit_is_unusable_and_never_written() {
     // 上限は `<id>.payload` 全体のバイト数で判定する（R-SESSION）。ちょうどは収まり、
     // 1 バイト超えると捨てる。
     let limit = prepared(copy()).compressed.len() as u64;
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let fits = "01HF7YAT00BBBBBBBBBBBBBBBB";
     let mut open = SessionStore::new(scratch.dir())
@@ -229,7 +229,7 @@ fn frozen_copy_over_the_limit_is_unusable_and_never_written() {
 
 #[test]
 fn session_without_state_and_an_unusable_copy_is_not_kept() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir()).with_copy_limit(1);
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
@@ -250,7 +250,7 @@ fn session_without_state_and_an_unusable_copy_is_not_kept() {
 
 #[test]
 fn session_dropping_the_copy_removes_the_copy_file() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut open = store.create(info(id, 100)).unwrap();

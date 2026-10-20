@@ -558,8 +558,8 @@ mod tests {
     use crate::domain::origin::{BlockOrigin, OriginTarget, Unknown};
     use crate::domain::review::{ReviewMeta, Side};
     use crate::source::git::{GitMode, GitSource, GroupBy};
-    use crate::source::testutil::TempRepo;
     use crate::source::{FileOrigin, ReviewSource};
+    use crate::testutil::{TempRepo, find_file};
 
     fn numbered(count: usize) -> Vec<String> {
         (1..=count).map(|n| format!("line {n}")).collect()
@@ -581,14 +581,7 @@ mod tests {
     }
 
     fn file_id(review: &ReviewMeta, path: &str) -> String {
-        review
-            .groups
-            .iter()
-            .flat_map(|group| group.files.iter())
-            .find(|file| file.path == path)
-            .unwrap_or_else(|| panic!("file not found: {path}"))
-            .id
-            .clone()
+        find_file(review, path).id.clone()
     }
 
     fn origin_of(source: &GitSource, path: &str) -> FileOrigin {

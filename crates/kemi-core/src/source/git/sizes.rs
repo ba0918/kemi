@@ -92,7 +92,7 @@ mod tests {
 
     use super::*;
     use crate::source::git::git_spec;
-    use crate::source::testutil::TempRepo;
+    use crate::testutil::TempRepo;
 
     #[test]
     fn batched_side_sizes_preserve_missing_objects_and_unusual_paths() {

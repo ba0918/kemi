@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::review::Side;
-use crate::source::testutil::TempRepo;
+use crate::testutil::{TempRepo, find_file};
 
 #[test]
 fn binary_metadata_keeps_old_and_new_sizes_across_worktree_index_and_range() {
@@ -43,15 +43,6 @@ fn binary_metadata_keeps_old_and_new_sizes_across_worktree_index_and_range() {
 
 fn source(repo: &TempRepo, mode: GitMode) -> GitSource {
     GitSource::new(repo.path.clone(), mode)
-}
-
-fn find_file<'a>(review: &'a ReviewMeta, path: &str) -> &'a FileEntry {
-    review
-        .groups
-        .iter()
-        .flat_map(|group| group.files.iter())
-        .find(|file| file.path == path)
-        .unwrap_or_else(|| panic!("file not found: {path}"))
 }
 
 // ---- 相対パス画像の読み取り（R-RENDER, R-SERVE） ----
