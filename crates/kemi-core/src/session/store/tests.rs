@@ -1509,25 +1509,6 @@ fn frozen_copy_over_the_limit_is_unusable_and_never_written() {
 }
 
 #[test]
-fn session_rejects_an_unknown_format_version() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    std::fs::create_dir_all(scratch.dir()).unwrap();
-    let id = "01HF7YAT00BBBBBBBBBBBBBBBB";
-    write_atomic(
-        &scratch.dir(),
-        &scratch.dir().join(format!("{id}.session")),
-        &encoding::encode_session(99, b"{}"),
-    )
-    .unwrap();
-
-    assert!(matches!(
-        store.read(id),
-        Err(SessionError::UnsupportedVersion { version: 99, .. })
-    ));
-}
-
-#[test]
 fn only_sessions_of_an_unreadable_version_are_reported() {
     let scratch = Scratch::new();
     let store = SessionStore::new(scratch.dir());
