@@ -45,7 +45,6 @@ import {
   editComment,
   endSelection,
   extendSelection,
-  openCommentEditor,
   openEditorAt,
   openFileWideEditor,
   startSelection,
@@ -84,7 +83,6 @@ import {
   receiveMessage,
   receiveMissed,
   receiveThread,
-  replyTo,
   setResolved,
   startComposition,
 } from "./features/agent.js";
@@ -96,7 +94,7 @@ import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayMode, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
-import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, commentOnExplanation, openExplanationEditor, keepExplanationDraft } from './features/explanation.js';
+import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, openExplanationEditor } from './features/explanation.js';
 
 /**
  * @param {KeyboardEvent} event
@@ -323,9 +321,7 @@ bindActions({
   explanationCodeChanged,
   showExplanationComment: comment=>void showExplanationComment(comment),
   followExplanationReference: reference=>void followExplanationReference(reference),
-  commentOnExplanation,
   openExplanationEditor,
-  keepExplanationDraft,
   renderPartMarkdown,
   addComment,
   closeThread,
@@ -333,7 +329,6 @@ bindActions({
   reloadThreadLines,
   editFromThread: (comment, unit) => void editFromThread(comment, unit),
   openThread,
-  replyTo: (comment, body) => void replyTo(comment, body),
   setThreadFolded,
   setResolved: (comment, resolved) => void setResolved(comment, resolved),
   applyRenderedView,
@@ -348,7 +343,6 @@ bindActions({
   expandSkipAt,
   extendSelection,
   goToComment,
-  openCommentEditor,
   openEditorAt,
   openBlockEditor,
   openFileWideEditor,

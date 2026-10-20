@@ -18,7 +18,7 @@ let contentsWidth = 280;
 let closeSelection = ()=>{};
 
 /** @param {number} revision @param {string} blockId @param {string} body */
-export function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(`${revision}:${blockId}`,body);}
+function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(`${revision}:${blockId}`,body);}
 
 /**
  * 入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の今の画面上の矩形を測る。
@@ -213,7 +213,7 @@ export function explanationChanged() {renderExplanationComments();}
 export function explanationCodeChanged() {renderExplanationStatus();}
 
 /** @param {any} block @param {string} body @param {number} revision @param {{text:string,occurrence:number}|null} [selection] */
-export async function commentOnExplanation(block,body,revision,selection=null) {
+async function commentOnExplanation(block,body,revision,selection=null) {
   if (!body.trim() || state.explanation.reading?.revision !== revision) return false;
   try {
     const comment=await api.postComment({op:'add_explanation',explanation_revision:revision,block_id:block.id,body,selection});
