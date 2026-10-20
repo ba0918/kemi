@@ -15,10 +15,68 @@ import { currentReference, live, liveActions, pageComments, shell } from "./stat
 /**
  * @typedef {import("./state.js").Description} Description
  * @typedef {import("./state.js").Change} Change
+ * @typedef {import("../../live-diff.js").ElementChanges} ElementChanges
+ * @typedef {import("../../live-diff.js").Mark} Mark
  */
 
 /** ページが記述を返すまで待つ上限。 */
 const DESCRIBE_TIMEOUT = 5000;
+
+/**
+ * 今の変化の一覧（live.changes）から作った、要素ごとの一覧と印。live.changes は setChanges が丸ごと差し替え、中を
+ * 書き換えないので、同じ一覧の間は作り直さない（描くたびと印を送るたびに、全部の変化から作り直していた）。
+ * @type {{ changes: Change[] | null, byElement: ElementChanges[] | null, marks: { now: Mark[], before: Mark[] } | null }}
+ */
+let derived = { changes: null, byElement: null, marks: null };
+
+/**
+ * @param {Change[]} changes
+ */
+function derivedFrom(changes) {
+  if (derived.changes !== changes) {
+    derived = { changes, byElement: null, marks: null };
+  }
+  return derived;
+}
+
+/**
+ * 要素ごとの一覧（live-diff.js の changesByElement）。
+ * @param {Change[]} changes
+ * @returns {ElementChanges[]}
+ */
+function elementsOf(changes) {
+  const held = derivedFrom(changes);
+  held.byElement ??= changesByElement(changes);
+  return held.byElement;
+}
+
+/**
+ * 印（live-diff.js の marksOf）。
+ * @param {Change[]} changes
+ * @returns {{ now: Mark[], before: Mark[] }}
+ */
+function marksFor(changes) {
+  const held = derivedFrom(changes);
+  held.marks ??= marksOf(changes);
+  return held.marks;
+}
+
+/** render が比べ直した直後にページのツリーを一覧ごと描き直す間。一覧はツリーと一緒に描くので、比べ直しでは描かない。 */
+let treeFollows = false;
+
+/**
+ * 変化の一覧を今に合わせてから、ページのツリーを描く（render から）。比べ直して結果が変わっても一覧はツリーと一緒に
+ * 1 回だけ作る（ツリーは一覧ごと作り直すので、先に一覧だけを描いても、同じ描き直しの中ですぐ捨てる）。
+ */
+export function refreshChangesAndTree() {
+  treeFollows = true;
+  try {
+    refreshChanges();
+  } finally {
+    treeFollows = false;
+  }
+  renderTree();
+}
 
 /**
  * 変化の一覧を今に合わせる（R-PAGE-DIFF）。比べる相手がスナップショットのときだけ比べる。
@@ -112,7 +170,7 @@ export function setChanges(changes, from, notice = "") {
   if (!same) {
     live.changes = changes;
     live.changesNotice = notice;
-    if (shell) {
+    if (shell && !treeFollows) {
       renderChanges(shell.pageTree, changeHandlers, changesToList());
     }
   }
@@ -128,7 +186,7 @@ export function renderMarks() {
   if (!shell) {
     return;
   }
-  const marks = live.changes === null || !live.marks ? { now: [], before: [] } : marksOf(live.changes);
+  const marks = live.changes === null || !live.marks ? { now: [], before: [] } : marksFor(live.changes);
   shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "marks", marks: marks.now }, live.origin);
   if (live.shownSnapshot !== "") {
     void showSnapshot(live.shownSnapshot);
@@ -145,7 +203,7 @@ function removedMarksOf(id) {
   if (live.changes === null || !live.marks || live.changesFrom?.snapshot !== id) {
     return [];
   }
-  return marksOf(live.changes)
+  return marksFor(live.changes)
     .before.map((mark) => mark.index)
     .sort((a, b) => a - b);
 }
@@ -226,7 +284,7 @@ function changesToList() {
   const compared = live.snapshots.find((item) => item.id === snapshot);
   const reference = compared ? referenceName(live.snapshots, { type: "snapshot", snapshot: compared }) : "";
   return {
-    list: changesByElement(live.changes), reference, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked,
+    list: elementsOf(live.changes), reference, shiftedOpen: live.shiftedOpen, listed: live.listed, unmarked,
     fromStart: compared?.kind === "start", canRecord: live.reachable && !live.recording, recording: live.recording,
   };
 }

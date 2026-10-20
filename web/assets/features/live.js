@@ -28,7 +28,14 @@ import { renderHeader } from "../views/header.js";
 import { buildShell, buildTopbar, renderCompareOptions } from "../views/live.js";
 import { handToAgent } from "./agent.js";
 import { refresh } from "./files.js";
-import { forgetFailures, refreshChanges, renderMarks, renderTree, setChanges, showSnapshot } from "./live/changes.js";
+import {
+  forgetFailures,
+  refreshChanges,
+  refreshChangesAndTree,
+  renderMarks,
+  setChanges,
+  showSnapshot,
+} from "./live/changes.js";
 import { deliverAnswer } from "./live/channel.js";
 import { placesAfterLoad, renderCompose, sendPlaces, showSavedTip, startComposing } from "./live/compose.js";
 import { openMockPanel, showMock, startMockControls, undoRemovedMock } from "./live/mock.js";
@@ -487,8 +494,7 @@ function render() {
   renderBand();
   renderCompose();
   renderReference();
-  refreshChanges();
-  renderTree();
+  refreshChangesAndTree();
   layoutFrames();
   // 並べている間に見方や側が変わると、並べたまま隠れるものも変わる。
   syncLaidOutInert();
