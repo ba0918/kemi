@@ -218,6 +218,24 @@ export function rangeAfterSkip(rows, skipIndex) {
 }
 
 /**
+ * 行コメントの範囲が覆う行番号を、側ごとに集める。
+ * @param {any[]} comments
+ * @returns {Record<string, Set<number>>}
+ */
+function commentedNumbers(comments) {
+  /** @type {Record<string, Set<number>>} */
+  const commented = { old: new Set(), new: new Set() };
+  for (const comment of comments.filter(hasLines)) {
+    const start = Number(comment.start_line);
+    const end = Number(comment.end_line ?? comment.start_line);
+    for (let number = start; number <= end; number += 1) {
+      commented[comment.side]?.add(number);
+    }
+  }
+  return commented;
+}
+
+/**
  * ページが持っている行（開いた行と、まだ開いていない折りたたみ）から、畳んだ形を作り
  * 直す。変更の行と行コメントの範囲の行を見せる行とし、その前後 `context` 行を残して、
  * ほかの等しい行を折りたたみにまとめる。まだ開いていない折りたたみは畳んだ側に入れる。
@@ -231,15 +249,7 @@ export function collapseLoadedRows(rows, comments, context) {
   if (!rows.some((row) => row.kind !== "equal")) {
     return rows;
   }
-  /** @type {Record<string, Set<number>>} */
-  const commented = { old: new Set(), new: new Set() };
-  for (const comment of comments.filter(hasLines)) {
-    const start = Number(comment.start_line);
-    const end = Number(comment.end_line ?? comment.start_line);
-    for (let number = start; number <= end; number += 1) {
-      commented[comment.side]?.add(number);
-    }
-  }
+  const commented = commentedNumbers(comments);
   const indexed = withRowIndex(rows);
   const mustShow = indexed.map(
     (row) =>
@@ -1038,22 +1048,17 @@ export function seenProgress(files) {
 export function commentedLines(display, comments) {
   /** @type {Set<number>} */
   const covered = new Set();
-  const ranges = comments.filter(hasLines);
-  if (ranges.length === 0) {
+  // 表示行ごとに行コメントを全部調べると O(表示行 × 行コメント) になるので、覆う行番号を 1 回集めて引く。
+  const commented = commentedNumbers(comments);
+  if (commented.old.size === 0 && commented.new.size === 0) {
     return covered;
   }
   display.forEach((line, index) => {
-    for (const comment of ranges) {
-      const target = comment.side === "old" ? line.oldLine : line.newLine;
-      if (!target) {
-        continue;
-      }
-      const number = Number(target.number);
-      const end = comment.end_line ?? comment.start_line;
-      if (number >= Number(comment.start_line) && number <= Number(end)) {
-        covered.add(index);
-        break;
-      }
+    if (
+      (line.oldLine && commented.old.has(Number(line.oldLine.number))) ||
+      (line.newLine && commented.new.has(Number(line.newLine.number)))
+    ) {
+      covered.add(index);
     }
   });
   return covered;
