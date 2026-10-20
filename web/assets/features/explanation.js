@@ -2,7 +2,7 @@
 import * as api from '../api.js';
 import { actions } from '../actions.js';
 import { dom } from '../dom.js';
-import { state, fileCacheKey, explanationInteractable } from '../state.js';
+import { state, currentUnit, fileCacheKey, explanationInteractable } from '../state.js';
 import { resolveCodeReference, explanationElementId } from '../explanation-model.js';
 import { applyReview, jumpToEntry, selectIndex } from './files.js';
 import { updateComments } from './comments.js';
@@ -240,7 +240,7 @@ export async function followExplanationReference(reference) {
       state.explanation.returnTo=true;
       liveView('page',reference.url);state.view='page';showView();return;
     }
-    const review=reference.unit===state.unit ? state.review : state.reviews.get(reference.unit);
+    const review=reference.unit===currentUnit() ? state.review : state.reviews.get(reference.unit);
     // 最新一覧の取得は、参照移動だけで読者が選んだCodeの世代を変えてしまう。
     const whole=resolveCodeReference({...reference,start_line:null,end_line:null},review,state.codeToken);
     if (whole.reason) {unavailable(whole.reason);return;}

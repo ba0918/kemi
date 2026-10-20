@@ -103,7 +103,6 @@ export const CONVERSATION_MAX_WIDTH = 960;
  *   originOpen: Map<string, string>,
  *   skipRanges: Map<number, any>,
  *   units: any[],
- *   unit: string | null,
  *   reviews: Map<string, any>,
  *   pendingUnit: { unit: string, jump: any } | null,
  *   allComments: any[],
@@ -218,7 +217,6 @@ export const state = {
   originOpen: new Map(),
   skipRanges: new Map(),
   units: [],
-  unit: null,
   reviews: new Map(),
   pendingUnit: null,
   allComments: [],
@@ -253,6 +251,11 @@ export function explanationInteractable() {
 
 export function currentEntry() {
   return state.current;
+}
+
+/** 表示中のグループ単位（"file" か "commit"）。単位を持たないレビューと、読み込む前は null。 */
+export function currentUnit() {
+  return state.review?.unit ?? null;
 }
 
 /** 描画に使う表示モード。狭い画面では常に 1 列（R-NARROW）。 */
@@ -387,7 +390,7 @@ export function originKey(fileId) {
 
 /** 最終形（由来を持つ単位）を表示しているか。 */
 export function originAvailable() {
-  return Boolean(state.review && state.review.unit === "file");
+  return currentUnit() === "file";
 }
 
 /** 表示中のファイルで由来の行を出すか。上限を超えるファイルは有効にしたときだけ。 */

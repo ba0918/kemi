@@ -4,7 +4,7 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
-import { displayMode, displayWrap, state } from "../state.js";
+import { currentUnit, displayMode, displayWrap, state } from "../state.js";
 import { countLabel, metaItems, seenProgress, unitLabel, unitSwitchOrder } from "../model.js";
 
 export function renderHeader() {
@@ -83,7 +83,7 @@ export function renderUnitSwitch() {
     }
     item.textContent = label;
     item.dataset.focusKey = `unit:${unit}`;
-    item.setAttribute("aria-pressed", String(unit === state.unit));
+    item.setAttribute("aria-pressed", String(unit === currentUnit()));
     item.addEventListener("click", () => actions.switchUnit(unit, null));
     dom.unitSwitch.append(item);
   }

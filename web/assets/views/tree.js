@@ -3,7 +3,7 @@
 
 import { actions } from "../actions.js";
 import { DIR_ICON, FILE_ICON, button, dom, el, svgIcon, textEl } from "../dom.js";
-import { commentsOf, currentEntry, groupProgressFor, state } from "../state.js";
+import { commentsOf, currentEntry, currentUnit, groupProgressFor, state } from "../state.js";
 import {
   buildTree,
   commentCountChanges,
@@ -44,7 +44,7 @@ export function fileStatsEl(file) {
  */
 export function appendGroupTitle(parent, group, className) {
   const title = el("span", className);
-  const box = state.unit === "commit" ? commitTypeBox(group.title || "") : null;
+  const box = currentUnit() === "commit" ? commitTypeBox(group.title || "") : null;
   if (box) {
     title.append(textEl("span", "ctype", box.type), document.createTextNode(box.title));
   } else {

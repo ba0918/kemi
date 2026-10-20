@@ -11,6 +11,7 @@ import {
   CONVERSATION_MIN_WIDTH,
   conversationShown,
   currentEntry,
+  currentUnit,
   entryOfComment,
   fileCacheKey,
   state,
@@ -339,7 +340,7 @@ export async function goToComment(comment, unit) {
     entries.findIndex(
       (entry) => entry.group.id === comment.group_id && entry.file.path === comment.path,
     );
-  if (unit && unit !== state.unit) {
+  if (unit && unit !== currentUnit()) {
     // 移り先が無ければ、会話パネルにスレッドを開いたまま（消えたコミットならそう示して）知らせる。
     const missing = () => {
       openThread(comment.id);

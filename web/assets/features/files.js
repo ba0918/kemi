@@ -7,6 +7,7 @@ import { actions } from "../actions.js";
 import { dom } from "../dom.js";
 import {
   currentEntry,
+  currentUnit,
   fileCacheKey,
   flatten,
   isShowingFile,
@@ -52,7 +53,6 @@ export function applyReview(review, fresh) {
   if (state.codeToken !== token) state.reviews = new Map();
   state.codeToken = token;
   state.review = review;
-  state.unit = review.unit ?? null;
   if (Array.isArray(review.units)) {
     state.units = review.units;
   }
@@ -63,8 +63,9 @@ export function applyReview(review, fresh) {
       state.agent = review.agent;
     }
   }
-  if (state.unit) {
-    state.reviews.set(state.unit, review);
+  const unit = currentUnit();
+  if (unit) {
+    state.reviews.set(unit, review);
   }
   state.entries = flatten(review);
   state.treeItems = new Map();
@@ -110,7 +111,7 @@ export async function refresh() {
   state.renderCache.clear();
   // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
   state.reviews = new Map();
-  applyReview(await api.getReview(true, state.unit), true);
+  applyReview(await api.getReview(true, currentUnit()), true);
   // 取得待ちのスクロールで、古い内容の幅計測に消費されないよう到着後に破棄する。
   invalidateHorizontalWidth();
   const current = currentEntry();

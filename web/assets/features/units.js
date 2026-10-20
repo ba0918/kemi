@@ -3,7 +3,7 @@
 
 import * as api from "../api.js";
 import { actions } from "../actions.js";
-import { currentEntry, flatten, state } from "../state.js";
+import { currentEntry, currentUnit, flatten, state } from "../state.js";
 import { unitLabel, unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { applyReview, jumpToEntry } from "./files.js";
@@ -22,7 +22,7 @@ import { renderTree } from "../views/tree.js";
  * @param {import("../actions.js").UnitJump | null} jump
  */
 export async function switchUnit(unit, jump) {
-  if (state.submitted || (unit === state.unit && !jump)) {
+  if (state.submitted || (unit === currentUnit() && !jump)) {
     return;
   }
   const status = state.units.find((candidate) => candidate.unit === unit);
@@ -43,7 +43,7 @@ export async function switchUnit(unit, jump) {
   }
   state.pendingUnit = null;
   const path = currentEntry()?.file.path ?? "";
-  let review = unit === state.unit ? state.review : state.reviews.get(unit);
+  let review = unit === currentUnit() ? state.review : state.reviews.get(unit);
   const fresh = !review;
   if (!review) {
     try {

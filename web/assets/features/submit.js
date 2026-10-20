@@ -3,7 +3,7 @@
 
 import * as api from "../api.js";
 import { el, textEl } from "../dom.js";
-import { state } from "../state.js";
+import { currentUnit, state } from "../state.js";
 import { countLabel, submitSummary, unhandedNotice, unitLabel } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
@@ -26,7 +26,8 @@ export function openConfirm(verdict) {
     state.entries.map((entry) => entry.file),
   );
   const list = el("dl", "sum");
-  const seenLabel = state.unit ? `Seen files (${unitLabel(state.unit)})` : "Seen files";
+  const unit = currentUnit();
+  const seenLabel = unit ? `Seen files (${unitLabel(unit)})` : "Seen files";
   list.append(
     textEl("dt", "", "Comments"),
     textEl("dd", "", `${countLabel(summary.comments, "comment")} (${summary.suggestions} with a suggestion)`),

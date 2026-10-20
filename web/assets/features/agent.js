@@ -6,7 +6,7 @@
 import { actions } from "../actions.js";
 import * as api from "../api.js";
 import { dom } from "../dom.js";
-import { conversationShown, state } from "../state.js";
+import { conversationShown, currentUnit, state } from "../state.js";
 import { addMessage, replaceComment, threadLastSeq } from "../conversation-model.js";
 import { updateComments } from "./comments.js";
 import { renderConversation } from "../views/conversation.js";
@@ -130,7 +130,7 @@ async function resyncAgent() {
   const messages = state.messages;
   const agent = state.agent;
   try {
-    const review = await api.getReview(false, state.unit);
+    const review = await api.getReview(false, currentUnit());
     // 読んでいる間に通知か書いた応答を取り込んでいたら、読んだものはそれより古いことがある。
     // 古いもので上書きすると、届いた返信や発言が消え、状態が戻るので、読み直す。
     if (state.allComments !== comments || state.messages !== messages || state.agent !== agent) {
