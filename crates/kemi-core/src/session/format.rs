@@ -604,11 +604,7 @@ fn author_dto(author: Author) -> String {
 }
 
 fn parse_author(author: &str) -> Result<Author, String> {
-    match author {
-        "reviewer" => Ok(Author::Reviewer),
-        "agent" => Ok(Author::Agent),
-        other => Err(format!("unknown author: {other}")),
-    }
+    Author::parse(author).ok_or_else(|| format!("unknown author: {author}"))
 }
 
 fn stored_content(
@@ -872,9 +868,9 @@ impl CommentDto {
                 Some(page) => CommentTarget::Page(page.into_target()?),
                 None => {
                     let side = match self.side.as_deref() {
-                        Some("new") => Side::New,
-                        Some("old") => Side::Old,
-                        Some(other) => return Err(format!("unknown side: {other}")),
+                        Some(side) => {
+                            Side::parse(side).ok_or_else(|| format!("unknown side: {side}"))?
+                        }
                         None => return Err("a comment has neither a file nor a page".to_string()),
                     };
                     CommentTarget::File(FileTarget {
@@ -1080,13 +1076,8 @@ impl ReviewDto {
 
 impl FileDto {
     fn into_entry(self) -> Result<FileEntry, String> {
-        let status = match self.status.as_str() {
-            "add" => Status::Add,
-            "delete" => Status::Delete,
-            "rename" => Status::Rename,
-            "modify" => Status::Modify,
-            other => return Err(format!("unknown status: {other}")),
-        };
+        let status = Status::parse(&self.status)
+            .ok_or_else(|| format!("unknown status: {}", self.status))?;
         Ok(FileEntry {
             id: self.id,
             group_id: self.group_id,
@@ -1148,12 +1139,8 @@ pub(super) fn decode_copy(bytes: &[u8]) -> Result<SessionCopy, String> {
 }
 
 fn parse_unit(unit: Option<String>) -> Result<Option<GroupBy>, String> {
-    match unit.as_deref() {
-        None => Ok(None),
-        Some("file") => Ok(Some(GroupBy::File)),
-        Some("commit") => Ok(Some(GroupBy::Commit)),
-        Some(other) => Err(format!("unknown group unit: {other}")),
-    }
+    unit.map(|unit| GroupBy::parse(&unit).ok_or_else(|| format!("unknown group unit: {unit}")))
+        .transpose()
 }
 
 impl MetaDto<'_> {

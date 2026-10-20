@@ -342,9 +342,10 @@ impl ResultSink for ResultStore {
 
 fn group_by(cli: &Cli) -> Result<GroupBy, String> {
     match cli.group_by.as_deref() {
-        None | Some("file") => Ok(GroupBy::File),
-        Some("commit") => Ok(GroupBy::Commit),
-        Some(other) => Err(format!("--group-by must be commit or file: {other}")),
+        None => Ok(GroupBy::File),
+        Some(unit) => {
+            GroupBy::parse(unit).ok_or_else(|| format!("--group-by must be commit or file: {unit}"))
+        }
     }
 }
 

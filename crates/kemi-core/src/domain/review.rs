@@ -22,6 +22,16 @@ impl Status {
             Status::Modify => "modify",
         }
     }
+
+    pub fn parse(status: &str) -> Option<Self> {
+        match status {
+            "add" => Some(Status::Add),
+            "delete" => Some(Status::Delete),
+            "rename" => Some(Status::Rename),
+            "modify" => Some(Status::Modify),
+            _ => None,
+        }
+    }
 }
 
 /// コミット範囲のグループ単位（R-UNIT）。最終形（`file`）とコミットごと（`commit`）。
@@ -36,6 +46,14 @@ impl GroupBy {
         match self {
             GroupBy::Commit => "commit",
             GroupBy::File => "file",
+        }
+    }
+
+    pub fn parse(unit: &str) -> Option<Self> {
+        match unit {
+            "commit" => Some(GroupBy::Commit),
+            "file" => Some(GroupBy::File),
+            _ => None,
         }
     }
 
@@ -60,6 +78,14 @@ impl Side {
         match self {
             Side::Old => "old",
             Side::New => "new",
+        }
+    }
+
+    pub fn parse(side: &str) -> Option<Self> {
+        match side {
+            "old" => Some(Side::Old),
+            "new" => Some(Side::New),
+            _ => None,
         }
     }
 }
@@ -149,6 +175,14 @@ impl Author {
         match self {
             Author::Reviewer => "reviewer",
             Author::Agent => "agent",
+        }
+    }
+
+    pub fn parse(author: &str) -> Option<Self> {
+        match author {
+            "reviewer" => Some(Author::Reviewer),
+            "agent" => Some(Author::Agent),
+            _ => None,
         }
     }
 }

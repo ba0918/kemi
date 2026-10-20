@@ -222,13 +222,8 @@ fn infer_status(
     path: &str,
 ) -> Result<Status, SourceError> {
     match explicit {
-        Some("add") => Ok(Status::Add),
-        Some("delete") => Ok(Status::Delete),
-        Some("rename") => Ok(Status::Rename),
-        Some("modify") => Ok(Status::Modify),
-        Some(other) => Err(SourceError::Manifest(format!(
-            "{path}: unknown status: {other}"
-        ))),
+        Some(status) => Status::parse(status)
+            .ok_or_else(|| SourceError::Manifest(format!("{path}: unknown status: {status}"))),
         None => {
             if renamed_from.is_some() {
                 Ok(Status::Rename)

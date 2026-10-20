@@ -363,11 +363,7 @@ struct ReviewQuery {
 }
 
 fn parse_unit(unit: &str) -> Result<GroupBy, ApiError> {
-    match unit {
-        "file" => Ok(GroupBy::File),
-        "commit" => Ok(GroupBy::Commit),
-        _ => Err(ApiError::bad_request("unit must be file or commit")),
-    }
+    GroupBy::parse(unit).ok_or_else(|| ApiError::bad_request("unit must be file or commit"))
 }
 
 async fn review(
@@ -625,11 +621,7 @@ async fn unit_api(
 }
 
 fn parse_side(side: &str) -> Result<Side, ApiError> {
-    match side {
-        "new" => Ok(Side::New),
-        "old" => Ok(Side::Old),
-        _ => Err(ApiError::bad_request("side must be new or old")),
-    }
+    Side::parse(side).ok_or_else(|| ApiError::bad_request("side must be new or old"))
 }
 
 #[derive(Debug, Deserialize)]
