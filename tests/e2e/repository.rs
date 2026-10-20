@@ -3,9 +3,7 @@ use super::*;
 #[tokio::test]
 async fn refresh_keeps_comment_on_the_same_file() {
     let dir = TempDir::new();
-    git(&dir.path, &["init", "-q"]);
-    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
-    git(&dir.path, &["config", "user.name", "kemi"]);
+    git_repo(&dir);
     dir.write("a.txt", "a1\n");
     dir.write("b.txt", "b1\n");
     git(&dir.path, &["add", "a.txt", "b.txt"]);
@@ -15,17 +13,6 @@ async fn refresh_keeps_comment_on_the_same_file() {
 
     let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
     let review = kemi.review_json().await;
-    let file_id = |review: &serde_json::Value, path: &str| {
-        review["groups"][0]["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|file| file["path"] == path)
-            .unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    };
     let b_id = file_id(&review, "b.txt");
     let a_id = file_id(&review, "a.txt");
 

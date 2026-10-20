@@ -335,23 +335,11 @@ async fn initial_explanations_work_with_all_input_modes_including_manifest_stdin
         "explanation.json",
         &serde_json::json!({"sections":sections}).to_string(),
     );
-    git(&workspace.path, &["init", "-q"]);
-    git(&workspace.path, &["config", "user.name", "Fixture"]);
-    git(
-        &workspace.path,
-        &["config", "user.email", "fixture@example.invalid"],
-    );
+    git_repo(&workspace);
     workspace.write("a.txt", "old\n");
     git(&workspace.path, &["add", "a.txt"]);
     git(&workspace.path, &["commit", "-qm", "base"]);
-    let base = String::from_utf8(
-        fixture_git(&workspace.path)
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .unwrap()
-            .stdout,
-    )
-    .unwrap();
+    let base = String::from_utf8(run_git(&workspace.path, &["rev-parse", "HEAD"])).unwrap();
     workspace.write("a.txt", "new\n");
     git(&workspace.path, &["add", "a.txt"]);
     git(&workspace.path, &["commit", "-qm", "new"]);
@@ -592,19 +580,6 @@ fn spawn_gated(
     )
 }
 
-/// 終わるのを待ち、(終了コード, stdout, stderr)。
-#[cfg(unix)]
-fn finish_gated(mut child: StopOnDrop) -> (Option<i32>, String, String) {
-    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
-    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
-    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
-    let mut out = String::new();
-    let mut err = String::new();
-    stdout.read_to_string(&mut out).unwrap();
-    stderr.read_to_string(&mut err).unwrap();
-    (status.code(), out, err)
-}
-
 /// 起動時の説明を用意している間の Ctrl+C は、URL を出さずに保留として終わる
 /// （output.md の R-SUBMIT、R-EXPLANATION-CLI）。
 #[cfg(unix)]
@@ -620,7 +595,7 @@ fn interrupt_while_preparing_the_initial_explanation_suspends_without_a_url() {
     gate.wait_started();
     signal(&child.0, "-INT");
     gate.release();
-    let (code, stdout, stderr) = finish_gated(child);
+    let (code, stdout, stderr) = finish_child(child);
 
     assert_eq!(code, Some(130), "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
@@ -644,18 +619,10 @@ fn failing_to_publish_after_saving_the_initial_explanation_prints_the_resume_lin
     let child = spawn_gated(&workspace, &state, &gate, &["--live", "page.html"]);
 
     gate.wait_started();
-    let lock = std::fs::read_dir(sessions_dir(&state.path))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "lock")
-        })
-        .unwrap();
-    let id = session_id(&lock);
+    let id = session_id(&files_with_extensions(&sessions_dir(&state.path), &["lock"])[0]);
     std::fs::create_dir(endpoint_dir(&state.path).join(format!("{id}.endpoint"))).unwrap();
     gate.release();
-    let (code, stdout, stderr) = finish_gated(child);
+    let (code, stdout, stderr) = finish_child(child);
 
     assert_eq!(code, Some(2), "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
@@ -730,12 +697,7 @@ async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_
 async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_targets_and_wait() {
     let workspace = TempDir::new();
     let state = TempDir::new();
-    git(&workspace.path, &["init", "-q"]);
-    git(&workspace.path, &["config", "user.name", "Fixture"]);
-    git(
-        &workspace.path,
-        &["config", "user.email", "fixture@example.invalid"],
-    );
+    git_repo(&workspace);
     workspace.write("a.txt", "old\n");
     git(&workspace.path, &["add", "a.txt"]);
     git(&workspace.path, &["commit", "-qm", "base"]);
@@ -779,12 +741,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert_eq!(context.0.wait().unwrap().code(), Some(0));
-    let file = review["groups"][0]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|file| file["path"] == "a.txt")
-        .unwrap();
+    let file = file_entry(&review, "a.txt");
     let f:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add","file_id":file["id"],"side":"new","body":"File question"})).await.json().await.unwrap();
     let p:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_page","body":"Page question","page":{"url":"/page.html","width":640,"places":[{"n":1,"kind":"pen","points":[{"x":1,"y":1},{"x":3,"y":3}]}]}})).await.json().await.unwrap();
     let e:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_explanation","explanation_revision":1,"block_id":"b","body":"Explanation question","selection":{"text":"plan","occurrence":0}})).await.json().await.unwrap();
@@ -850,12 +807,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
 async fn resumed_context_keeps_skipped_files_present_but_does_not_offer_line_references() {
     let workspace = TempDir::new();
     let state = TempDir::new();
-    git(&workspace.path, &["init", "-q"]);
-    git(&workspace.path, &["config", "user.name", "Fixture"]);
-    git(
-        &workspace.path,
-        &["config", "user.email", "fixture@example.invalid"],
-    );
+    git_repo(&workspace);
     workspace.write("base.txt", "base\n");
     git(&workspace.path, &["add", "base.txt"]);
     git(&workspace.path, &["commit", "-qm", "base"]);
@@ -867,18 +819,7 @@ async fn resumed_context_keeps_skipped_files_present_but_does_not_offer_line_ref
     );
     let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap().to_string();
-    let store = SessionStore::new(sessions_dir(&state.path));
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        if matches!(
-            store.read(&id).unwrap().copy,
-            kemi_core::session::CopyState::Ready(_)
-        ) {
-            break;
-        }
-        assert!(tokio::time::Instant::now() < deadline);
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    assert_eq!(session_id(&wait_for_frozen_session(&state.path).await), id);
     kemi.kill();
     let resumed = Kemi::spawn_with_state(
         &workspace.path,
@@ -948,27 +889,16 @@ async fn explanation_updates_read_one_document_from_stdin_and_named_manifests_re
 fn initial_opposite_unit_references_refuse_wrong_group_path_side_and_unknown_lines_before_publication()
  {
     let workspace = TempDir::new();
-    git(&workspace.path, &["init", "-q"]);
-    git(&workspace.path, &["config", "user.name", "Fixture"]);
-    git(
-        &workspace.path,
-        &["config", "user.email", "fixture@example.invalid"],
-    );
+    git_repo(&workspace);
     workspace.write("unchanged.txt", "unchanged\n");
     workspace.write("old-name.txt", "rename\n");
     git(&workspace.path, &["add", "unchanged.txt", "old-name.txt"]);
     git(&workspace.path, &["commit", "-qm", "base"]);
     let sha = || {
-        String::from_utf8(
-            fixture_git(&workspace.path)
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap()
-        .trim()
-        .to_string()
+        String::from_utf8(run_git(&workspace.path, &["rev-parse", "HEAD"]))
+            .unwrap()
+            .trim()
+            .to_string()
     };
     let base = sha();
     workspace.write("first.txt", "first\n");

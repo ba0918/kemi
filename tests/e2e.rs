@@ -378,9 +378,7 @@ fn digest_manifest() -> String {
 
 /// base → 2 コミットの小さなリポジトリ。base の sha を返す。
 fn two_commit_repo(dir: &TempDir) -> String {
-    git(&dir.path, &["init", "-q"]);
-    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
-    git(&dir.path, &["config", "user.name", "kemi"]);
+    git_repo(dir);
     git(&dir.path, &["config", "core.hooksPath", "/dev/null"]);
     dir.write("a.txt", "one\n");
     git(&dir.path, &["add", "-A"]);
@@ -407,11 +405,21 @@ fn results_dir(state: &Path) -> PathBuf {
 }
 
 fn result_files(state: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(results_dir(state))
+    files_with_extensions(&results_dir(state), &["json"])
+}
+
+/// `dir` の直下で拡張子が `extensions` のどれかのファイルを、名前の順に。`dir` が無ければ空。
+fn files_with_extensions(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|entries| {
             entries
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.extension().is_some_and(|extension| {
+                        extensions.iter().any(|wanted| extension == *wanted)
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -438,6 +446,7 @@ async fn submit_manifest(
     (answer, stdout, status.code())
 }
 
+/// コミットできる空のリポジトリ。
 fn git_repo(dir: &TempDir) {
     git(&dir.path, &["init", "-q"]);
     git(&dir.path, &["config", "user.email", "kemi@example.com"]);
@@ -534,18 +543,31 @@ fn start_with_global(dir: &Path, state: &TempDir, global: &Path, args: &[&str]) 
     )
 }
 
-/// 最終形の `path` のファイルの由来を取りに行く。
-async fn fetch_origin(kemi: &Kemi, path: &str) -> reqwest::Response {
-    let review = kemi.review_json().await;
-    let id = review["groups"][0]["files"]
+/// レビューの最初のグループで、パスが `path` のファイル。
+fn file_entry<'a>(review: &'a serde_json::Value, path: &str) -> &'a serde_json::Value {
+    review["groups"][0]["files"]
         .as_array()
         .unwrap()
         .iter()
         .find(|file| file["path"] == path)
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        .unwrap_or_else(|| panic!("no {path} in the review: {review}"))
+}
+
+/// レビューの最初のグループで、パスが `path` のファイルの id。
+fn file_id(review: &serde_json::Value, path: &str) -> String {
+    file_entry(review, path)["id"].as_str().unwrap().to_string()
+}
+
+/// JSON のオブジェクトのキーを名前の順に。
+fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+    let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+/// 最終形の `path` のファイルの由来を取りに行く。
+async fn fetch_origin(kemi: &Kemi, path: &str) -> reqwest::Response {
+    let id = file_id(&kemi.review_json().await, path);
     kemi.get(&format!("api/origin/{id}")).await
 }
 
@@ -619,40 +641,14 @@ fn sessions_dir(state: &Path) -> PathBuf {
 }
 
 fn session_files(state: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(sessions_dir(state))
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.extension()
-                        .is_some_and(|extension| extension == "session")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort();
-    files
+    files_with_extensions(&sessions_dir(state), &["session"])
 }
 
 /// `sessions/` に残っているセッションのファイル。セッション 1 つは `<id>.session` と
 /// `<id>.payload` の 2 つなので、片方だけ残っていないことも見られるように両方を数える。
 #[cfg(unix)]
 fn session_dir_files(state: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(sessions_dir(state))
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.extension()
-                        .is_some_and(|extension| extension == "session" || extension == "payload")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort();
-    files
+    files_with_extensions(&sessions_dir(state), &["session", "payload"])
 }
 
 async fn wait_for_session(state: &Path) -> PathBuf {
@@ -698,13 +694,26 @@ fn signal(child: &Child, signal: &str) {
 /// 変更のある worktree のフィクスチャ。
 fn worktree_fixture(dir: &TempDir) {
     std::fs::write(dir.path.join("a.txt"), "one\ntwo\n").unwrap();
-    git(&dir.path, &["init", "-q"]);
-    git(&dir.path, &["config", "user.email", "e2e@example.com"]);
-    git(&dir.path, &["config", "user.name", "e2e"]);
+    git_repo(dir);
     git(&dir.path, &["config", "core.hooksPath", "/dev/null"]);
     git(&dir.path, &["add", "-A"]);
     git(&dir.path, &["commit", "-q", "-m", "base"]);
     std::fs::write(dir.path.join("a.txt"), "one\nTWO\n").unwrap();
+}
+
+/// 変更のある worktree のレビューを起動し、写しの凍結を待つ。(kemi, セッションの id,
+/// 最初のファイルの id) を返す。保留と復元を確かめる前置き。
+#[cfg(unix)]
+async fn frozen_worktree_review(dir: &TempDir, state: &TempDir) -> (Kemi, String, String) {
+    worktree_fixture(dir);
+    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
+    kemi.wait_serving().await;
+    let id = session_id(&wait_for_frozen_session(&state.path).await);
+    let file_id = kemi.get_json("api/review").await["groups"][0]["files"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (kemi, id, file_id)
 }
 
 fn session_info(id: &str, mode: SessionMode, title: &str, workspace: &Path) -> SessionInfo {
@@ -912,19 +921,22 @@ fn spawn_wait(dir: &Path, state: &Path, args: &[&str]) -> StopOnDrop {
 }
 
 /// 終わるのを待ち、(終了コード, stdout, stderr)。
-async fn finish_agent(mut child: StopOnDrop) -> (Option<i32>, String, String) {
-    tokio::task::spawn_blocking(move || {
-        let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
-        let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
-        let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
-        let mut out = String::new();
-        let mut err = String::new();
-        stdout.read_to_string(&mut out).unwrap();
-        stderr.read_to_string(&mut err).unwrap();
-        (status.code(), out, err)
-    })
-    .await
-    .unwrap()
+async fn finish_agent(child: StopOnDrop) -> (Option<i32>, String, String) {
+    tokio::task::spawn_blocking(move || finish_child(child))
+        .await
+        .unwrap()
+}
+
+/// 裏で走らせた子が終わるのを待ち、(終了コード, stdout, stderr)。
+fn finish_child(mut child: StopOnDrop) -> (Option<i32>, String, String) {
+    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
+    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
+    let mut out = String::new();
+    let mut err = String::new();
+    stdout.read_to_string(&mut out).unwrap();
+    stderr.read_to_string(&mut err).unwrap();
+    (status.code(), out, err)
 }
 
 /// worktree のレビューを起動し、review の id を読む。

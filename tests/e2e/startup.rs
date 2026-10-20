@@ -277,9 +277,7 @@ async fn exit_code_approved_is_0_and_stdout_json() {
 #[tokio::test]
 async fn runtime_io_error_stops_with_exit_2_without_json() {
     let dir = TempDir::new();
-    git(&dir.path, &["init", "-q"]);
-    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
-    git(&dir.path, &["config", "user.name", "kemi"]);
+    git_repo(&dir);
     dir.write("a.txt", "one\ntwo\n");
     git(&dir.path, &["add", "a.txt"]);
     git(&dir.path, &["commit", "-q", "-m", "base"]);

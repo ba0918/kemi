@@ -332,13 +332,8 @@ async fn a_handed_comment_has_the_same_keys_as_in_the_submit() {
     let handed = &answer["events"][0]["comments"][0]["comment"];
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     let submitted = &document["comments"][0];
-    let keys = |value: &serde_json::Value| {
-        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
-        keys.sort();
-        keys
-    };
     assert_eq!(handed["id"], submitted["id"]);
-    assert_eq!(keys(handed), keys(submitted));
+    assert_eq!(sorted_keys(handed), sorted_keys(submitted));
 }
 
 #[test]
@@ -441,13 +436,11 @@ async fn a_submitted_page_comment_has_no_image_and_the_keys_it_had_when_handed()
     assert_eq!(submitted["outdated"], false);
     assert_eq!(submitted["group_id"], "page");
     assert_eq!(submitted["group_title"], "Page");
-    let keys = |value: &serde_json::Value| {
-        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
-        keys.sort();
-        keys
-    };
-    assert_eq!(keys(&handed), keys(submitted));
-    assert_eq!(keys(&handed["page"]), keys(&submitted["page"]));
+    assert_eq!(sorted_keys(&handed), sorted_keys(submitted));
+    assert_eq!(
+        sorted_keys(&handed["page"]),
+        sorted_keys(&submitted["page"])
+    );
 }
 
 #[tokio::test]

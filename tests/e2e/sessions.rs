@@ -433,17 +433,8 @@ fn digest_and_result_do_not_create_sessions() {
 #[tokio::test]
 async fn resume_keeps_the_frozen_contents_and_state() {
     let dir = TempDir::new();
-    worktree_fixture(&dir);
     let state = TempDir::new();
-    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
-    kemi.wait_serving().await;
-    let session = wait_for_frozen_session(&state.path).await;
-    let id = session_id(&session);
-    let review = kemi.get_json("api/review").await;
-    let file_id = review["groups"][0]["files"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let (kemi, id, file_id) = frozen_worktree_review(&dir, &state).await;
     kemi.post(
         "api/comment",
         serde_json::json!({
@@ -504,16 +495,8 @@ async fn resume_keeps_the_frozen_contents_and_state() {
 #[tokio::test]
 async fn resume_writes_state_back_to_the_same_session() {
     let dir = TempDir::new();
-    worktree_fixture(&dir);
     let state = TempDir::new();
-    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
-    kemi.wait_serving().await;
-    let id = session_id(&wait_for_frozen_session(&state.path).await);
-    let review = kemi.get_json("api/review").await;
-    let file_id = review["groups"][0]["files"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let (kemi, id, file_id) = frozen_worktree_review(&dir, &state).await;
     kemi.post(
         "api/comment",
         serde_json::json!({
@@ -559,16 +542,8 @@ async fn resume_writes_state_back_to_the_same_session() {
 #[tokio::test]
 async fn resume_does_not_reuse_a_deleted_comment_id() {
     let dir = TempDir::new();
-    worktree_fixture(&dir);
     let state = TempDir::new();
-    let kemi = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
-    kemi.wait_serving().await;
-    let id = session_id(&wait_for_frozen_session(&state.path).await);
-    let review = kemi.get_json("api/review").await;
-    let file_id = review["groups"][0]["files"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let (kemi, id, file_id) = frozen_worktree_review(&dir, &state).await;
     kemi.post(
         "api/comment",
         serde_json::json!({
@@ -945,17 +920,7 @@ async fn live_resume_keeps_comments_and_seen_marks_on_the_same_files() {
     let mut kemi =
         Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
     let id = kemi.review_id();
-    let review = kemi.review_json().await;
-    let id_of = |review: &serde_json::Value, path: &str| {
-        review["groups"][0]["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|file| file["path"] == path)
-            .map(|file| file["id"].as_str().unwrap().to_string())
-            .unwrap()
-    };
-    let a = id_of(&review, "a.txt");
+    let a = file_id(&kemi.review_json().await, "a.txt");
     kemi.post(
         "api/comment",
         serde_json::json!({
@@ -976,24 +941,15 @@ async fn live_resume_keeps_comments_and_seen_marks_on_the_same_files() {
 
     let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
     let review = resumed.review_json().await;
-    let a = id_of(&review, "a.txt");
-    let zero = id_of(&review, "0.txt");
+    let a = file_id(&review, "a.txt");
+    let zero = file_id(&review, "0.txt");
     let file = resumed.get_json(&format!("api/file/{a}")).await;
     let other = resumed.get_json(&format!("api/file/{zero}")).await;
 
     assert_eq!(file["comments"][0]["body"], "on a.txt", "{file}");
     assert_eq!(other["comments"].as_array().unwrap().len(), 0, "{other}");
-    let seen = |path: &str| {
-        review["groups"][0]["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|file| file["path"] == path)
-            .unwrap()["seen"]
-            .clone()
-    };
-    assert_eq!(seen("a.txt"), true);
-    assert_eq!(seen("0.txt"), false);
+    assert_eq!(file_entry(&review, "a.txt")["seen"], true);
+    assert_eq!(file_entry(&review, "0.txt")["seen"], false);
     resumed.kill();
 }
 
