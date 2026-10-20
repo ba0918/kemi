@@ -23,33 +23,20 @@ impl std::fmt::Display for ContentError {
 
 impl std::error::Error for ContentError {}
 
-#[derive(Debug)]
-pub struct InputContent(pub ConversationContent);
-impl<'de> Deserialize<'de> for InputContent {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_content(deserializer, ContainerFields::OnlyContent).map(Self)
-    }
-}
-
+/// body か parts のどちらか 1 つを読む。書き込みの要求に flatten で埋め込むので、
+/// 要求の側が知らないキーもここに来る。それは読み飛ばす。
 #[derive(Debug)]
 pub struct WriteContent(pub ConversationContent);
 impl<'de> Deserialize<'de> for WriteContent {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_content(deserializer, ContainerFields::LegacyWrite).map(Self)
+        deserialize_content(deserializer).map(Self)
     }
-}
-
-#[derive(Clone, Copy)]
-enum ContainerFields {
-    OnlyContent,
-    LegacyWrite,
 }
 
 fn deserialize_content<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-    fields: ContainerFields,
 ) -> Result<ConversationContent, D::Error> {
-    struct ContentVisitor(ContainerFields);
+    struct ContentVisitor;
     impl<'de> Visitor<'de> for ContentVisitor {
         type Value = ConversationContent;
         fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -59,15 +46,8 @@ fn deserialize_content<'de, D: serde::Deserializer<'de>>(
             let mut content = None;
             while let Some(key) = map.next_key::<String>()? {
                 if !matches!(key.as_str(), "body" | "parts") {
-                    match self.0 {
-                        ContainerFields::OnlyContent => {
-                            return Err(serde::de::Error::unknown_field(&key, &["body", "parts"]));
-                        }
-                        ContainerFields::LegacyWrite => {
-                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
-                            continue;
-                        }
-                    }
+                    let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                    continue;
                 }
                 if content.is_some() {
                     return Err(serde::de::Error::custom(format!(
@@ -83,7 +63,7 @@ fn deserialize_content<'de, D: serde::Deserializer<'de>>(
             content.ok_or_else(|| serde::de::Error::custom("body/parts: missing content field"))
         }
     }
-    deserializer.deserialize_map(ContentVisitor(fields))
+    deserializer.deserialize_map(ContentVisitor)
 }
 pub fn validate_content(content: ConversationContent) -> Result<ConversationContent, ContentError> {
     Ok(match content {
@@ -104,10 +84,10 @@ pub fn validate_plain_body(body: &str) -> Result<(), ContentError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContentError, ConversationContent, InputContent, validate_content};
+    use super::{ContentError, ConversationContent, WriteContent, validate_content};
 
     fn decode_content(input: &str) -> Result<ConversationContent, ContentError> {
-        let value: InputContent = serde_json::from_str(input).map_err(ContentError::Json)?;
+        let value: WriteContent = serde_json::from_str(input).map_err(ContentError::Json)?;
         validate_content(value.0)
     }
 
