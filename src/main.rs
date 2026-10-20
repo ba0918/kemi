@@ -15,7 +15,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use cli::{
-    Cli, InputModeError, parse_args, validate_explanation_flags, validate_input_mode,
+    Cli, InputMode, InputModeError, parse_args, validate_explanation_flags, validate_input_mode,
     validate_live_flags, validate_removed_flags, validate_result_flags, validate_resume_flags,
 };
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
@@ -24,7 +24,7 @@ use kemi_core::result;
 use kemi_core::session::{
     PageSnapshot, SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis,
 };
-use kemi_core::source::git::{GitMode, GitSource, GroupBy};
+use kemi_core::source::git::{GitMode, GitSource};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
 use kemi_server::{
@@ -203,31 +203,27 @@ async fn start_agent_channel(
 
 /// 起動時の入力から、セッションに記録する情報を組み立てる。コミット範囲は完全な sha に
 /// 解決しておく（R-SESSION）。
-fn session_info(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Result<SessionInfo, String> {
+fn session_info(input: &InputMode<(LivePage, PathBuf)>) -> Result<SessionInfo, String> {
     let workspace = workspace_root(Path::new("."));
-    let mode = if let Some((page, root)) = live {
-        SessionMode::Live {
+    let mode = match input {
+        InputMode::Live((page, root)) => SessionMode::Live {
             page: page.clone(),
             root: root.clone(),
-        }
-    } else if cli.worktree {
-        SessionMode::Worktree
-    } else if cli.staged {
-        SessionMode::Staged
-    } else if cli.manifest.is_some() {
-        SessionMode::Manifest
-    } else {
-        let from = cli.from.clone().unwrap_or_default();
-        let to = cli.to.clone().unwrap_or_else(|| "HEAD".to_string());
-        let repo =
-            kemi_core::source::git::repo_root(Path::new(".")).map_err(|error| error.to_string())?;
-        let (from_sha, to_sha) = kemi_core::source::git::resolve_range(&repo, &from, &to)
-            .map_err(|error| error.to_string())?;
-        SessionMode::Range {
-            from,
-            to,
-            from_sha,
-            to_sha,
+        },
+        InputMode::Worktree => SessionMode::Worktree,
+        InputMode::Staged => SessionMode::Staged,
+        InputMode::Manifest(_) => SessionMode::Manifest,
+        InputMode::Range { from, to, .. } => {
+            let repo = kemi_core::source::git::repo_root(Path::new("."))
+                .map_err(|error| error.to_string())?;
+            let (from_sha, to_sha) = kemi_core::source::git::resolve_range(&repo, from, to)
+                .map_err(|error| error.to_string())?;
+            SessionMode::Range {
+                from: from.clone(),
+                to: to.clone(),
+                from_sha,
+                to_sha,
+            }
         }
     };
     let now = now_millis();
@@ -245,7 +241,7 @@ fn session_info(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Result<Session
 
 /// セッションの保存先を開く。決められない・開けないときは警告だけを出し、セッション
 /// なしでレビューを続ける。
-fn open_session(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Option<Arc<StoredSession>> {
+fn open_session(input: &InputMode<(LivePage, PathBuf)>) -> Option<Arc<StoredSession>> {
     let Some(dir) = sessions_dir() else {
         eprintln!(
             "kemi: cannot determine where to save sessions ({})",
@@ -253,7 +249,7 @@ fn open_session(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Option<Arc<Sto
         );
         return None;
     };
-    let info = match session_info(cli, live) {
+    let info = match session_info(input) {
         Ok(info) => info,
         Err(message) => {
             eprintln!("kemi: cannot start a session: {message}");
@@ -337,47 +333,25 @@ impl ResultSink for ResultStore {
     }
 }
 
-fn group_by(cli: &Cli) -> Result<GroupBy, String> {
-    match cli.group_by.as_deref() {
-        None => Ok(GroupBy::File),
-        Some(unit) => {
-            GroupBy::parse(unit).ok_or_else(|| format!("--group-by must be commit or file: {unit}"))
-        }
-    }
-}
-
 fn build_source(
     cli: &Cli,
-    live: Option<&(LivePage, PathBuf)>,
+    input: &InputMode<(LivePage, PathBuf)>,
 ) -> Result<Box<dyn ReviewSource>, String> {
-    if let Some((page, root)) = live {
-        return Ok(Box::new(LiveSource::new(page, root)));
-    }
-    if let Some(manifest) = &cli.manifest {
-        let source = ManifestSource::from_path(Path::new(manifest), &cli.base)
-            .map_err(|error| error.to_string())?;
-        return Ok(Box::new(source));
-    }
-    if cli.worktree {
-        return Ok(Box::new(
-            GitSource::open(GitMode::Worktree).map_err(|error| error.to_string())?,
-        ));
-    }
-    if cli.staged {
-        return Ok(Box::new(
-            GitSource::open(GitMode::Staged).map_err(|error| error.to_string())?,
-        ));
-    }
-    let from = cli.from.clone().unwrap_or_default();
-    let to = cli.to.clone().unwrap_or_else(|| "HEAD".to_string());
-    Ok(Box::new(
-        GitSource::open(GitMode::Range {
-            from,
-            to,
-            group_by: group_by(cli)?,
-        })
-        .map_err(|error| error.to_string())?,
-    ))
+    let git = |mode| GitSource::open(mode).map_err(|error| error.to_string());
+    Ok(match input {
+        InputMode::Live((page, root)) => Box::new(LiveSource::new(page, root)),
+        InputMode::Manifest(manifest) => Box::new(
+            ManifestSource::from_path(Path::new(manifest), &cli.base)
+                .map_err(|error| error.to_string())?,
+        ),
+        InputMode::Worktree => Box::new(git(GitMode::Worktree)?),
+        InputMode::Staged => Box::new(git(GitMode::Staged)?),
+        InputMode::Range { from, to, group_by } => Box::new(git(GitMode::Range {
+            from: from.clone(),
+            to: to.clone(),
+            group_by: *group_by,
+        })?),
+    })
 }
 
 fn with_focus(source: Box<dyn ReviewSource>, cli: &Cli) -> Result<Box<dyn ReviewSource>, String> {
@@ -937,21 +911,21 @@ async fn main() {
         run_resume(&cli).await;
     }
 
-    match validate_input_mode(&cli) {
-        Ok(()) => {}
+    let mode = match validate_input_mode(&cli) {
+        Ok(mode) => mode,
         Err(InputModeError::Usage) => {
             eprintln!("{USAGE}");
             std::process::exit(2);
         }
         Err(InputModeError::Message(message)) => fail(message),
-    }
+        Err(InputModeError::InvalidValue(message)) => fail(&message),
+    };
 
-    let live = match cli.live.as_deref().map(live_target).transpose() {
-        Ok(live) => live,
+    let input = match mode.resolve_live(live_target) {
+        Ok(input) => input,
         Err(message) => fail(&message),
     };
-    let source = match build_source(&cli, live.as_ref()).and_then(|source| with_focus(source, &cli))
-    {
+    let source = match build_source(&cli, &input).and_then(|source| with_focus(source, &cli)) {
         Ok(source) => source,
         Err(message) => fail(&message),
     };
@@ -973,7 +947,7 @@ async fn main() {
         }
     }
 
-    let stored_session = open_session(&cli, live.as_ref());
+    let stored_session = open_session(&input);
     let initial_explanation = cli.explanation.as_ref().map(|file| {
         let text = std::fs::read_to_string(file)
             .unwrap_or_else(|error| fail(&format!("cannot read the explanation: {error}")));
@@ -988,12 +962,18 @@ async fn main() {
         document
     });
     let results_key = result::workspace_key(&workspace_root(Path::new(".")));
-    let live = live.map(|(page, root)| LiveRun {
-        page,
-        root,
-        snapshots: Vec::new(),
-        last_snapshot_number: 0,
-    });
+    let live = match input {
+        InputMode::Live((page, root)) => Some(LiveRun {
+            page,
+            root,
+            snapshots: Vec::new(),
+            last_snapshot_number: 0,
+        }),
+        InputMode::Manifest(_)
+        | InputMode::Range { .. }
+        | InputMode::Worktree
+        | InputMode::Staged => None,
+    };
     run_review(
         &cli,
         source,

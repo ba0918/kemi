@@ -3,6 +3,8 @@
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
+use kemi_core::source::git::GroupBy;
+
 pub(crate) struct Cli {
     pub explanation: Option<String>,
     pub manifest: Option<String>,
@@ -163,9 +165,43 @@ pub(crate) fn validate_result_flags(cli: &Cli) -> Result<(), String> {
 pub(crate) enum InputModeError {
     Usage,
     Message(&'static str),
+    /// フラグの値の誤り。中身は理由の文。
+    InvalidValue(String),
 }
 
-pub(crate) fn validate_input_mode(cli: &Cli) -> Result<(), InputModeError> {
+/// 検証済みの入力モード（R-INPUT）。`L` は `--live` の見る対象で、読んだときは引数の
+/// 文字列、起動側が解決した後は解決したもの。
+pub(crate) enum InputMode<L = String> {
+    Manifest(String),
+    Range {
+        from: String,
+        to: String,
+        group_by: GroupBy,
+    },
+    Worktree,
+    Staged,
+    Live(L),
+}
+
+impl InputMode {
+    /// `--live` の見る対象を `resolve` で解決する。ほかのモードはそのまま。
+    pub(crate) fn resolve_live<L>(
+        self,
+        resolve: impl FnOnce(&str) -> Result<L, String>,
+    ) -> Result<InputMode<L>, String> {
+        Ok(match self {
+            InputMode::Manifest(path) => InputMode::Manifest(path),
+            InputMode::Range { from, to, group_by } => InputMode::Range { from, to, group_by },
+            InputMode::Worktree => InputMode::Worktree,
+            InputMode::Staged => InputMode::Staged,
+            InputMode::Live(target) => InputMode::Live(resolve(&target)?),
+        })
+    }
+}
+
+/// 入力モードがちょうど 1 つであることを確かめて、そのモードを返す。誤りの優先順は、
+/// モードの重なり → モードの無さ → `--to` と `--group-by` の前提 → `--group-by` の値。
+pub(crate) fn validate_input_mode(cli: &Cli) -> Result<InputMode, InputModeError> {
     let modes = [
         cli.manifest.is_some(),
         cli.from.is_some(),
@@ -188,7 +224,33 @@ pub(crate) fn validate_input_mode(cli: &Cli) -> Result<(), InputModeError> {
     if cli.group_by.is_some() && cli.from.is_none() {
         return Err(InputModeError::Message("--group-by requires --from"));
     }
-    Ok(())
+    if let Some(path) = &cli.manifest {
+        return Ok(InputMode::Manifest(path.clone()));
+    }
+    if let Some(from) = &cli.from {
+        let group_by = match cli.group_by.as_deref() {
+            None => GroupBy::File,
+            Some(unit) => GroupBy::parse(unit).ok_or_else(|| {
+                InputModeError::InvalidValue(format!("--group-by must be commit or file: {unit}"))
+            })?,
+        };
+        return Ok(InputMode::Range {
+            from: from.clone(),
+            to: cli.to.clone().unwrap_or_else(|| "HEAD".to_string()),
+            group_by,
+        });
+    }
+    if cli.worktree {
+        return Ok(InputMode::Worktree);
+    }
+    if cli.staged {
+        return Ok(InputMode::Staged);
+    }
+    // 上で数えたモードは 1 つなので、残るのは --live だけ。
+    match &cli.live {
+        Some(target) => Ok(InputMode::Live(target.clone())),
+        None => Err(InputModeError::Usage),
+    }
 }
 
 pub(crate) fn validate_resume_flags(cli: &Cli) -> Result<(), String> {
