@@ -415,13 +415,32 @@ export function reachableStops() {
 }
 
 /**
+ * グループ id ごとのファイル。state.entries を作り直したときだけ数え直す。見出しごとに全ファイルを
+ * 走査すると、ツリーの作り直しが O(グループ × ファイル) になる。見たの印はファイルの中で書き換わる
+ * ので、ファイルの並びを覚えておけば数は最新になる。
+ * @type {{ entries: Entry[], files: Map<string, FileEntry[]> } | null}
+ */
+let groupFiles = null;
+
+/**
  * @param {string} groupId
  * @returns {{ seen: number, total: number, done: boolean }}
  */
 export function groupProgressFor(groupId) {
-  return seenProgress(
-    state.entries.filter((entry) => entry.group.id === groupId).map((entry) => entry.file),
-  );
+  if (groupFiles === null || groupFiles.entries !== state.entries) {
+    /** @type {Map<string, FileEntry[]>} */
+    const files = new Map();
+    for (const entry of state.entries) {
+      const list = files.get(entry.group.id);
+      if (list) {
+        list.push(entry.file);
+      } else {
+        files.set(entry.group.id, [entry.file]);
+      }
+    }
+    groupFiles = { entries: state.entries, files };
+  }
+  return seenProgress(groupFiles.files.get(groupId) ?? []);
 }
 
 export function allLinesExpanded() {
