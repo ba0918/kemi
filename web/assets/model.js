@@ -329,6 +329,38 @@ export function sideTone(kind, side) {
 }
 
 /**
+ * 色の役割の記号。追加は `+`、削除は `−` で、ほかの役割には記号を付けない。
+ * @param {string} tone
+ * @returns {string}
+ */
+export function toneSign(tone) {
+  return tone === "add" ? "+" : tone === "del" ? "−" : "";
+}
+
+/**
+ * 位置の帯に出す、表示行の色の役割。1 列の行は sideTone のとおりで、2 列の書き換えの行
+ * （旧と新を 1 行に並べる）は追加の色にする。
+ * @param {string} kind
+ * @returns {string}
+ */
+export function rulerTone(kind) {
+  return kind === "replace" ? "add" : sideTone(kind, null);
+}
+
+/**
+ * 位置の帯に出す、描画表示のブロックの印（R-RENDER）の色の役割。消したブロックは削除、
+ * 足したブロックと旧と新を重ねたブロックは追加の色にする。
+ * @param {string} mark
+ * @returns {string}
+ */
+export function blockTone(mark) {
+  if (mark === "deleted") {
+    return "del";
+  }
+  return mark === "unchanged" ? "" : "add";
+}
+
+/**
  * 各行の上端オフセット（最後に全体の高さ）を返す。
  * @param {number[]} heights
  * @returns {number[]}

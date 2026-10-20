@@ -34,6 +34,9 @@ import {
   statusLetter,
   rangeAfterSkip,
   sideTone,
+  toneSign,
+  rulerTone,
+  blockTone,
   unitSwitchOrder,
   unitSwitchTarget,
   originJumpTarget,
@@ -847,6 +850,20 @@ test("unified_colors_each_line_by_the_side_it_shows", () => {
   assert.equal(sideTone("replace-new", null), "add");
   assert.equal(sideTone("insert", null), "add");
   assert.equal(sideTone("equal", null), "");
+});
+
+test("追加と削除の色の役割には + と − の記号を付け、ほかの役割には付けない", () => {
+  assert.deepEqual(["add", "del", "empty", ""].map(toneSign), ["+", "−", "", ""]);
+});
+
+test("位置の帯は 1 列の行を側の色で、2 列の書き換えの行を追加の色で示す", () => {
+  const kinds = ["insert", "replace-new", "replace", "delete", "replace-old", "equal", "skip", "origin"];
+  assert.deepEqual(kinds.map(rulerTone), ["add", "add", "add", "del", "del", "", "", ""]);
+});
+
+test("位置の帯は描画表示の消したブロックを削除、足したブロックと重ねたブロックを追加の色で示す", () => {
+  const marks = ["deleted", "added", "modified", "unchanged"];
+  assert.deepEqual(marks.map(blockTone), ["del", "add", "add", ""]);
 });
 
 /**

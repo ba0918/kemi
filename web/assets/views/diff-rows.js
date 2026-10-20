@@ -12,7 +12,7 @@ import {
   shownComments,
   state,
 } from "../state.js";
-import { countLabel, lineHasAnchor, originJumpTarget, plusSides, sideTone } from "../model.js";
+import { countLabel, lineHasAnchor, originJumpTarget, plusSides, sideTone, toneSign } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
 import { renderFileHeader } from "./file-header.js";
 import { showToast } from "./overlay.js";
@@ -112,7 +112,7 @@ function renderLine(line) {
   row.append(
     numberCell("old", line.oldLine, canComment && plusHere("old", line.oldLine, sides)),
     numberCell("new", line.newLine, canComment && plusHere("new", line.newLine, sides)),
-    textEl("span", "mk", signFor(line.kind)),
+    textEl("span", "mk", toneSign(tone)),
   );
   const code = el("span", "code");
   if (line.newLine) {
@@ -229,23 +229,6 @@ function renderOriginReason(line) {
 }
 
 /**
- * @param {string} kind
- * @returns {string}
- */
-function signFor(kind) {
-  switch (kind) {
-    case "insert":
-    case "replace-new":
-      return "+";
-    case "delete":
-    case "replace-old":
-      return "−";
-    default:
-      return "";
-  }
-}
-
-/**
  * @param {"old" | "new"} side
  * @param {import("../model.js").Line|null} line
  * @param {import("../model.js").Segment[]} segments
@@ -259,8 +242,7 @@ function sideCell(side, line, segments, withPlus, tone) {
   const text = el("span", "code-text");
   fillCode(text, line, segments);
   code.append(text);
-  const sign = tone === "del" ? "−" : tone === "add" ? "+" : "";
-  cell.append(numberCell(side, line, withPlus), textEl("span", "mk", sign), code);
+  cell.append(numberCell(side, line, withPlus), textEl("span", "mk", toneSign(tone)), code);
   return cell;
 }
 

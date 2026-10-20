@@ -3,7 +3,7 @@
 
 import { dom } from "../dom.js";
 import { NAV_MARGIN, currentEntry, reachableStops, state } from "../state.js";
-import { navCurrentIndex, rulerMarks } from "../model.js";
+import { blockTone, navCurrentIndex, rulerMarks, rulerTone } from "../model.js";
 import { blockElements, blockTop } from "./rendered.js";
 
 /** @typedef {import("../model.js").DisplayLine} DisplayLine */
@@ -61,20 +61,7 @@ export function renderNav(offsets) {
  * @returns {string}
  */
 function rulerKind(line, index) {
-  if (state.threads.byLine.has(index)) {
-    return "note";
-  }
-  switch (line.kind) {
-    case "delete":
-    case "replace-old":
-      return "del";
-    case "insert":
-    case "replace-new":
-    case "replace":
-      return "add";
-    default:
-      return "";
-  }
+  return state.threads.byLine.has(index) ? "note" : rulerTone(line.kind);
 }
 
 /**
@@ -95,15 +82,7 @@ function renderedRulerData() {
       offsets.push(top);
     }
     const mark = blocks[index] ? blocks[index].mark : "unchanged";
-    kinds.push(
-      state.renderedThreads.byBlock.has(index)
-        ? "note"
-        : mark === "deleted"
-          ? "del"
-          : mark === "unchanged"
-            ? ""
-            : "add",
-    );
+    kinds.push(state.renderedThreads.byBlock.has(index) ? "note" : blockTone(mark));
     offsets.push(bottom);
     cursor = bottom;
   });
