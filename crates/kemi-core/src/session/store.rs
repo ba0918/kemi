@@ -164,12 +164,7 @@ impl SessionStore {
     pub fn open(&self, id: &str) -> Result<OpenSession, SessionError> {
         checked_id(id)?;
         let lock = SessionLock::acquire(&self.dir, id)?;
-        let meta = self.read_meta_of(id)?;
-        let path = self.path(id);
-        let (info, state, copy) = meta.into_parts().map_err(|reason| SessionError::Corrupt {
-            path: path.clone(),
-            reason,
-        })?;
+        let (info, state, copy) = self.read_parts(id)?;
         let copy = match copy {
             // `--live` のセッションは写しを持たない（R-PAGE-SESSION）。
             CopyMeta::Pending if info.mode.is_live() => CopyState::Pending,
@@ -196,12 +191,7 @@ impl SessionStore {
     /// 保存済みのセッションを、ロックを取らずに読む。
     pub fn read(&self, id: &str) -> Result<SavedSession, SessionError> {
         checked_id(id)?;
-        let meta = self.read_meta_of(id)?;
-        let path = self.path(id);
-        let (info, state, copy) = meta.into_parts().map_err(|reason| SessionError::Corrupt {
-            path: path.clone(),
-            reason,
-        })?;
+        let (info, state, copy) = self.read_parts(id)?;
         let copy = match copy {
             CopyMeta::Pending => CopyState::Pending,
             CopyMeta::Unusable(reason) => CopyState::Unusable(reason),
@@ -301,13 +291,17 @@ impl SessionStore {
         payload_path(&self.dir, id)
     }
 
-    fn read_meta_of(&self, id: &str) -> Result<MetaDto<'static>, SessionError> {
-        match read_meta(&self.path(id)) {
+    /// `<id>.session` を読み、情報・状態・写しの状態に分ける。
+    fn read_parts(&self, id: &str) -> Result<(SessionInfo, SessionState, CopyMeta), SessionError> {
+        let path = self.path(id);
+        let meta = match read_meta(&path) {
             Err(SessionError::NotFound { .. }) => {
-                Err(SessionError::NotFound { id: id.to_string() })
+                return Err(SessionError::NotFound { id: id.to_string() });
             }
-            other => other,
-        }
+            other => other?,
+        };
+        meta.into_parts()
+            .map_err(|reason| SessionError::Corrupt { path, reason })
     }
 
     /// `<id>.payload` を読んで写しに戻す。ファイルが無いときは「使えない」。
@@ -424,12 +418,7 @@ impl OpenSession {
         state: SessionState,
         updated: u128,
     ) -> Result<(), SessionError> {
-        if self.lifecycle != Lifecycle::Active {
-            return Err(SessionError::Unusable {
-                id: self.info.id.clone(),
-                reason: "the review is stopping".into(),
-            });
-        }
+        self.ensure_active()?;
         let display = state.display.as_ref().ok_or_else(|| SessionError::Encode {
             reason: "diff_display_version: missing generation state".into(),
         })?;
@@ -440,15 +429,7 @@ impl OpenSession {
             })?;
         let mut info = self.info.clone();
         info.updated = updated;
-        let meta = MetaDto::from_parts(&info, &state, &self.copy);
-        let bytes = serde_json::to_vec(&meta).map_err(|e| SessionError::Encode {
-            reason: e.to_string(),
-        })?;
-        write_atomic(
-            &self.dir,
-            &self.path(),
-            &encoding::encode_session(encoding::VERSION, &bytes),
-        )?;
+        self.write_session(&info, &state, &self.copy)?;
         self.state = state;
         self.info = info;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
@@ -460,12 +441,7 @@ impl OpenSession {
         prepared: super::PreparedCopy,
         mut state: SessionState,
     ) -> Result<bool, SessionError> {
-        if self.lifecycle != Lifecycle::Active {
-            return Err(SessionError::Unusable {
-                id: self.info.id.clone(),
-                reason: "the review is stopping".into(),
-            });
-        }
+        self.ensure_active()?;
         let ready = prepared.compressed.len() as u64 <= COPY_LIMIT;
         let copy = if ready {
             write_atomic(
@@ -480,15 +456,7 @@ impl OpenSession {
             }
             CopyState::Unusable("the review copy is larger than 20 MB".into())
         };
-        let meta = MetaDto::from_parts(&self.info, &state, &copy);
-        let bytes = serde_json::to_vec(&meta).map_err(|e| SessionError::Encode {
-            reason: e.to_string(),
-        })?;
-        write_atomic(
-            &self.dir,
-            &self.path(),
-            &encoding::encode_session(encoding::VERSION, &bytes),
-        )?;
+        self.write_session(&self.info, &state, &copy)?;
         self.state = state;
         self.copy = copy;
         if !ready {
@@ -511,9 +479,7 @@ impl OpenSession {
     /// submit の確定後にセッションを消す。消した後の保存は無視する。
     pub fn delete(&mut self) -> Result<(), SessionError> {
         self.lifecycle = Lifecycle::Deleted;
-        // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
-        self.remove_file()?;
-        self.remove_payload_file()?;
+        self.remove_session_and_copy()?;
         remove_dir_if_present(&files_path(&self.dir, &self.info.id))?;
         remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))
     }
@@ -599,13 +565,11 @@ impl OpenSession {
         }
         self.lifecycle = Lifecycle::Suspended;
         if self.info.mode.is_live() && !self.state.has_conversation() {
-            self.remove_file()?;
-            self.remove_payload_file()?;
+            self.remove_session_and_copy()?;
             return remove_dir_if_present(&files_path(&self.dir, &self.info.id));
         }
         if !self.info.mode.is_live() && self.state.is_empty() && !self.has_copy() {
-            self.remove_file()?;
-            self.remove_payload_file()?;
+            self.remove_session_and_copy()?;
         }
         Ok(())
     }
@@ -728,6 +692,23 @@ impl OpenSession {
         remove_if_present(&payload_path(&self.dir, &self.info.id))
     }
 
+    /// `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
+    fn remove_session_and_copy(&self) -> Result<(), SessionError> {
+        self.remove_file()?;
+        self.remove_payload_file()
+    }
+
+    /// 停止の後に届いた保存を断る。submit や保留が片付けたファイルを作り直さない。
+    fn ensure_active(&self) -> Result<(), SessionError> {
+        if self.lifecycle == Lifecycle::Active {
+            return Ok(());
+        }
+        Err(SessionError::Unusable {
+            id: self.info.id.clone(),
+            reason: "the review is stopping".into(),
+        })
+    }
+
     fn has_copy(&self) -> bool {
         matches!(self.copy, CopyState::Ready(_))
     }
@@ -753,7 +734,7 @@ impl OpenSession {
             // 書いており、保留で終わるときに消すかを決める（`close_suspended`）。
             return self.remove_file();
         }
-        self.write_session()?;
+        self.write_session(&self.info, &self.state, &self.copy)?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
     }
@@ -772,7 +753,7 @@ impl OpenSession {
         }
         write_atomic(&self.dir, &payload_path(&self.dir, &self.info.id), payload)?;
         self.copy = CopyState::Ready(copy);
-        self.write_session()?;
+        self.write_session(&self.info, &self.state, &self.copy)?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
     }
@@ -787,8 +768,14 @@ impl OpenSession {
         self.remove_payload_file()
     }
 
-    fn write_session(&self) -> Result<(), SessionError> {
-        let meta = MetaDto::from_parts(&self.info, &self.state, &self.copy);
+    /// `<id>.session` を書く。`info` の id はこのセッションのもの。
+    fn write_session(
+        &self,
+        info: &SessionInfo,
+        state: &SessionState,
+        copy: &CopyState,
+    ) -> Result<(), SessionError> {
+        let meta = MetaDto::from_parts(info, state, copy);
         let meta = serde_json::to_vec(&meta).map_err(|error| SessionError::Encode {
             reason: error.to_string(),
         })?;
