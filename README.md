@@ -201,6 +201,7 @@ in `docs/spec/` are the authoritative contracts and are written in Japanese.
 |---|---|
 | Input modes, flags, manifests, focus files, and digest | [Input reference](skills/kemi/references/inputs.md) |
 | Agent replies and feedback delivery | [Conversation reference](skills/kemi/references/conversation.md) |
+| What an explanation should say, and diagram templates | [Writing explanations](skills/kemi/references/explanation-writing.md) |
 | Explanation JSON, references, and updates | [Explanation reference](skills/kemi/references/explanation.md) |
 | Result JSON and saved results | [Result reference](skills/kemi/references/results.md) |
 | Interrupted reviews and saved sessions | [Resume reference](skills/kemi/references/resume.md) |

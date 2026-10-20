@@ -33,14 +33,28 @@ manifest's `approval` is returned unchanged, not checked by kemi.
 ## Prepare the explanation before handing off
 
 For a human judgment or approval handoff, save an explanation in the review before sharing
-its URL. State what changed and why, what the person should judge, and unverified points or
-caveats. Separate independently judgeable points into commentable blocks; one short text
-block is enough for a small change. Use typed Code references where they help the person
-inspect evidence, not hashes as navigation. A diagram is optional, not a required chapter.
+its URL. The explanation is where the person reads the change; the diff, specification, or
+plan is the evidence behind it. Reviews are rare and decide what gets built, so write for a
+reader who has seen neither the session nor the diff: what behaves differently and how it
+works, why this way rather than the alternatives, what they must decide and what each option
+changes, what was decided without them, and what is unverified or could go wrong. Show
+mechanisms with diagrams, pseudocode, before-and-after examples, and tables, and define terms
+coined during the work. Length follows what there is to explain and what the change decides,
+not the size of the diff: one block can carry a one-line fix, while a specification or plan
+needs the full treatment. Separate independently judgeable points into commentable blocks. Use
+typed Code references where they help the person inspect evidence, not hashes as navigation.
 This requirement does not apply to self-inspection, `--digest`, or stored-result retrieval.
 
-Read [explanation authoring](references/explanation.md#adding-an-explanation) before a new
-handoff: write a separate JSON file with only `sections`, then pass `--explanation <file>`
+The person will not read the diff to catch what the explanation gets wrong, so check it before
+sharing the URL. Unless the change has no structure or logic to show and its whole explanation
+is a sentence or two, a reader without the session first restates the change from the
+explanation alone, then compares it with the reviewed diff; fix every misreading and every
+mismatch, and report both results in the handoff, or that no such reader was available.
+
+Before a new handoff, read [writing explanations](references/explanation-writing.md) for the
+content, tested diagram templates, and the evidence to show at handoff, and
+[explanation authoring](references/explanation.md#adding-an-explanation) for the format: write
+a separate JSON file with only `sections`, then pass `--explanation <file>`
 with the input mode. Startup validates and saves it before publishing the review; failure
 exits `2` before any URL. Do not fetch context for a review that has not started.
 For an already running or resumed review, read [the update procedure](references/explanation.md#updating-the-explanation)

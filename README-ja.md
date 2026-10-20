@@ -195,6 +195,7 @@ kemiはこれらの設定を変更しません。
 |---|---|
 | 入力モード、フラグ、manifest、focusファイル、digest | [入力の参照資料](skills/kemi/references/inputs.md)（英語） |
 | エージェントの返信とフィードバックの受け渡し | [会話の参照資料](skills/kemi/references/conversation.md)（英語） |
+| 説明文書に書く内容と図の雛形 | [説明文書の書き方](skills/kemi/references/explanation-writing.md)（英語） |
 | 説明文書のJSON、参照、更新 | [説明文書の参照資料](skills/kemi/references/explanation.md)（英語） |
 | 結果のJSONと保存済みの結果 | [結果の参照資料](skills/kemi/references/results.md)（英語） |
 | 中断したレビューと保存済みセッション | [再開の参照資料](skills/kemi/references/resume.md)（英語） |

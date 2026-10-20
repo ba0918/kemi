@@ -6,10 +6,13 @@ For a new human handoff, author the explanation before starting kemi. The initia
 JSON file has **only** `sections`; the server sets revision 1 and the initial metadata base.
 Do not use `--context` at this stage: there is no running review id yet.
 
-1. State the change and reason, requested judgment, and unverified points or caveats.
+1. Decide the content with [writing explanations](explanation-writing.md): what changes and
+   how it works, why, the decisions requested, what was decided without the person, and what
+   is unverified, shown with diagrams, pseudocode, and examples where the change has structure
+   or logic.
 2. Split independently judgeable points into separate blocks so each can receive its own
-   comment. Keep a block's stable id when updating the same point. One short text block can
-   cover a small change; neither three chapters nor references on every block are required.
+   comment. Keep a block's stable id when updating the same point. The number of blocks follows
+   the content; references are needed only where they help the person inspect evidence.
 3. Attach typed Code references where inspecting a particular reviewed file helps judgment.
    Use known input group/path/side values; leave both line bounds null when counts are unknown.
    Keep approval hashes in the approval record, not long identity lists in the explanation:
@@ -45,6 +48,8 @@ blocks, and 0–32 references per block, within 524,288 UTF-8 bytes of string va
 
 This complete synthetic initial document assumes the working-tree input contains the
 new side of `web/submit.js`. Replace its content and target with the actual reviewed input.
+It shows the format only; a real handoff carries the content that
+[writing explanations](explanation-writing.md) describes.
 Each judgment is a separate text block; the snippet is separately commentable too:
 
 ```json
@@ -93,6 +98,10 @@ whole-file reference both line bounds are null. A line reference requires known 
 and two 1-based inclusive integers with start ≤ end, within that side's total. Diff statistics
 are not total line counts. Valid whole-file references to the opposite commit grouping are
 accepted at startup before its full list is built; do not invent counts to target lines.
+Startup rejects a line reference whose total is unknown with `line count is unknown for this
+display version`, which is the usual case for git inputs. Use a whole-file reference there and
+name the heading or function in the block text. For a later update, context reports
+`old_lines`/`new_lines` only where they are known.
 
 A Page reference is exactly `{"type":"page","url":"/products?x=1"}` with the live path/query,
 not the review URL or an arbitrary external URL. It must already be registered in the review;
@@ -105,22 +114,25 @@ existence; Page registration is still required. Navigation resolves against the 
 imported Code list or registered live Page. Missing targets show a reason rather than guessing
 a replacement, importing a newer list, or silently shortening a line range.
 
-### Minimal diagram guidance
+### Diagram parts
 
-Use a diagram only when order, branching, or relationships are clearer visually than in a
-short paragraph. Give it its own block id and choose `diagram`, `sequence`, or `flow` with
-`title` and `role`. A minimal sequence part (one request, no invented response) is:
+Give each diagram its own block id. Which part to use for what is in
+[writing explanations](explanation-writing.md#choosing-the-part); tested templates and the layout
+rules that make a diagram fail are in its [diagram templates](explanation-writing.md#diagram-templates).
+Every diagram part has `type`, `title`, and `role`, plus:
 
-```json
-{"type":"sequence","title":"Submission example","role":"example","participants":[{"id":"reader","label":"Reader"},{"id":"server","label":"Server"}],"events":[{"type":"message","from":"reader","to":"server","label":"Submit verdict","kind":"call"}]}
-```
+| Type | Fields |
+|---|---|
+| `diagram` (grid) | `source`: lines of `id = label` (`id = ? label` draws a dashed box), rows `\| a \| b \| . \|` placing ids (`.` is empty), and `a -> b : label` edges |
+| `sequence` | `participants`: `{id,label,x?}`, left to right. `events`: `{type:"message",from,to,label,kind,gap_after?}` with `kind` `call` (solid) or `return` (dashed); `{type:"alt",branches:[{condition,messages}],gap_after?}` with 2–8 branches; `{type:"loop",condition,messages,gap_after?}`. Frames do not nest. Optional `layout` `{participant_gap,event_gap,self_loop_width}` and `canvas` `{width,height}` |
+| `flow` | `nodes`: `{id,kind,label,position?,width?,height?}` with `kind` `start`, `end`, `process`, or `decision` and `position` `{x,y}` the centre. `edges`: `{from,to,from_port?,to_port?,via?,label?}` with ports `north`, `east`, `south`, `west` (default south to north), `via` a list of `{x,y}`, and `label` `{text,position?}`; every edge leaving a decision needs a label. Optional `canvas` |
 
-Wrap it in a block with `id`, `part`, and `references` just like text. Do not use Markdown
-images as diagrams: they do not load. Structurally valid diagrams may still fail browser
-layout, which shows the reason and complete original JSON, not proof the diagram is correct.
-For richer diagrams or boundary-size documents, consult the
+A sequence allows up to 12 participants and 96 messages; a flow up to 32 nodes and 64 edges;
+coordinates are integers from 0 to 8192. Wrap a diagram in a block with `id`, `part`, and
+`references` just like text. Do not use Markdown images as diagrams: they do not load.
+Structurally valid diagrams may still fail browser layout, which shows the reason and complete
+original JSON, not proof the diagram is correct. For boundary-size documents, consult the
 [part fields and limits](https://github.com/ba0918/kemi/blob/main/docs/spec/content-parts.md).
-Ordinary text/code blocks and references need no remote specification lookup.
 
 An initial document opens EXPLANATION with a contents list; Conversation is shared with
 Code/Page. Without a document the explanation switch is disabled until an update adds one.
