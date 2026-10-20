@@ -226,6 +226,22 @@ export function appendSegments(parent, segments, fallback) {
 }
 
 /**
+ * 文字列をクリップボードへ写す。写せたら null、写せなければその理由を返す。安全でない接続
+ * （--bind で LAN のアドレスに http で開いた）では navigator.clipboard が無く、呼ぶとその場で
+ * 投げるので、それも理由として返す。
+ * @param {string} text
+ * @returns {Promise<string | null>}
+ */
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+}
+
+/**
  * 描き直しで作り直す操作にフォーカスがあれば、その操作の鍵（data-focus-key）。
  * 作り直した後に同じ鍵の要素へフォーカスを戻し、キーボードの操作を続けられるようにする。
  * @param {HTMLElement} container

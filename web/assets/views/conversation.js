@@ -7,7 +7,7 @@
 import { actions } from "../actions.js";
 import { contentView, partView } from './parts.js';
 import { explanationReferences } from './explanation.js';
-import { button, dom, el, textEl } from "../dom.js";
+import { button, copyText, dom, el, textEl } from "../dom.js";
 import {
   commitGroups,
   conversationShown,
@@ -158,14 +158,9 @@ function renderHandNote(note, control) {
   const copy = button("hand-copy");
   copy.textContent = "Copy";
   copy.title = `Copy ${command}`;
-  // 安全でない接続（--bind で LAN のアドレスに http で開いた）では navigator.clipboard が無く、呼ぶとその場で投げる。
   copy.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      copy.textContent = "Copied";
-    } catch (error) {
-      copy.textContent = `Could not copy: ${error}`;
-    }
+    const failure = await copyText(command);
+    copy.textContent = failure === null ? "Copied" : `Could not copy: ${failure}`;
   });
   note.append(" ", code, copy);
 }

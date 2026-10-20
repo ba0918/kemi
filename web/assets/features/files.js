@@ -4,7 +4,7 @@
 import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
 import * as api from "../api.js";
 import { actions } from "../actions.js";
-import { dom } from "../dom.js";
+import { copyText, dom } from "../dom.js";
 import {
   currentEntry,
   currentUnit,
@@ -324,17 +324,17 @@ async function loadOrigin(entry) {
  * @param {HTMLButtonElement} element
  */
 export async function copyPath(path, element) {
-  try {
-    await navigator.clipboard.writeText(path);
-    element.classList.add("copied");
-    element.title = "Copied";
-    window.setTimeout(() => {
-      element.classList.remove("copied");
-      element.title = "Copy path";
-    }, 1_500);
-  } catch (error) {
-    showOverlay("could not copy", String(error));
+  const failure = await copyText(path);
+  if (failure !== null) {
+    showOverlay("could not copy", failure);
+    return;
   }
+  element.classList.add("copied");
+  element.title = "Copied";
+  window.setTimeout(() => {
+    element.classList.remove("copied");
+    element.title = "Copy path";
+  }, 1_500);
 }
 
 /**

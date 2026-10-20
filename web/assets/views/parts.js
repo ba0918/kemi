@@ -1,6 +1,6 @@
 // @ts-check
 import { actions } from '../actions.js';
-import { COPY_ICON, el, iconButton, textEl } from '../dom.js';
+import { COPY_ICON, copyText, el, iconButton, textEl } from '../dom.js';
 import { diagramViewport } from './diagrams/viewport.js';
 import { gridView } from './diagrams/grid.js';
 
@@ -57,8 +57,9 @@ function copyCodeButton(body) {
   // コピーのラベルは、Explanation の選択・引用する本文には含めない。
   copy.setAttribute('data-explanation-injected', '');
   copy.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(body); labelCopy(copy, 'Copied', true); }
-    catch (error) { labelCopy(copy, `Could not copy: ${error}`, false); }
+    const failure = await copyText(body);
+    if (failure === null) labelCopy(copy, 'Copied', true);
+    else labelCopy(copy, `Could not copy: ${failure}`, false);
   });
   return copy;
 }
