@@ -20,7 +20,6 @@ pub(crate) struct Cli {
     pub no_open: bool,
     pub digest: bool,
     pub digest_top: usize,
-    pub serve: bool,
     pub out: Option<String>,
     pub result: bool,
     pub any: bool,
@@ -50,7 +49,6 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, String> {
         no_open: false,
         digest: false,
         digest_top: 100,
-        serve: false,
         out: None,
         result: false,
         any: false,
@@ -114,7 +112,8 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, String> {
                     .parse()
                     .map_err(|_| "--digest-top requires a number".to_string())?
             }
-            "--serve" => cli.serve = true,
+            // 互換のための受理のみ。既定で常にサーブする（R-INPUT-6）。
+            "--serve" => {}
             "--out" => cli.out = Some(value(&mut index)?),
             "--result" => cli.result = true,
             "--any" => cli.any = true,

@@ -124,6 +124,21 @@ fn bind_rejects_hostname_ipv6_and_result_or_digest_combinations() {
     }
 }
 
+/// `--serve` は互換のために受け付けるだけで、付けても今どおりサーブする（R-INPUT-6）。
+#[test]
+fn serve_flag_is_accepted_for_compatibility_and_the_review_starts() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+
+    let kemi = Kemi::spawn(
+        &dir.path,
+        &["--worktree", "--serve", "--no-open", "--port", "0"],
+    );
+
+    assert!(kemi.url.starts_with("http://127.0.0.1:"), "{}", kemi.url);
+    kemi.kill();
+}
+
 #[test]
 fn cli_out_rejected_with_reason() {
     let dir = TempDir::new();

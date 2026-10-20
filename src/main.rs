@@ -614,8 +614,6 @@ async fn run_review(
     live: Option<LiveRun>,
     initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
 ) -> ! {
-    // --serve は互換のための受理のみ。既定で常にサーブする。
-    let _ = cli.serve;
     // シグナルの受け口は URL を出す前に作る。URL を見てすぐ Ctrl+C しても、
     // 保留として 130 で終われるように（R-SESSION）。
     #[cfg(unix)]
