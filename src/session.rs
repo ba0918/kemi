@@ -90,6 +90,36 @@ mod tests {
     }
 
     #[test]
+    fn list_line_has_five_tab_separated_columns_with_tabs_and_newlines_as_spaces() {
+        let mut listed = summary(
+            "01HF7YAT00AAAAAAAAAAAAAAAA",
+            1_700_000_000_000,
+            SessionMode::Manifest,
+            1,
+        );
+        listed.title = "a\tb\nc\rd".to_string();
+        listed.workspace = PathBuf::from("/tmp/work\tspace");
+
+        let line = list_line(&listed);
+
+        let columns: Vec<&str> = line.split('\t').collect();
+        let updated = local_time::format_local(1_700_000_000_000);
+        assert_eq!(
+            columns,
+            vec![
+                "01HF7YAT00AAAAAAAAAAAAAAAA",
+                updated.as_str(),
+                "/tmp/work space",
+                "a b c d",
+                "1/4",
+            ],
+            "{line:?}"
+        );
+        assert_eq!(updated.len(), "YYYY-MM-DD HH:MM".len());
+        assert!(!line.contains('\n') && !line.contains('\r'), "{line:?}");
+    }
+
+    #[test]
     fn select_labels_align_the_five_columns_and_sanitize_values() {
         let sessions = vec![
             summary(

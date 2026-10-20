@@ -285,17 +285,19 @@ async fn resume_of_a_running_session_exits_2() {
     kemi.kill();
 }
 
+/// 列の中身は session.rs の単体テストが、並び順は kemi-core のセッションの一覧のテストが
+/// 確かめる。ここは保留したセッションごとに 5 列の 1 行が出ることだけを見る。
 #[test]
-fn resume_without_an_id_lists_five_columns_newest_first() {
+fn resume_without_an_id_lists_each_session_in_five_columns() {
     let dir = TempDir::new();
     let state = TempDir::new();
-    let older = "01HF7YAT00AAAAAAAAAAAAAAAA";
-    let newer = "01HF7YAT00BBBBBBBBBBBBBBBB";
-    craft_session(&state.path, older, SessionMode::Manifest, "a\tb\nc");
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    let first = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let second = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    // タブと改行を含むタイトルでも、行と列は崩れない。
+    craft_session(&state.path, first, SessionMode::Manifest, "a\tb\nc");
     craft_session(
         &state.path,
-        newer,
+        second,
         SessionMode::Worktree,
         "Working tree changes",
     );
@@ -309,16 +311,16 @@ fn resume_without_an_id_lists_five_columns_newest_first() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{stdout}");
-    assert!(lines[0].starts_with(newer), "{stdout}");
-    assert!(lines[1].starts_with(older), "{stdout}");
-    let columns: Vec<&str> = lines[1].split('\t').collect();
-    assert_eq!(columns.len(), 5, "{stdout}");
-    assert_eq!(columns[3], "a b c");
-    assert_eq!(columns[4], "1/1");
-    assert!(columns[1].len() == 16, "timestamp: {}", columns[1]);
-    assert!(!lines[1].contains('\n'));
+    let mut ids: Vec<&str> = stdout
+        .lines()
+        .map(|line| {
+            let columns: Vec<&str> = line.split('\t').collect();
+            assert_eq!(columns.len(), 5, "{stdout}");
+            columns[0]
+        })
+        .collect();
+    ids.sort();
+    assert_eq!(ids, vec![first, second], "{stdout}");
 }
 
 #[test]
