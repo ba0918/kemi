@@ -486,32 +486,15 @@ export async function expandSkip(index) {
 async function expandSkipAt(index) {
   const entry = currentEntry();
   const skip = state.rows[index];
-  if (
-    !entry ||
-    !skip ||
-    skip.kind !== "skip" ||
-    skip.from === undefined ||
-    skip.to === undefined
-  ) {
+  if (!entry || !isExpandable(skip)) {
     return false;
   }
   const generation = state.selectGeneration;
   const cacheKey = state.cacheKey;
-  /** @type {LogicalRow[]} */
-  const replacement = [];
-  let from = Number(skip.from);
-  const to = Number(skip.to);
-  while (from < to) {
-    const data = await api.getFile(entry.file.id, { from, to }, colorOptions(entry.file.id));
-    if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
-      // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
-      return false;
-    }
-    replacement.push(...(data.rows || []));
-    if (data.next === null || data.next === undefined) {
-      break;
-    }
-    from = Number(data.next);
+  const replacement = await fetchSkipRows(entry, skip, generation, cacheKey);
+  if (replacement === null) {
+    // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
+    return false;
   }
   if (state.rows[index] !== skip) {
     // 同じ折りたたみが先に展開された。取得前の位置へ挿すと表示行が重複する。
@@ -527,6 +510,89 @@ async function expandSkipAt(index) {
   return true;
 }
 
+/**
+ * @param {LogicalRow | undefined} row
+ * @returns {boolean}
+ */
+function isExpandable(row) {
+  return Boolean(row && row.kind === "skip" && row.from !== undefined && row.to !== undefined);
+}
+
+/**
+ * 折りたたみの行を、サーバの残りが尽きるまで取る。取得中にファイルや表示条件が変わったら null。
+ * @param {Entry} entry
+ * @param {LogicalRow} skip
+ * @param {number} generation 取り始めた時の選択の世代
+ * @param {string} cacheKey 取り始めた時のキャッシュの鍵
+ * @returns {Promise<LogicalRow[] | null>}
+ */
+async function fetchSkipRows(entry, skip, generation, cacheKey) {
+  /** @type {LogicalRow[]} */
+  const replacement = [];
+  let from = Number(skip.from);
+  const to = Number(skip.to);
+  while (from < to) {
+    const data = await api.getFile(entry.file.id, { from, to }, colorOptions(entry.file.id));
+    if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
+      return null;
+    }
+    replacement.push(...(data.rows || []));
+    if (data.next === null || data.next === undefined) {
+      break;
+    }
+    from = Number(data.next);
+  }
+  return replacement;
+}
+
+/**
+ * 取った行を、元の折りたたみの位置へ差し込んだ並び。折りたたみは行のオブジェクトで見分けるので、
+ * 取っている間に別の操作で開いた（並びから消えた）ものは差し込まない（表示行を重複させない）。
+ * @param {LogicalRow[]} rows
+ * @param {Map<LogicalRow, LogicalRow[]>} expanded
+ * @returns {LogicalRow[]}
+ */
+function withExpanded(rows, expanded) {
+  /** @type {LogicalRow[]} */
+  const result = [];
+  for (const row of rows) {
+    const replacement = expanded.get(row);
+    if (!replacement) {
+      result.push(row);
+      continue;
+    }
+    // 50 万行の展開では、行を引数に展開する push が引数の上限を超えて失敗する。
+    for (const line of replacement) {
+      result.push(line);
+    }
+  }
+  return result;
+}
+
+/**
+ * 全行の展開で読み終えた行を差し込む。表示中のファイルなら表示行を 1 回だけ作り直す。取得中に
+ * 別のファイルや表示条件へ切り替わっていたら、取り始めたファイルのキャッシュにだけ入れる。
+ * @param {Map<LogicalRow, LogicalRow[]>} expanded
+ * @param {string} cacheKey
+ * @param {boolean} showing
+ */
+function storeExpanded(expanded, cacheKey, showing) {
+  if (expanded.size === 0) {
+    return;
+  }
+  if (!showing) {
+    const data = state.cache.get(cacheKey);
+    if (data) {
+      state.cache.set(cacheKey, { ...data, rows: withExpanded(data.rows, expanded) });
+    }
+    return;
+  }
+  const rows = withExpanded(state.rows, expanded);
+  state.rows = rows;
+  state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
+  recomputeDisplay();
+}
+
 export async function expandAll() {
   const entry = currentEntry();
   if (!entry) {
@@ -537,19 +603,35 @@ export async function expandAll() {
   }
   const generation = state.selectGeneration;
   const cacheKey = state.cacheKey;
-  let index = 0;
-  while (index < state.rows.length) {
-    if (state.rows[index].kind !== "skip") {
-      index += 1;
-      continue;
+  const showing = () => generation === state.selectGeneration && cacheKey === state.cacheKey;
+  // 取るのは 1 つずつ順に。表示行の作り直しと描き直しは、全部を差し込んでから 1 回だけにする
+  // （折りたたみごとに作り直すと O(折りたたみ × 行数)）。
+  /** @type {Map<LogicalRow, LogicalRow[]>} */
+  const expanded = new Map();
+  try {
+    for (const skip of state.rows.filter((row) => row.kind === "skip")) {
+      if (!isExpandable(skip)) {
+        break;
+      }
+      const replacement = await fetchSkipRows(entry, skip, generation, cacheKey);
+      if (replacement === null) {
+        break;
+      }
+      expanded.set(skip, replacement);
     }
-    const expanded = await expandSkipAt(index);
-    if (!expanded) {
-      break;
+  } catch (error) {
+    // 読めなかった折りたたみの手前までは、開いた形で残す。
+    const shown = showing();
+    storeExpanded(expanded, cacheKey, shown);
+    if (shown && expanded.size > 0) {
+      renderDiff();
+      renderFloating();
     }
-    index += 1;
+    throw error;
   }
-  if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
+  const shown = showing();
+  storeExpanded(expanded, cacheKey, shown);
+  if (!shown) {
     // 取得中に別のファイルへ切り替わった。新しい選択が描画する。
     return;
   }
