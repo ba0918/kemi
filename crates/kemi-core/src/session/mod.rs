@@ -464,6 +464,74 @@ mod tests {
         }
     }
 
+    /// c3（返信 r5）と発言 m2 を持つ状態。通し番号は書いた順に 1, 2, 3 で、
+    /// `largest_seq_at` の位置のものにだけ 9 を振る。
+    fn restored_contents(largest_seq_at: usize) -> SessionState {
+        let mut seqs = [1, 2, 3];
+        seqs[largest_seq_at] = 9;
+        let mut c3 = comment("c3");
+        c3.seq = seqs[0];
+        c3.replies.push(Reply {
+            id: "r5".to_string(),
+            seq: seqs[1],
+            author: Author::Reviewer,
+            body: "reply".into(),
+        });
+        SessionState {
+            comments: vec![c3],
+            messages: vec![Message {
+                id: "m2".to_string(),
+                seq: seqs[2],
+                author: Author::Agent,
+                body: "message".into(),
+            }],
+            ..SessionState::default()
+        }
+    }
+
+    #[test]
+    fn restoring_continues_numbering_from_the_contents_above_the_saved_counters() {
+        // コメント・返信・発言のどれが最後の通し番号を持っていても、その番号から続ける。
+        for largest_seq_at in 0..3 {
+            let restored = restored_contents(largest_seq_at).prepare_for_restore();
+
+            assert_eq!(
+                (
+                    restored.last_comment,
+                    restored.last_reply,
+                    restored.last_message,
+                    restored.last_seq
+                ),
+                (3, 5, 2, 9),
+                "the largest sequence number is at {largest_seq_at}"
+            );
+        }
+    }
+
+    #[test]
+    fn restoring_keeps_saved_counters_above_the_contents() {
+        // 消したコメント・返信・発言の番号は、中身から消えても再利用しない（R-COMMENT）。
+        let state = SessionState {
+            last_comment: 10,
+            last_reply: 20,
+            last_message: 30,
+            last_seq: 40,
+            ..restored_contents(0)
+        };
+
+        let restored = state.prepare_for_restore();
+
+        assert_eq!(
+            (
+                restored.last_comment,
+                restored.last_reply,
+                restored.last_message,
+                restored.last_seq
+            ),
+            (10, 20, 30, 40)
+        );
+    }
+
     #[test]
     fn agent_writes_continue_ids_and_share_the_sequence_in_input_order() {
         let existing_message = Message {
