@@ -25,27 +25,29 @@ async fn submit_with_events_open_exits_with_json() {
     assert_eq!(document["verdict"], "approved");
 }
 
+/// 組めないフラグの判定は cli.rs の単体テストが確かめる。ここは拒否が終了コードと stderr に
+/// 届く配線だけを見る。
 #[test]
-fn cli_result_usage_errors_exit_2() {
+fn result_refuses_other_flags_in_english() {
     let dir = TempDir::new();
-    two_commit_repo(&dir);
-    dir.write("manifest.json", MANIFEST);
+    let state = TempDir::new();
+    // 結果を 1 件置く。拒否が無ければ、それを出して 0 で終わる。
+    kemi_core::result::save(
+        &results_dir(&state.path),
+        "00000000000000aa",
+        r#"{"kemi":3,"verdict":"approved"}"#,
+        1,
+        1,
+    )
+    .unwrap();
 
-    for args in [
-        &["--result", "--from", "HEAD~1"][..],
-        &["--result", "--port", "0"],
-        &["--result", "--worktree"],
-        &["--result", "manifest.json"],
-        &["--result", "--digest"],
-        &["--any"],
-        &["--workspace", "."],
-        &["--result", "--any", "--workspace", "."],
-        &["--worktree", "--group-by", "commit"],
-    ] {
-        let output = run(&dir.path, args);
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
-    }
+    let output = run_with_state(&dir.path, &["--result", "--any", "--worktree"], &state.path);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.is_empty());
+    assert!(!contains_japanese(&stderr), "{stderr}");
 }
 
 #[cfg(unix)]

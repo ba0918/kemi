@@ -68,31 +68,27 @@ async fn result_not_written_on_interrupt_or_runtime_error() {
     assert!(result_files(&state.path).is_empty());
 }
 
+/// 組めないフラグの判定は cli.rs の単体テストが確かめる。ここは拒否が終了コードと stderr に
+/// 届く配線だけを見る。
 #[test]
-fn resume_flag_conflicts_exit_2_in_english() {
+fn resume_refuses_other_flags_in_english() {
     let dir = TempDir::new();
-    let cases: &[&[&str]] = &[
-        &["--resume", "--digest"],
-        &["--resume", "--digest-top", "3"],
-        &["--resume", "--worktree"],
-        &["--resume", "--staged"],
-        &["--resume", "--from", "HEAD"],
-        &["--resume", "--group-by", "commit"],
-        &["--resume", "--base", "."],
-        &["--resume", "--focus", "focus.json"],
-        &["--resume", "--result"],
-        &["--resume", "--any"],
-        &["--resume", "--workspace", "."],
-        &["--worktree", "--resume"],
-    ];
-    for args in cases {
-        let output = run(&dir.path, args);
-        assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
-        assert!(output.stdout.is_empty(), "kemi {args:?}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!stderr.is_empty(), "kemi {args:?}");
-        assert!(!contains_japanese(&stderr), "kemi {args:?}: {stderr}");
-    }
+    let state = TempDir::new();
+    // 復元できるセッションを置く。拒否が無ければ、一覧を出して 0 で終わる。
+    craft_session(
+        &state.path,
+        "01HF7YAT00AAAAAAAAAAAAAAAA",
+        SessionMode::Worktree,
+        "Working tree changes",
+    );
+
+    let output = run_with_state(&dir.path, &["--resume", "--digest"], &state.path);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.is_empty());
+    assert!(!contains_japanese(&stderr), "{stderr}");
 }
 
 #[cfg(unix)]

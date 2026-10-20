@@ -12,18 +12,13 @@ fn live_usage_errors_exit_2_in_english() {
     let cases: Vec<Vec<&str>> = vec![
         vec!["--live", "http://example.com/"],
         vec!["--live", "https://localhost:5173/"],
-        vec!["--live", "http://localhost:5173/", "--worktree"],
+        // --live と組めないフラグの判定は cli.rs の単体テストが確かめる。ここはその拒否の
+        // 配線だけを見る（拒否が無ければ作業ツリーの digest を出して 0 で終わる）。
         vec!["--live", "http://localhost:5173/", "--digest"],
-        vec!["--live", "http://localhost:5173/", "--staged"],
-        vec!["--live", "http://localhost:5173/", "--from", "HEAD"],
-        vec!["--live", "http://localhost:5173/", "--base", "."],
-        vec!["--live", "http://localhost:5173/", "--digest-top", "3"],
-        vec!["--live", "http://localhost:5173/", "--result"],
         vec!["--live", outside_page],
         vec!["--live", "notes.txt"],
         vec!["--live", "missing.html"],
         vec!["--live"],
-        vec!["--worktree", "--live-port", "0"],
     ];
     for args in &cases {
         // 退行で受け入れてサーブを始めても、ブラウザを開かず空いたポートで待つように。

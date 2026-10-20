@@ -442,13 +442,9 @@ fn initial_explanation_exclusions_and_bad_inputs_never_start_a_review_or_print_s
             "--port",
             "0",
         ],
+        // --explanation と組めないモードの判定は cli.rs と agent.rs の単体テストが確かめる。
+        // ここは --digest との拒否の配線だけを見る（拒否が無ければ digest を出して 0 で終わる）。
         vec!["manifest.json", "--digest", "--explanation", "bad.json"],
-        vec!["--resume", "--explanation", "bad.json"],
-        vec!["--result", "--explanation", "bad.json"],
-        vec!["reply", "id", "--explanation", "bad.json"],
-        vec!["wait", "id", "--explanation", "bad.json"],
-        vec!["explain", "id", "--context", "--file", "bad.json"],
-        vec!["explain", "id", "--explanation", "bad.json"],
     ] {
         let result = run(&workspace.path, &args);
         assert_eq!(result.status.code(), Some(2), "{args:?}");

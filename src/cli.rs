@@ -377,6 +377,165 @@ mod tests {
         }
     }
 
+    /// `prefix` の後ろに `flag` を足した引数。
+    fn with(prefix: &[&'static str], flag: &[&'static str]) -> Vec<&'static str> {
+        [prefix, flag].concat()
+    }
+
+    #[test]
+    fn result_accepts_only_any_or_workspace() {
+        for args in [
+            &["--worktree"][..],
+            &["--result"],
+            &["--result", "--any"],
+            &["--result", "--workspace", "."],
+        ] {
+            assert_eq!(validate_result_flags(&parse(args)), Ok(()), "{args:?}");
+        }
+        for args in [
+            &["--any"][..],
+            &["--workspace", "."],
+            &["--result", "--any", "--workspace", "."],
+            &["manifest.json", "--result"],
+        ] {
+            assert!(validate_result_flags(&parse(args)).is_err(), "{args:?}");
+        }
+        for flag in [
+            &["--from", "HEAD~1"][..],
+            &["--to", "HEAD"],
+            &["--group-by", "commit"],
+            &["--worktree"],
+            &["--staged"],
+            &["--live", "page.html"],
+            &["--live-port", "0"],
+            &["--focus", "focus.json"],
+            &["--base", "."],
+            &["--port", "0"],
+            &["--bind", "127.0.0.1"],
+            &["--no-open"],
+            &["--serve"],
+            &["--digest"],
+            &["--digest-top", "3"],
+            &["--explanation", "e.json"],
+            &["--resume"],
+        ] {
+            let args = with(&["--result"], flag);
+            assert!(validate_result_flags(&parse(&args)).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn resume_accepts_only_the_flags_for_serving() {
+        for args in [
+            &["--worktree"][..],
+            &["--resume"],
+            &["--resume", "01HF7YAT00AAAAAAAAAAAAAAAA"],
+            &[
+                "--resume",
+                "--port",
+                "0",
+                "--bind",
+                "127.0.0.1",
+                "--no-open",
+                "--serve",
+                "--live-port",
+                "0",
+            ],
+        ] {
+            assert_eq!(validate_resume_flags(&parse(args)), Ok(()), "{args:?}");
+        }
+        assert!(validate_resume_flags(&parse(&["manifest.json", "--resume"])).is_err());
+        for flag in [
+            &["--from", "HEAD"][..],
+            &["--to", "HEAD"],
+            &["--group-by", "commit"],
+            &["--worktree"],
+            &["--staged"],
+            &["--live", "page.html"],
+            &["--focus", "focus.json"],
+            &["--base", "."],
+            &["--digest"],
+            &["--digest-top", "3"],
+            &["--result"],
+            &["--any"],
+            &["--workspace", "."],
+            &["--explanation", "e.json"],
+        ] {
+            let args = with(&["--resume"], flag);
+            assert!(validate_resume_flags(&parse(&args)).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn live_accepts_only_its_own_flags_and_live_port_needs_live_or_resume() {
+        for args in [
+            &["--worktree"][..],
+            &["--resume", "--live-port", "0"],
+            &["--live", "page.html"],
+            &[
+                "--live",
+                "page.html",
+                "--port",
+                "0",
+                "--bind",
+                "127.0.0.1",
+                "--no-open",
+                "--live-port",
+                "0",
+                "--focus",
+                "focus.json",
+                "--explanation",
+                "e.json",
+                "--serve",
+            ],
+        ] {
+            assert_eq!(validate_live_flags(&parse(args)), Ok(()), "{args:?}");
+        }
+        for args in [
+            &["--live-port", "0"][..],
+            &["--worktree", "--live-port", "0"],
+            &["manifest.json", "--live", "page.html"],
+        ] {
+            assert!(validate_live_flags(&parse(args)).is_err(), "{args:?}");
+        }
+        for flag in [
+            &["--from", "HEAD"][..],
+            &["--to", "HEAD"],
+            &["--group-by", "commit"],
+            &["--worktree"],
+            &["--staged"],
+            &["--base", "."],
+            &["--digest"],
+            &["--digest-top", "3"],
+            &["--result"],
+            &["--any"],
+            &["--workspace", "."],
+            &["--resume"],
+        ] {
+            let args = with(&["--live", "page.html"], flag);
+            assert!(validate_live_flags(&parse(&args)).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn explanation_is_refused_only_with_digest() {
+        for args in [
+            &["manifest.json", "--explanation", "e.json"][..],
+            &["manifest.json", "--digest"],
+        ] {
+            assert_eq!(validate_explanation_flags(&parse(args)), Ok(()), "{args:?}");
+        }
+        assert!(
+            validate_explanation_flags(&parse(&[
+                "manifest.json",
+                "--digest",
+                "--explanation",
+                "e.json"
+            ]))
+            .is_err()
+        );
+    }
+
     #[test]
     fn mode_validation_preserves_missing_mode_and_conflict_precedence() {
         assert!(matches!(
@@ -390,6 +549,10 @@ mod tests {
         assert!(matches!(
             validate_input_mode(&parse(&["--worktree", "--to", "HEAD"])),
             Err(InputModeError::Message("--to requires --from"))
+        ));
+        assert!(matches!(
+            validate_input_mode(&parse(&["--worktree", "--group-by", "commit"])),
+            Err(InputModeError::Message("--group-by requires --from"))
         ));
     }
 }

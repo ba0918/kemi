@@ -181,27 +181,28 @@ async fn wait_after_the_submit_exits_2_and_points_to_the_result() {
     assert!(stderr.contains("kemi --result"), "{stderr}");
 }
 
-#[test]
-fn wait_and_reply_refuse_other_flags_in_english() {
+/// wait / reply / explain が受けない引数の判定は agent.rs の単体テストが確かめる。ここは
+/// 拒否が終了コードと stderr に届く配線だけを見る。
+#[tokio::test]
+async fn an_agent_command_refuses_a_flag_it_does_not_take_in_english() {
     let dir = TempDir::new();
-    let id = "01HF7YAT00ZZZZZZZZZZZZZZZZ";
-    for args in [
-        vec!["wait", id, "--worktree"],
-        vec!["wait", id, "--no-open"],
-        vec!["wait", "--timeout", "1"],
-        vec!["wait", id, "--timeout", "soon"],
-        vec!["wait"],
-        vec!["reply", id, "--timeout", "1"],
-        vec!["reply"],
-        vec!["reply", id, "extra"],
-    ] {
-        let output = run(&dir.path, &args);
-        assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
-        assert!(output.stdout.is_empty(), "kemi {args:?}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!stderr.is_empty(), "kemi {args:?}");
-        assert!(!contains_japanese(&stderr), "kemi {args:?}: {stderr}");
-    }
+    let state = TempDir::new();
+    // 動いているレビューの id を使う。拒否が無ければ、書き込みを渡して 0 で終わる。
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+
+    let output = run_agent(
+        &dir.path,
+        &state.path,
+        &["reply", &id, "--no-open"],
+        r#"{"writes":[]}"#,
+    );
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.is_empty());
+    assert!(!contains_japanese(&stderr), "{stderr}");
+    kemi.kill();
 }
 
 #[tokio::test]

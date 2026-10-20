@@ -281,6 +281,85 @@ fn failed(message: &str) -> i32 {
 mod tests {
     use super::*;
 
+    fn parse_args(name: &str, args: &[&str]) -> Result<Command, String> {
+        let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+        parse(name, &args)
+    }
+
+    #[test]
+    fn each_command_takes_one_id_and_only_its_own_flags() {
+        assert!(matches!(
+            parse_args("wait", &["ID"]),
+            Ok(Command::Wait { id, timeout: None }) if id == "ID"
+        ));
+        assert!(matches!(
+            parse_args("wait", &["ID", "--timeout", "5"]),
+            Ok(Command::Wait {
+                timeout: Some(5),
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_args("reply", &["ID"]),
+            Ok(Command::Reply { id }) if id == "ID"
+        ));
+        assert!(matches!(
+            parse_args("explain", &["ID"]),
+            Ok(Command::Explain {
+                file: None,
+                context: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_args("explain", &["ID", "--file", "update.json"]),
+            Ok(Command::Explain {
+                file: Some(_),
+                context: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_args("explain", &["ID", "--context"]),
+            Ok(Command::Explain {
+                file: None,
+                context: true,
+                ..
+            })
+        ));
+
+        let refused: &[(&str, &[&str])] = &[
+            ("wait", &[]),
+            ("wait", &["ID", "extra"]),
+            ("wait", &["--timeout", "1"]),
+            ("wait", &["ID", "--timeout"]),
+            ("wait", &["ID", "--timeout", "soon"]),
+            ("wait", &["ID", "--worktree"]),
+            ("wait", &["ID", "--no-open"]),
+            ("wait", &["ID", "--explanation", "e.json"]),
+            ("wait", &["ID", "--file", "update.json"]),
+            ("wait", &["ID", "--context"]),
+            ("reply", &[]),
+            ("reply", &["ID", "extra"]),
+            ("reply", &["ID", "--timeout", "1"]),
+            ("reply", &["ID", "--no-open"]),
+            ("reply", &["ID", "--explanation", "e.json"]),
+            ("reply", &["ID", "--file", "update.json"]),
+            ("reply", &["ID", "--context"]),
+            ("explain", &[]),
+            ("explain", &["ID", "extra"]),
+            ("explain", &["ID", "--file"]),
+            ("explain", &["ID", "--file", "a.json", "--file", "b.json"]),
+            ("explain", &["ID", "--context", "--context"]),
+            ("explain", &["ID", "--context", "--file", "update.json"]),
+            ("explain", &["ID", "--timeout", "1"]),
+            ("explain", &["ID", "--explanation", "e.json"]),
+        ];
+        for (name, args) in refused {
+            assert!(parse_args(name, args).is_err(), "kemi {name} {args:?}");
+        }
+    }
+
     fn handed_answer() -> serde_json::Value {
         serde_json::json!({
             "events": [{ "type": "handed", "comments": [], "replies": [], "messages": [] }],
