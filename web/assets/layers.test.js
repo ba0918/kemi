@@ -69,16 +69,17 @@ function featureOrder() {
 }
 
 /**
- * モジュールの層。features/ の下のディレクトリは同じ名前の feature の一部。
+ * モジュールの層。features/ の下のディレクトリは同じ名前の feature の一部（child）。
  * @param {string} path
- * @returns {{ layer: "app" } | { layer: "feature", name: string } | { layer: "view" } | { layer: "leaf" }}
+ * @returns {{ layer: "app" } | { layer: "feature", name: string, child: boolean } | { layer: "view" } | { layer: "leaf" }}
  */
 function layerOf(path) {
   if (path === "app.js") {
     return { layer: "app" };
   }
   if (path.startsWith("features/")) {
-    return { layer: "feature", name: path.split("/")[1].replace(/\.js$/, "") };
+    const segments = path.split("/");
+    return { layer: "feature", name: segments[1].replace(/\.js$/, ""), child: segments.length > 2 };
   }
   if (path.startsWith("views/")) {
     return { layer: "view" };
@@ -115,7 +116,7 @@ test("import する先はどれも web/assets の中にある", () => {
   assert.deepEqual(missing, []);
 });
 
-test("features は自分より前の feature だけを直接 import する", () => {
+test("features は自分より前の feature だけを直接 import し、features/<name>/ の下は親を import しない", () => {
   const order = featureOrder();
   const unknown = [...graph.keys()]
     .map(layerOf)
@@ -132,7 +133,11 @@ test("features は自分より前の feature だけを直接 import する", () 
       if (source.layer !== "feature" || target.layer !== "feature") {
         return false;
       }
-      return source.name === target.name || order.indexOf(target.name) < order.indexOf(source.name);
+      if (source.name === target.name) {
+        // 親（features/<name>.js）から下のファイルへの向きだけ。下から親を呼ぶときは actions を通す。
+        return !(source.child && !target.child);
+      }
+      return order.indexOf(target.name) < order.indexOf(source.name);
     },
   );
   assert.deepEqual(found, []);
