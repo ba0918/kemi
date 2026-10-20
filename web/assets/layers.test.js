@@ -1,7 +1,7 @@
 // 層の規則（PROJECT.md「web/assets/ の層」）と index.html の modulepreload の一覧を、import 文から確かめる。
 // あわせて index.html の stylesheet の順を確かめる。
-// 辺にするのは行頭（字下げを含む）の静的な import / export … from だけ。JSDoc の import("…") は型だけの
-// 参照で読み込みを生まないので数えない。動的な import(…) は app.js が --live のモジュールを読む所だけに
+// 辺にするのは行頭（字下げを含む）か `;` の後の静的な import / export … from だけ。JSDoc の import("…") は
+// 型だけの参照で読み込みを生まないので数えない。動的な import(…) は app.js が --live のモジュールを読む所だけに
 // 限ることを、別に確かめる。
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -35,13 +35,15 @@ function modules(dir = "") {
  */
 function importsOf(path) {
   const source = readFileSync(join(assets, path), "utf8");
-  const statement = /^\s*(?:import|export)\s*(?:[^;"']*?\bfrom\s*)?["']([^"']+)["']/gm;
+  // 1 行に複数の文を書いた所の 2 つ目以降も拾うよう、行頭に加えて `;` の後も文の始まりとみなす。
+  const statement = /(?:^|;)\s*(?:import|export)\s*(?:[^;"']*?\bfrom\s*)?["']([^"']+)["']/gm;
   const found = [...source.matchAll(statement)];
   // 読めない書き方（波括弧の中の文字列やクォートを含むコメントなど）の import は、黙って辺から外れると
-  // 違反が通る。行頭の import と export … from の数と合わなければ落とす。
+  // 違反が通る。文の始まりの import と export … from の数と合わなければ落とす。import.meta と動的な
+  // import(…)、import で始まる別の語（important など）は文ではないので数えない。
   const starts =
-    [...source.matchAll(/^\s*import\s*[\w*{"']/gm)].length +
-    [...source.matchAll(/^\s*export\s*(?:\*|\{)[^;]*?\bfrom\b/gm)].length;
+    [...source.matchAll(/(?:^|;)\s*import\b(?!\s*[.(])/gm)].length +
+    [...source.matchAll(/(?:^|;)\s*export\s*(?:\*|\{)[^;]*?\bfrom\b/gm)].length;
   assert.equal(found.length, starts, `${path}: 読めない import / export … from がある`);
   return found.map((match) => posix.normalize(posix.join(posix.dirname(path), match[1])));
 }
