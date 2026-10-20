@@ -58,6 +58,22 @@ function withoutComments(source) {
 const graph = new Map(modules().map((path) => [path, importsOf(path)]));
 
 /**
+ * `--live` のページの見方のモジュール（PROJECT.md の例外。live.css は JS ではないのでここに無い）。
+ * features/live/ の下と views/live*.js に分けても含める。名前に live を含むだけのモジュールは含めない。
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isLiveModule(path) {
+  return (
+    path === "features/live.js" ||
+    path.startsWith("features/live/") ||
+    /^views\/live[^/]*\.js$/.test(path) ||
+    path === "live-model.js" ||
+    path === "live-diff.js"
+  );
+}
+
+/**
  * features の順番。PROJECT.md の `a → b → …` の 1 か所を正典にする。
  * @returns {string[]}
  */
@@ -102,11 +118,16 @@ function violations(applies, allowed) {
 test("動的な import は app.js が --live のモジュールを読む所だけ", () => {
   const found = modules().flatMap((path) => {
     const code = withoutComments(readFileSync(join(assets, path), "utf8"));
-    return [...code.matchAll(/\bimport\s*\(\s*(?:["']([^"']+)["'])?/g)].map((match) =>
-      match[1] === undefined ? `${path} → ?` : `${path} → ${posix.normalize(posix.join(posix.dirname(path), match[1]))}`,
-    );
+    return [...code.matchAll(/\bimport\s*\(\s*(?:["']([^"']+)["'])?/g)].map((match) => ({
+      from: path,
+      to: match[1] === undefined ? null : posix.normalize(posix.join(posix.dirname(path), match[1])),
+    }));
   });
-  assert.deepEqual(found, ["app.js → features/live.js"]);
+  assert.ok(found.length > 0, "app.js が --live のモジュールを動的に読む所が見つかること");
+  assert.deepEqual(
+    found.filter(({ from, to }) => from !== "app.js" || to === null || !isLiveModule(to)).map(({ from, to }) => `${from} → ${to}`),
+    [],
+  );
 });
 
 test("import する先はどれも web/assets の中にある", () => {
@@ -189,10 +210,17 @@ test("modulepreload は app.js から静的にたどれるモジュールとち�
       pending.push(...(graph.get(path) ?? []));
     }
   }
+  // 先に確かめる。--live のモジュールを静的に import すると、下の「modulepreload に無い」より先に、
+  // 原因どおりの文言で落ちる。
   assert.deepEqual(
-    preloaded.filter((path) => path.includes("live")),
+    [...reachable].filter(isLiveModule).sort(),
     [],
-    "--live のモジュールは --live のレビューでだけ動的に読む",
+    "--live のモジュールは --live のレビューでだけ動的に読む（静的に import しない）",
+  );
+  assert.deepEqual(
+    preloaded.filter(isLiveModule),
+    [],
+    "--live のモジュールは modulepreload に載せない",
   );
   assert.deepEqual(
     [...reachable].filter((path) => !preloaded.includes(path)).sort(),
