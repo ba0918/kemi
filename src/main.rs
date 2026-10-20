@@ -4,6 +4,7 @@ mod agent;
 mod cli;
 mod local_time;
 mod notice;
+mod report;
 mod session;
 
 use std::io::IsTerminal;
@@ -33,6 +34,7 @@ use kemi_server::{
     detect_share_address, exposure_warning, live_exposure_warning, serve, session_host,
     session_url,
 };
+use report::{fail, warn};
 use tokio::net::TcpListener;
 
 const USAGE: &str = "\
@@ -134,11 +136,11 @@ impl EndpointFile {
         Ok(())
     }
     fn announce(&self) {
-        eprintln!("kemi: review {}", self.id);
+        eprintln!("{}", report::review_line(&self.id));
     }
     fn remove(&self) {
         if let Err(error) = kemi_core::session::remove_endpoint(&self.dir, &self.id) {
-            eprintln!("kemi: cannot remove the agent endpoint: {error}");
+            warn(&format!("cannot remove the agent endpoint: {error}"));
         }
     }
 }
@@ -155,7 +157,9 @@ async fn start_agent_channel(
     let listener = match bind_agent_listener().await {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("kemi: cannot listen for kemi wait and kemi reply: {error}");
+            warn(&format!(
+                "cannot listen for kemi wait and kemi reply: {error}"
+            ));
             return None;
         }
     };
@@ -163,15 +167,17 @@ async fn start_agent_channel(
     let port = match listener.local_addr() {
         Ok(address) => address.port(),
         Err(error) => {
-            eprintln!("kemi: cannot listen for kemi wait and kemi reply: {error}");
+            warn(&format!(
+                "cannot listen for kemi wait and kemi reply: {error}"
+            ));
             return None;
         }
     };
     let Some(dir) = endpoints_dir() else {
-        eprintln!(
-            "kemi: cannot determine where to write the agent endpoint ({})",
+        warn(&format!(
+            "cannot determine where to write the agent endpoint ({})",
             results_unset_reason()
-        );
+        ));
         return None;
     };
     let endpoint = kemi_core::session::Endpoint {
@@ -185,7 +191,7 @@ async fn start_agent_channel(
     };
     if !defer {
         if let Err(error) = endpoint_file.publish() {
-            eprintln!("kemi: {error}");
+            warn(&error);
             return None;
         }
         endpoint_file.announce();
@@ -247,23 +253,23 @@ fn open_session(
     place: &LaunchPlace,
 ) -> Option<Arc<StoredSession>> {
     let Some(dir) = sessions_dir() else {
-        eprintln!(
-            "kemi: cannot determine where to save sessions ({})",
+        warn(&format!(
+            "cannot determine where to save sessions ({})",
             results_unset_reason()
-        );
+        ));
         return None;
     };
     let info = match session_info(input, place) {
         Ok(info) => info,
         Err(message) => {
-            eprintln!("kemi: cannot start a session: {message}");
+            warn(&format!("cannot start a session: {message}"));
             return None;
         }
     };
     match StoredSession::start(&SessionStore::new(dir), info) {
         Ok(session) => Some(Arc::new(session)),
         Err(error) => {
-            eprintln!("kemi: cannot start a session: {error}");
+            warn(&format!("cannot start a session: {error}"));
             None
         }
     }
@@ -442,17 +448,12 @@ fn open_browser(url: &str) {
     }
 }
 
-fn fail(message: &str) -> ! {
-    eprintln!("kemi: {message}");
-    std::process::exit(2);
-}
-
 /// 復元できるセッションが残るときだけ、機械が読む 1 行を stderr に出す（R-SESSION）。
 fn print_resume_hint(stored_session: Option<&StoredSession>) {
     if let Some(stored_session) = stored_session
         && let Some(id) = stored_session.resumable_id()
     {
-        eprintln!("kemi: resume with: kemi --resume {id}");
+        eprintln!("{}", report::resume_line(&id));
     }
 }
 
@@ -482,7 +483,10 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
         Ok(address) => address.port(),
         Err(error) => fail(&format!("cannot listen on {}:{port}: {error}", cli.bind)),
     };
-    eprintln!("kemi: live http://{host}:{actual}{start}");
+    eprintln!(
+        "{}",
+        report::live_line(&format!("http://{host}:{actual}{start}"))
+    );
     Some(LiveParams {
         listener,
         target,
@@ -499,7 +503,7 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
 const SUSPEND_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 fn announce_review_url(url: &str) {
-    eprintln!("kemi: {url}");
+    eprintln!("{}", report::url_line(url));
 }
 
 /// サーブを始める前にそろえたもの。
@@ -560,11 +564,11 @@ async fn prepare_review(
         key: results_key,
     };
     match results.location() {
-        Some(dir) => eprintln!("kemi: results are saved to: {dir}"),
-        None => eprintln!(
-            "kemi: cannot determine where to save results ({})",
+        Some(dir) => warn(&format!("results are saved to: {dir}")),
+        None => warn(&format!(
+            "cannot determine where to save results ({})",
             results_unset_reason()
-        ),
+        )),
     }
     let control = ServeControl::new();
     let (agent, endpoint) = match start_agent_channel(
@@ -739,7 +743,7 @@ async fn finish_review(
             close_suspended(stored_session.as_deref());
             print_resume_hint(stored_session.as_deref());
             drop(stored_session);
-            std::process::exit(130);
+            std::process::exit(report::INTERRUPTED);
         }
     }
 }
@@ -753,7 +757,7 @@ fn finish_submitted(document: serde_json::Value) -> ! {
         .get("verdict")
         .and_then(|value| value.as_str())
         .and_then(Verdict::parse)
-        .map_or(2, Verdict::exit_code);
+        .map_or(report::ERROR, Verdict::exit_code);
     std::process::exit(code);
 }
 
@@ -763,7 +767,7 @@ fn close_suspended(stored_session: Option<&StoredSession>) {
     if let Some(stored_session) = stored_session
         && let Err(error) = stored_session.close_suspended()
     {
-        eprintln!("kemi: could not remove the session files: {error}");
+        warn(&format!("could not remove the session files: {error}"));
     }
 }
 
@@ -820,7 +824,7 @@ fn restored_snapshots(stored: &StoredSession) -> Vec<PageSnapshot> {
         .filter_map(|read| match read {
             Ok(snapshot) => Some(snapshot),
             Err(error) => {
-                eprintln!("kemi: could not restore a snapshot: {error}");
+                warn(&format!("could not restore a snapshot: {error}"));
                 None
             }
         })
@@ -868,7 +872,7 @@ fn pick_session(sessions: &[SessionSummary]) -> String {
             sessions[index].id.clone()
         }
         Err(InquireError::OperationCanceled) | Err(InquireError::OperationInterrupted) => {
-            std::process::exit(130)
+            std::process::exit(report::INTERRUPTED)
         }
         Err(error) => fail(&format!("cannot choose a session: {error}")),
     }
@@ -886,7 +890,7 @@ fn list_sessions(store: &SessionStore, sessions: &[SessionSummary]) -> ! {
         let _ = writeln!(out, "{}", session::list_line(summary));
     }
     let _ = out.flush();
-    std::process::exit(0);
+    std::process::exit(report::SUCCESS);
 }
 
 #[tokio::main]
@@ -898,9 +902,9 @@ async fn main() {
         let command = match agent::parse(name, &args[1..]) {
             Ok(command) => command,
             Err(message) => {
-                eprintln!("kemi: {message}");
+                warn(&message);
                 eprintln!("{}", agent::USAGE);
-                std::process::exit(2);
+                std::process::exit(report::ERROR);
             }
         };
         let code = tokio::task::spawn_blocking(move || {
@@ -950,7 +954,7 @@ async fn main() {
         Ok(mode) => mode,
         Err(InputModeError::Usage) => {
             eprintln!("{USAGE}");
-            std::process::exit(2);
+            std::process::exit(report::ERROR);
         }
         Err(InputModeError::Message(message)) => fail(message),
         Err(InputModeError::InvalidValue(message)) => fail(&message),

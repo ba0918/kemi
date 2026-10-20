@@ -14,6 +14,8 @@ mod http;
 
 use http::post;
 
+use crate::report;
+
 pub const USAGE: &str = "\
 kemi: usage:
   kemi wait <id> [--timeout <seconds>]   wait for what the reviewer hands over, then print it
@@ -126,7 +128,7 @@ pub fn run(command: Command, sessions: Option<PathBuf>, endpoints: Option<PathBu
             ) {
                 Ok((200, answer)) => {
                     print_json(&answer);
-                    0
+                    report::SUCCESS
                 }
                 Ok((_, answer)) => refused(&answer),
                 Err(message) => failed(&message),
@@ -161,7 +163,7 @@ pub fn run(command: Command, sessions: Option<PathBuf>, endpoints: Option<PathBu
                 Ok((200, answer)) => {
                     let ids = answer.get("ids").cloned().unwrap_or_default();
                     print_json(&serde_json::json!({ "ids": ids }));
-                    0
+                    report::SUCCESS
                 }
                 Ok((_, answer)) => refused(&answer),
                 Err(message) => failed(&message),
@@ -231,7 +233,7 @@ fn acknowledge(endpoint: &Endpoint, answer: &serde_json::Value) -> Result<(), St
 
 fn print_events(id: &str, answer: &serde_json::Value, out: &mut dyn Write) -> std::io::Result<i32> {
     if answer.get("timeout").and_then(serde_json::Value::as_bool) == Some(true) {
-        return Ok(3);
+        return Ok(report::TIMEOUT);
     }
     let events = answer.get("events").cloned().unwrap_or_default();
     // submit が入っていれば、終了コードは submit と同じ（承認 0 / 変更要求 1）。
@@ -249,7 +251,7 @@ fn print_events(id: &str, answer: &serde_json::Value, out: &mut dyn Write) -> st
     });
     writeln!(out, "{printed}")?;
     out.flush()?;
-    Ok(verdict.map_or(0, Verdict::exit_code))
+    Ok(verdict.map_or(report::SUCCESS, Verdict::exit_code))
 }
 
 fn print_json(value: &serde_json::Value) {
@@ -271,8 +273,8 @@ fn reason(answer: &serde_json::Value) -> &str {
 }
 
 fn failed(message: &str) -> i32 {
-    eprintln!("kemi: {message}");
-    2
+    report::warn(message);
+    report::ERROR
 }
 
 #[cfg(test)]
