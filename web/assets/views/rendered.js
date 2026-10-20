@@ -11,6 +11,12 @@ import { renderCommentOrEditor, renderEditor } from "./comment.js";
 /** @typedef {import("../state.js").Editor} Editor */
 
 /**
+ * 描き直すたびに #rendered-doc へ付ける、`+` を隠すリスナーを外す信号。#rendered-doc は描き直しても
+ * 残る要素なので、外さないとリスナーと、それが掴む外れた `+` が描き直しのたびに溜まる。
+ */
+let plusListeners = new AbortController();
+
+/**
  * 文書のブロック要素（文書順）。`data-kemi-block` の並びはサーバの `blocks` と同じ順で、
  * 添字で対応づく。
  * @returns {HTMLElement[]}
@@ -36,6 +42,8 @@ export function renderRendered() {
   const focus = captureEditorFocus();
   const focusKey = focusKeyWithin(dom.renderedDoc);
   dom.renderedDoc.textContent = "";
+  plusListeners.abort();
+  plusListeners = new AbortController();
   const rendered = state.rendered;
   const entry = currentEntry();
   dom.renderedDoc.hidden = !state.renderedActive;
@@ -239,9 +247,13 @@ function attachPlus(body, blocks) {
   };
   body.addEventListener("mouseover", showPlusAt);
   body.addEventListener("click", showPlusAt);
-  dom.renderedDoc.addEventListener("mouseleave", () => {
-    plus.hidden = true;
-  });
+  dom.renderedDoc.addEventListener(
+    "mouseleave",
+    () => {
+      plus.hidden = true;
+    },
+    { signal: plusListeners.signal },
+  );
   plus.addEventListener("click", () => {
     if (hovered >= 0) {
       actions.openBlockEditor(hovered);

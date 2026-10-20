@@ -7,7 +7,8 @@
 // 保持と上限超えでのソース表示への戻り、2 列表示でも 1 段、表の切り替えと見出し行、
 // SVG と PNG の切り替えの有無と既定、画像の並びと "unchanged"、壊れた画像の枠、symlink の
 // 相対パス画像の枠。保留した後の `kemi --resume` で描画表示・相対パス画像・切り替えの既定。
-// 最後の起動: 新側と消したブロックから付けたコメントが submit の JSON に行コメントとして入る。
+// 最後の起動: 新側と消したブロックから付けたコメントが submit の JSON に行コメントとして入る。描き直しを
+// 重ねても、離れたときに + を隠すリスナーが溜まらない。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -364,6 +365,27 @@ try {
 const state2 = await mkdtemp(join(tmpdir(), 'kemi-render-state-'));
 kemi = await startKemi(fixture, state2);
 await openGuideRendered(kemi.url);
+// 描き直しのたびに #rendered-doc へ mouseleave のリスナーが足されて残らないことを数える（足した数 −
+// 外した数）。ここから先の入力欄の開閉とコメントの追加で、描画表示は何度も描き直される。
+await evaluate(`(() => {
+  window.__kemiLeaveListeners = 0;
+  const add = EventTarget.prototype.addEventListener;
+  const remove = EventTarget.prototype.removeEventListener;
+  const counted = (target, type) => target instanceof Element && target.id === 'rendered-doc' && type === 'mouseleave';
+  EventTarget.prototype.addEventListener = function (type, listener, options) {
+    if (counted(this, type)) {
+      window.__kemiLeaveListeners += 1;
+      const signal = options && typeof options === 'object' ? options.signal : undefined;
+      signal?.addEventListener('abort', () => { window.__kemiLeaveListeners -= 1; }, { once: true });
+    }
+    return add.call(this, type, listener, options);
+  };
+  EventTarget.prototype.removeEventListener = function (type, listener, options) {
+    if (counted(this, type)) window.__kemiLeaveListeners -= 1;
+    return remove.call(this, type, listener, options);
+  };
+  return true;
+})()`);
 await openBlockEditor('new:7-7');
 assert.equal(
   await evaluate(`document.querySelector('#rendered-doc .kb-quote').textContent`),
@@ -377,6 +399,11 @@ assert.equal(await evaluate(`document.querySelector('#rendered-doc .editor .sugg
 await browser('fill', '#rendered-doc .editor textarea[data-editor-field="body"]', 'from the deleted row');
 await clickVisible('#rendered-doc .editor button[type="submit"]');
 await waitFor(`document.querySelector('#comment-count').textContent === '2'`);
+assert.ok(
+  await evaluate('window.__kemiLeaveListeners') <= 1,
+  `re-rendering keeps at most one mouseleave listener on #rendered-doc: ${await evaluate('window.__kemiLeaveListeners')}`,
+);
+console.log('PASS 描画表示を描き直しても、離れたときに + を隠すリスナーは溜まらない');
 await browser('click', '#btn-approve');
 await waitFor(`!document.querySelector('#modal').hidden`);
 await browser('click', '#modal-ok');
