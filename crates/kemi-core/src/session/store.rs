@@ -108,7 +108,7 @@ impl std::error::Error for SessionError {}
 
 /// 保存済みのセッション 1 つ。
 #[derive(Clone, Debug, PartialEq)]
-pub struct StoredSession {
+pub struct SavedSession {
     pub info: SessionInfo,
     pub state: SessionState,
     pub copy: CopyState,
@@ -191,7 +191,7 @@ impl SessionStore {
     }
 
     /// 保存済みのセッションを、ロックを取らずに読む。
-    pub fn read(&self, id: &str) -> Result<StoredSession, SessionError> {
+    pub fn read(&self, id: &str) -> Result<SavedSession, SessionError> {
         checked_id(id)?;
         let meta = self.read_meta_of(id)?;
         let path = self.path(id);
@@ -209,7 +209,7 @@ impl SessionStore {
                 Err(error) => return Err(error),
             },
         };
-        Ok(StoredSession { info, state, copy })
+        Ok(SavedSession { info, state, copy })
     }
 
     /// 復元できるセッションの一覧。最終更新の新しい順（同時刻は id の大きい順）。

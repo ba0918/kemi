@@ -26,7 +26,7 @@ pub use endpoint::{Endpoint, read_endpoint, remove_endpoint, write_endpoint};
 pub use files::{FILES_LIMIT, PageSnapshot, SnapshotKind};
 pub use format::additional_saved_size;
 
-pub use store::{FileWritten, FilesWrite, OpenSession, SessionError, SessionStore, StoredSession};
+pub use store::{FileWritten, FilesWrite, OpenSession, SavedSession, SessionError, SessionStore};
 pub use ulid::{is_valid_id, new_ulid, now_millis};
 
 use std::collections::{BTreeMap, BTreeSet};
