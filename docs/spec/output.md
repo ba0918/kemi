@@ -37,6 +37,10 @@
   出さない（このときもセッションは残る）。ただし、裏でのグループ単位の作成の失敗
   （`R-UNIT`）、由来の計算の失敗（`R-ORIGIN`）、結果ファイルの保存の失敗（`R-RESULT`）
   はレビューを終えず、終了コードも変えない。
+- `kemi` が stdout に書けないとき（読み手が先に閉じたパイプなど）は、submit の JSON・
+  `--result`・`--digest`・`--version`・復元の一覧のどれでも、`kemi: cannot write to stdout: <理由>`
+  を stderr に出して終了コード `2` で終わる。submit の JSON は stdout より先に結果ファイルへ
+  書いている（`R-SESSION`）ので、書けていれば `kemi --result` で読める。
 - 出力する JSON の契約:
 
 ```json
@@ -130,10 +134,14 @@
   エージェントの発言が `messages` に入る（e2e）。
 - 送信後、承認と変更要求のボタンが押せない（ブラウザ自動化で確認）。
 - 完了画面の JSON が stdout の JSON と同じ内容になる（人が確認）。
+- 読み手を閉じたパイプを stdout にして submit・`kemi --result`・`kemi --digest`・`kemi --version`・
+  端末でない `kemi --resume`（一覧）を実行すると、どれも終了コード 2 で、stderr に
+  `kemi: cannot write to stdout:` の行が出る（e2e）。
 
 **反例**
 
 - 進捗ログが stdout に混ざり、JSON のパースに失敗する。
+- stdout に書けないと panic し、契約に無い終了コード（101）で終わる。
 - 同時 submit の両方が受理され、どちらの verdict か分からなくなる。
 - 送信後もボタンが押せ、確認ダイアログの後に何も起きない。
 - Ctrl+C でレビュー中のコメントが失われる。
