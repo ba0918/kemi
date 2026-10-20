@@ -32,8 +32,9 @@ use serde_json::{Value, json};
 
 use super::ApiError;
 use super::channel::notify_agent_state;
+use super::json::{agent_event_json, page_comment_json, page_message_json};
 use crate::secret::same_secret;
-use crate::session::{agent_event_json, page_comment_json, page_message_json, persist};
+use crate::session::persist;
 use crate::{AppState, Event, Stop, SubmitState};
 
 pub(crate) fn agent_router(state: Arc<AppState>) -> Router {

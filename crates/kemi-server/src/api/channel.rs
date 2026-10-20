@@ -12,7 +12,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ApiError;
-use crate::session::{page_message_json, persist};
+use super::json::page_message_json;
+use crate::session::persist;
 use crate::{AppState, Event};
 
 #[derive(Debug, Deserialize)]

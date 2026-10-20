@@ -5,6 +5,7 @@
 
 mod api;
 mod explanation;
+mod freeze;
 mod highlight;
 mod lan;
 mod live;
@@ -428,7 +429,7 @@ pub(crate) struct AppState {
     /// 内容の読み取り（`ReviewSource` として）と、公開中のソースの取得・差し替え
     /// （`current` / `publish`）の両方に使う。
     pub sources: Arc<kemi_core::source::SourceSlot>,
-    pub initial_review: Mutex<Option<session::FreezeInput>>,
+    pub initial_review: Mutex<Option<freeze::FreezeInput>>,
     pub display_id: String,
     pub display_ready: std::sync::atomic::AtomicBool,
     pub highlighter: std::sync::OnceLock<crate::highlight::Highlighter>,
@@ -502,7 +503,7 @@ struct InitialSessionState {
     initial_state: kemi_core::session::SessionState,
     display_id: String,
     review_state: units::ReviewState,
-    initial_review: Option<session::FreezeInput>,
+    initial_review: Option<freeze::FreezeInput>,
 }
 
 pub async fn serve(
@@ -663,7 +664,7 @@ fn initial_session_state(
         .session
         .as_ref()
         .filter(|sink| sink.needs_copy())
-        .map(|_| session::FreezeInput {
+        .map(|_| freeze::FreezeInput {
             source: initial_source.clone(),
             startup_unit: review_state.startup_unit,
             startup: review_state.startup.clone(),

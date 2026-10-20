@@ -15,9 +15,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::channel::notify_agent_state;
+use super::json::page_comment_json;
 use super::snapshot::{comment_ids, forget_removed};
 use super::{ApiError, find_file, parse_side, side_lines};
-use crate::session::{page_comment_json, persist};
+use crate::session::persist;
 use crate::{AppState, Event, Notice};
 
 #[derive(Debug, Deserialize)]

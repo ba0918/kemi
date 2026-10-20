@@ -17,10 +17,10 @@ use kemi_core::render::{self, InitialView, Target};
 use kemi_core::source::FileContent;
 use serde_json::{Value, json};
 
+use super::json::page_comment_json;
 use super::{ApiError, ExpandQuery, find_file, prepare_content, side_lines};
 use crate::AppState;
 use crate::highlight::{self, HighlightedLine, Highlighter};
-use crate::session::page_comment_json;
 
 /// 1 ファイル分の左右のハイライト結果。
 struct Highlighted {

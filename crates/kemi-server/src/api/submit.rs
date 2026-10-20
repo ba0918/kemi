@@ -11,8 +11,9 @@ use kemi_core::domain::submit::{RESULT_CONTRACT_VERSION, Verdict};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::json::{comment_json, message_json};
 use super::{ApiError, find_file, side_lines};
-use crate::session::{comment_json, delete_stored, message_json};
+use crate::session::delete_stored;
 use crate::{AppState, Notice, Stop, SubmitState};
 
 #[derive(Debug, Deserialize)]
