@@ -463,33 +463,11 @@ struct LiveRun {
     last_snapshot_number: u32,
 }
 
-impl LiveRun {
-    /// 中継の相手と、最初に開くパス。
-    fn target(&self) -> Option<(LiveTarget, String)> {
-        match &self.page {
-            LivePage::Url(text) => {
-                let url = parse_live_url(text).ok()?;
-                Some((
-                    LiveTarget::Url {
-                        authority: url.authority,
-                        start: url.path_and_query.clone(),
-                        display: url.text,
-                    },
-                    url.path_and_query,
-                ))
-            }
-            LivePage::File(path) => Some((
-                LiveTarget::File { path: path.clone() },
-                format!("/{}", kemi_core::domain::live::url_path(path)),
-            )),
-        }
-    }
-}
-
 /// 中継のリスナーを立て、`kemi: live <url>` を出す（R-PAGE-MODE）。`--bind` に従い、
 /// `--live-port` で固定できる（R-PAGE-PROXY）。
 async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LiveParams> {
-    let (target, start) = live.target()?;
+    let target = LiveTarget::from_page(&live.page).ok()?;
+    let start = target.start();
     let port = cli.live_port.unwrap_or(0);
     let listener = match TcpListener::bind((cli.bind, port)).await {
         Ok(listener) => listener,

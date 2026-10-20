@@ -11,6 +11,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use kemi_core::domain::content;
+use kemi_core::domain::live::url_path;
 use kemi_core::domain::review::{FileEntry, Side, Status};
 use kemi_core::render::{self, IMAGE_MAX_BYTES, ImageRef, ReviewPaths, Target};
 use kemi_core::source::ReviewSource;
@@ -243,13 +244,7 @@ fn prepare_markdown(
     };
     let file_id = id.to_string();
     let image_url = move |reference: &ImageRef| match reference {
-        ImageRef::Review { file_id, side } => {
-            format!(
-                "api/image/review/{}/{}",
-                url_segment(file_id),
-                side.as_str()
-            )
-        }
+        ImageRef::Review { file_id, side } => review_image_url(file_id, *side),
         ImageRef::Repo { path, side } => format!(
             "api/image/repo/{}/{}/{}",
             url_segment(&file_id),
@@ -314,12 +309,4 @@ fn url_segment(value: &str) -> String {
         }
     }
     encoded
-}
-
-/// `/` で区切ったパスをセグメントごとに符号化する。
-fn url_path(path: &str) -> String {
-    path.split('/')
-        .map(url_segment)
-        .collect::<Vec<_>>()
-        .join("/")
 }

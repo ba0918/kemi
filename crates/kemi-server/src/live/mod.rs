@@ -16,10 +16,11 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use kemi_core::domain::live::url_path;
+use kemi_core::domain::live::{LiveError, LivePage, parse_live_url, url_path};
 use kemi_core::session::PageSnapshot;
 
 use crate::Assets;
+use crate::secret::same_secret;
 
 /// 中継の待ち受けと相手（R-PAGE-PROXY）。
 pub struct LiveParams {
@@ -52,6 +53,32 @@ pub enum LiveTarget {
     },
     /// 配れる範囲の HTML ファイル。`path` は範囲の根からの相対パス（`/` 区切り）。
     File { path: String },
+}
+
+impl LiveTarget {
+    /// 見る対象から中継の相手を作る。URL は保存した文字列をもう一度読むので、読めない
+    /// 値（手で書き換えたセッションなど）は誤りになる。
+    pub fn from_page(page: &LivePage) -> Result<Self, LiveError> {
+        match page {
+            LivePage::Url(text) => {
+                let url = parse_live_url(text)?;
+                Ok(LiveTarget::Url {
+                    authority: url.authority,
+                    start: url.path_and_query,
+                    display: url.text,
+                })
+            }
+            LivePage::File(path) => Ok(LiveTarget::File { path: path.clone() }),
+        }
+    }
+
+    /// 最初に開くパスとクエリ。中継の URL の後ろに付ける。
+    pub fn start(&self) -> String {
+        match self {
+            LiveTarget::Url { start, .. } => start.clone(),
+            LiveTarget::File { path } => format!("/{}", url_path(path)),
+        }
+    }
 }
 
 /// レビュー画面と中継が共有する、中継の情報。
@@ -181,15 +208,15 @@ impl LiveState {
 /// 中継のリスナーを分けて、レビュー画面と中継の両方が持つ情報を作る。
 pub(crate) fn prepare(params: LiveParams) -> std::io::Result<(TcpListener, LiveInfo, LiveTarget)> {
     let port = params.listener.local_addr()?.port();
-    let (start, display) = match &params.target {
-        LiveTarget::Url { start, display, .. } => (start.clone(), display.clone()),
-        LiveTarget::File { path, .. } => (format!("/{}", url_path(path)), format!("/{path}")),
+    let display = match &params.target {
+        LiveTarget::Url { display, .. } => display.clone(),
+        LiveTarget::File { path, .. } => format!("/{path}"),
     };
     let info = LiveInfo {
         port,
         cookie_name: format!("kemi_live_{port}"),
         cookie: params.cookie,
-        start,
+        start: params.target.start(),
         display,
         code_view: params.code_view,
         snapshots: std::sync::Mutex::new(Snapshots::restored(
@@ -282,14 +309,4 @@ fn reload_events(state: &LiveState) -> Response {
     Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response()
-}
-
-/// 長さと中身を、早く抜けずに比べる。
-fn same_secret(left: &[u8], right: &[u8]) -> bool {
-    left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .fold(0u8, |difference, (a, b)| difference | (a ^ b))
-            == 0
 }

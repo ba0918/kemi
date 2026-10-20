@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 
 use super::ApiError;
 use super::channel::notify_agent_state;
+use crate::secret::same_secret;
 use crate::session::{agent_event_json, page_comment_json, page_message_json, persist};
 use crate::{AppState, Event, Stop, SubmitState};
 
@@ -93,16 +94,6 @@ fn admit(peer: IpAddr, headers: &HeaderMap, token: &str, expected: &str) -> Resu
         return Err(ApiError::forbidden("the agent token does not match"));
     }
     Ok(())
-}
-
-/// 長さ以外の比べ方で時間が変わらないように、すべてのバイトを比べる。
-fn same_secret(given: &[u8], expected: &[u8]) -> bool {
-    given.len() == expected.len()
-        && given
-            .iter()
-            .zip(expected)
-            .fold(0u8, |difference, (left, right)| difference | (left ^ right))
-            == 0
 }
 
 #[derive(Debug, Deserialize)]

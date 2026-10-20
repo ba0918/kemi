@@ -9,6 +9,7 @@ mod highlight;
 mod lan;
 mod live;
 mod preparation;
+mod secret;
 mod session;
 mod units;
 mod watch;
@@ -627,12 +628,7 @@ fn initial_session_state(
         let pages: Vec<_> = params
             .live
             .as_ref()
-            .map_or_else(Vec::new, |live| match &live.target {
-                LiveTarget::Url { start, .. } => vec![start.clone()],
-                LiveTarget::File { path } => {
-                    vec![format!("/{}", kemi_core::domain::live::url_path(path))]
-                }
-            });
+            .map_or_else(Vec::new, |live| vec![live.target.start()]);
         initial_state.explanation = Some(explanation::initial_history(
             document,
             initial_source.as_ref(),
