@@ -1,11 +1,14 @@
 //! 一覧と選択画面に出すローカル時刻（R-SESSION）。`YYYY-MM-DD HH:MM`。
 //!
-//! 時刻の整形に新しい依存は足さない。unix は `localtime_r`、Windows は
-//! `FileTimeToLocalFileTime` を使い、失敗したときは UTC で出す。
+//! 時刻の整形に新しい依存は足さない。64 bit の unix は `localtime_r`、Windows は
+//! `FileTimeToLocalFileTime` を使い、それ以外の対象と、失敗したときは UTC で出す。
 
-#![expect(
-    unsafe_code,
-    reason = "OS のローカル時刻変換を FFI で呼ぶ。新しい依存を足さないため"
+#![cfg_attr(
+    any(all(unix, target_pointer_width = "64"), windows),
+    expect(
+        unsafe_code,
+        reason = "OS のローカル時刻変換を FFI で呼ぶ。新しい依存を足さないため"
+    )
 )]
 
 /// 一覧に出すローカル時刻。millis は UNIX エポックからのミリ秒。
@@ -52,9 +55,12 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     (year as i32, month as u32, day as u32)
 }
 
-#[cfg(unix)]
+// 下の `Tm` の並び（末尾の `tm_gmtoff` と `tm_zone`）と、`time_t` を i64 として渡すことは、
+// 64 bit の対象でだけ成り立つ。32 bit の unix では C の `struct tm` より大きくなり、
+// `localtime_r` が書かない後半を読んでしまうので、FFI は 64 bit に限る。
+#[cfg(all(unix, target_pointer_width = "64"))]
 fn local_parts(seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
-    // glibc / musl / macOS で先頭の 9 つの int は同じ並び。64 bit の対象だけを扱う。
+    // glibc / musl / macOS で先頭の 9 つの int は同じ並び。
     #[repr(C)]
     struct Tm {
         tm_sec: i32,
@@ -147,7 +153,7 @@ fn local_parts(millis_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
     ))
 }
 
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(any(all(unix, target_pointer_width = "64"), windows)))]
 fn local_parts(_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
     None
 }
@@ -171,7 +177,7 @@ mod tests {
         assert_eq!(utc_parts(-120), (1969, 12, 31, 23, 58));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, target_pointer_width = "64"))]
     #[test]
     fn local_time_matches_the_date_command() {
         let expected = std::process::Command::new("date")
