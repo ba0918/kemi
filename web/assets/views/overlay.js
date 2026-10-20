@@ -1,7 +1,7 @@
 // @ts-check
 // 画面に重ねて出すもの: 知らせ、完了画面、確認ダイアログ、短い通知。
 
-import { dom, button, el, textEl } from "../dom.js";
+import { dom, button, copyText, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { countLabel, unitLabel } from "../model.js";
 
@@ -151,15 +151,9 @@ export function showCompletion(verdict, answer) {
   const row = el("div", "finish-row");
   const copy = button("btn primary");
   copy.textContent = "Copy JSON";
-  copy.addEventListener("click", () => {
-    navigator.clipboard
-      .writeText(json)
-      .then(() => {
-        copy.textContent = "Copied";
-      })
-      .catch((error) => {
-        copy.textContent = `could not copy: ${error}`;
-      });
+  copy.addEventListener("click", async () => {
+    const failure = await copyText(json);
+    copy.textContent = failure === null ? "Copied" : `Could not copy: ${failure}`;
   });
   const suggestions = comments.filter((/** @type {any} */ comment) => comment.suggestion).length;
   row.append(copy, textEl("span", "finish-meta", `${countLabel(comments.length, "comment")} / ${countLabel(suggestions, "suggestion")}`));

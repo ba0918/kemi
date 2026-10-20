@@ -11,7 +11,8 @@
 // 札と入力欄の左端、札を押すとシートでスレッドが開くこと、「…」の Comments で札を隠すこと、
 // シートのスレッドからその行へ移るとシートが閉じてその行が見えること、シートを開いたまま
 // 幅をまたぐとシートが閉じること、描画表示のブロックのタップ。
-// 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
+// 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。clipboard の
+// 無い接続でも、完了画面の Copy JSON が写せなかったことを示す。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -668,4 +669,12 @@ assert.equal(comment.end_line, 3);
 assert.deepEqual(comment.quote, ['file 0 line 2', 'file 0 line 3']);
 assert.equal(comment.body, 'tapped range comment');
 console.log('PASS 390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る');
+// スマホから --bind で LAN のアドレスに http で開いた（安全でない接続）ページには navigator.clipboard が無い。
+// 完了画面の Copy JSON を押すと、何も示さないままにせず、写せなかったことをボタンに出す。
+const copyJson = `Array.from(document.querySelectorAll('#overlay-card .finish-row button'))[0]`;
+await waitFor(`${copyJson}?.textContent === 'Copy JSON'`);
+await evaluate(`Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }); true`);
+await evaluate(`${copyJson}.click(); true`);
+await waitFor(`${copyJson}.textContent.startsWith('Could not copy: ')`);
+console.log('PASS clipboard の無い接続で完了画面の Copy JSON を押すと、写せなかったことをボタンに出す');
 await run('agent-browser', ['--session', session, 'close']);
