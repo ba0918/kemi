@@ -61,7 +61,7 @@ pub(super) struct SideDoc<'a> {
     pub document: &'a Document<'a>,
     pub front_matter: bool,
     pub blocks: Vec<BlockInfo<'a, 'a>>,
-    /// 正規化した全行。旧新の整列に使う。
+    /// 正規化した全行。旧新の整列にだけ使うので、両側があるときだけ作る（ほかは空）。
     pub lines: &'a [String],
     image_context: ImageContext<'a>,
 }
@@ -102,14 +102,18 @@ struct Prepared {
     lines: Vec<String>,
 }
 
-fn prepare(text: &str) -> Prepared {
+fn prepare(text: &str, aligned: bool) -> Prepared {
     let normalized = content::normalize(text);
     let (front_lines, front, body) = split_front_matter(&normalized);
     Prepared {
         front_lines,
         front: front.map(str::to_string),
         body: body.to_string(),
-        lines: content::lines(&normalized),
+        lines: if aligned {
+            content::lines(&normalized)
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -127,8 +131,9 @@ pub(super) fn render(
     if !content::within_auto_limit(input.old, input.new) {
         return Err(Unrenderable::TooLarge);
     }
-    let old = input.old.map(prepare);
-    let new = input.new.map(prepare);
+    let aligned = input.old.is_some() && input.new.is_some();
+    let old = input.old.map(|text| prepare(text, aligned));
+    let new = input.new.map(|text| prepare(text, aligned));
     let old_allocator = Allocator::new();
     let new_allocator = Allocator::new();
     let old_document = old
@@ -803,7 +808,7 @@ pub(super) fn render_part(
     body: &str,
     highlight: Option<Highlight<'_>>,
 ) -> Result<String, Unrenderable> {
-    let prepared = prepare(body);
+    let prepared = prepare(body, false);
     let allocator = Allocator::new();
     let document = parse(&allocator, &prepared.body)?;
     let doc = collect_side(
