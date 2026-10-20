@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment;
 use kemi_core::domain::review::Side;
-use kemi_core::domain::submit::Verdict;
+use kemi_core::domain::submit::{RESULT_CONTRACT_VERSION, Verdict};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -152,7 +152,7 @@ async fn build_submit_document(state: &AppState, verdict: Verdict) -> Result<Val
     let comments: Vec<Value> = session.state.comments.iter().map(comment_json).collect();
     let messages: Vec<Value> = session.state.messages.iter().map(message_json).collect();
     Ok(json!({
-        "kemi": 3,
+        "kemi": RESULT_CONTRACT_VERSION,
         "diff_display_version":session.state.display.as_ref().map(|d|&d.current),
         "explanation":session.state.explanation,
         "title": review.title,

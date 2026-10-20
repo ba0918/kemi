@@ -12,6 +12,7 @@ use kemi_core::domain::explanation::{
     validate_update, validate_version,
 };
 use kemi_core::domain::review::{Comment, CommentTarget, GroupBy};
+use kemi_core::domain::submit::RESULT_CONTRACT_VERSION;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -116,7 +117,7 @@ pub(crate) async fn context(
     let session = state.session.lock().expect("session poisoned");
     let display = session.state.display.as_ref().expect("display assigned");
     Ok(Json(
-        json!({"kemi":3,"review":state.display_id,"diff_display_version":display.current,
+        json!({"kemi":RESULT_CONTRACT_VERSION,"review":state.display_id,"diff_display_version":display.current,
         "explanation_revision":session.state.explanation.as_ref().map_or(0, |h| h.current_revision),
         "explanation":session.state.explanation.as_ref().and_then(|h| h.current()),
         "references":{"code":code,"pages":pages.iter().map(|url| json!({"url":url})).collect::<Vec<_>>()}}),
