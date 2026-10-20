@@ -8,6 +8,7 @@ pub mod manifest;
 mod origin;
 pub mod work_tree;
 
+pub use crate::domain::content::FileContent;
 pub use frozen::FrozenSource;
 pub use live::LiveSource;
 
@@ -51,13 +52,6 @@ impl std::fmt::Display for SourceError {
 }
 
 impl std::error::Error for SourceError {}
-
-/// 表示時に取り出す 1 ファイルの内容。None はその側が存在しない（追加・削除）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileContent {
-    pub old: Option<Vec<u8>>,
-    pub new: Option<Vec<u8>>,
-}
 
 #[derive(Clone, Debug)]
 pub struct ReferenceMetadata {

@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::source::FileContent;
+use crate::domain::content::FileContent;
 
 /// ファイル先頭の目印。読めないファイルを黙ってセッションにしない。
 pub(crate) const MAGIC: &[u8] = b"kemi-session\n";

@@ -5,10 +5,10 @@ use super::*;
 use crate::domain::agent::{
     AgentEvent, Channel, Handed, HandedComment, HandedReply, ReplyRef, Unhanded,
 };
+use crate::domain::content::FileContent;
 use crate::domain::review::{Author, GroupBy, Message, Reply, ReviewMeta, Side, Suggestion};
 use crate::session::files::{PageSnapshot, SnapshotKind};
 use crate::session::{FrozenUnit, SessionMode};
-use crate::source::FileContent;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 

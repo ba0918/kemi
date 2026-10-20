@@ -13,6 +13,7 @@ use crate::domain::content;
 use crate::domain::focus::FocusTargets;
 use crate::domain::noise::{GeneratedAttributes, NoiseInput, classify};
 use crate::domain::review::{FileEntry, Group, ReviewMeta, Side, Status};
+use crate::session::SessionError;
 use crate::source::origin::{OriginPaths, OriginRange, file_origin};
 use crate::source::work_tree::WorkTree;
 use crate::source::{FileOrigin, Plan, PlanStore, PlannedFile, ReviewSource, SideRef, SourceError};
@@ -1374,6 +1375,20 @@ fn commit_sha(repo: &Path, revision: &str) -> Result<String, SourceError> {
 
 fn ref_not_found(revision: &str) -> SourceError {
     SourceError::Git(format!("ref not found: {revision}"))
+}
+
+/// コミット範囲の端を完全な sha に解決する（R-SESSION）。起動時に 1 度だけ呼ぶ。
+pub fn resolve_range(repo: &Path, from: &str, to: &str) -> Result<(String, String), SessionError> {
+    fn resolve(repo: &Path, revision: &str) -> Result<String, SessionError> {
+        let spec = format!("{revision}^{{commit}}");
+        git_text(repo, &["rev-parse", "--verify", "--quiet", &spec])
+            .map(|sha| sha.trim().to_string())
+            .map_err(|error| SessionError::Range {
+                revision: revision.to_string(),
+                reason: error.to_string(),
+            })
+    }
+    Ok((resolve(repo, from)?, resolve(repo, to)?))
 }
 
 /// `--to` の ref 更新を検知するための監視パス。返すのは ref のファイルそのもので、

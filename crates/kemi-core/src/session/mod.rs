@@ -30,11 +30,12 @@ pub use store::{FileWritten, FilesWrite, OpenSession, SavedSession, SessionError
 pub use ulid::{is_valid_id, new_ulid, now_millis};
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use format::{decode_copy, encode_copy};
 
 use crate::domain::agent::{AgentEvent, Channel, ContentWrite, HandedComment};
+use crate::domain::content::FileContent;
 use crate::domain::conversation_content::ConversationContent;
 use crate::domain::display_version::DisplayVersions;
 use crate::domain::explanation::{
@@ -44,7 +45,6 @@ use crate::domain::explanation::{
 use crate::domain::live::LivePage;
 use crate::domain::parts_validation::validate_parts;
 use crate::domain::review::{Author, Comment, CommentTarget, GroupBy, Message, Reply, ReviewMeta};
-use crate::source::FileContent;
 
 /// ULID でない id は存在しない id として拒否し、保存領域の外へパスを組み立てない。
 fn checked_id(id: &str) -> Result<&str, SessionError> {
@@ -53,20 +53,6 @@ fn checked_id(id: &str) -> Result<&str, SessionError> {
     } else {
         Err(SessionError::NotFound { id: id.to_string() })
     }
-}
-
-/// コミット範囲の端を完全な sha に解決する（R-SESSION）。起動時に 1 度だけ呼ぶ。
-pub fn resolve_range(repo: &Path, from: &str, to: &str) -> Result<(String, String), SessionError> {
-    fn resolve(repo: &Path, revision: &str) -> Result<String, SessionError> {
-        let spec = format!("{revision}^{{commit}}");
-        crate::source::git::git_text(repo, &["rev-parse", "--verify", "--quiet", &spec])
-            .map(|sha| sha.trim().to_string())
-            .map_err(|error| SessionError::Range {
-                revision: revision.to_string(),
-                reason: error.to_string(),
-            })
-    }
-    Ok((resolve(repo, from)?, resolve(repo, to)?))
 }
 
 /// セッション 1 つの情報。一覧の列と、復元の手がかりになる。

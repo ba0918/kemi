@@ -221,7 +221,7 @@ fn session_info(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Result<Session
         let to = cli.to.clone().unwrap_or_else(|| "HEAD".to_string());
         let repo =
             kemi_core::source::git::repo_root(Path::new(".")).map_err(|error| error.to_string())?;
-        let (from_sha, to_sha) = kemi_core::session::resolve_range(&repo, &from, &to)
+        let (from_sha, to_sha) = kemi_core::source::git::resolve_range(&repo, &from, &to)
             .map_err(|error| error.to_string())?;
         SessionMode::Range {
             from,

@@ -1,4 +1,11 @@
-//! 内容の正規化（CRLF/LF、最終行の改行）
+//! ファイルの内容と、その正規化（CRLF/LF、最終行の改行）
+
+/// 表示時に取り出す 1 ファイルの内容。None はその側が存在しない（追加・削除）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileContent {
+    pub old: Option<Vec<u8>>,
+    pub new: Option<Vec<u8>>,
+}
 
 /// CRLF と CR を LF に揃える。改行コードの変更だけを差分として見せないため。
 pub fn normalize(content: &str) -> String {
