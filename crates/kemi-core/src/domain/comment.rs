@@ -117,19 +117,32 @@ mod tests {
     #[test]
     fn comment_rejects_line_number_zero() {
         let range = LineRange { start: 0, end: 1 };
-        assert!(validate_comment(Side::New, Some(range), None).is_err());
+        assert_eq!(
+            validate_comment(Side::New, Some(range), None),
+            Err(CommentError::LineNumberOutOfRange)
+        );
+        let range = LineRange { start: 1, end: 1 };
+        assert_eq!(validate_comment(Side::New, Some(range), None), Ok(()));
     }
 
     #[test]
     fn comment_rejects_reversed_range() {
         let range = LineRange { start: 5, end: 2 };
-        assert!(validate_comment(Side::New, Some(range), None).is_err());
+        assert_eq!(
+            validate_comment(Side::New, Some(range), None),
+            Err(CommentError::ReversedRange)
+        );
+        let range = LineRange { start: 5, end: 5 };
+        assert_eq!(validate_comment(Side::New, Some(range), None), Ok(()));
     }
 
     #[test]
     fn comment_file_whole_must_be_new_side() {
         assert_eq!(validate_comment(Side::New, None, None), Ok(()));
-        assert!(validate_comment(Side::Old, None, None).is_err());
+        assert_eq!(
+            validate_comment(Side::Old, None, None),
+            Err(CommentError::FileWideMustBeNewSide)
+        );
     }
 
     #[test]
@@ -144,12 +157,19 @@ mod tests {
     #[test]
     fn comment_suggestion_is_rejected_on_old_side() {
         let range = LineRange { start: 2, end: 2 };
-        assert!(validate_comment(Side::Old, Some(range), Some("replacement")).is_err());
+        assert_eq!(
+            validate_comment(Side::Old, Some(range), Some("replacement")),
+            Err(CommentError::SuggestionRequiresNewSide)
+        );
+        assert_eq!(validate_comment(Side::Old, Some(range), None), Ok(()));
     }
 
     #[test]
     fn comment_suggestion_is_rejected_on_file_whole() {
-        assert!(validate_comment(Side::New, None, Some("replacement")).is_err());
+        assert_eq!(
+            validate_comment(Side::New, None, Some("replacement")),
+            Err(CommentError::SuggestionRequiresRange)
+        );
     }
 
     #[test]
@@ -162,7 +182,14 @@ mod tests {
     #[test]
     fn comment_quote_rejects_range_beyond_end_of_file() {
         let content = lines(&["a"]);
-        assert!(quote_for(&content, LineRange { start: 1, end: 2 }).is_err());
+        assert_eq!(
+            quote_for(&content, LineRange { start: 1, end: 2 }),
+            Err(CommentError::QuoteOutOfBounds)
+        );
+        assert_eq!(
+            quote_for(&content, LineRange { start: 1, end: 1 }),
+            Ok(lines(&["a"]))
+        );
     }
 
     #[test]

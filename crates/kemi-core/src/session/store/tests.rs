@@ -409,19 +409,30 @@ fn malformed_parts_are_rejected_from_version_four_instead_of_becoming_plain() {
         &CopyStatus::Pending,
     ))
     .unwrap();
+    let write = |value: &serde_json::Value| {
+        std::fs::write(
+            session_path(&scratch.dir(), id),
+            encoding::encode_session(4, &serde_json::to_vec(value).unwrap()),
+        )
+        .unwrap();
+    };
     value["state"]["comments"][0]["replies"][0]["body"] = serde_json::Value::Null;
+    value["state"]["comments"][0]["replies"][0]["parts"] =
+        serde_json::json!([{"type":"text","body":"valid"}]);
+    write(&value);
+    assert!(store.read(id).is_ok(), "the same reply with valid parts");
     for parts in [
         serde_json::json!([]),
         serde_json::json!([{"type":"text","body":null}]),
         serde_json::json!([{"type":"code","body":"x","language":"x","role":"example","title":null}]),
     ] {
         value["state"]["comments"][0]["replies"][0]["parts"] = parts;
-        std::fs::write(
-            session_path(&scratch.dir(), id),
-            encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
-        )
-        .unwrap();
-        assert!(store.read(id).is_err());
+        write(&value);
+        let result = store.read(id);
+        assert!(
+            matches!(result, Err(SessionError::Corrupt { .. })),
+            "{result:?}"
+        );
     }
     value["state"]["comments"][0]["replies"][0]["parts"] =
         serde_json::json!([{"type":"text","body":"valid"}]);
@@ -429,12 +440,12 @@ fn malformed_parts_are_rejected_from_version_four_instead_of_becoming_plain() {
         .as_object_mut()
         .unwrap()
         .remove("body");
-    std::fs::write(
-        session_path(&scratch.dir(), id),
-        encoding::encode_session(4, &serde_json::to_vec(&value).unwrap()),
-    )
-    .unwrap();
-    assert!(store.read(id).is_err());
+    write(&value);
+    let result = store.read(id);
+    assert!(
+        matches!(result, Err(SessionError::Corrupt { .. })),
+        "{result:?}"
+    );
 }
 
 /// 説明コメント一つを持つ版 4 の保存値。`target` はコメントの `explanation` の値。
@@ -1318,7 +1329,8 @@ fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
         }
         assert!(payload.is_dir());
         let bytes = std::fs::read(scratch.dir().join(format!("{id}.session"))).unwrap();
-        let envelope: serde_json::Value = serde_json::from_slice(&bytes[18..]).unwrap();
+        let envelope: serde_json::Value =
+            serde_json::from_slice(encoding::decode_session(&bytes).unwrap().1).unwrap();
         let mut saved = envelope["state"].clone();
         for key in [
             "diff_display_version",
