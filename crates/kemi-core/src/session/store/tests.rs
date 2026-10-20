@@ -1637,21 +1637,63 @@ fn session_cleanup_removes_orphan_lock_files() {
     std::fs::create_dir_all(scratch.dir()).unwrap();
     let lock_path = scratch.dir().join("01HF7YAT00AAAAAAAAAAAAAAAA.lock");
     std::fs::write(&lock_path, b"").unwrap();
+    let written = modified(&lock_path);
 
     // 新しすぎるロックは、始まったばかりのセッションと競合しないよう残す。
-    prune_orphan_locks(&scratch.dir(), Duration::from_secs(60));
+    prune_orphan_locks(
+        &scratch.dir(),
+        written + ORPHAN_LOCK_MIN_AGE - Duration::from_secs(1),
+        ORPHAN_LOCK_MIN_AGE,
+    );
     assert!(lock_path.exists());
 
     // ロック中のものは他のプロセスのものなので残す。
     let held = SessionLock::acquire(&scratch.dir(), "01HF7YAT00AAAAAAAAAAAAAAAA").unwrap();
-    prune_orphan_locks(&scratch.dir(), Duration::ZERO);
+    prune_orphan_locks(
+        &scratch.dir(),
+        written + ORPHAN_LOCK_MIN_AGE,
+        ORPHAN_LOCK_MIN_AGE,
+    );
     assert!(lock_path.exists());
     drop(held);
 
-    // 使われていない古いロックは消える。
+    // 使われていない古いロックは、猶予ちょうどで消える。
     std::fs::write(&lock_path, b"").unwrap();
-    prune_orphan_locks(&scratch.dir(), Duration::ZERO);
+    let written = modified(&lock_path);
+    prune_orphan_locks(
+        &scratch.dir(),
+        written + ORPHAN_LOCK_MIN_AGE,
+        ORPHAN_LOCK_MIN_AGE,
+    );
     assert!(!lock_path.exists());
+}
+
+#[test]
+fn session_cleanup_removes_an_orphan_lock_even_within_the_limits() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut open = store.create(info(id, 100)).unwrap();
+    open.save_state_at(state_with_comment(), 200).unwrap();
+    drop(open);
+    // 強制終了したレビューが残したロック。セッションは上限の内側なので、
+    // 消すセッションが無くても毎回片付ける。
+    let orphan = scratch.dir().join("01HF7YAT00BBBBBBBBBBBBBBBB.lock");
+    std::fs::write(&orphan, b"").unwrap();
+
+    cleanup_at(
+        &scratch.dir(),
+        KEEP_SESSIONS,
+        KEEP_BYTES,
+        modified(&orphan) + ORPHAN_LOCK_MIN_AGE,
+    );
+
+    assert!(!orphan.exists());
+    assert!(store.read(id).is_ok());
+}
+
+fn modified(path: &Path) -> SystemTime {
+    std::fs::metadata(path).unwrap().modified().unwrap()
 }
 
 #[test]

@@ -30,6 +30,9 @@ pub(crate) const COPY_LIMIT: u64 = 20 * 1024 * 1024;
 pub(crate) const KEEP_SESSIONS: usize = 100;
 /// 全ワークスペース合計で残すバイト数。
 pub(crate) const KEEP_BYTES: u64 = 500 * 1024 * 1024;
+/// セッションのファイルが無いロックを孤児として片付けるまでの猶予。始まったばかりの
+/// セッションは、ロックを取ってから最初の `<id>.session` を書くまでこの形になる。
+const ORPHAN_LOCK_MIN_AGE: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -812,6 +815,11 @@ fn files_path(dir: &Path, id: &str) -> PathBuf {
 /// 数えない。復元できないセッションも数える。1 セッションの大きさは `<id>.session` と
 /// `<id>.payload` と `<id>.files/` の中のファイルの合算（R-SESSION）。
 pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
+    cleanup_at(dir, keep_count, keep_bytes, SystemTime::now());
+}
+
+/// [`cleanup`] の本体。孤児のロックの古さを `now` から測る。
+pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: SystemTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -847,7 +855,7 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
         let _ = std::fs::remove_file(super::endpoint_path(dir, id));
     }
     // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
-    prune_orphan_locks(dir, Duration::from_secs(60));
+    prune_orphan_locks(dir, now, ORPHAN_LOCK_MIN_AGE);
     for id in payloads.keys().filter(|id| !sessions.contains_key(*id)) {
         // 起動中のレビューは `<id>.payload` を書いてから `<id>.session` を書くので、
         // その間だけこの形になる。ロックを持っているものは消さない（R-SESSION）。
@@ -902,11 +910,10 @@ pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
 /// セッションのファイルが無いまま残ったロックファイルを片付ける。始まったばかりの
 /// セッションと競合しないよう、`min_age` より新しいものは触らない。ロック中のものは
 /// 他プロセスが使っているので残す。
-fn prune_orphan_locks(dir: &Path, min_age: Duration) {
+fn prune_orphan_locks(dir: &Path, now: SystemTime, min_age: Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let now = SystemTime::now();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(id) = name
