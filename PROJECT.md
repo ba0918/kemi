@@ -53,10 +53,11 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   ESM は依存を 1 段ずつ発見するため。実測で読み込み完了が約 2 割短くなった）。
   モジュールを足したり改名したりしたら、その一覧も直す。ズレても壊れず、ブラウザの
   コンソールに警告が出るだけ。
-- 上の規則（features の順番、views が import しないもの、leaf の許可表）と `modulepreload` の一覧は
-  `web/assets/layers.test.js`（`node --test web`）が import 文から確かめる。features の順番は上の行を
-  そのまま読む。JSDoc の `import("…")` は型だけの参照で読み込みを生まないので数えない。
-  読み込んだだけで走る文の規則は確かめない。
+- 上の規則（features の順番と `features/<name>/` の下から親を import しないこと、views が import しないもの、
+  leaf の許可表）と `modulepreload` の一覧は `web/assets/layers.test.js`（`node --test web`）が import 文から
+  確かめる。features の順番は上の行をそのまま読む。JSDoc の `import("…")` は型だけの参照で読み込みを
+  生まないので数えない。動的な `import(…)` は、下の例外（`app.js` が `--live` のモジュールを読む所）だけで
+  あることも確かめる。読み込んだだけで走る文の規則は確かめない。
 - 例外は `--live` のページの見方（`features/live.js`・`views/live.js`・`live-model.js`・`live-diff.js`・
   `live.css`）。`--live` でないレビューはページ用のファイルを読み込まない約束（`R-VERIFY`）
   なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
