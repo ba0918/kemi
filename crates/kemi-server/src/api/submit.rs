@@ -7,7 +7,6 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment;
-use kemi_core::domain::review::Side;
 use kemi_core::domain::submit::{RESULT_CONTRACT_VERSION, Verdict};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -98,57 +97,41 @@ async fn build_submit_document(state: &AppState, verdict: Verdict) -> Result<Val
         .expect("review lock poisoned")
         .startup
         .clone();
-    let snapshot: Vec<(String, String, Side, String)> = {
+    let file_ids: Vec<String> = {
         let session = state.session.lock().expect("session poisoned");
         // ページへのコメントは内容ハッシュを持たず、outdated は常に false（R-SUBMIT）。
+        let mut seen = std::collections::HashSet::new();
         session
             .state
             .comments
             .iter()
-            .filter_map(|comment| {
-                let file = comment.file()?;
-                Some((
-                    comment.id.clone(),
-                    file.file_id.clone(),
-                    file.side,
-                    file.content_hash.clone(),
-                ))
-            })
+            .filter_map(|comment| comment.file())
+            .filter(|file| seen.insert(file.file_id.as_str()))
+            .map(|file| file.file_id.clone())
             .collect()
     };
-    let mut hashes = std::collections::HashMap::new();
-    let mut outdated = std::collections::HashMap::new();
-    for (id, file_id, side, created_hash) in snapshot {
-        if !hashes.contains_key(&file_id) {
-            // 一覧から消えたファイルは内容を引けないので、全コメントを古い扱いにする。
-            let content = if find_file(state, &file_id).is_err() {
-                None
-            } else {
-                source_content(state, &file_id).await?
-            };
-            let pair = content.map(|content| {
-                (
-                    comment::content_hash(&side_lines(&content.old)),
-                    comment::content_hash(&side_lines(&content.new)),
-                )
-            });
-            hashes.insert(file_id.clone(), pair);
-        }
-        let is_outdated = hashes[&file_id].as_ref().is_none_or(|(old, new)| {
-            let current = match side {
-                Side::Old => old,
-                Side::New => new,
-            };
-            comment::is_outdated(&created_hash, current)
-        });
-        outdated.insert(id, is_outdated);
+    for file_id in file_ids {
+        // 一覧から消えたファイルは内容を引けないので、全コメントを古い扱いにする。
+        let content = if find_file(state, &file_id).is_err() {
+            None
+        } else {
+            source_content(state, &file_id).await?
+        };
+        let lines = content.map(|content| (side_lines(&content.old), side_lines(&content.new)));
+        comment::refresh_outdated(
+            &mut state
+                .session
+                .lock()
+                .expect("session poisoned")
+                .state
+                .comments,
+            &file_id,
+            lines
+                .as_ref()
+                .map(|(old, new)| (old.as_slice(), new.as_slice())),
+        );
     }
-    let mut session = state.session.lock().expect("session poisoned");
-    for comment in session.state.comments.iter_mut() {
-        if let Some(is_outdated) = outdated.get(&comment.id) {
-            comment.outdated = *is_outdated;
-        }
-    }
+    let session = state.session.lock().expect("session poisoned");
     let comments: Vec<Value> = session.state.comments.iter().map(comment_json).collect();
     let messages: Vec<Value> = session.state.messages.iter().map(message_json).collect();
     Ok(json!({

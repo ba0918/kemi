@@ -1,7 +1,7 @@
 //! コメントと suggestion（R-COMMENT）の検証と状態。
 
 use crate::domain::fnv::Fnv1a;
-use crate::domain::review::{LineRange, Place, Side};
+use crate::domain::review::{Comment, LineRange, Place, Side};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentError {
@@ -99,10 +99,38 @@ pub fn is_outdated(created_hash: &str, current_hash: &str) -> bool {
     created_hash != current_hash
 }
 
+/// `file_id` のファイルへの行コメントの outdated を、今の内容に合わせて付け直す（R-COMMENT）。
+/// `current` は今の旧側と新側の行。一覧から消えて内容を引けないファイルは None で、
+/// そのコメントはすべて古い扱いにする。ハッシュはコメントのある側だけを 1 回ずつ求める。
+pub fn refresh_outdated(
+    comments: &mut [Comment],
+    file_id: &str,
+    current: Option<(&[String], &[String])>,
+) {
+    let mut old_hash = None;
+    let mut new_hash = None;
+    for comment in comments.iter_mut() {
+        let Some(file) = comment.file().filter(|file| file.file_id == file_id) else {
+            continue;
+        };
+        let outdated = current.is_none_or(|(old, new)| {
+            let current_hash = match file.side {
+                Side::Old => old_hash.get_or_insert_with(|| content_hash(old)),
+                Side::New => new_hash.get_or_insert_with(|| content_hash(new)),
+            };
+            is_outdated(&file.content_hash, current_hash)
+        });
+        comment.outdated = outdated;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::review::{LineRange, Place, PlaceKind, Side};
+    use crate::domain::review::{
+        Comment, CommentTarget, FileTarget, LineRange, Place, PlaceKind, Side,
+    };
+    use crate::testutil::{file_comment, file_target};
 
     fn lines(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
@@ -202,6 +230,61 @@ mod tests {
         assert_ne!(created, changed);
         assert!(!is_outdated(&created, &same));
         assert!(is_outdated(&created, &changed));
+    }
+
+    /// `file_id` の `side` 側への行コメント。作成時の内容は `created`。
+    fn line_comment(id: &str, file_id: &str, side: Side, created: &[&str]) -> Comment {
+        Comment {
+            target: CommentTarget::File(FileTarget {
+                file_id: file_id.to_string(),
+                side,
+                content_hash: content_hash(&lines(created)),
+                ..file_target()
+            }),
+            ..file_comment(id)
+        }
+    }
+
+    fn outdated(comments: &[Comment]) -> Vec<(&str, bool)> {
+        comments
+            .iter()
+            .map(|comment| (comment.id.as_str(), comment.outdated))
+            .collect()
+    }
+
+    #[test]
+    fn refreshing_marks_a_line_comment_outdated_only_when_its_own_side_changed() {
+        let mut comments = vec![
+            line_comment("c1", "f1", Side::Old, &["a"]),
+            line_comment("c2", "f1", Side::New, &["b"]),
+            // 別のファイルのコメントは、作成時と内容が違っても触らない。
+            line_comment("c3", "f2", Side::New, &["x"]),
+        ];
+        comments[0].outdated = true;
+
+        let (old, new) = (lines(&["a"]), lines(&["b", "changed"]));
+        refresh_outdated(&mut comments, "f1", Some((&old, &new)));
+
+        assert_eq!(
+            outdated(&comments),
+            [("c1", false), ("c2", true), ("c3", false)]
+        );
+    }
+
+    #[test]
+    fn refreshing_a_file_missing_from_the_review_marks_all_its_comments_outdated() {
+        let mut comments = vec![
+            line_comment("c1", "f1", Side::Old, &["a"]),
+            line_comment("c2", "f1", Side::New, &["b"]),
+            line_comment("c3", "f2", Side::New, &["x"]),
+        ];
+
+        refresh_outdated(&mut comments, "f1", None);
+
+        assert_eq!(
+            outdated(&comments),
+            [("c1", true), ("c2", true), ("c3", false)]
+        );
     }
 
     fn place(n: u32) -> Place {

@@ -94,7 +94,16 @@ fn prepare_file(
     // 描画表示の対象かと、事前に分かる描画不可は、ここで読んだ内容だけで決める（R-RENDER）。
     let render_info = render_info(file, old_text.as_deref(), new_text.as_deref());
 
-    update_outdated(state, id, &old_lines, &new_lines);
+    comment::refresh_outdated(
+        &mut state
+            .session
+            .lock()
+            .expect("session poisoned")
+            .state
+            .comments,
+        id,
+        Some((&old_lines, &new_lines)),
+    );
 
     if let (Some(from), Some(to)) = (query.from, query.to) {
         let from = from.min(rows.len());
@@ -194,22 +203,6 @@ fn commented_lines(state: &AppState, file_id: &str) -> (HashSet<u32>, HashSet<u3
         }
     }
     (old, new)
-}
-
-fn update_outdated(state: &AppState, file_id: &str, old_lines: &[String], new_lines: &[String]) {
-    let mut session = state.session.lock().expect("session poisoned");
-    let mut old_hash = None;
-    let mut new_hash = None;
-    for comment in session.state.comments.iter_mut() {
-        let Some(file) = comment.file().filter(|file| file.file_id == file_id) else {
-            continue;
-        };
-        let current_hash = match file.side {
-            Side::Old => old_hash.get_or_insert_with(|| comment::content_hash(old_lines)),
-            Side::New => new_hash.get_or_insert_with(|| comment::content_hash(new_lines)),
-        };
-        comment.outdated = comment::is_outdated(&file.content_hash, current_hash);
-    }
 }
 
 fn row_json(row: &Row, highlighted: Option<&Highlighted>) -> Value {
