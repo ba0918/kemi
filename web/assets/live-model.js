@@ -311,6 +311,71 @@ export function chooseReference({ snapshots, mock, page, width, chosen }) {
 }
 
 /**
+ * 帯の知らせに添える操作。`undo-mock` は外したモックを同じパスで割り当て直し、`show-recorded` は手で取ったものを見る。
+ * @typedef {"undo-mock" | "show-recorded"} BandAction
+ * @typedef {{ text: string, kind: "waiting" | "done", label: string, title: string, action: BandAction | null }} BandNotice
+ */
+
+/**
+ * 帯の知らせ。出すのは 1 つで、取れなかった理由 → モックの取り消しを断った理由 → 外したモック（取り消す操作つき。
+ * live-compare.md の R-PAGE-MOCK）→ 手で取って比べる相手を切り替えたこと（R-PAGE-REF）→ 保存しなかった
+ * スナップショット（live.md の R-PAGE-SESSION）の順に、最初にあるもの。取り消しを断った理由・外したモック・手で取った
+ * ものは、表示中のページのものだけ。手で取ったものは、それが今も比べる相手のときだけ知らせ、それを見ていない間
+ * （広い画面では見る対象だけ、狭い画面では動いているページの側）だけ、それを見る操作を添える。
+ * @param {{
+ *   refNotice: string,
+ *   undoMockFailed: { page: string, text: string } | null,
+ *   removedMock: { page: string, path: string } | null,
+ *   recorded: { page: string, id: string } | null,
+ *   chosen: string | undefined,
+ *   reference: Reference,
+ *   snapshots: SnapshotSummary[],
+ *   page: string,
+ *   narrow: boolean,
+ *   side: "live" | "ref",
+ *   compare: "now" | "side" | "overlay",
+ * }} input
+ *   refNotice は取れなかったときの知らせ（無ければ空）、chosen は表示中のページで選んだ時点、reference はその比べる相手、
+ *   snapshots は取った順
+ * @returns {BandNotice}
+ */
+export function bandNotice({ refNotice, undoMockFailed, removedMock, recorded, chosen, reference, snapshots, page, narrow, side, compare }) {
+  const text = refNotice === "" && undoMockFailed !== null && undoMockFailed.page === page ? undoMockFailed.text : refNotice;
+  if (text !== "") {
+    return { text, kind: "waiting", label: "", title: "", action: null };
+  }
+  if (removedMock !== null && removedMock.page === page) {
+    return {
+      text: `Mock removed · ${removedMock.path}`,
+      kind: "done",
+      label: "Undo",
+      title: `Assign ${removedMock.path} again`,
+      action: "undo-mock",
+    };
+  }
+  if (
+    recorded !== null &&
+    recorded.page === page &&
+    chosen === recorded.id &&
+    reference.type === "snapshot" &&
+    reference.snapshot.id === recorded.id
+  ) {
+    // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
+    const unseen = narrow ? side === "live" : compare === "now";
+    const title = narrow ? "Show the recorded snapshot" : "Show the recorded snapshot side by side";
+    return {
+      text: `Comparing from ${snapshotLabel(snapshots, reference.snapshot)}`,
+      kind: "done",
+      label: unseen ? "Compare →" : "",
+      title: unseen ? title : "",
+      action: unseen ? "show-recorded" : null,
+    };
+  }
+  const unsaved = reference.type === "snapshot" ? unsavedSnapshotNotice(reference.snapshot) : "";
+  return { text: unsaved, kind: "waiting", label: "", title: "", action: null };
+}
+
+/**
  * 重ねて透かすときの比べる相手の置き方（live-compare.md の DC2）。比べる相手は自分では
  * スクロールしない（スクリプトを止めた枠、別のオリジンの枠）ので、中身の高さで描き、
  * 見る対象のスクロールの分だけ外側でずらす。

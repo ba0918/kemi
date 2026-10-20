@@ -14,6 +14,7 @@ import {
   MOCK_FILE_CHOICE,
   WIDTH_CHOICES,
   addPlace,
+  bandNotice,
   commentShortName,
   buildPageTree,
   chooseReference,
@@ -36,7 +37,6 @@ import {
   snapshotLabel,
   startSnapshotDue,
   undoPlace,
-  unsavedSnapshotNotice,
 } from "../live-model.js";
 import { changesByElement, diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
@@ -388,7 +388,8 @@ export function startLive(info) {
   startComposing(shell);
   shell.refRecordButton.addEventListener("click", () => void recordCurrent());
   startShiftedReferenceMoves(shell.refWheel);
-  shell.refNoticeAction.addEventListener("click", () => bandAction?.());
+  const noticeAction = shell.refNoticeAction;
+  noticeAction.addEventListener("click", () => runBandAction(noticeAction.dataset.action));
   window.addEventListener("message", receive);
   const resized = new ResizeObserver(() => {
     // 狭い画面との境をまたぐと、操作の置き場所・比べる相手の選択の出し入れ・見出し・並べたまま隠れている側が変わる。
@@ -2238,59 +2239,47 @@ function renderReference() {
 }
 
 /**
- * 帯の知らせ: 取れなかった理由、手で取って比べる相手を切り替えたこと、保存できなかったスナップショットの順に 1 つ。
- * 手で取ったことの知らせには、取ったものを見ていない間（見る対象だけ、狭い画面で動いているページの側）だけ、
- * それを見る操作を添える（live-compare.md の R-PAGE-REF）。
+ * 帯の知らせ（live-model.js の bandNotice）。添える操作は、押したときに読めるよう操作の要素に書いておく。
  * @param {import("../live-model.js").Reference} reference
  */
 function renderBandNotice(reference) {
   if (!shell) {
     return;
   }
-  bandAction = null;
-  const removed = live.removedMock !== null && live.removedMock.page === live.page ? live.removedMock : null;
-  const undoFailed = live.undoMockFailed !== null && live.undoMockFailed.page === live.page ? live.undoMockFailed.text : "";
-  const recorded =
-    live.recorded !== null &&
-    live.recorded.page === live.page &&
-    live.chosen.get(live.page) === live.recorded.id &&
-    reference.type === "snapshot" &&
-    reference.snapshot.id === live.recorded.id
-      ? reference.snapshot
-      : null;
-  let text = live.refNotice === "" ? undoFailed : live.refNotice;
-  let kind = "waiting";
-  let label = "";
-  let title = "";
-  if (text === "" && removed !== null) {
-    text = `Mock removed · ${removed.path}`;
-    kind = "done";
-    label = "Undo";
-    title = `Assign ${removed.path} again`;
-    bandAction = undoRemovedMock;
-  } else if (text === "" && recorded !== null) {
-    text = `Comparing from ${snapshotLabel(live.snapshots, recorded)}`;
-    kind = "done";
-    // 取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。
-    if (state.narrow ? live.side === "live" : live.compare === "now") {
-      label = "Compare →";
-      title = state.narrow ? "Show the recorded snapshot" : "Show the recorded snapshot side by side";
-      bandAction = showRecorded;
-    }
-  } else if (text === "" && reference.type === "snapshot") {
-    text = unsavedSnapshotNotice(reference.snapshot);
-  }
-  shell.refNotice.hidden = text === "";
-  shell.refNotice.dataset.kind = kind;
-  shell.refNoticeText.textContent = text;
-  shell.refNoticeAction.hidden = bandAction === null;
-  shell.refNoticeAction.textContent = label;
-  shell.refNoticeAction.title = title;
+  const notice = bandNotice({
+    refNotice: live.refNotice,
+    undoMockFailed: live.undoMockFailed,
+    removedMock: live.removedMock,
+    recorded: live.recorded,
+    chosen: live.chosen.get(live.page),
+    reference,
+    snapshots: live.snapshots,
+    page: live.page,
+    narrow: state.narrow,
+    side: live.side,
+    compare: live.compare,
+  });
+  shell.refNotice.hidden = notice.text === "";
+  shell.refNotice.dataset.kind = notice.kind;
+  shell.refNoticeText.textContent = notice.text;
+  shell.refNoticeAction.hidden = notice.action === null;
+  shell.refNoticeAction.dataset.action = notice.action ?? "";
+  shell.refNoticeAction.textContent = notice.label;
+  shell.refNoticeAction.title = notice.title;
 }
 
-/** 帯の知らせの操作。知らせを描くたびに決める。 */
-/** @type {(() => void) | null} */
-let bandAction = null;
+/**
+ * 帯の知らせの操作を押した。押す時点の状態で決め直さず、描いたときに決めた操作をする（見えている操作の名前と、
+ * 押してすることを食い違わせない）。
+ * @param {string | undefined} action
+ */
+function runBandAction(action) {
+  if (action === "undo-mock") {
+    void undoRemovedMock();
+  } else if (action === "show-recorded") {
+    showRecorded();
+  }
+}
 
 /** 手で取ったものを見る: 広い画面では並べる見比べ方に、狭い画面では比べる相手の 1 枚に切り替える。 */
 function showRecorded() {

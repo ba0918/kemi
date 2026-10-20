@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   WIDTH_CHOICES,
   addPlace,
+  bandNotice,
   buildPageTree,
   draftElsewhere,
   editBody,
@@ -245,6 +246,118 @@ test("without a mock, or once it is removed, the snapshot order applies again", 
   assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: undefined }), { type: "snapshot", snapshot: snapshots[1] });
   assert.deepEqual(chooseReference({ snapshots, mock: null, page: "/", width: 1280, chosen: "mock" }), { type: "snapshot", snapshot: snapshots[1] });
   assert.deepEqual(chooseReference({ snapshots: [], mock: null, page: "/", width: 1280, chosen: undefined }), { type: "none" });
+});
+
+/**
+ * 帯の知らせの入力。既定は、何も知らせることの無い広い画面の見る対象だけ。
+ * @param {Partial<Parameters<typeof bandNotice>[0]>} [input]
+ */
+const band = (input = {}) =>
+  bandNotice({
+    refNotice: "",
+    undoMockFailed: null,
+    removedMock: null,
+    recorded: null,
+    chosen: undefined,
+    reference: { type: "none" },
+    snapshots: [],
+    page: "/",
+    narrow: false,
+    side: "live",
+    compare: "now",
+    ...input,
+  });
+
+/** 手で取って比べる相手を切り替えた直後の知らせの入力（live-compare.md の R-PAGE-REF）。 */
+const recordedNow = () => {
+  const taken = snap("s2", "manual");
+  return {
+    snapshots: [snap("s1", "start"), taken],
+    recorded: { page: "/", id: "s2" },
+    chosen: "s2",
+    reference: /** @type {const} */ ({ type: "snapshot", snapshot: taken }),
+  };
+};
+
+test("the band tells one thing: a failure to record, then a refused undo, then a removed mock, then the recorded snapshot", () => {
+  const removedMock = { page: "/", path: "m.html" };
+  const undoMockFailed = { page: "/", text: "Mock not assigned again · m.html: gone" };
+  const all = { ...recordedNow(), removedMock, undoMockFailed, refNotice: "Not recorded: the page is not loaded" };
+  assert.equal(band(all).text, "Not recorded: the page is not loaded");
+  assert.equal(band({ ...all, refNotice: "" }).text, "Mock not assigned again · m.html: gone");
+  assert.equal(band({ ...all, refNotice: "", undoMockFailed: null }).text, "Mock removed · m.html");
+  assert.equal(band({ ...all, refNotice: "", undoMockFailed: null, removedMock: null }).text, "Comparing from Recorded 1");
+});
+
+test("a snapshot that was not saved is told on the band only when nothing else is", () => {
+  const unsaved = { ...snap("s1", "manual"), unsaved: true };
+  const reference = /** @type {const} */ ({ type: "snapshot", snapshot: unsaved });
+  assert.deepEqual(band({ reference, snapshots: [unsaved] }), {
+    text: unsavedSnapshotNotice(unsaved),
+    kind: "waiting",
+    label: "",
+    title: "",
+    action: null,
+  });
+  assert.equal(band({ reference, snapshots: [unsaved], refNotice: "Not recorded: x" }).text, "Not recorded: x");
+  assert.deepEqual(band(), { text: "", kind: "waiting", label: "", title: "", action: null });
+});
+
+test("a removed mock is told with an undo, and a refused undo without one, only on the page they belong to", () => {
+  assert.deepEqual(band({ removedMock: { page: "/", path: "m.html" } }), {
+    text: "Mock removed · m.html",
+    kind: "done",
+    label: "Undo",
+    title: "Assign m.html again",
+    action: "undo-mock",
+  });
+  assert.equal(band({ removedMock: { page: "/other", path: "m.html" } }).text, "");
+  assert.deepEqual(band({ undoMockFailed: { page: "/", text: "refused" } }), {
+    text: "refused",
+    kind: "waiting",
+    label: "",
+    title: "",
+    action: null,
+  });
+  assert.equal(band({ undoMockFailed: { page: "/other", text: "refused" } }).text, "");
+});
+
+test("the recorded snapshot is told only while it is still the chosen reference of the page", () => {
+  const recorded = recordedNow();
+  assert.equal(band(recorded).kind, "done");
+  assert.equal(band({ ...recorded, page: "/other" }).text, "");
+  assert.equal(band({ ...recorded, chosen: "s1" }).text, "");
+  assert.equal(band({ ...recorded, chosen: undefined }).text, "");
+  assert.equal(band({ ...recorded, reference: { type: "none" } }).text, "");
+  assert.equal(band({ ...recorded, reference: { type: "snapshot", snapshot: snap("s1", "start") } }).text, "");
+});
+
+test("the recorded snapshot carries an action to see it only while it is not shown", () => {
+  const recorded = recordedNow();
+  // 広い画面では見る対象だけのときだけ、並べる見比べ方へ切り替える操作を付ける。
+  assert.deepEqual(band({ ...recorded, compare: "now" }), {
+    text: "Comparing from Recorded 1",
+    kind: "done",
+    label: "Compare →",
+    title: "Show the recorded snapshot side by side",
+    action: "show-recorded",
+  });
+  for (const compare of /** @type {const} */ (["side", "overlay"])) {
+    assert.deepEqual(band({ ...recorded, compare }), {
+      text: "Comparing from Recorded 1",
+      kind: "done",
+      label: "",
+      title: "",
+      action: null,
+    });
+  }
+  // 狭い画面では見比べ方によらず、動いているページの側を見ている間だけ、比べる相手の 1 枚にする操作を付ける。
+  for (const compare of /** @type {const} */ (["now", "side", "overlay"])) {
+    const onLive = band({ ...recorded, narrow: true, side: "live", compare });
+    assert.deepEqual([onLive.label, onLive.title, onLive.action], ["Compare →", "Show the recorded snapshot", "show-recorded"]);
+    const onRef = band({ ...recorded, narrow: true, side: "ref", compare });
+    assert.deepEqual([onRef.label, onRef.title, onRef.action], ["", "", null]);
+  }
 });
 
 test("an overlaid reference is drawn at the full content height and moved by the scroll of the page", () => {
