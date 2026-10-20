@@ -447,6 +447,16 @@ impl OpenSession {
         Ok(())
     }
 
+    /// 凍結した写しを、凍結の印を付けた状態と一緒に保存する。`<id>.payload` を書いてから
+    /// `<id>.session` を書く。途中で止まっても、残るのはどの `<id>.session` からも「使える」と
+    /// 指されていない `<id>.payload` だけになる（R-SESSION の書く順序）。
+    ///
+    /// 写しを「使える」にするのも `<id>.payload` を置けてからにする。書けなかったのに
+    /// 「使える」と覚えると、次に状態を書いたとき写しの無い `<id>.session` が
+    /// 「使える」と主張してしまう。
+    ///
+    /// 圧縮後の写しが上限を超えたら `<id>.payload` を書かず、凍結の印を外して復元不可に
+    /// し、`Ok(false)` を返す。最終更新は進めない。
     pub fn save_frozen_copy(
         &mut self,
         prepared: super::PreparedCopy,
@@ -475,11 +485,6 @@ impl OpenSession {
         }
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(ready)
-    }
-
-    /// 凍結した写しを保存する。圧縮後の上限を超えたら写しを捨てて復元不可にする。
-    pub fn save_copy(&mut self, copy: SessionCopy) -> Result<(), SessionError> {
-        self.save_copy_with_limit(copy, super::now_millis(), COPY_LIMIT)
     }
 
     /// 写しを作れなかったことを記録する。状態と情報だけが残る。
@@ -665,22 +670,6 @@ impl OpenSession {
         self.persist()
     }
 
-    pub(crate) fn save_copy_with_limit(
-        &mut self,
-        copy: SessionCopy,
-        now: u128,
-        limit: u64,
-    ) -> Result<(), SessionError> {
-        let body = super::encode_copy(&copy).map_err(|reason| SessionError::Encode { reason })?;
-        let compressed = encoding::gzip(&body);
-        self.info.updated = now;
-        if compressed.len() as u64 > limit {
-            self.copy = CopyState::Unusable("the review copy is larger than 20 MB".to_string());
-            return self.persist_without_copy();
-        }
-        self.persist_with_copy(copy, &compressed)
-    }
-
     pub(crate) fn mark_unresumable_at(
         &mut self,
         reason: &str,
@@ -745,25 +734,6 @@ impl OpenSession {
             // 書いており、保留で終わるときに消すかを決める（`close_suspended`）。
             return self.remove_file();
         }
-        self.write_session(&self.info, &self.state, &self.copy)?;
-        cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
-        Ok(())
-    }
-
-    /// 写しを保存する。`<id>.payload` を書いてから `<id>.session` を書く。途中で
-    /// 止まっても、残るのはどの `<id>.session` からも「使える」と指されていない
-    /// `<id>.payload` だけになる（R-SESSION の書く順序）。
-    ///
-    /// 写しを「使える」にするのも `<id>.payload` を置けてからにする。書けなかったのに
-    /// 「使える」と覚えると、次に状態を書いたとき写しの無い `<id>.session` が
-    /// 「使える」と主張してしまう。
-    fn persist_with_copy(&mut self, copy: SessionCopy, payload: &[u8]) -> Result<(), SessionError> {
-        if self.lifecycle == Lifecycle::Deleted {
-            self.copy = CopyState::Ready(copy);
-            return Ok(());
-        }
-        write_atomic(&self.dir, &payload_path(&self.dir, &self.info.id), payload)?;
-        self.copy = CopyState::Ready(copy);
         self.write_session(&self.info, &self.state, &self.copy)?;
         cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())

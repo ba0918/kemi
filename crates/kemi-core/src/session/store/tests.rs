@@ -577,14 +577,15 @@ fn session_roundtrips_info_state_and_copy() {
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
     open.save_state_at(state_with_comment(), 200).unwrap();
-    open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
     let id = open.id().to_string();
     drop(open);
 
     let opened = store.open(&id).unwrap();
 
     assert_eq!(opened.info().id, id);
-    assert_eq!(opened.info().updated, 300);
+    assert_eq!(opened.info().updated, 200);
     assert_eq!(opened.state(), &state_with_comment());
     assert_eq!(opened.copy(), &CopyState::Ready(copy()));
     assert!(opened.is_resumable());
@@ -1010,7 +1011,7 @@ fn session_file_holds_no_frozen_review_paths() {
     let mut only_in_the_copy = copy();
     only_in_the_copy.units[0].review.groups[0].files[0].path = "src/needle_marker.rs".to_string();
     open.save_state_at(state_with_comment(), 200).unwrap();
-    open.save_copy_with_limit(only_in_the_copy, 300, COPY_LIMIT)
+    open.save_frozen_copy(prepared(only_in_the_copy), state_with_comment())
         .unwrap();
     let id = open.id().to_string();
     drop(open);
@@ -1052,7 +1053,8 @@ fn session_without_its_copy_file_is_not_listed_and_cannot_be_opened() {
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
     open.save_state_at(state_with_comment(), 200).unwrap();
-    open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
     let id = open.id().to_string();
     drop(open);
     std::fs::remove_file(scratch.dir().join(format!("{id}.payload"))).unwrap();
@@ -1071,7 +1073,8 @@ fn session_copy_is_stored_as_gzip() {
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
     let id = open.id().to_string();
     drop(open);
 
@@ -1090,7 +1093,8 @@ fn session_state_write_leaves_the_copy_file_untouched() {
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
     let id = open.id().to_string();
     let payload = scratch.dir().join(format!("{id}.payload"));
     // gzip として読めないバイト列に置き換える。状態の保存がここを書き直すなら
@@ -1125,7 +1129,8 @@ fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
                 .insert(file.id.clone(), content(None, Some(b"one\n")));
             frozen.units[0].review.groups[0].files.push(file);
         }
-        open.save_copy_with_limit(frozen, 200, COPY_LIMIT).unwrap();
+        open.save_frozen_copy(prepared(frozen), SessionState::default())
+            .unwrap();
         let payload = payload_path(&scratch.dir(), id);
         std::fs::remove_file(&payload).unwrap();
         std::fs::create_dir(&payload).unwrap();
@@ -1159,57 +1164,6 @@ fn general_state_has_no_file_or_generation_arrays_and_needs_no_payload_io() {
         states.push(saved);
     }
     assert_eq!(states[0], states[1]);
-}
-
-#[cfg(unix)]
-#[test]
-fn session_copy_that_cannot_be_written_does_not_become_resumable() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
-    let mut open = store.create(info(id, 100)).unwrap();
-    open.save_state_at(state_with_comment(), 200).unwrap();
-    // 写しのファイルを置けなくする（同じ名前のディレクトリがあると rename が
-    // 失敗する）。ディスクが一杯のときと同じ経路になる。
-    std::fs::create_dir_all(scratch.dir().join(format!("{id}.payload"))).unwrap();
-
-    assert!(open.save_copy_with_limit(copy(), 300, COPY_LIMIT).is_err());
-
-    // 写しを置けていないので「使える」にしない。この後に状態を書いても、
-    // 「使える」と書いた `<id>.session` は残らない（R-SESSION の不変条件）。
-    assert!(!open.is_resumable());
-    open.save_state_at(state_with_comment(), 400).unwrap();
-    assert!(store.list().unwrap().is_empty());
-}
-
-#[test]
-fn session_copy_over_the_limit_is_unusable() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    let mut open = store
-        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
-        .unwrap();
-    open.save_state_at(state_with_comment(), 110).unwrap();
-    let mut oversized = copy();
-    oversized.contents.insert(
-        "big".to_string(),
-        content(None, Some(&incompressible(1024))),
-    );
-    // 上限は `<id>.payload` 全体で判定する（R-SESSION）。変更ファイルの内容だけで
-    // ちょうど収まる上限を渡し、凍結したレビューのメタデータの分で超えさせる。
-    let contents_only = encoding::gzip(&encoding::encode_contents(&oversized.contents)).len();
-    open.save_copy_with_limit(oversized, 200, contents_only as u64)
-        .unwrap();
-    let id = open.id().to_string();
-    assert!(matches!(open.copy(), CopyState::Unusable(_)));
-    drop(open);
-
-    let stored = store.read(&id).unwrap();
-    assert!(matches!(stored.copy, CopyState::Unusable(_)));
-    assert!(matches!(
-        store.open(&id),
-        Err(SessionError::Unusable { .. })
-    ));
 }
 
 /// gzip でほとんど縮まない ASCII の文字列（`seed` ごとに違う）。
@@ -1413,7 +1367,8 @@ fn only_sessions_of_an_unreadable_version_are_reported() {
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
     open.save_state_at(state_with_comment(), 200).unwrap();
-    open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
     drop(open);
     assert!(!store.has_unreadable_version());
 
@@ -1455,11 +1410,17 @@ fn session_file_is_not_left_empty() {
 #[test]
 fn session_without_state_and_an_unusable_copy_is_not_kept() {
     let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
+    let store = SessionStore::new(scratch.dir()).with_copy_limit(1);
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, 1).unwrap();
+    assert!(
+        !open
+            .save_frozen_copy(prepared(copy()), SessionState::default())
+            .unwrap()
+    );
+
+    open.close_suspended().unwrap();
 
     assert!(matches!(
         store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
@@ -1474,7 +1435,8 @@ fn session_atomic_replace_ignores_a_leftover_temporary() {
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
     let id = open.id().to_string();
     let temporary = scratch.dir().join(format!(".{id}.session.tmp"));
     std::fs::write(&temporary, b"part of the next write").unwrap();
@@ -1525,7 +1487,8 @@ fn session_cleanup_keeps_the_total_size() {
         "big".to_string(),
         content(None, Some(&incompressible(20_000))),
     );
-    old.save_copy_with_limit(large, 100, COPY_LIMIT).unwrap();
+    old.save_frozen_copy(prepared(large), SessionState::default())
+        .unwrap();
     drop(old);
     let mut newest = store
         .create(info("01HF7YAT00BBBBBBBBBBBBBBBB", 200))
@@ -1556,19 +1519,19 @@ fn session_cleanup_keeps_a_locked_session_out_of_the_count() {
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
     locked
-        .save_copy_with_limit(copy(), 100, COPY_LIMIT)
+        .save_frozen_copy(prepared(copy()), SessionState::default())
         .unwrap();
     let mut middle = store
         .create(info("01HF7YAT00BBBBBBBBBBBBBBBB", 200))
         .unwrap();
     middle
-        .save_copy_with_limit(copy(), 200, COPY_LIMIT)
+        .save_frozen_copy(prepared(copy()), SessionState::default())
         .unwrap();
     let mut newest = store
         .create(info("01HF7YAT00CCCCCCCCCCCCCCCC", 300))
         .unwrap();
     newest
-        .save_copy_with_limit(copy(), 300, COPY_LIMIT)
+        .save_frozen_copy(prepared(copy()), SessionState::default())
         .unwrap();
 
     // 最古を開いたまま 2 件だけ残す。ロック中は消えず、件数にも数えないので、
@@ -1678,7 +1641,9 @@ fn session_cleanup_evicts_a_stale_pair_by_the_limits() {
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut stale = store.create(info(id, 100)).unwrap();
     stale.save_state_at(state_with_comment(), 100).unwrap();
-    stale.save_copy_with_limit(copy(), 100, COPY_LIMIT).unwrap();
+    stale
+        .save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
     let session = scratch.dir().join(format!("{id}.session"));
     let payload = scratch.dir().join(format!("{id}.payload"));
     // 強制終了で残りうる形。「使える」でない `<id>.session` と `<id>.payload` が
@@ -1706,7 +1671,8 @@ fn session_dropping_the_copy_removes_the_copy_file() {
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let mut open = store.create(info(id, 100)).unwrap();
     open.save_state_at(state_with_comment(), 200).unwrap();
-    open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
 
     open.mark_unresumable_at("cannot read the contents", 400)
         .unwrap();
@@ -1718,7 +1684,9 @@ fn session_dropping_the_copy_removes_the_copy_file() {
     // 状態が空のまま写しが使えなくなる枝では、セッションごと消えて写しも残らない。
     let other = "01HF7YAT00BBBBBBBBBBBBBBBB";
     let mut empty = store.create(info(other, 100)).unwrap();
-    empty.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    empty
+        .save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
 
     empty
         .mark_unresumable_at("cannot read the contents", 300)
@@ -1755,17 +1723,24 @@ fn session_list_orders_by_updated_and_skips_unusable() {
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
     older.save_state_at(state_with_comment(), 100).unwrap();
-    older.save_copy_with_limit(copy(), 100, COPY_LIMIT).unwrap();
+    older
+        .save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
     let mut newer = store
         .create(info("01HF7YAT00BBBBBBBBBBBBBBBB", 200))
         .unwrap();
     newer.save_state_at(state_with_comment(), 200).unwrap();
-    newer.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
-    let mut unusable = store
+    newer
+        .save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
+    let mut unusable = SessionStore::new(scratch.dir())
+        .with_copy_limit(1)
         .create(info("01HF7YAT00CCCCCCCCCCCCCCCC", 300))
         .unwrap();
     unusable.save_state_at(state_with_comment(), 300).unwrap();
-    unusable.save_copy_with_limit(copy(), 300, 1).unwrap();
+    unusable
+        .save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
 
     let listed = store.list().unwrap();
 
@@ -1849,7 +1824,8 @@ fn session_delete_removes_the_file() {
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
     let id = open.id().to_string();
 
     open.delete().unwrap();
@@ -1905,32 +1881,16 @@ fn suspending_after_submit_does_not_allow_late_writes_to_recreate_the_session() 
     open.close_suspended().unwrap();
 
     open.save_state_at(state_with_comment(), 300).unwrap();
-    open.save_copy_with_limit(copy(), 400, COPY_LIMIT).unwrap();
+    assert!(
+        open.save_frozen_copy(prepared(copy()), state_with_comment())
+            .is_err()
+    );
     let write = open.save_image("c1", b"image", &BTreeSet::new());
 
     assert!(matches!(write.written, FileWritten::Failed(_)));
     assert!(!session_path(&scratch.dir(), id).exists());
     assert!(!payload_path(&scratch.dir(), id).exists());
     assert!(!files_path(&scratch.dir(), id).exists());
-}
-
-#[test]
-fn session_is_not_recreated_by_a_copy_saved_after_delete() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    let mut open = store
-        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
-        .unwrap();
-    open.save_state_at(state_with_comment(), 200).unwrap();
-    open.delete().unwrap();
-
-    // submit と競争した凍結が、消えたあとに写しを保存する。
-    open.save_copy_with_limit(copy(), 300, COPY_LIMIT).unwrap();
-
-    assert!(matches!(
-        store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
-        Err(SessionError::NotFound { .. })
-    ));
 }
 
 #[cfg(unix)]
@@ -1942,7 +1902,8 @@ fn session_files_are_owner_only() {
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
     let id = open.id().to_string();
 
     let dir_mode = std::fs::metadata(scratch.dir())
@@ -2205,7 +2166,8 @@ fn endpoint_is_removed_with_the_session() {
     let mut open = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    open.save_copy_with_limit(copy(), 200, COPY_LIMIT).unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
     let id = open.id().to_string();
     let endpoint = Endpoint {
         port: 1,

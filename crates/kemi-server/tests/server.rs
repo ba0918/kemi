@@ -1146,9 +1146,14 @@ impl SessionSink for RecordingSink {
         }
     }
 
-    fn save_copy(&self, copy: SessionCopy) -> Result<(), SessionError> {
-        self.copies.lock().unwrap().push(copy);
-        Ok(())
+    fn save_frozen_copy(
+        &self,
+        copy: kemi_core::session::PreparedCopy,
+        state: SessionState,
+    ) -> Result<bool, SessionError> {
+        self.copies.lock().unwrap().push(copy.into_copy());
+        self.save_issued_state(state)?;
+        Ok(true)
     }
 
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
@@ -1249,8 +1254,13 @@ impl SessionSink for SlowSink {
         Ok(())
     }
 
-    fn save_copy(&self, _copy: SessionCopy) -> Result<(), SessionError> {
-        Ok(())
+    fn save_frozen_copy(
+        &self,
+        _copy: kemi_core::session::PreparedCopy,
+        state: SessionState,
+    ) -> Result<bool, SessionError> {
+        self.save_issued_state(state)?;
+        Ok(true)
     }
 
     fn mark_unresumable(&self, _reason: &str) -> Result<(), SessionError> {
@@ -1396,10 +1406,6 @@ impl SessionSink for StoreSink {
 
     fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.open.lock().unwrap().save_state(state)
-    }
-
-    fn save_copy(&self, copy: SessionCopy) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_copy(copy)
     }
 
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {

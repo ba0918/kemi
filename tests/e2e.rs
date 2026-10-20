@@ -735,15 +735,19 @@ fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> Sess
     let mut open = store
         .create(session_info(id, mode, title, &workspace))
         .unwrap();
-    open.save_state(SessionState {
+    let state = SessionState {
         comments: vec![session_comment()],
         seen: ["f1".to_string()].into_iter().collect(),
         collapsed: BTreeMap::new(),
         last_comment: 1,
         ..SessionState::default()
-    })
+    };
+    open.save_state(state.clone()).unwrap();
+    open.save_frozen_copy(
+        kemi_core::session::prepare_copy(session_copy()).unwrap(),
+        state,
+    )
     .unwrap();
-    open.save_copy(session_copy()).unwrap();
     store
 }
 

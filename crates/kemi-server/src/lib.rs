@@ -199,15 +199,13 @@ pub trait SessionSink: Send + Sync {
     fn initial_title(&self) -> Option<String> {
         None
     }
+    /// 凍結が完成したとき。写しと、凍結の印を付けた状態を一緒に保存する。写しの上限は
+    /// 実装が判定し、超えたら写しを捨てて `Ok(false)` を返す。
     fn save_frozen_copy(
         &self,
         copy: kemi_core::session::PreparedCopy,
         state: kemi_core::session::SessionState,
-    ) -> Result<bool, SessionError> {
-        self.save_copy(copy.into_copy())?;
-        self.save_issued_state(state)?;
-        Ok(true)
-    }
+    ) -> Result<bool, SessionError>;
     fn review_id(&self) -> Option<String> {
         None
     }
@@ -232,8 +230,6 @@ pub trait SessionSink: Send + Sync {
     fn describe_review(&self, title: &str, total_files: usize);
     /// 状態が変わるたび。空の状態と写しだけで、書くべきものが無ければ何もしない。
     fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), SessionError>;
-    /// 凍結が完成したとき。写しの上限は実装が判定する。
-    fn save_copy(&self, copy: kemi_core::session::SessionCopy) -> Result<(), SessionError>;
     /// 凍結できなかったとき。状態と情報だけを残す。
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError>;
     /// submit の確定後。

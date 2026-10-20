@@ -378,11 +378,13 @@ pub struct SessionCopy {
     pub contents: BTreeMap<String, FileContent>,
 }
 
+/// 保存する前に圧縮まで済ませた写し。圧縮は重いので、保存の門の外で作る。
 pub struct PreparedCopy {
     pub(crate) copy: SessionCopy,
     pub(crate) compressed: Vec<u8>,
 }
 impl PreparedCopy {
+    /// 写しの中身。core のストアを使わない保存先（`SessionSink` の実装）が中身を持つときに使う。
     pub fn into_copy(self) -> SessionCopy {
         self.copy
     }

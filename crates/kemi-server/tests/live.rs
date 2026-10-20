@@ -1285,11 +1285,12 @@ impl SessionSink for InterruptedImageSink {
         self.open.lock().unwrap().save_state(state)
     }
 
-    fn save_copy(
+    fn save_frozen_copy(
         &self,
-        copy: kemi_core::session::SessionCopy,
-    ) -> Result<(), kemi_core::session::SessionError> {
-        self.open.lock().unwrap().save_copy(copy)
+        copy: kemi_core::session::PreparedCopy,
+        state: kemi_core::session::SessionState,
+    ) -> Result<bool, kemi_core::session::SessionError> {
+        self.open.lock().unwrap().save_frozen_copy(copy, state)
     }
 
     fn mark_unresumable(&self, reason: &str) -> Result<(), kemi_core::session::SessionError> {
@@ -1460,8 +1461,12 @@ impl SessionSink for StoreSink {
         self.open.lock().unwrap().save_state(state)
     }
 
-    fn save_copy(&self, copy: kemi_core::session::SessionCopy) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_copy(copy)
+    fn save_frozen_copy(
+        &self,
+        copy: kemi_core::session::PreparedCopy,
+        state: kemi_core::session::SessionState,
+    ) -> Result<bool, SessionError> {
+        self.open.lock().unwrap().save_frozen_copy(copy, state)
     }
 
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {

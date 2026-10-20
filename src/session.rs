@@ -5,8 +5,8 @@ use std::sync::{Mutex, OnceLock};
 use std::collections::BTreeSet;
 
 use kemi_core::session::{
-    FilesWrite, OpenSession, PageSnapshot, SessionCopy, SessionError, SessionInfo, SessionState,
-    SessionStore, SessionSummary,
+    FilesWrite, OpenSession, PageSnapshot, SessionError, SessionInfo, SessionState, SessionStore,
+    SessionSummary,
 };
 use kemi_core::source::FrozenSource;
 use kemi_server::SessionSink;
@@ -158,10 +158,6 @@ impl SessionSink for StoredSession {
             .lock()
             .expect("session poisoned")
             .save_state(state)
-    }
-
-    fn save_copy(&self, copy: SessionCopy) -> Result<(), SessionError> {
-        self.open.lock().expect("session poisoned").save_copy(copy)
     }
 
     fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {

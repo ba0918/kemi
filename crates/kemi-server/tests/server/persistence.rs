@@ -308,16 +308,11 @@ async fn result_save_failure_is_reported_and_shown_without_changing_the_submit()
 
 #[tokio::test]
 async fn session_copy_over_the_limit_is_unresumable() {
-    let dir = std::env::temp_dir().join(format!(
-        "kemi-server-session-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let store = SessionStore::new(dir.clone());
+    let temp = TempRepo::new();
+    let dir = temp.path.join("sessions");
+    // 上限を小さくしたストアで、20 MB を超える内容を作らずに同じ道（凍結 → 上限超過 →
+    // 復元不可）を通す。
+    let store = SessionStore::new(dir.clone()).with_copy_limit(64 * 1024);
     let info = SessionInfo {
         id: "01HF7YAT00SERVER0000000000".to_string(),
         created: 1,
@@ -339,7 +334,7 @@ async fn session_copy_over_the_limit_is_unresumable() {
         "big".to_string(),
         FileContent {
             old: None,
-            new: Some(incompressible(21 * 1024 * 1024)),
+            new: Some(incompressible(128 * 1024)),
         },
     );
     let server = TestServer::start_with_session(Arc::new(source), sink).await;
@@ -349,7 +344,7 @@ async fn session_copy_over_the_limit_is_unresumable() {
     server.get("api/review").await;
 
     let id = "01HF7YAT00SERVER0000000000";
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Ok(stored) = store.read(id)
             && matches!(stored.copy, kemi_core::session::CopyState::Unusable(_))
@@ -366,7 +361,6 @@ async fn session_copy_over_the_limit_is_unresumable() {
     // 上限の判定は `<id>.payload` 全体で行い、超える写しはディスクに書かない
     // （R-SESSION）。
     assert!(!dir.join(format!("{id}.payload")).exists());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
