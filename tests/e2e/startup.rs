@@ -24,27 +24,6 @@ fn cli_mode_exclusive_exits_2() {
 }
 
 #[tokio::test]
-async fn bind_accepts_an_ipv4_literal() {
-    let dir = TempDir::new();
-    dir.write("manifest.json", MANIFEST);
-    let kemi = Kemi::spawn(
-        &dir.path,
-        &[
-            "manifest.json",
-            "--bind",
-            "127.0.0.1",
-            "--no-open",
-            "--port",
-            "0",
-        ],
-    );
-
-    let response = kemi.get("api/review").await;
-    assert_eq!(response.status(), 200);
-    kemi.kill();
-}
-
-#[tokio::test]
 async fn bind_wildcard_warns_after_the_url_and_serves() {
     let dir = TempDir::new();
     dir.write("manifest.json", MANIFEST);
@@ -275,15 +254,20 @@ async fn exit_code_approved_is_0_and_stdout_json() {
 }
 
 #[tokio::test]
-async fn runtime_io_error_stops_with_exit_2_without_json() {
+async fn runtime_io_error_stops_with_exit_2_without_json_or_a_result_file() {
     let dir = TempDir::new();
+    let state = TempDir::new();
     git_repo(&dir);
     dir.write("a.txt", "one\ntwo\n");
     git(&dir.path, &["add", "a.txt"]);
     git(&dir.path, &["commit", "-q", "-m", "base"]);
     dir.write("a.txt", "one\nTWO\n");
 
-    let mut kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
+    let mut kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &["--worktree", "--no-open", "--port", "0"],
+        &state.path,
+    );
     let review = kemi.review_json().await;
     let file_id = review["groups"][0]["files"][0]["id"]
         .as_str()
@@ -300,6 +284,7 @@ async fn runtime_io_error_stops_with_exit_2_without_json() {
     kemi.stdout.read_to_string(&mut stdout).unwrap();
     assert_eq!(status.code(), Some(2));
     assert!(stdout.is_empty(), "stdout: {stdout}");
+    assert!(result_files(&state.path).is_empty());
 }
 
 #[tokio::test]

@@ -2,24 +2,7 @@ use super::*;
 
 #[cfg(unix)]
 #[tokio::test]
-async fn interrupt_exits_130_without_json() {
-    let dir = TempDir::new();
-    dir.write("manifest.json", MANIFEST);
-    let kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
-    kemi.wait_serving().await;
-    let pid = kemi.child.id().to_string();
-
-    let status = Command::new("kill").args(["-INT", &pid]).status().unwrap();
-    assert!(status.success());
-
-    let (exit, stdout) = kemi.wait();
-    assert_eq!(exit.code(), Some(130));
-    assert!(stdout.is_empty());
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn result_not_written_on_interrupt_or_runtime_error() {
+async fn interrupt_exits_130_without_json_or_a_result_file() {
     let dir = TempDir::new();
     let state = TempDir::new();
     dir.write("manifest.json", MANIFEST);
@@ -29,42 +12,12 @@ async fn result_not_written_on_interrupt_or_runtime_error() {
         &state.path,
     );
     kemi.wait_serving().await;
-    let pid = kemi.child.id().to_string();
-    assert!(
-        Command::new("kill")
-            .args(["-INT", &pid])
-            .status()
-            .unwrap()
-            .success()
-    );
-    let (exit, _) = kemi.wait();
+
+    signal(&kemi.child, "-INT");
+    let (exit, stdout) = kemi.wait();
+
     assert_eq!(exit.code(), Some(130));
-
-    let repo = TempDir::new();
-    git_repo(&repo);
-    repo.write("a.txt", "one\n");
-    git(&repo.path, &["add", "a.txt"]);
-    git(&repo.path, &["commit", "-q", "-m", "base"]);
-    repo.write("a.txt", "two\n");
-    let mut failing = Kemi::spawn_with_state(
-        &repo.path,
-        &["--worktree", "--no-open", "--port", "0"],
-        &state.path,
-    );
-    let review = failing.review_json().await;
-    let id = review["groups"][0]["files"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    std::fs::remove_file(repo.path.join("a.txt")).unwrap();
-    let _ = failing
-        .client
-        .get(format!("{}api/file/{id}", failing.url))
-        .send()
-        .await;
-    let status = wait_for_exit(&mut failing, std::time::Duration::from_secs(10)).await;
-    assert_eq!(status.code(), Some(2));
-
+    assert!(stdout.is_empty(), "stdout: {stdout}");
     assert!(result_files(&state.path).is_empty());
 }
 
