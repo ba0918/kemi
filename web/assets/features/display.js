@@ -10,6 +10,7 @@ import {
   OVERSCAN,
   ROW_HEIGHT,
   colorOptions,
+  currentComments,
   currentEntry,
   displayMode,
   displayWrap,
@@ -400,9 +401,10 @@ export function scheduleRender() {
 }
 
 export function recomputeThreads() {
-  state.threads = placeThreads(state.display, state.comments);
-  state.commented = commentedLines(state.display, state.comments);
-  state.stops = navStops(state.display, state.comments);
+  const comments = currentComments();
+  state.threads = placeThreads(state.display, comments);
+  state.commented = commentedLines(state.display, comments);
+  state.stops = navStops(state.display, comments);
   state.rulerDirty = true;
 }
 
@@ -539,7 +541,7 @@ export function collapseAll() {
   // 最初に読んだ畳んだ形には、展開してから付けたコメントの行が無い。かといって畳む形を
   // サーバから読み直すと、更新バッジを押す前にディスクの新しい内容へ差し替わり（R-LIVE）、
   // ファイルが消えていればレビューが終わる。いまページにある行から畳み直す。
-  const rows = collapseLoadedRows(state.rows, state.comments, Number(data.context));
+  const rows = collapseLoadedRows(state.rows, currentComments(), Number(data.context));
   state.rows = rows;
   state.cache.set(state.cacheKey, { ...data, rows, collapsedRows: rows });
   recomputeDisplay();

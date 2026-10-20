@@ -5,6 +5,7 @@
 import * as api from "../api.js";
 import {
   colorOptions,
+  currentComments,
   currentEntry,
   fileCacheKey,
   isShowingFile,
@@ -88,8 +89,9 @@ function showSource() {
 /** ブロックの列とコメントから、札の置き場と止まる場所を決め直す。 */
 function recomputeRenderedThreads() {
   const blocks = state.rendered ? state.rendered.blocks : [];
-  state.renderedThreads = placeRenderedComments(blocks, state.comments);
-  state.renderedStops = renderedStops(blocks, state.comments);
+  const comments = currentComments();
+  state.renderedThreads = placeRenderedComments(blocks, comments);
+  state.renderedStops = renderedStops(blocks, comments);
   state.rulerDirty = true;
 }
 

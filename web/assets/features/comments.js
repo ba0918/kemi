@@ -224,7 +224,7 @@ export function closeEditor() {
 }
 
 /**
- * 表示とキャッシュのコメントを差し替える。行の高さは測り直すが、見ている位置は動かさない
+ * ページのコメントを差し替えて描き直す。行の高さは測り直すが、見ている位置は動かさない
  * （見ている位置より上で伸びた分は測り直しが打ち消す）。
  * @param {(comments: any[]) => any[]} change
  */
@@ -232,10 +232,6 @@ export function updateComments(change) {
   const before = state.allComments;
   state.allComments = change(state.allComments);
   actions.explanationChanged();
-  for (const [id, comments] of state.commentStore) {
-    state.commentStore.set(id, change(comments));
-  }
-  state.comments = change(state.comments);
   recomputeThreads();
   remeasure();
   refreshCommentBadges(before);
@@ -258,22 +254,16 @@ export async function addComment(payload) {
     refreshCommentBadges(before);
     renderHeader();
     renderConversation();
-    // 応答までに別のファイルへ切り替わっていても、足すのは送信先の
-    // コメントだけ。表示中の state は送信先を表示中のときだけ更新する。
-    const stored = state.commentStore.get(payload.file_id);
-    if (stored) {
-      const comments = [...stored, comment];
-      state.commentStore.set(payload.file_id, comments);
-      if (isShowingFile(payload.file_id)) {
-        state.comments = comments;
-        state.editor = null;
-        state.selection = null;
-        recomputeThreads();
-        renderDiff();
-        renderFloating();
-        renderFileHeader();
-        refreshRendered();
-      }
+    // 応答までに別のファイルへ切り替わっていても、コメントは送信先のファイルに付く（グループと
+    // パスで引く）。差分の描き直しは、送信先を表示中のときだけ。
+    if (isShowingFile(payload.file_id)) {
+      state.editor = null;
+      state.selection = null;
+      recomputeThreads();
+      renderDiff();
+      renderFloating();
+      renderFileHeader();
+      refreshRendered();
     }
     const selection = hasLines(payload)
       ? {

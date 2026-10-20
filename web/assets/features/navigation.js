@@ -162,13 +162,7 @@ async function loadForNavigation(entry, generation) {
     // 読み直し（テーマや更新）で消えたキャッシュへ、古い行を戻さない。
     return null;
   }
-  const stored = storeFileData(key, data);
-  // 飛ばしたファイルを後で選んだとき、その間の返信・解決・削除の前のコメントが出ないよう、
-  // 差し替えの届く控えへ入れておく。
-  if (!state.commentStore.has(entry.file.id)) {
-    state.commentStore.set(entry.file.id, data.comments || []);
-  }
-  return stored;
+  return storeFileData(key, data);
 }
 
 /** ファイルを表示し終えた後の移り先（次のファイルの最初の変更や、由来の該当行）へ移る。 */

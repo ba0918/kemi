@@ -65,7 +65,6 @@ export const CONVERSATION_MAX_WIDTH = 960;
  *   sortBySize: boolean,
  *   theme: string,
  *   cache: Map<string, any>,
- *   commentStore: Map<string, any[]>,
  *   rows: LogicalRow[],
  *   display: DisplayLine[],
  *   displayFileId: string | null,
@@ -79,7 +78,6 @@ export const CONVERSATION_MAX_WIDTH = 960;
  *   dark: boolean,
  *   cacheKey: string,
  *   selectGeneration: number,
- *   comments: any[],
  *   selection: Selection | null,
  *   editor: Editor | null,
  *   submitted: boolean,
@@ -168,7 +166,6 @@ export const state = {
   sortBySize: false,
   theme: loadTheme(),
   cache: new Map(),
-  commentStore: new Map(),
   rows: [],
   display: [],
   displayFileId: null,
@@ -182,7 +179,6 @@ export const state = {
   dark: false,
   cacheKey: "",
   selectGeneration: 0,
-  comments: [],
   selection: null,
   editor: null,
   submitted: false,
@@ -289,15 +285,53 @@ export function flatten(review) {
 }
 
 /**
+ * （グループ, パス）ごとのコメント。state.allComments を差し替えたときだけ作り直す（どこも並びを
+ * その場で書き換えない）。ファイルごとに全コメントを走査すると、ツリーの作り直しが
+ * O(ファイル × コメント) になる。
+ * @type {{ comments: any[], byFile: Map<string, any[]> } | null}
+ */
+let commentIndex = null;
+
+/**
+ * @param {string} groupId
+ * @param {string} path
+ */
+function fileKey(groupId, path) {
+  return `${groupId}\0${path}`;
+}
+
+/**
  * ファイルのコメント（ファイル全体のコメントを含む）。コメントの JSON は submit の契約の
  * 形でファイル id を持たないので、サーバが id を振るのと同じ（グループ, パス）で対応付ける。
+ * 返す並びは索引のものなので、書き換えない。
  * @param {Entry} entry
  * @returns {any[]}
  */
 export function commentsOf(entry) {
-  return state.allComments.filter(
-    (comment) => comment.group_id === entry.group.id && comment.path === entry.file.path,
-  );
+  if (commentIndex === null || commentIndex.comments !== state.allComments) {
+    /** @type {Map<string, any[]>} */
+    const byFile = new Map();
+    for (const comment of state.allComments) {
+      if (typeof comment.group_id !== "string" || typeof comment.path !== "string") {
+        continue;
+      }
+      const key = fileKey(comment.group_id, comment.path);
+      const list = byFile.get(key);
+      if (list) {
+        list.push(comment);
+      } else {
+        byFile.set(key, [comment]);
+      }
+    }
+    commentIndex = { comments: state.allComments, byFile };
+  }
+  return commentIndex.byFile.get(fileKey(entry.group.id, entry.file.path)) ?? [];
+}
+
+/** 表示中のファイルのコメント。ファイルを選んでいなければ空。 */
+export function currentComments() {
+  const entry = currentEntry();
+  return entry ? commentsOf(entry) : [];
 }
 
 /**

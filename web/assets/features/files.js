@@ -108,7 +108,6 @@ export async function refresh() {
   // 取得中の展開応答が、新しいレビューで消えたキャッシュへ古い行を戻さないようにする。
   state.selectGeneration += 1;
   state.cache.clear();
-  state.commentStore.clear();
   state.origins.clear();
   state.renderCache.clear();
   // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
@@ -178,7 +177,6 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
       : null;
   state.current = entry;
   state.landing = null;
-  const id = entry.file.id;
   const key = fileCacheKey(entry);
   state.cacheKey = key;
   const generation = ++state.selectGeneration;
@@ -224,9 +222,6 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   state.renderInfo = data.render || null;
   state.highlightCapable = Boolean(data.highlight && data.highlight.capable);
   state.highlightEnabled = Boolean(data.highlight && data.highlight.enabled);
-  const storedComments = state.commentStore.get(id);
-  state.comments = storedComments || data.comments || [];
-  state.commentStore.set(id, state.comments);
   if (!options.keepEditor) {
     state.selection = null;
     state.editor = null;
