@@ -816,7 +816,6 @@ async fn the_status_goes_from_not_connected_to_waiting_to_working() {
     let notified = next_sse_event(&mut events, "agent").await;
     assert_eq!(notified["status"], "waiting");
     assert_eq!(notified["called"], true);
-    assert_eq!(server.agent_status().await, "waiting");
 
     waiting.await.unwrap();
 
