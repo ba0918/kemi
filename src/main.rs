@@ -67,8 +67,8 @@ flags used with --result:
 /// `--live` の見る対象と配れる範囲の根を決める（R-PAGE-MODE）。根は起動したディレクトリが
 /// git の作業ツリーの中なら作業ツリーの根、外なら起動したディレクトリ。ファイルは
 /// シンボリックリンクを解決した実体の場所で判定する。
-fn live_target(value: &str) -> Result<(LivePage, PathBuf), String> {
-    let root = std::fs::canonicalize(workspace_root(Path::new(".")))
+fn live_target(value: &str, place: &LaunchPlace) -> Result<(LivePage, PathBuf), String> {
+    let root = std::fs::canonicalize(place.workspace())
         .map_err(|error| format!("cannot resolve the launch directory: {error}"))?;
     if value.contains("://") {
         let url = parse_live_url(value).map_err(|error| error.to_string())?;
@@ -203,8 +203,11 @@ async fn start_agent_channel(
 
 /// 起動時の入力から、セッションに記録する情報を組み立てる。コミット範囲は完全な sha に
 /// 解決しておく（R-SESSION）。
-fn session_info(input: &InputMode<(LivePage, PathBuf)>) -> Result<SessionInfo, String> {
-    let workspace = workspace_root(Path::new("."));
+fn session_info(
+    input: &InputMode<(LivePage, PathBuf)>,
+    place: &LaunchPlace,
+) -> Result<SessionInfo, String> {
+    let workspace = place.workspace();
     let mode = match input {
         InputMode::Live((page, root)) => SessionMode::Live {
             page: page.clone(),
@@ -214,9 +217,7 @@ fn session_info(input: &InputMode<(LivePage, PathBuf)>) -> Result<SessionInfo, S
         InputMode::Staged => SessionMode::Staged,
         InputMode::Manifest(_) => SessionMode::Manifest,
         InputMode::Range { from, to, .. } => {
-            let repo = kemi_core::source::git::repo_root(Path::new("."))
-                .map_err(|error| error.to_string())?;
-            let (from_sha, to_sha) = kemi_core::source::git::resolve_range(&repo, from, to)
+            let (from_sha, to_sha) = kemi_core::source::git::resolve_range(place.repo()?, from, to)
                 .map_err(|error| error.to_string())?;
             SessionMode::Range {
                 from: from.clone(),
@@ -241,7 +242,10 @@ fn session_info(input: &InputMode<(LivePage, PathBuf)>) -> Result<SessionInfo, S
 
 /// セッションの保存先を開く。決められない・開けないときは警告だけを出し、セッション
 /// なしでレビューを続ける。
-fn open_session(input: &InputMode<(LivePage, PathBuf)>) -> Option<Arc<StoredSession>> {
+fn open_session(
+    input: &InputMode<(LivePage, PathBuf)>,
+    place: &LaunchPlace,
+) -> Option<Arc<StoredSession>> {
     let Some(dir) = sessions_dir() else {
         eprintln!(
             "kemi: cannot determine where to save sessions ({})",
@@ -249,7 +253,7 @@ fn open_session(input: &InputMode<(LivePage, PathBuf)>) -> Option<Arc<StoredSess
         );
         return None;
     };
-    let info = match session_info(input) {
+    let info = match session_info(input, place) {
         Ok(info) => info,
         Err(message) => {
             eprintln!("kemi: cannot start a session: {message}");
@@ -265,11 +269,38 @@ fn open_session(input: &InputMode<(LivePage, PathBuf)>) -> Option<Arc<StoredSess
     }
 }
 
-/// 結果を識別するリポジトリのトップ。git の外ならその場所そのもの。
-fn workspace_root(path: &Path) -> PathBuf {
-    kemi_core::source::git::repo_root(path)
-        .or_else(|_| std::fs::canonicalize(path))
-        .unwrap_or_else(|_| path.to_path_buf())
+/// 起動したディレクトリなど、レビューを識別する場所。git の作業ツリーの根は要るときに
+/// 1 回だけ求める（`git rev-parse` はプロセスの起動で、起動 1 回で何度も呼ぶと遅い）。
+struct LaunchPlace {
+    path: PathBuf,
+    repo: std::cell::OnceCell<Result<PathBuf, String>>,
+}
+
+impl LaunchPlace {
+    fn at(path: PathBuf) -> Self {
+        LaunchPlace {
+            path,
+            repo: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// git の作業ツリーの根。git の外では誤り（コミット範囲の解決やソースに要る）。
+    fn repo(&self) -> Result<&Path, String> {
+        self.repo
+            .get_or_init(|| {
+                kemi_core::source::git::repo_root(&self.path).map_err(|error| error.to_string())
+            })
+            .as_deref()
+            .map_err(Clone::clone)
+    }
+
+    /// 結果とセッションを識別するリポジトリのトップ（R-RESULT）。git の外ならその場所そのもの。
+    fn workspace(&self) -> PathBuf {
+        match self.repo() {
+            Ok(repo) => repo.to_path_buf(),
+            Err(_) => std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone()),
+        }
+    }
 }
 
 /// `kemi --result`: 最新の結果ファイルの中身を stdout に出し、元の verdict の終了コードで
@@ -283,7 +314,7 @@ fn print_result(cli: &Cli) -> ! {
     };
     let key = (!cli.any).then(|| {
         let place = cli.workspace.clone().unwrap_or_else(|| PathBuf::from("."));
-        result::workspace_key(&workspace_root(&place))
+        result::workspace_key(&LaunchPlace::at(place).workspace())
     });
     let Some(text) = result::load_latest(&dir, key.as_deref()) else {
         fail("no result for this location");
@@ -336,8 +367,9 @@ impl ResultSink for ResultStore {
 fn build_source(
     cli: &Cli,
     input: &InputMode<(LivePage, PathBuf)>,
+    place: &LaunchPlace,
 ) -> Result<Box<dyn ReviewSource>, String> {
-    let git = |mode| GitSource::open(mode).map_err(|error| error.to_string());
+    let git = |mode| Ok::<_, String>(GitSource::new(place.repo()?.to_path_buf(), mode));
     Ok(match input {
         InputMode::Live((page, root)) => Box::new(LiveSource::new(page, root)),
         InputMode::Manifest(manifest) => Box::new(
@@ -432,6 +464,8 @@ struct LiveRun {
     snapshots: Vec<PageSnapshot>,
     /// `<id>.files/` に残るスナップショットのファイルの最大の番号（読めないものも含む）。
     last_snapshot_number: u32,
+    /// 根が git の作業ツリーの中で、コードの見方を出せるか。
+    code_view: bool,
 }
 
 /// 中継のリスナーを立て、`kemi: live <url>` を出す（R-PAGE-MODE）。`--bind` に従い、
@@ -455,7 +489,7 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
         root: live.root.clone(),
         cookie: random_token(),
         mock_secret: random_token(),
-        code_view: kemi_core::source::git::repo_root(&live.root).is_ok(),
+        code_view: live.code_view,
         snapshots: live.snapshots.clone(),
         last_snapshot_number: live.last_snapshot_number,
     })
@@ -758,6 +792,7 @@ async fn run_resume(cli: &Cli) -> ! {
         SessionMode::Live { page, root } => {
             let source = Arc::new(LiveSource::new(&page, &root)) as Arc<dyn ReviewSource>;
             live = Some(LiveRun {
+                code_view: kemi_core::source::git::repo_root(&root).is_ok(),
                 page,
                 root,
                 snapshots: restored_snapshots(&stored),
@@ -921,14 +956,16 @@ async fn main() {
         Err(InputModeError::InvalidValue(message)) => fail(&message),
     };
 
-    let input = match mode.resolve_live(live_target) {
+    let place = LaunchPlace::at(PathBuf::from("."));
+    let input = match mode.resolve_live(|target| live_target(target, &place)) {
         Ok(input) => input,
         Err(message) => fail(&message),
     };
-    let source = match build_source(&cli, &input).and_then(|source| with_focus(source, &cli)) {
-        Ok(source) => source,
-        Err(message) => fail(&message),
-    };
+    let source =
+        match build_source(&cli, &input, &place).and_then(|source| with_focus(source, &cli)) {
+            Ok(source) => source,
+            Err(message) => fail(&message),
+        };
     let source: Arc<dyn ReviewSource> = Arc::from(source);
 
     if cli.digest {
@@ -947,7 +984,7 @@ async fn main() {
         }
     }
 
-    let stored_session = open_session(&input);
+    let stored_session = open_session(&input, &place);
     let initial_explanation = cli.explanation.as_ref().map(|file| {
         let text = std::fs::read_to_string(file)
             .unwrap_or_else(|error| fail(&format!("cannot read the explanation: {error}")));
@@ -961,13 +998,15 @@ async fn main() {
         }
         document
     });
-    let results_key = result::workspace_key(&workspace_root(Path::new(".")));
+    let results_key = result::workspace_key(&place.workspace());
     let live = match input {
         InputMode::Live((page, root)) => Some(LiveRun {
             page,
             root,
             snapshots: Vec::new(),
             last_snapshot_number: 0,
+            // 根は起動した場所の作業ツリーの根なので、git の中かは起動した場所と同じ。
+            code_view: place.repo().is_ok(),
         }),
         InputMode::Manifest(_)
         | InputMode::Range { .. }
