@@ -135,6 +135,10 @@ impl SessionStore {
     }
 
     /// `<id>.payload` の上限を差し替える。既定は 20 MB。
+    ///
+    /// 上限を超えたときの理由の文言（`the review copy is larger than 20 MB`）は既定の上限を
+    /// 名指しし、差し替えても変わらない。差し替えるのは、20 MB を超える内容を作らずに上限
+    /// 超えの道を通すテストのためで、本番の上限は既定のまま。
     pub fn with_copy_limit(self, copy_limit: u64) -> Self {
         SessionStore { copy_limit, ..self }
     }
