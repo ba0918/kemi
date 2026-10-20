@@ -8,7 +8,7 @@ use kemi_core::domain::comment::{self, CommentError, PlaceError};
 use kemi_core::domain::explanation::{ExplanationSelection, MAX_OCCURRENCE, validate_selection};
 use kemi_core::domain::review::{
     Author, Comment, CommentTarget, FileTarget, LineRange, PageTarget, Place, PlaceElement,
-    PlaceKind, Point, Rect, Reply, Side, Suggestion,
+    PlaceKind, Point, Rect, Side, Suggestion,
 };
 use kemi_core::session::FileWritten;
 use serde::Deserialize;
@@ -141,15 +141,14 @@ pub(super) async fn comment_api(
             body,
             suggestion,
             selection,
-        } => {
-            if suggestion.is_some() {
-                return Err(ApiError::bad_request(
-                    "explanation comments cannot have suggestions",
-                ));
-            }
-            let selection = parse_selection(selection).map_err(ApiError::bad_request)?;
-            add_explanation_comment(&state, explanation_revision, &block_id, body, selection)
-        }
+        } => add_explanation_comment(
+            &state,
+            explanation_revision,
+            &block_id,
+            body,
+            suggestion,
+            selection,
+        ),
         CommentRequest::Add {
             file_id,
             side,
@@ -170,139 +169,131 @@ pub(super) async fn comment_api(
             id,
             body,
             suggestion,
-        } => {
-            let gate = super::mutation_gate(&state)?;
-            let mut session = state.session.lock().expect("session poisoned");
-            let index = session
-                .state
-                .comments
-                .iter()
-                .position(|comment| comment.id == id)
-                .ok_or_else(comment_not_found)?;
-            // 行レンジ・side・quote・作成時の内容ハッシュも、ページの場所と画像も変えない
-            // （R-COMMENT、live.md の R-PAGE-COMMENT）。
-            match session.state.comments[index].file() {
-                Some(file) => {
-                    let range = file
-                        .start_line
-                        .zip(file.end_line)
-                        .map(|(start, end)| LineRange { start, end });
-                    comment::validate_comment(file.side, range, suggestion.as_deref())
-                        .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
-                }
-                None if suggestion.is_some() => {
-                    return Err(ApiError::bad_request(comment_error_message(
-                        CommentError::SuggestionRequiresNewSide,
-                    )));
-                }
-                None => {}
-            }
-            // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
-            let previous = session.clone();
-            let comment = &mut session.state.comments[index];
-            if let Some(file) = comment.file_mut() {
-                file.suggestion = suggestion.map(|replacement| Suggestion { replacement });
-            }
-            comment.body = body;
-            let value = page_comment_json(comment);
-            session.state.channel.note_comment(&id);
-            if let Err(error) = kemi_core::session::validate_additional(&session.state) {
-                *session = previous;
-                return Err(ApiError::too_large(error.to_string()));
-            }
-            drop(session);
-            drop(gate);
-            persist(&state);
-            notify_agent_state(&state);
-            Ok(Json(value))
-        }
-        CommentRequest::Delete { id } => {
-            let gate = super::mutation_gate(&state)?;
-            let mut session = state.session.lock().expect("session poisoned");
-            let index = session
-                .state
-                .comments
-                .iter()
-                .position(|comment| comment.id == id)
-                .ok_or_else(comment_not_found)?;
-            // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
-            session.state.comments.remove(index);
-            session.state.channel.note_comment(&id);
-            // 返事を待っていたコメントが消えて残りの行が無くなったら、状態を移す（R-AGENT-STATE）。
-            // ロックはほかと同じくセッション → エージェントの順に取る。
-            state
-                .agent
-                .link
-                .lock()
-                .expect("agent poisoned")
-                .comment_deleted(
-                    session.state.channel.called,
-                    kemi_core::session::now_millis(),
-                    &session.state.comments,
-                );
-            drop(session);
-            drop(gate);
-            persist(&state);
-            notify_agent_state(&state);
-            Ok(Json(json!({ "id": id, "deleted": true })))
-        }
-        CommentRequest::Reply { id, body } => {
-            let gate = super::mutation_gate(&state)?;
-            let mut session = state.session.lock().expect("session poisoned");
-            let index = session
-                .state
-                .comments
-                .iter()
-                .position(|comment| comment.id == id)
-                .ok_or_else(comment_not_found)?;
-            // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
-            let previous = session.clone();
-            session.state.last_reply += 1;
-            let reply = Reply {
-                id: format!("r{}", session.state.last_reply),
-                seq: session.state.next_seq(),
-                author: Author::Reviewer,
-                body: body.into(),
-            };
-            session.state.channel.note_reply(&id, &reply.id);
-            let comment = &mut session.state.comments[index];
-            comment.replies.push(reply);
-            let value = page_comment_json(comment);
-            if let Err(error) = kemi_core::session::validate_additional(&session.state) {
-                *session = previous;
-                return Err(ApiError::too_large(error.to_string()));
-            }
-            drop(session);
-            drop(gate);
-            persist(&state);
-            let _ = state.events.send(Event::Thread(value.clone()));
-            notify_agent_state(&state);
-            Ok(Json(value))
-        }
-        CommentRequest::Resolve { id, resolved } => {
-            let gate = super::mutation_gate(&state)?;
-            let mut session = state.session.lock().expect("session poisoned");
-            let index = session
-                .state
-                .comments
-                .iter()
-                .position(|comment| comment.id == id)
-                .ok_or_else(comment_not_found)?;
-            // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
-            let previous = session.clone();
-            let comment = &mut session.state.comments[index];
-            comment.resolved = resolved;
-            let value = page_comment_json(comment);
-            if let Err(error) = kemi_core::session::validate_additional(&session.state) {
-                *session = previous;
-                return Err(ApiError::too_large(error.to_string()));
-            }
-            drop(session);
-            drop(gate);
-            persist(&state);
-            Ok(Json(value))
-        }
+        } => edit_comment(&state, &id, body, suggestion),
+        CommentRequest::Delete { id } => delete_comment(&state, id),
+        CommentRequest::Reply { id, body } => reply_to_comment(&state, &id, body),
+        CommentRequest::Resolve { id, resolved } => resolve_comment(&state, &id, resolved),
     }
+}
+
+/// 本文と suggestion を書き換える。行レンジ・side・quote・作成時の内容ハッシュも、ページの
+/// 場所と画像も変えない（R-COMMENT、live.md の R-PAGE-COMMENT）。
+fn edit_comment(
+    state: &AppState,
+    id: &str,
+    body: String,
+    suggestion: Option<String>,
+) -> Result<Json<Value>, ApiError> {
+    let gate = super::mutation_gate(state)?;
+    let mut session = state.session.lock().expect("session poisoned");
+    let index = comment_index(&session.state.comments, id)?;
+    match session.state.comments[index].file() {
+        Some(file) => {
+            let range = file
+                .start_line
+                .zip(file.end_line)
+                .map(|(start, end)| LineRange { start, end });
+            comment::validate_comment(file.side, range, suggestion.as_deref())
+                .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
+        }
+        None if suggestion.is_some() => {
+            return Err(ApiError::bad_request(comment_error_message(
+                CommentError::SuggestionRequiresNewSide,
+            )));
+        }
+        None => {}
+    }
+    // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+    let previous = session.clone();
+    let comment = &mut session.state.comments[index];
+    if let Some(file) = comment.file_mut() {
+        file.suggestion = suggestion.map(|replacement| Suggestion { replacement });
+    }
+    comment.body = body;
+    let value = page_comment_json(comment);
+    session.state.channel.note_comment(id);
+    if let Err(error) = kemi_core::session::validate_additional(&session.state) {
+        *session = previous;
+        return Err(ApiError::too_large(error.to_string()));
+    }
+    drop(session);
+    drop(gate);
+    persist(state);
+    notify_agent_state(state);
+    Ok(Json(value))
+}
+
+fn delete_comment(state: &AppState, id: String) -> Result<Json<Value>, ApiError> {
+    let gate = super::mutation_gate(state)?;
+    let mut session = state.session.lock().expect("session poisoned");
+    let index = comment_index(&session.state.comments, &id)?;
+    // id は再利用しない。採番は last_comment が進むだけで、削除では戻さない。
+    session.state.comments.remove(index);
+    session.state.channel.note_comment(&id);
+    // 返事を待っていたコメントが消えて残りの行が無くなったら、状態を移す（R-AGENT-STATE）。
+    // ロックはほかと同じくセッション → エージェントの順に取る。
+    state
+        .agent
+        .link
+        .lock()
+        .expect("agent poisoned")
+        .comment_deleted(
+            session.state.channel.called,
+            kemi_core::session::now_millis(),
+            &session.state.comments,
+        );
+    drop(session);
+    drop(gate);
+    persist(state);
+    notify_agent_state(state);
+    Ok(Json(json!({ "id": id, "deleted": true })))
+}
+
+fn reply_to_comment(state: &AppState, id: &str, body: String) -> Result<Json<Value>, ApiError> {
+    let gate = super::mutation_gate(state)?;
+    let mut session = state.session.lock().expect("session poisoned");
+    let index = comment_index(&session.state.comments, id)?;
+    // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+    let previous = session.clone();
+    let reply_id = session.state.add_reply(id, Author::Reviewer, body.into());
+    session.state.channel.note_reply(id, &reply_id);
+    let value = page_comment_json(&session.state.comments[index]);
+    if let Err(error) = kemi_core::session::validate_additional(&session.state) {
+        *session = previous;
+        return Err(ApiError::too_large(error.to_string()));
+    }
+    drop(session);
+    drop(gate);
+    persist(state);
+    let _ = state.events.send(Event::Thread(value.clone()));
+    notify_agent_state(state);
+    Ok(Json(value))
+}
+
+fn resolve_comment(state: &AppState, id: &str, resolved: bool) -> Result<Json<Value>, ApiError> {
+    let gate = super::mutation_gate(state)?;
+    let mut session = state.session.lock().expect("session poisoned");
+    let index = comment_index(&session.state.comments, id)?;
+    // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+    let previous = session.clone();
+    let comment = &mut session.state.comments[index];
+    comment.resolved = resolved;
+    let value = page_comment_json(comment);
+    if let Err(error) = kemi_core::session::validate_additional(&session.state) {
+        *session = previous;
+        return Err(ApiError::too_large(error.to_string()));
+    }
+    drop(session);
+    drop(gate);
+    persist(state);
+    Ok(Json(value))
+}
+
+fn comment_index(comments: &[Comment], id: &str) -> Result<usize, ApiError> {
+    comments
+        .iter()
+        .position(|comment| comment.id == id)
+        .ok_or_else(comment_not_found)
 }
 
 async fn add_comment(
@@ -344,10 +335,10 @@ async fn add_comment(
 
     let gate = super::mutation_gate(state)?;
     let mut session = state.session.lock().expect("session poisoned");
-    session.state.last_comment += 1;
+    let (id, seq) = session.state.issue_comment_id();
     let comment = Comment {
-        id: format!("c{}", session.state.last_comment),
-        seq: session.state.next_seq(),
+        id,
+        seq,
         group_id: file.group_id.clone(),
         group_title,
         body,
@@ -402,14 +393,12 @@ fn add_page_comment(
         .map_err(|error| ApiError::bad_request(place_error_message(error)))?;
 
     let saving = super::mutation_gate(state)?;
-    let (id, seq) = {
-        let mut session = state.session.lock().expect("session poisoned");
-        session.state.last_comment += 1;
-        (
-            format!("c{}", session.state.last_comment),
-            session.state.next_seq(),
-        )
-    };
+    let (id, seq) = state
+        .session
+        .lock()
+        .expect("session poisoned")
+        .state
+        .issue_comment_id();
     // 画像はセッションのロックの外で書く。書けなくてもコメントは画像なしで残す。
     // 書いてからコメントが入るまでは、スナップショットと別の画像の書き込みを止める。その間に
     // 20 MB の規則が掛かると、まだ状態に無いこの画像を、削除したコメントの画像と見誤る
@@ -469,8 +458,15 @@ fn add_explanation_comment(
     revision: u64,
     block_id: &str,
     body: String,
-    selection: Option<ExplanationSelection>,
+    suggestion: Option<String>,
+    selection: Option<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    if suggestion.is_some() {
+        return Err(ApiError::bad_request(
+            "explanation comments cannot have suggestions",
+        ));
+    }
+    let selection = parse_selection(selection).map_err(ApiError::bad_request)?;
     let gate = super::mutation_gate(state)?;
     let mut session = state.session.lock().expect("session poisoned");
     let version = session
@@ -489,11 +485,10 @@ fn add_explanation_comment(
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
     }
     let mut candidate = session.snapshot();
-    candidate.last_comment += 1;
-    candidate.last_seq += 1;
+    let (id, seq) = candidate.issue_comment_id();
     let comment = Comment {
-        id: format!("c{}", candidate.last_comment),
-        seq: candidate.last_seq,
+        id,
+        seq,
         group_id: String::new(),
         group_title: String::new(),
         body,

@@ -152,9 +152,54 @@ pub struct AppliedAgentWrites {
 
 impl SessionState {
     /// 次の書き込みの通し番号。画面とエージェントのどちらが書いても同じ列から振る。
-    pub fn next_seq(&mut self) -> u32 {
+    fn next_seq(&mut self) -> u32 {
         self.last_seq += 1;
         self.last_seq
+    }
+
+    /// 次のコメントの id と通し番号を振る。番号は削除でも戻さない（R-COMMENT）。
+    pub fn issue_comment_id(&mut self) -> (String, u32) {
+        self.last_comment += 1;
+        (format!("c{}", self.last_comment), self.next_seq())
+    }
+
+    /// コメント `comment_id` に返信を足し、振った id を返す。コメントが無ければ足さない
+    /// （番号は進む）。
+    pub fn add_reply(
+        &mut self,
+        comment_id: &str,
+        author: Author,
+        body: ConversationContent,
+    ) -> String {
+        self.last_reply += 1;
+        let reply = Reply {
+            id: format!("r{}", self.last_reply),
+            seq: self.next_seq(),
+            author,
+            body,
+        };
+        let id = reply.id.clone();
+        if let Some(comment) = self
+            .comments
+            .iter_mut()
+            .find(|comment| comment.id == comment_id)
+        {
+            comment.replies.push(reply);
+        }
+        id
+    }
+
+    /// レビュー全体への発言を足し、`messages` の中の位置を返す。
+    pub fn add_message(&mut self, author: Author, body: ConversationContent) -> usize {
+        self.last_message += 1;
+        let message = Message {
+            id: format!("m{}", self.last_message),
+            seq: self.next_seq(),
+            author,
+            body,
+        };
+        self.messages.push(message);
+        self.messages.len() - 1
     }
 
     /// エージェントの書き込みを会話に足す。途中まで書かれた会話を残さないよう、呼び出し側が
@@ -169,36 +214,15 @@ impl SessionState {
                     comment_id,
                     content,
                 } => {
-                    self.last_reply += 1;
-                    let reply = Reply {
-                        id: format!("r{}", self.last_reply),
-                        seq: self.next_seq(),
-                        author: Author::Agent,
-                        body: content,
-                    };
-                    ids.push(reply.id.clone());
-                    if let Some(comment) = self
-                        .comments
-                        .iter_mut()
-                        .find(|comment| comment.id == comment_id)
-                    {
-                        comment.replies.push(reply);
-                    }
+                    ids.push(self.add_reply(&comment_id, Author::Agent, content));
                     if !touched.contains(&comment_id) {
                         touched.push(comment_id);
                     }
                 }
                 ContentWrite::Message { content } => {
-                    self.last_message += 1;
-                    let message = Message {
-                        id: format!("m{}", self.last_message),
-                        seq: self.next_seq(),
-                        author: Author::Agent,
-                        body: content,
-                    };
-                    ids.push(message.id.clone());
-                    message_indices.push(self.messages.len());
-                    self.messages.push(message);
+                    let index = self.add_message(Author::Agent, content);
+                    ids.push(self.messages[index].id.clone());
+                    message_indices.push(index);
                 }
             }
         }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::agent::{AgentEvent, HandLineAt};
-use kemi_core::domain::review::{Author, Message};
+use kemi_core::domain::review::Author;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -30,17 +30,12 @@ pub(super) async fn message_api(
     let gate = super::mutation_gate(&state)?;
     let value = {
         let mut session = state.session.lock().expect("session poisoned");
-        session.state.last_message += 1;
-        let message = Message {
-            id: format!("m{}", session.state.last_message),
-            seq: session.state.next_seq(),
-            author: Author::Reviewer,
-            body: request.body.into(),
-        };
-        session.state.channel.note_message(&message.id);
-        let value = page_message_json(&message);
-        session.state.messages.push(message);
-        value
+        let session_state = &mut session.state;
+        let index = session_state.add_message(Author::Reviewer, request.body.into());
+        session_state
+            .channel
+            .note_message(&session_state.messages[index].id);
+        page_message_json(&session_state.messages[index])
     };
     drop(gate);
     persist(&state);
