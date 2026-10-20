@@ -11,6 +11,7 @@ mod live;
 mod preparation;
 mod secret;
 mod session;
+mod stored_session;
 mod units;
 mod watch;
 
@@ -32,6 +33,7 @@ pub use api::{session_host, session_url};
 pub use lan::{detect_share_address, exposure_warning, live_exposure_warning};
 pub use live::{LiveParams, LiveTarget};
 use session::Session;
+pub use stored_session::StoredSession;
 
 /// ページに配る資産。kemi-server は web の中身を知らない。
 pub struct Asset {

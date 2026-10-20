@@ -16,10 +16,11 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use kemi_core::domain::review::ReviewMeta;
-use kemi_core::session::{FilesWrite, OpenSession, PageSnapshot, SessionError, SnapshotKind};
+use kemi_core::session::{FilesWrite, PageSnapshot, SessionError, SessionState, SnapshotKind};
 use kemi_core::source::{FileContent, ReviewSource, SourceError};
 use kemi_server::{
-    Asset, Assets, LiveParams, LiveTarget, Notice, NoticeSink, ServeParams, SessionSink, serve,
+    Asset, Assets, LiveParams, LiveTarget, Notice, NoticeSink, ServeParams, SessionSink,
+    StoredSession, serve,
 };
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -1198,12 +1199,10 @@ async fn page_body_boundary(op: &str) {
     let (authority, dev) = start_dev_server().await;
     let scratch = Scratch::new(&format!("page-body-boundary-{op}"));
     let store = kemi_core::session::SessionStore::new(scratch.0.clone());
-    let open = store
-        .create(stored_session_info(&authority, &scratch))
-        .unwrap();
-    let sink = Arc::new(StoreSink {
-        open: std::sync::Mutex::new(open),
-    });
+    let info = stored_session_info(&authority, &scratch);
+    let id = info.id.clone();
+    let sink = Arc::new(StoredSession::start(&store, info).unwrap());
+    let saved_state = || store.read(&id).unwrap().state;
     let running = start_review_with_session(
         LiveTarget::Url {
             authority: authority.clone(),
@@ -1226,7 +1225,7 @@ async fn page_body_boundary(op: &str) {
         let accepted = post_review(&running, "api/comment", request(&boundary)).await;
         assert_eq!(accepted.status(), 200, "{op}");
         let before = get_review_json(&running, "api/review").await;
-        let saved = sink.open.lock().unwrap().state().clone();
+        let saved = saved_state();
         let refused =
             post_review(&running, "api/comment", request(&(boundary.clone() + "x"))).await;
         assert_eq!(refused.status(), 413, "{op}");
@@ -1234,14 +1233,14 @@ async fn page_body_boundary(op: &str) {
         let after = get_review_json(&running, "api/review").await;
         assert_eq!(before["comments"], after["comments"]);
         assert_eq!(before["agent"], after["agent"]);
-        assert_eq!(*sink.open.lock().unwrap().state(), saved);
+        assert_eq!(saved_state(), saved);
         assert_eq!(
             post_review(&running, "api/comment", request("next"))
                 .await
                 .status(),
             200
         );
-        let next = sink.open.lock().unwrap().state().clone();
+        let next = saved_state();
         assert_eq!(next.last_seq, saved.last_seq + u32::from(op != "edit"));
         assert_eq!(
             next.last_comment,
@@ -1268,58 +1267,62 @@ async fn page_comment_replies_accept_the_utf8_boundary_and_reject_overflow_witho
 /// 割り込む要求。画像を書いた直後に別のスレッドで送り、応答の状態を返す。
 type Interruption = Box<dyn FnOnce() -> std::sync::mpsc::Receiver<StatusCode> + Send>;
 
-/// 実際のセッションに書く sink。画像を書いた直後に、割り込む要求を送って少し待つ。
+/// 本物のセッションに書く sink。画像を書いた直後に、割り込む要求を送って少し待つ。
+/// 画像の保存のほかは本物にそのまま渡す。
 struct InterruptedImageSink {
-    open: std::sync::Mutex<kemi_core::session::OpenSession>,
+    stored: StoredSession,
     interruption: std::sync::Mutex<Option<Interruption>>,
     answer: std::sync::Mutex<Option<std::sync::mpsc::Receiver<StatusCode>>>,
     runtime: tokio::runtime::Handle,
 }
 
 impl SessionSink for InterruptedImageSink {
-    fn save_explanation_state(
-        &self,
-        state: kemi_core::session::SessionState,
-    ) -> Result<(), kemi_core::session::SessionError> {
-        self.open.lock().unwrap().save_explanation_state(state)
+    fn save_explanation_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.stored.save_explanation_state(state)
     }
-    fn save_issued_state(
-        &self,
-        state: kemi_core::session::SessionState,
-    ) -> Result<(), kemi_core::session::SessionError> {
-        self.open.lock().unwrap().save_issued_state(state)
+    fn initial_title(&self) -> Option<String> {
+        self.stored.initial_title()
     }
-    fn describe_review(&self, _title: &str, _total_files: usize) {}
-
-    fn save_state(
-        &self,
-        state: kemi_core::session::SessionState,
-    ) -> Result<(), kemi_core::session::SessionError> {
-        self.open.lock().unwrap().save_state(state)
-    }
-
     fn save_frozen_copy(
         &self,
         copy: kemi_core::session::PreparedCopy,
-        state: kemi_core::session::SessionState,
-    ) -> Result<bool, kemi_core::session::SessionError> {
-        self.open.lock().unwrap().save_frozen_copy(copy, state)
+        state: SessionState,
+    ) -> Result<bool, SessionError> {
+        self.stored.save_frozen_copy(copy, state)
     }
-
-    fn mark_unresumable(&self, reason: &str) -> Result<(), kemi_core::session::SessionError> {
-        self.open.lock().unwrap().mark_unresumable(reason)
+    fn review_id(&self) -> Option<String> {
+        self.stored.review_id()
     }
-
-    fn delete(&self) -> Result<(), kemi_core::session::SessionError> {
-        self.open.lock().unwrap().delete()
+    fn is_resumed(&self) -> bool {
+        self.stored.is_resumed()
     }
-
+    fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.stored.save_issued_state(state)
+    }
+    fn initial_state(&self) -> SessionState {
+        self.stored.initial_state()
+    }
+    fn needs_copy(&self) -> bool {
+        self.stored.needs_copy()
+    }
+    fn describe_review(&self, title: &str, total_files: usize) {
+        self.stored.describe_review(title, total_files);
+    }
+    fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.stored.save_state(state)
+    }
+    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
+        self.stored.mark_unresumable(reason)
+    }
+    fn delete(&self) -> Result<(), SessionError> {
+        self.stored.delete()
+    }
     fn save_snapshot(
         &self,
         snapshot: &PageSnapshot,
         comments: &std::collections::BTreeSet<String>,
     ) -> FilesWrite {
-        self.open.lock().unwrap().save_snapshot(snapshot, comments)
+        self.stored.save_snapshot(snapshot, comments)
     }
 
     fn save_image(
@@ -1328,11 +1331,7 @@ impl SessionSink for InterruptedImageSink {
         bytes: &[u8],
         comments: &std::collections::BTreeSet<String>,
     ) -> FilesWrite {
-        let written = self
-            .open
-            .lock()
-            .unwrap()
-            .save_image(comment_id, bytes, comments);
+        let written = self.stored.save_image(comment_id, bytes, comments);
         let interruption = self.interruption.lock().unwrap().take();
         if let Some(interrupt) = interruption {
             let answer = interrupt();
@@ -1368,9 +1367,10 @@ async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_
     let root = Scratch::new("interrupted-image");
     // 画像とスナップショットが並んでは入らない上限。画像を削除したコメントのものと
     // 見誤れば、スナップショットのために画像が消える。
-    let open = SessionStore::new(sessions.0.clone())
-        .with_files_limit(2000)
-        .create(SessionInfo {
+    let store = SessionStore::new(sessions.0.clone()).with_files_limit(2000);
+    let stored = StoredSession::start(
+        &store,
+        SessionInfo {
             id: "01HF7YAT00PAGE000000000000".to_string(),
             created: 1,
             updated: 1,
@@ -1382,10 +1382,11 @@ async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_
             },
             title: "live".to_string(),
             total_files: 0,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     let sink = Arc::new(InterruptedImageSink {
-        open: std::sync::Mutex::new(open),
+        stored,
         interruption: std::sync::Mutex::new(None),
         answer: std::sync::Mutex::new(None),
         runtime: tokio::runtime::Handle::current(),
@@ -1433,8 +1434,11 @@ async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_
     let answer = sink.answer.lock().unwrap().take().unwrap();
     assert_eq!(answer.recv().unwrap(), StatusCode::OK);
     assert!(added.get("image_unsaved").is_none(), "{added}");
-    let open = sink.open.lock().unwrap();
-    let saved = &open.state().comments;
+    let saved = &store
+        .read("01HF7YAT00PAGE000000000000")
+        .unwrap()
+        .state
+        .comments;
     let kemi_core::domain::review::CommentTarget::Page(page) = &saved[0].target else {
         panic!("{saved:?}");
     };
@@ -1443,79 +1447,6 @@ async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_
 }
 
 // ---- スナップショットとコメントの画像の保存（R-PAGE-SESSION の 20 MB の規則） ----
-
-/// 実際のセッションに書く sink。`<id>.files/` の上限を小さくして規則を確かめる。
-struct StoreSink {
-    open: std::sync::Mutex<OpenSession>,
-}
-
-impl SessionSink for StoreSink {
-    fn review_id(&self) -> Option<String> {
-        Some(self.open.lock().unwrap().id().into())
-    }
-    fn initial_state(&self) -> kemi_core::session::SessionState {
-        self.open.lock().unwrap().state().clone()
-    }
-    fn is_resumed(&self) -> bool {
-        self.open.lock().unwrap().state().display.is_some()
-    }
-    fn needs_copy(&self) -> bool {
-        !self.open.lock().unwrap().info().mode.is_live()
-    }
-    fn save_explanation_state(
-        &self,
-        state: kemi_core::session::SessionState,
-    ) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_explanation_state(state)
-    }
-    fn save_issued_state(
-        &self,
-        state: kemi_core::session::SessionState,
-    ) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_issued_state(state)
-    }
-    fn describe_review(&self, _title: &str, _total_files: usize) {}
-
-    fn save_state(&self, state: kemi_core::session::SessionState) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_state(state)
-    }
-
-    fn save_frozen_copy(
-        &self,
-        copy: kemi_core::session::PreparedCopy,
-        state: kemi_core::session::SessionState,
-    ) -> Result<bool, SessionError> {
-        self.open.lock().unwrap().save_frozen_copy(copy, state)
-    }
-
-    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
-        self.open.lock().unwrap().mark_unresumable(reason)
-    }
-
-    fn delete(&self) -> Result<(), SessionError> {
-        self.open.lock().unwrap().delete()
-    }
-
-    fn save_image(
-        &self,
-        comment_id: &str,
-        bytes: &[u8],
-        comments: &std::collections::BTreeSet<String>,
-    ) -> FilesWrite {
-        self.open
-            .lock()
-            .unwrap()
-            .save_image(comment_id, bytes, comments)
-    }
-
-    fn save_snapshot(
-        &self,
-        snapshot: &PageSnapshot,
-        comments: &std::collections::BTreeSet<String>,
-    ) -> FilesWrite {
-        self.open.lock().unwrap().save_snapshot(snapshot, comments)
-    }
-}
 
 struct ToggleScan {
     fail: std::sync::atomic::AtomicBool,
@@ -1556,9 +1487,8 @@ async fn resumed_code_failure_case(update_explanation: bool) {
         ..kemi_core::session::SessionState::default()
     };
     open.save_issued_state(state).unwrap();
-    let sink = Arc::new(StoreSink {
-        open: std::sync::Mutex::new(open),
-    });
+    drop(open);
+    let sink = Arc::new(StoredSession::resume(&store, &id).unwrap());
     let source = Arc::new(ToggleScan {
         fail: std::sync::atomic::AtomicBool::new(true),
     });
@@ -1612,17 +1542,7 @@ async fn resumed_code_failure_case(update_explanation: bool) {
         let response=reqwest::Client::new().post(format!("http://127.0.0.1:{agent_port}/a/agent-token/explain")).json(&serde_json::json!({"expected_revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"updated"},"references":[{"type":"code","unit":null,"group_id":"old","path":"old.txt","side":"new","start_line":1,"end_line":2}]}]}]})).send().await.unwrap();
         assert_eq!(response.status(), 200);
     }
-    assert_eq!(
-        sink.open
-            .lock()
-            .unwrap()
-            .state()
-            .display
-            .as_ref()
-            .unwrap()
-            .issued,
-        1
-    );
+    assert_eq!(store.read(&id).unwrap().state.display.unwrap().issued, 1);
     source
         .fail
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1668,11 +1588,12 @@ async fn start_stored_review(
     files_limit: u64,
     snapshots: Vec<PageSnapshot>,
 ) -> Running {
-    let open = kemi_core::session::SessionStore::new(sessions.0.clone())
-        .with_files_limit(files_limit)
-        .create(stored_session_info(authority, sessions))
-        .unwrap();
-    let last_snapshot_number = open.last_snapshot_number();
+    let stored = StoredSession::start(
+        &kemi_core::session::SessionStore::new(sessions.0.clone()).with_files_limit(files_limit),
+        stored_session_info(authority, sessions),
+    )
+    .unwrap();
+    let last_snapshot_number = stored.last_snapshot_number();
     start_restored_review(
         LiveTarget::Url {
             authority: authority.to_string(),
@@ -1680,9 +1601,7 @@ async fn start_stored_review(
             display: format!("http://{authority}/"),
         },
         sessions.0.clone(),
-        Some(Arc::new(StoreSink {
-            open: std::sync::Mutex::new(open),
-        })),
+        Some(Arc::new(stored)),
         snapshots,
         last_snapshot_number,
     )

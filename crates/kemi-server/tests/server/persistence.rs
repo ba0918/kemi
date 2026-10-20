@@ -324,10 +324,7 @@ async fn session_copy_over_the_limit_is_unresumable() {
         title: "big".to_string(),
         total_files: 1,
     };
-    let open = store.create(info).unwrap();
-    let sink = Arc::new(StoreSink {
-        open: Mutex::new(open),
-    });
+    let sink = Arc::new(kemi_server::StoredSession::start(&store, info).unwrap());
 
     let mut source = FakeSource::new();
     source.meta.groups[0].files = vec![file_entry("f1", "src/a.rs"), file_entry("big", "big.bin")];

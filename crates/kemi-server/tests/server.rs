@@ -1062,7 +1062,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Condvar, Mutex};
 
 use kemi_core::session::{
-    OpenSession, SessionCopy, SessionError, SessionInfo, SessionMode, SessionState, SessionStore,
+    SessionCopy, SessionError, SessionInfo, SessionMode, SessionState, SessionStore,
 };
 use kemi_server::SessionSink;
 
@@ -1388,63 +1388,6 @@ impl ResultSink for FailingResults {
 
     fn location(&self) -> Option<String> {
         None
-    }
-}
-
-/// 一時ディレクトリのセッションを実際に書く sink。上限の扱いを core に任せる。
-struct StoreSink {
-    open: Mutex<OpenSession>,
-}
-
-impl SessionSink for StoreSink {
-    fn review_id(&self) -> Option<String> {
-        Some(self.open.lock().unwrap().id().into())
-    }
-    fn save_explanation_state(&self, state: SessionState) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_explanation_state(state)
-    }
-    fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_issued_state(state)
-    }
-    fn save_frozen_copy(
-        &self,
-        copy: kemi_core::session::PreparedCopy,
-        state: SessionState,
-    ) -> Result<bool, SessionError> {
-        self.open.lock().unwrap().save_frozen_copy(copy, state)
-    }
-    fn describe_review(&self, _title: &str, _total_files: usize) {}
-
-    fn save_state(&self, state: SessionState) -> Result<(), SessionError> {
-        self.open.lock().unwrap().save_state(state)
-    }
-
-    fn mark_unresumable(&self, reason: &str) -> Result<(), SessionError> {
-        self.open.lock().unwrap().mark_unresumable(reason)
-    }
-
-    fn delete(&self) -> Result<(), SessionError> {
-        self.open.lock().unwrap().delete()
-    }
-
-    fn save_image(
-        &self,
-        comment_id: &str,
-        bytes: &[u8],
-        comments: &std::collections::BTreeSet<String>,
-    ) -> kemi_core::session::FilesWrite {
-        self.open
-            .lock()
-            .unwrap()
-            .save_image(comment_id, bytes, comments)
-    }
-
-    fn save_snapshot(
-        &self,
-        snapshot: &kemi_core::session::PageSnapshot,
-        comments: &std::collections::BTreeSet<String>,
-    ) -> kemi_core::session::FilesWrite {
-        self.open.lock().unwrap().save_snapshot(snapshot, comments)
     }
 }
 

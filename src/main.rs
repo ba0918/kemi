@@ -29,7 +29,7 @@ use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
 use kemi_server::{
     AgentParams, Asset, Assets, LiveParams, LiveTarget, ResultSaveError, ResultSink, ServeControl,
-    ServeOutcome, ServeParams, SessionSink, SuspendOutcome, bind_agent_listener,
+    ServeOutcome, ServeParams, SessionSink, StoredSession, SuspendOutcome, bind_agent_listener,
     detect_share_address, exposure_warning, live_exposure_warning, serve, session_host,
     session_url,
 };
@@ -147,7 +147,7 @@ impl EndpointFile {
 /// （R-AGENT-CLI）。往復はセッションの id と置き場所に頼るので、セッションのあるレビュー
 /// だけ。立てられない・書けないときは警告だけで、今どおり submit だけでやりとりする。
 async fn start_agent_channel(
-    stored_session: Option<&session::StoredSession>,
+    stored_session: Option<&StoredSession>,
     control: &ServeControl,
     defer: bool,
 ) -> Option<(AgentParams, EndpointFile)> {
@@ -245,10 +245,7 @@ fn session_info(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Result<Session
 
 /// セッションの保存先を開く。決められない・開けないときは警告だけを出し、セッション
 /// なしでレビューを続ける。
-fn open_session(
-    cli: &Cli,
-    live: Option<&(LivePage, PathBuf)>,
-) -> Option<Arc<session::StoredSession>> {
+fn open_session(cli: &Cli, live: Option<&(LivePage, PathBuf)>) -> Option<Arc<StoredSession>> {
     let Some(dir) = sessions_dir() else {
         eprintln!(
             "kemi: cannot determine where to save sessions ({})",
@@ -263,7 +260,7 @@ fn open_session(
             return None;
         }
     };
-    match session::StoredSession::start(&SessionStore::new(dir), info) {
+    match StoredSession::start(&SessionStore::new(dir), info) {
         Ok(session) => Some(Arc::new(session)),
         Err(error) => {
             eprintln!("kemi: cannot start a session: {error}");
@@ -445,11 +442,11 @@ fn fail(message: &str) -> ! {
 }
 
 /// 復元できるセッションが残るときだけ、機械が読む 1 行を stderr に出す（R-SESSION）。
-fn print_resume_hint(stored_session: Option<&session::StoredSession>) {
+fn print_resume_hint(stored_session: Option<&StoredSession>) {
     if let Some(stored_session) = stored_session
-        && let Some(line) = stored_session.resume_line()
+        && let Some(id) = stored_session.resumable_id()
     {
-        eprintln!("{line}");
+        eprintln!("kemi: resume with: kemi --resume {id}");
     }
 }
 
@@ -511,7 +508,7 @@ struct ReviewStartup {
 async fn prepare_review(
     cli: &Cli,
     source: Arc<dyn ReviewSource>,
-    stored_session: Option<&Arc<session::StoredSession>>,
+    stored_session: Option<&Arc<StoredSession>>,
     results_key: String,
     live: Option<&LiveRun>,
     initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
@@ -611,7 +608,7 @@ async fn prepare_review(
 async fn run_review(
     cli: &Cli,
     source: Arc<dyn ReviewSource>,
-    stored_session: Option<Arc<session::StoredSession>>,
+    stored_session: Option<Arc<StoredSession>>,
     results_key: String,
     live: Option<LiveRun>,
     initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
@@ -691,7 +688,7 @@ async fn run_review(
 /// 終わり方を stdout・セッションの片付け・終了コードにする。
 async fn finish_review(
     outcome: Option<Result<ServeOutcome, kemi_server::ServerError>>,
-    stored_session: Option<Arc<session::StoredSession>>,
+    stored_session: Option<Arc<StoredSession>>,
     control: &ServeControl,
     mut serving: tokio::task::JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
 ) -> ! {
@@ -755,7 +752,7 @@ fn finish_submitted(document: serde_json::Value) -> ! {
 
 /// 保留か実行時エラーで終わるとき、会話の無い `--live` のセッションの `<id>.files/` を消す
 /// （R-PAGE-SESSION）。失敗は警告だけにする（R-SESSION）。
-fn close_suspended(stored_session: Option<&session::StoredSession>) {
+fn close_suspended(stored_session: Option<&StoredSession>) {
     if let Some(stored_session) = stored_session
         && let Err(error) = stored_session.close_suspended()
     {
@@ -777,7 +774,7 @@ async fn run_resume(cli: &Cli) -> ! {
         Some(None) => choose_session(&store),
         None => unreachable!("run_resume is called only with --resume"),
     };
-    let stored = match session::StoredSession::resume(&store, &id) {
+    let stored = match StoredSession::resume(&store, &id) {
         Ok(stored) => stored,
         Err(error) => fail(&error.to_string()),
     };
@@ -808,7 +805,7 @@ async fn run_resume(cli: &Cli) -> ! {
 }
 
 /// `<id>.files/` のスナップショットを読み戻す。読めないものは飛ばして警告し、復元は続ける。
-fn restored_snapshots(stored: &session::StoredSession) -> Vec<PageSnapshot> {
+fn restored_snapshots(stored: &StoredSession) -> Vec<PageSnapshot> {
     stored
         .read_snapshots()
         .into_iter()
