@@ -469,45 +469,30 @@ export function recomputeDisplay(anchor = captureAnchor()) {
 }
 
 /**
- * 折りたたみの「Show N lines」。開いた後にファイルの帯も描き直す（開けなかったときも）。
+ * 折りたたみの「Show N lines」。1 つの折りたたみをサーバの残りが尽きるまで展開し、開いた後に
+ * ファイルの帯も描き直す（開けなかったときも）。
  * @param {number} index
  */
 export async function expandSkip(index) {
-  await expandSkipAt(index);
-  renderFileHeader();
-}
-
-/**
- * 1 つの折りたたみを、サーバの残りが尽きるまで展開する。ファイルの帯は描き直さない
- * （全行の展開では、展開し終えてから 1 回だけ描く）。
- * @param {number} index
- * @returns {Promise<boolean>} 展開できたら true。
- */
-async function expandSkipAt(index) {
   const entry = currentEntry();
   const skip = state.rows[index];
-  if (!entry || !isExpandable(skip)) {
-    return false;
+  if (entry && isExpandable(skip)) {
+    const generation = state.selectGeneration;
+    const cacheKey = state.cacheKey;
+    const replacement = await fetchSkipRows(entry, skip, generation, cacheKey);
+    // 取得中にファイルや表示条件が変わった（null）なら、古い応答で表示とキャッシュを上書きしない。
+    // 同じ折りたたみが先に展開されていたら、取得前の位置へ挿すと表示行が重複するので挿さない。
+    if (replacement !== null && state.rows[index] === skip) {
+      // 50 万行の展開では、行を引数に展開する splice が引数の上限を超えて失敗する。
+      const rows = state.rows.slice(0, index).concat(replacement, state.rows.slice(index + 1));
+      state.rows = rows;
+      state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
+      recomputeDisplay();
+      renderDiff();
+      renderFloating();
+    }
   }
-  const generation = state.selectGeneration;
-  const cacheKey = state.cacheKey;
-  const replacement = await fetchSkipRows(entry, skip, generation, cacheKey);
-  if (replacement === null) {
-    // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
-    return false;
-  }
-  if (state.rows[index] !== skip) {
-    // 同じ折りたたみが先に展開された。取得前の位置へ挿すと表示行が重複する。
-    return false;
-  }
-  // 50 万行の展開では、行を引数に展開する splice が引数の上限を超えて失敗する。
-  const rows = state.rows.slice(0, index).concat(replacement, state.rows.slice(index + 1));
-  state.rows = rows;
-  state.cache.set(cacheKey, { ...state.cache.get(cacheKey), rows });
-  recomputeDisplay();
-  renderDiff();
-  renderFloating();
-  return true;
+  renderFileHeader();
 }
 
 /**

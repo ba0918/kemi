@@ -252,6 +252,11 @@ try {
   await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('twofold 16')`);
   assert.equal(await evaluate(`document.querySelector('#diff-content').textContent.includes('fold one 9')`), true, 'キャッシュにも同じ形で入っている');
   console.log('PASS 全行の展開の途中で表示中のファイルを選び直しても、読み終えた折りたたみは表示とキャッシュの両方で開いた形');
+  // 残った折りたたみの「Show N lines」は、その 1 つだけを開く。
+  await browser('click','#diff-content .expand-button');
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('fold two 24')`);
+  assert.equal(await evaluate(`document.querySelectorAll('#diff-content .expand-button').length`), 0);
+  console.log('PASS 折りたたみを 1 つ開くと、その行が差し込まれる');
   console.log(JSON.stringify({test:'50万行の疎な変更',viewport:await evaluate('({width:innerWidth,height:innerHeight})'),loadMs,verticalAndHorizontalMs:performance.now()-moveStart,renderedRows:largeEnd.count}));
   await browser('click','[data-file-id="long"]');
   await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('NEW_END')`);
