@@ -1105,6 +1105,12 @@ fn keeps_no_files() -> kemi_core::session::FilesWrite {
 }
 
 impl SessionSink for RecordingSink {
+    fn save_explanation_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.save_state(state)
+    }
+    fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.save_state(state)
+    }
     fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
         self.explanation.lock().unwrap().clone()
     }
@@ -1235,6 +1241,9 @@ impl Drop for FirstSaveGuard {
 }
 
 impl SessionSink for SlowSink {
+    fn save_explanation_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.save_issued_state(state)
+    }
     fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.states.lock().unwrap().push(state);
         Ok(())
@@ -1391,6 +1400,9 @@ struct StoreSink {
 impl SessionSink for StoreSink {
     fn review_id(&self) -> Option<String> {
         Some(self.open.lock().unwrap().id().into())
+    }
+    fn save_explanation_state(&self, state: SessionState) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_explanation_state(state)
     }
     fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.open.lock().unwrap().save_issued_state(state)

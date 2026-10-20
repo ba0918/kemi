@@ -30,7 +30,7 @@ use api::AllowedHosts;
 pub use api::{session_host, session_url};
 pub use lan::{detect_share_address, exposure_warning, live_exposure_warning};
 pub use live::{LiveParams, LiveTarget};
-pub use session::Session;
+use session::Session;
 
 /// ページに配る資産。kemi-server は web の中身を知らない。
 pub struct Asset {
@@ -199,12 +199,11 @@ pub trait ResultSink: Send + Sync {
 /// レビューをセッションとして残す先（R-SESSION）。一般状態の保存失敗は警告だけにし、
 /// 新しい世代は保存が成功するまで公開しない。
 pub trait SessionSink: Send + Sync {
+    /// 説明を差し替えるとき。説明を含む追加分の上限を確かめてから保存する。
     fn save_explanation_state(
         &self,
         state: kemi_core::session::SessionState,
-    ) -> Result<(), SessionError> {
-        self.save_issued_state(state)
-    }
+    ) -> Result<(), SessionError>;
     fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
         None
     }
@@ -224,12 +223,11 @@ pub trait SessionSink: Send + Sync {
     fn is_resumed(&self) -> bool {
         false
     }
+    /// 新しい差分表示版を発行するとき。保存できてから版を公開する。
     fn save_issued_state(
         &self,
         state: kemi_core::session::SessionState,
-    ) -> Result<(), SessionError> {
-        self.save_state(state)
-    }
+    ) -> Result<(), SessionError>;
     /// 復元のときに、サーバのメモリへ読み戻す状態。新規のセッションでは空。
     fn initial_state(&self) -> kemi_core::session::SessionState {
         kemi_core::session::SessionState::default()

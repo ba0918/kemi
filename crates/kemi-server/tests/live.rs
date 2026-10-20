@@ -1276,6 +1276,18 @@ struct InterruptedImageSink {
 }
 
 impl SessionSink for InterruptedImageSink {
+    fn save_explanation_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), kemi_core::session::SessionError> {
+        self.open.lock().unwrap().save_explanation_state(state)
+    }
+    fn save_issued_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), kemi_core::session::SessionError> {
+        self.open.lock().unwrap().save_issued_state(state)
+    }
     fn describe_review(&self, _title: &str, _total_files: usize) {}
 
     fn save_state(
@@ -1448,6 +1460,12 @@ impl SessionSink for StoreSink {
     }
     fn needs_copy(&self) -> bool {
         !self.open.lock().unwrap().info().mode.is_live()
+    }
+    fn save_explanation_state(
+        &self,
+        state: kemi_core::session::SessionState,
+    ) -> Result<(), SessionError> {
+        self.open.lock().unwrap().save_explanation_state(state)
     }
     fn save_issued_state(
         &self,
