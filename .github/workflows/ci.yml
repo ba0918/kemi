@@ -96,3 +96,6 @@ jobs:
         run: scripts/check-skill-format.sh
       - name: Skill frontmatter
         run: scripts/check-skill-frontmatter.sh
+      # ランナーの python3（ubuntu-24.04 では 3.12）で走らせる。下限の 3.9 では走らせていない。
+      - name: Context summary helper
+        run: python3 -m unittest discover -s tests -p 'test_context_summary.py'
