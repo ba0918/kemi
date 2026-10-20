@@ -537,6 +537,23 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_group_by_value_is_refused_with_its_value() {
+        assert!(matches!(
+            validate_input_mode(&parse(&["--from", "x", "--group-by", "bad"])),
+            Err(InputModeError::InvalidValue(message))
+                if message == "--group-by must be commit or file: bad"
+        ));
+    }
+
+    #[test]
+    fn group_by_without_from_is_refused_before_its_value_is_read() {
+        assert!(matches!(
+            validate_input_mode(&parse(&["--worktree", "--group-by", "bad"])),
+            Err(InputModeError::Message("--group-by requires --from"))
+        ));
+    }
+
+    #[test]
     fn mode_validation_preserves_missing_mode_and_conflict_precedence() {
         assert!(matches!(
             validate_input_mode(&parse(&["--to", "HEAD"])),
