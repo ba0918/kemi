@@ -57,7 +57,9 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   leaf の許可表）と `modulepreload` の一覧は `web/assets/layers.test.js`（`node --test web`）が import 文から
   確かめる。features の順番は上の行をそのまま読む。JSDoc の `import("…")` は型だけの参照で読み込みを
   生まないので数えない。動的な `import(…)` は、下の例外（`app.js` が `--live` のモジュールを読む所）だけで
-  あることも確かめる。読み込んだだけで走る文の規則は確かめない。
+  あることも確かめる。`index.html` の stylesheet の順（部品の `parts.css`・`explanation.css` の後に
+  `style.css`）も確かめる。詳細度の同じ規則は後に読んだ方が勝つので、この順が見た目を決める。
+  読み込んだだけで走る文の規則は確かめない。
 - 例外は `--live` のページの見方（`features/live.js`・`views/live.js`・`live-model.js`・`live-diff.js`・
   `live.css`）。`--live` でないレビューはページ用のファイルを読み込まない約束（`R-VERIFY`）
   なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
