@@ -99,16 +99,14 @@ function renderedRulerData() {
  * @param {number[]} offsets
  */
 export function renderRuler(offsets) {
-  /** @type {string[]} */
-  let kinds = [];
+  /** @type {string[] | null} */
+  let kinds = null;
   if (state.renderedActive) {
     // 画像の読み込みでブロックの位置が動くので、描画表示では毎回測り直す。
     const data = renderedRulerData();
     kinds = data.kinds;
     offsets = data.offsets;
     state.rulerDirty = true;
-  } else {
-    kinds = state.display.map(rulerKind);
   }
   const height = dom.ruler.clientHeight;
   const total = offsets[offsets.length - 1] || 0;
@@ -133,7 +131,8 @@ export function renderRuler(offsets) {
         del: styles.getPropertyValue("--del-ink").trim(),
         note: styles.getPropertyValue("--note-line").trim(),
       };
-      for (const mark of rulerMarks(kinds, offsets, height)) {
+      // 差分の表示行の種類は帯を描き直すときだけ作る（スクロールのフレームごとに表示行の数だけ作らない）。
+      for (const mark of rulerMarks(kinds ?? state.display.map(rulerKind), offsets, height)) {
         context.fillStyle = colors[mark.kind];
         if (mark.kind === "note") {
           context.fillRect(1, mark.top, width - 2, Math.max(3, mark.bottom - mark.top));
