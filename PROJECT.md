@@ -19,7 +19,8 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `docs/README.md` | 文書の入口。各ディレクトリの役割といまの文書 |
 | `docs/spec/kemi.md` | 承認済みの本体の仕様の索引。契約（CLI、JSON、性能条件）の正典は、そこから辿る責務ごとのファイル |
 | `CONTEXT.md` | 用語集。二通りに読める語の読みの正典 |
-| `src/main.rs` | CLI と配線、stdout / stderr、終了コード |
+| `src/main.rs` | CLI の引数の振り分けと、確かめる順。配線は `src/` の `input.rs`（入力からソース）・`review.rs`（起動・サーブ・終わり方）・`resume.rs`（復元）・`results.rs`（結果ファイル） |
+| `src/report.rs` | stderr の契約の行、stdout への書き込み、終了コード |
 | `crates/kemi-core/src/domain/` | 純粋なドメイン（整列、コメント、digest、ノイズ判定） |
 | `crates/kemi-core/src/source/` | git / manifest の読み取りアダプタ |
 | `crates/kemi-server/` | HTTP と SSE（axum） |
