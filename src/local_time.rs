@@ -57,7 +57,9 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
 
 // 下の `Tm` の並び（末尾の `tm_gmtoff` と `tm_zone`）と、`time_t` を i64 として渡すことは、
 // 64 bit の対象でだけ成り立つ。32 bit の unix では C の `struct tm` より大きくなり、
-// `localtime_r` が書かない後半を読んでしまうので、FFI は 64 bit に限る。
+// `localtime_r` が書かない後半を読んでしまうので、FFI は 64 bit に限る。64 bit でも
+// illumos・Solaris・AIX の `struct tm` は末尾の 2 つを持たないので、`Tm` はゼロで初めて、
+// 書かれない後半はゼロとして読む。
 #[cfg(all(unix, target_pointer_width = "64"))]
 fn local_parts(seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
     // glibc / musl / macOS で先頭の 9 つの int は同じ並び。
@@ -78,14 +80,18 @@ fn local_parts(seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
     unsafe extern "C" {
         fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
     }
-    let mut tm = std::mem::MaybeUninit::<Tm>::uninit();
+    let mut tm = std::mem::MaybeUninit::<Tm>::zeroed();
     // SAFETY: `seconds` は生きている i64 への参照で、`tm` は `Tm` の大きさの書き込み先。
-    // `localtime_r` はどちらも呼び出しの間しか使わない。
+    // 64 bit の C の `struct tm` は `Tm` と同じ大きさか（glibc・musl・macOS・BSD）、末尾の 2 つ
+    // を持たない分だけ小さい（illumos・Solaris・AIX）ので、`localtime_r` は `tm` の外に書かない。
+    // どちらも呼び出しの間しか使わない。
     let result = unsafe { localtime_r(&seconds, tm.as_mut_ptr()) };
     if result.is_null() {
         return None;
     }
-    // SAFETY: `localtime_r` が null 以外を返したので、`tm` は全項目が書き込まれている。
+    // SAFETY: `tm` はゼロで初めてあり、`localtime_r` が null 以外を返したので先頭の 9 項目は
+    // 書き込まれている。`struct tm` が末尾の 2 つを持たない対象では、そこはゼロのまま残り、
+    // ゼロは i64 にも null のポインタとしても正しい値。
     let tm = unsafe { tm.assume_init() };
     Some((
         tm.tm_year + 1900,
