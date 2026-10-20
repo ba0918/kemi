@@ -407,8 +407,16 @@ impl OpenSession {
     }
 
     pub fn save_explanation_state(&mut self, state: SessionState) -> Result<(), SessionError> {
+        self.save_explanation_state_at(state, super::now_millis())
+    }
+
+    pub(crate) fn save_explanation_state_at(
+        &mut self,
+        state: SessionState,
+        now: u128,
+    ) -> Result<(), SessionError> {
         super::validate_additional(&state)?;
-        self.save_atomic_state(state, super::now_millis())
+        self.save_atomic_state(state, now)
     }
 
     fn save_atomic_state(

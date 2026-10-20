@@ -329,15 +329,15 @@ fn explanation_state_saving_advances_updated_time_only_after_atomic_success_with
         }),
         ..SessionState::default()
     };
-    open.save_explanation_state(state.clone()).unwrap();
-    assert!(open.info().updated > 100);
-    let updated = open.info().updated;
+    open.save_explanation_state_at(state.clone(), 200).unwrap();
+    assert_eq!(open.info().updated, 200);
+    assert_eq!(store.read(id).unwrap().info.updated, 200);
     assert!(!payload_path(&scratch.dir(), id).exists());
     let bytes = std::fs::read(session_path(&scratch.dir(), id)).unwrap();
     std::fs::create_dir(scratch.dir().join(format!(".{id}.session.tmp"))).unwrap();
-    assert!(open.save_explanation_state(state.clone()).is_err());
+    assert!(open.save_explanation_state_at(state.clone(), 300).is_err());
     assert_eq!(open.state(), &state);
-    assert_eq!(open.info().updated, updated);
+    assert_eq!(open.info().updated, 200);
     assert_eq!(
         std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
         bytes
