@@ -110,10 +110,10 @@ export async function navigate(direction) {
   try {
     let from = here < 0 ? state.index : here;
     for (;;) {
-      const next = nextFileIndex(files, from, direction, (file) => {
-        const candidate = visible.find((item) => item.file.id === file.id);
-        return hasStops(file, candidate ? commentsOf(candidate) : [], state.collapsedOverrides);
-      });
+      // files は visible の file を同じ位置に並べたものなので、候補の位置で visible を引く。
+      const next = nextFileIndex(files, from, direction, (file, index) =>
+        hasStops(file, commentsOf(visible[index]), state.collapsedOverrides),
+      );
       if (next === null) {
         showToast(direction > 0 ? "This is the last change" : "This is the first change");
         return;

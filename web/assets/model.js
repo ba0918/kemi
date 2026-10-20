@@ -896,16 +896,17 @@ export function hasLoadedStops(rows, comments) {
 
 /**
  * 見えている順で、次（`direction` 1）か前（-1）の移動先のファイル。見たのファイルも
- * 飛ばさない。端では null。
+ * 飛ばさない。端では null。`navigable` には候補の位置も渡すので、呼び手は同じ位置の
+ * ほかの並びを探し直さずに引ける。
  * @param {FileEntry[]} files
  * @param {number} index 今のファイルの位置
  * @param {1 | -1} direction
- * @param {(file: FileEntry) => boolean} navigable
+ * @param {(file: FileEntry, index: number) => boolean} navigable
  * @returns {number | null}
  */
 export function nextFileIndex(files, index, direction, navigable) {
   for (let next = index + direction; next >= 0 && next < files.length; next += direction) {
-    if (navigable(files[next])) {
+    if (navigable(files[next], next)) {
       return next;
     }
   }

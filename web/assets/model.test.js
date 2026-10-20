@@ -800,6 +800,19 @@ test("next_file_skips_noise_binary_and_files_without_stops_but_not_seen_ones", (
   assert.equal(nextFileIndex(files, 4, -1, navigable), 0);
 });
 
+test("次のファイルを探すとき、候補の位置も渡す", () => {
+  const files = [file("a.rs", 1, 0), file("b.rs", 2, 0), file("c.rs", 3, 0), file("d.rs", 4, 0)];
+  /** @type {number[]} */
+  const asked = [];
+  const navigable = (/** @type {FileEntry} */ entry, /** @type {number} */ index) => {
+    asked.push(index);
+    return entry === files[index] && index === 2;
+  };
+
+  assert.equal(nextFileIndex(files, 0, 1, navigable), 2);
+  assert.deepEqual(asked, [1, 2]);
+});
+
 test("next_file_counts_a_line_comment_as_a_stop", () => {
   const moved = file("moved.rs", 0, 0, { status: "rename" });
 
