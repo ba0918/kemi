@@ -166,6 +166,9 @@ export const state = {
   sortBySize: false,
   theme: loadTheme(),
   cache: new Map(),
+  // 表示中のファイルの行。入れるときは、その鍵（cacheKey）のキャッシュの rows と同じ配列にする（写しを入れない）。
+  // 同じ配列かで、キャッシュの行のまま表示しているか（features/display.js の showingCached）と、畳んだ形のままか
+  // （collapseAll、allLinesExpanded）を見分ける。
   rows: [],
   display: [],
   displayFileId: null,
