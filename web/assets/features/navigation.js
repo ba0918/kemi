@@ -15,12 +15,11 @@ import {
   hasLoadedStops,
   hasStops,
   lineHasAnchor,
-  lineOffsets,
   navNextTarget,
   navPrevTarget,
   nextFileIndex,
 } from "../model.js";
-import { fetchFileData, scheduleRender, storeFileData } from "./display.js";
+import { fetchFileData, rowOffsets, scheduleRender, storeFileData } from "./display.js";
 import { navView, stopTops } from "../views/nav.js";
 import { blockElements, blockTop } from "../views/rendered.js";
 import { showToast } from "../views/overlay.js";
@@ -84,7 +83,7 @@ export async function navigate(direction) {
   if (!entry || state.loading || state.navigating || state.submitted) {
     return;
   }
-  const offsets = lineOffsets(state.heights);
+  const offsets = rowOffsets();
   const stops = state.renderedActive ? state.renderedStops : reachableStops();
   const tops = stopTops(offsets);
   const view = navView();
@@ -172,7 +171,7 @@ export function applyPendingJump() {
   if (!jump) {
     return;
   }
-  const offsets = lineOffsets(state.heights);
+  const offsets = rowOffsets();
   if (state.renderedActive) {
     const tops = stopTops(offsets);
     if (jump === "first" || jump === "last") {

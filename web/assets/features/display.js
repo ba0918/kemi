@@ -44,8 +44,26 @@ import { renderNav, renderRuler } from "../views/nav.js";
 /** @typedef {import("../model.js").LogicalRow} LogicalRow */
 /** @typedef {import("../state.js").Entry} Entry */
 
-/** 測り直しの後の描き直しを、1 フレームに 1 回だけにする。 */
+/** 描き直しを、1 フレームに 1 回だけにする。 */
 let rendering = false;
+
+/**
+ * 表示行の上端（最後の要素は全体の高さ）と、それを求めた高さの配列。高さを変える所が null に
+ * し、次に読むときに作り直す。スクロールのたびに作り直すと、50 万行では毎フレーム 50 万要素になる。
+ * @type {{ heights: number[], offsets: number[] } | null}
+ */
+let offsetsCache = null;
+
+/**
+ * 表示行の上端（最後の要素は全体の高さ）。高さが変わるまで同じ配列を返すので、書き換えない。
+ * @returns {number[]}
+ */
+export function rowOffsets() {
+  if (offsetsCache === null || offsetsCache.heights !== state.heights) {
+    offsetsCache = { heights: state.heights, offsets: lineOffsets(state.heights) };
+  }
+  return offsetsCache.offsets;
+}
 
 /**
  * 次に描いたときに測り直す行（表示行の位置）。
@@ -133,6 +151,7 @@ function markStaleRows() {
 /** 表示する行が変わったときや折返しを切り替えたとき、行の高さを基準値へ戻す。 */
 export function resetHeights() {
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
+  offsetsCache = null;
   staleRows = new Set();
   // 位置の帯の印は行の高さから描く。測る行が無くても、古い高さの印を残さない。
   state.rulerDirty = true;
@@ -153,7 +172,7 @@ export function captureAnchor() {
   if (state.display.length === 0) {
     return null;
   }
-  const offsets = lineOffsets(state.heights);
+  const offsets = rowOffsets();
   const scrollTop = dom.viewport.scrollTop;
   const index = rowAtOffset(offsets, scrollTop);
   const line = state.display[index];
@@ -176,7 +195,7 @@ function restoreAnchor(anchor) {
   if (index < 0) {
     return;
   }
-  const offsets = lineOffsets(state.heights);
+  const offsets = rowOffsets();
   // 全体の高さを先に広げる。古い高さのままでは、戻す位置が末尾で切り詰められる。
   dom.content.style.height = `${offsets[offsets.length - 1] || 0}px`;
   const top = offsets[index] ?? 0;
@@ -260,7 +279,7 @@ export function renderDiff() {
     renderRuler([0]);
     return;
   }
-  const offsets = lineOffsets(state.heights);
+  const offsets = rowOffsets();
   const totalHeight = offsets[offsets.length - 1] || 0;
   dom.content.style.height = `${totalHeight}px`;
   const window = windowFor(
@@ -361,6 +380,7 @@ function measureHeights(start, offsets) {
     }
   });
   if (changed) {
+    offsetsCache = null;
     state.rulerDirty = true;
   }
   if (shift !== 0) {
@@ -387,17 +407,21 @@ function measureHeights(start, offsets) {
     // 測り終えて動かなくなった。ここから先、置き直すものはもう無い。
     state.landing = null;
   }
-  if (changed && !rendering) {
-    rendering = true;
-    requestAnimationFrame(() => {
-      rendering = false;
-      renderDiff();
-    });
+  if (changed) {
+    scheduleRender();
   }
 }
 
+/** 次のフレームで描き直す。同じフレームのうちに何度呼ばれても、描くのは 1 回。 */
 export function scheduleRender() {
-  requestAnimationFrame(() => renderDiff());
+  if (rendering) {
+    return;
+  }
+  rendering = true;
+  requestAnimationFrame(() => {
+    rendering = false;
+    renderDiff();
+  });
 }
 
 export function recomputeThreads() {
@@ -429,6 +453,7 @@ export function recomputeDisplay(anchor = captureAnchor()) {
   // 測った高さは残る行へ移す。捨てると、見えていない上の行が基準値に詰まって
   // 読んでいた位置が上へずれる。
   state.heights = carryHeights(previous, previousHeights, state.display, ROW_HEIGHT);
+  offsetsCache = null;
   state.skipRanges = new Map();
   state.rows.forEach((row, index) => {
     if (row.kind === "skip") {
@@ -628,7 +653,7 @@ export function setWrap(wrap) {
  */
 export function scrollToRulerPosition(event) {
   const rect = dom.ruler.getBoundingClientRect();
-  const total = lineOffsets(state.heights).at(-1) || 0;
+  const total = rowOffsets().at(-1) || 0;
   const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
   dom.viewport.scrollTop = Math.max(0, ratio * total - dom.viewport.clientHeight / 2);
   scheduleRender();
