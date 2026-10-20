@@ -149,7 +149,8 @@ fn update_error(error: kemi_core::domain::explanation::ExplanationError) -> ApiE
         | kemi_core::domain::explanation::ExplanationError::RevisionLimit
         | kemi_core::domain::explanation::ExplanationError::Reference { .. }
         | kemi_core::domain::explanation::ExplanationError::UnknownBlock
-        | kemi_core::domain::explanation::ExplanationError::Capacity => {
+        | kemi_core::domain::explanation::ExplanationError::Capacity
+        | kemi_core::domain::explanation::ExplanationError::InvalidTarget => {
             ApiError::bad_request(error.to_string())
         }
     }

@@ -2,7 +2,7 @@ use super::display_version::{DisplayVersionError, known_generation};
 use super::parts::Part;
 pub use super::parts_validation::MAX_OCCURRENCE;
 use super::parts_validation::{PartError, PartRule, bound, id, string_bytes, text, validate_part};
-use super::review::GroupBy;
+use super::review::{ExplanationTarget, GroupBy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -278,6 +278,8 @@ pub enum ExplanationError {
     },
     UnknownBlock,
     Capacity,
+    /// 保存された説明コメントの対象が、作成時に作れない形。
+    InvalidTarget,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReferenceFailure {
@@ -321,6 +323,7 @@ impl std::fmt::Display for ExplanationError {
             Self::Capacity => f.write_str(
                 "explanation: retained history or additional saved content exceeds capacity",
             ),
+            Self::InvalidTarget => f.write_str("explanation: invalid original target"),
         }
     }
 }
@@ -372,6 +375,28 @@ pub fn validate_selection(
             rule: PartRule::Occurrence,
         }
         .into());
+    }
+    Ok(())
+}
+/// 保存された説明コメントの対象を、復元の前に確かめる。版の範囲、block_id と引用の一致、
+/// 引用したブロックの構造、選択。
+pub fn validate_target(target: &ExplanationTarget) -> Result<(), ExplanationError> {
+    id("explanation.block_id", &target.block_id)?;
+    if target.revision == 0
+        || target.revision > MAX_REVISION
+        || target.quote.block.id != target.block_id
+    {
+        return Err(ExplanationError::InvalidTarget);
+    }
+    validate_document(&ExplanationDocument {
+        sections: vec![ExplanationSection {
+            id: "quote".into(),
+            title: target.quote.section_title.clone(),
+            blocks: vec![target.quote.block.clone()],
+        }],
+    })?;
+    if let Some(selection) = &target.selection {
+        validate_selection(&target.quote.block.part, selection)?;
     }
     Ok(())
 }

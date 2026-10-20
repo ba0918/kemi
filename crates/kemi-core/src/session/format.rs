@@ -825,28 +825,7 @@ impl From<&Comment> for CommentDto {
 impl CommentDto {
     fn into_comment(self) -> Result<Comment, String> {
         let target = if let Some(target) = self.explanation {
-            crate::domain::parts_validation::id("explanation.block_id", &target.block_id)
-                .map_err(|e| e.to_string())?;
-            if target.revision == 0
-                || target.revision > crate::domain::explanation::MAX_REVISION
-                || target.quote.block.id != target.block_id
-            {
-                return Err("explanation: invalid original target".into());
-            }
-            crate::domain::explanation::validate_document(
-                &crate::domain::explanation::ExplanationDocument {
-                    sections: vec![crate::domain::explanation::ExplanationSection {
-                        id: "quote".into(),
-                        title: target.quote.section_title.clone(),
-                        blocks: vec![target.quote.block.clone()],
-                    }],
-                },
-            )
-            .map_err(|e| e.to_string())?;
-            if let Some(selection) = &target.selection {
-                crate::domain::explanation::validate_selection(&target.quote.block.part, selection)
-                    .map_err(|e| e.to_string())?;
-            }
+            crate::domain::explanation::validate_target(&target).map_err(|e| e.to_string())?;
             CommentTarget::Explanation(target)
         } else {
             match self.page {
