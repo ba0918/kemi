@@ -19,6 +19,7 @@ use cli::{
     validate_result_flags, validate_resume_flags,
 };
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
+use kemi_core::domain::submit::Verdict;
 use kemi_core::result;
 use kemi_core::session::{
     PageSnapshot, SessionInfo, SessionMode, SessionStore, SessionSummary, now_millis,
@@ -297,12 +298,11 @@ fn print_result(cli: &Cli) -> ! {
     // 壊れたファイルを stdout に出してから終了コード 2 にしないよう、先に読み解く。
     let verdict = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
-        .and_then(|document| document["verdict"].as_str().map(str::to_string));
-    let code = match verdict.as_deref() {
-        Some("approved") => 0,
-        Some("changes_requested") => 1,
-        _ => fail("cannot read the latest result file"),
+        .and_then(|document| document["verdict"].as_str().and_then(Verdict::parse));
+    let Some(verdict) = verdict else {
+        fail("cannot read the latest result file");
     };
+    let code = verdict.exit_code();
     print!("{text}");
     use std::io::Write;
     let _ = std::io::stdout().flush();
@@ -763,11 +763,11 @@ fn finish_submitted(document: serde_json::Value) -> ! {
         Ok(json) => println!("{json}"),
         Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
     }
-    let code = match document.get("verdict").and_then(|value| value.as_str()) {
-        Some("approved") => 0,
-        Some("changes_requested") => 1,
-        _ => 2,
-    };
+    let code = document
+        .get("verdict")
+        .and_then(|value| value.as_str())
+        .and_then(Verdict::parse)
+        .map_or(2, Verdict::exit_code);
     std::process::exit(code);
 }
 

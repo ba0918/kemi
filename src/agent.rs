@@ -7,6 +7,7 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+use kemi_core::domain::submit::Verdict;
 use kemi_core::session::{Endpoint, SessionStore, is_valid_id, read_endpoint};
 
 mod http;
@@ -239,15 +240,12 @@ fn print_events(id: &str, answer: &serde_json::Value, out: &mut dyn Write) -> st
             .iter()
             .find(|event| event["type"] == "submitted")
             .and_then(|event| event["result"]["verdict"].as_str())
-            .map(str::to_string)
+            .and_then(Verdict::parse)
     });
     let printed = serde_json::json!({ "kemi": 3, "review": id, "events": events });
     writeln!(out, "{printed}")?;
     out.flush()?;
-    Ok(match verdict.as_deref() {
-        Some("changes_requested") => 1,
-        _ => 0,
-    })
+    Ok(verdict.map_or(0, Verdict::exit_code))
 }
 
 fn print_json(value: &serde_json::Value) {

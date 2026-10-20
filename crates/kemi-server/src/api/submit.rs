@@ -8,6 +8,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment;
 use kemi_core::domain::review::Side;
+use kemi_core::domain::submit::Verdict;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -26,11 +27,8 @@ pub(super) async fn submit_api(
     Json(request): Json<SubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
     super::ensure_display_persisted(&state)?;
-    if request.verdict != "approved" && request.verdict != "changes_requested" {
-        return Err(ApiError::bad_request(
-            "verdict must be approved or changes_requested",
-        ));
-    }
+    let verdict = Verdict::parse(&request.verdict)
+        .ok_or_else(|| ApiError::bad_request("verdict must be approved or changes_requested"))?;
     {
         let _gate = state.persist.lock().expect("persist poisoned");
         let mut submit_state = state.stopping.submit_state.lock().expect("submit poisoned");
@@ -40,7 +38,7 @@ pub(super) async fn submit_api(
         }
     }
 
-    match build_submit_document(&state, &request.verdict).await {
+    match build_submit_document(&state, verdict).await {
         Ok(document) => {
             let saved = {
                 // suspend が確定済みの submit を返す前に、結果の保存とセッションの削除を終える。
@@ -93,7 +91,7 @@ fn save_result(state: &AppState, document: &Value) -> Value {
     }
 }
 
-async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value, ApiError> {
+async fn build_submit_document(state: &AppState, verdict: Verdict) -> Result<Value, ApiError> {
     let review = state
         .review
         .read()
@@ -158,7 +156,7 @@ async fn build_submit_document(state: &AppState, verdict: &str) -> Result<Value,
         "diff_display_version":session.state.display.as_ref().map(|d|&d.current),
         "explanation":session.state.explanation,
         "title": review.title,
-        "verdict": verdict,
+        "verdict": verdict.as_str(),
         "approval": review.approval.iter().map(|approval| json!({
             "path": approval.path,
             "identity": approval.identity,
