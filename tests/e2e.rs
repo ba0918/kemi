@@ -6,7 +6,7 @@
 )]
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -194,14 +194,9 @@ impl Kemi {
             client: http_client(),
             _state: None,
         };
-        if let Some(input) = input {
-            kemi.child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(input.as_bytes())
-                .unwrap();
-        }
+        let feeding = input.map(|input| {
+            process::feed(kemi.child.stdin.take().unwrap(), input.as_bytes().to_vec())
+        });
         let mut line = String::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         kemi.url = loop {
@@ -222,6 +217,9 @@ impl Kemi {
             }
             kemi.preamble.push(line.clone());
         };
+        if let Some(feeding) = feeding {
+            feeding.finish().unwrap();
+        }
         Ok(kemi)
     }
 
@@ -420,21 +418,6 @@ struct ExitedWithoutUrl {
     status: std::io::Result<std::process::ExitStatus>,
     /// 終わるまでに stderr へ出たすべて。
     stderr: String,
-}
-
-/// プロセスの終了を待つ。時間内に終わらなければパニックする。
-async fn wait_for_exit(kemi: &mut Kemi, timeout: std::time::Duration) -> std::process::ExitStatus {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        if let Some(status) = kemi.child.try_wait().unwrap() {
-            return status;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "kemi が時間内に終了しませんでした"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
 }
 
 fn run(dir: &Path, args: &[&str]) -> std::process::Output {
@@ -1261,7 +1244,7 @@ async fn stderr_of_a_review_that_sees_an_update(dir: &TempDir) -> Vec<String> {
     for line in kemi.stderr.by_ref().lines() {
         lines.push(line.unwrap());
     }
-    let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
+    let (status, _) = kemi.wait();
     assert_eq!(status.code(), Some(0));
     lines
 }

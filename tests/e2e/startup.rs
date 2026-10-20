@@ -263,7 +263,7 @@ async fn runtime_io_error_stops_with_exit_2_without_json_or_a_result_file() {
     git(&dir.path, &["commit", "-q", "-m", "base"]);
     dir.write("a.txt", "one\nTWO\n");
 
-    let mut kemi = Kemi::spawn_with_state(
+    let kemi = Kemi::spawn_with_state(
         &dir.path,
         &["--worktree", "--no-open", "--port", "0"],
         &state.path,
@@ -279,9 +279,7 @@ async fn runtime_io_error_stops_with_exit_2_without_json_or_a_result_file() {
     let response = kemi.get(&format!("api/file/{file_id}")).await;
     assert_eq!(response.status(), 500);
 
-    let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
-    let mut stdout = String::new();
-    kemi.stdout.read_to_string(&mut stdout).unwrap();
+    let (status, stdout) = kemi.wait();
     assert_eq!(status.code(), Some(2));
     assert!(stdout.is_empty(), "stdout: {stdout}");
     assert!(result_files(&state.path).is_empty());
@@ -366,18 +364,23 @@ fn version_result_digest_and_session_list_exit_2_when_stdout_is_closed() {
         vec!["manifest.json", "--digest"],
         vec!["--resume"],
     ] {
-        let output = kemi_command(&dir.path, &state.path)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(closed_pipe())
-            .output()
-            .unwrap();
-
-        assert_cannot_write_to_stdout(
-            output.status.code(),
-            &String::from_utf8_lossy(&output.stderr),
-            &format!("kemi {args:?}"),
+        // stdout を閉じたパイプにするので、stdout を受け取る run_command は使えない。
+        let mut child = StopOnDrop(
+            kemi_command(&dir.path, &state.path)
+                .args(&args)
+                .stdin(Stdio::null())
+                .stdout(closed_pipe())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
         );
+        let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+        let status = process::wait(&mut child.0, std::time::Duration::from_secs(20))
+            .unwrap_or_else(|error| panic!("kemi {args:?}: {error}"));
+        let mut text = String::new();
+        stderr.read_to_string(&mut text).unwrap();
+
+        assert_cannot_write_to_stdout(status.code(), &text, &format!("kemi {args:?}"));
     }
 }
 

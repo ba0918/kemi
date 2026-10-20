@@ -4,7 +4,7 @@ use super::*;
 async fn submit_with_events_open_exits_with_json() {
     let dir = TempDir::new();
     dir.write("manifest.json", MANIFEST);
-    let mut kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
+    let kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
 
     // ブラウザと同じく SSE を開いたまま submit しても、サーバは接続を閉じて終了する。
     let events = open_events(&kemi.url).await;
@@ -15,11 +15,9 @@ async fn submit_with_events_open_exits_with_json() {
         .await;
     assert_eq!(response.status(), 200);
 
-    let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
+    let (status, stdout) = kemi.wait();
     drop(events);
 
-    let mut stdout = String::new();
-    kemi.stdout.read_to_string(&mut stdout).unwrap();
     assert_eq!(status.code(), Some(0));
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(document["verdict"], "approved");
