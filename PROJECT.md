@@ -36,22 +36,27 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | 層 | 中身 |
 |---|---|
 | `app.js` | 結線と起動だけ。すべてを import してよい唯一のモジュール |
-| `features/` | 状態を変え、`api.js` を呼び、描き直す |
-| `views/` | 要素を作る。`api.js` を除く leaf と、ほかの `views/` を import してよい（循環させない）。`api.js`・`features/`・`app.js` は import しない |
-| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読みと、書いているページへのコメントの場所の扱い）、`live-diff.js`（`--live` の差分の純粋な処理。要素の記述を比べて変化の一覧を作る） |
+| `features/` | 状態を変え、`api.js` を呼び、描き直す。`features/explanation/` は `explanation` の一部（親の `explanation.js` が import し、親を呼ぶときは `actions` を通す） |
+| `views/` | 要素を作る。`api.js` を除く leaf と、ほかの `views/` を import してよい（循環させない）。`api.js`・`features/`・`app.js` は import しない。`views/diagrams/` は図の view で、`diagrams/` を使う |
+| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読みと、書いているページへのコメントの場所の扱い）、`live-diff.js`（`--live` の差分の純粋な処理。要素の記述を比べて変化の一覧を作る）、`explanation-model.js`（説明ビューの純粋な読み）、`diagrams/`（shoryo から取り込んだ図の描画の束。DOM を使う。上流とそろえるため、中身を kemi の層に合わせて書き換えない） |
 
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
 - `features/` の中の順番は
-   `horizontal-scroll → display → navigation → files → rendered → theme → parts → comments → agent → units → conversation → narrow → submit → explanation → live` で、
+   `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
-- `state.js` は `storage.js` と `model.js` を import してよい。ほかの leaf 同士は import しない。
+- `state.js` は `storage.js` と `model.js` を import してよい。`diagrams/` の中のファイルは互いに import してよい。
+  ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
   読み込んだだけで走る文（`addEventListener` や起動の呼び出し）は置かない。
 - `web/index.html` は全モジュールを `modulepreload` で先に取りに行かせる（ビルド無しの
   ESM は依存を 1 段ずつ発見するため。実測で読み込み完了が約 2 割短くなった）。
   モジュールを足したり改名したりしたら、その一覧も直す。ズレても壊れず、ブラウザの
-  コンソールに警告が出るだけなので、機械的な検査は無い。
+  コンソールに警告が出るだけ。
+- 上の規則（features の順番、views が import しないもの、leaf の許可表）と `modulepreload` の一覧は
+  `web/assets/layers.test.js`（`node --test web`）が import 文から確かめる。features の順番は上の行を
+  そのまま読む。JSDoc の `import("…")` は型だけの参照で読み込みを生まないので数えない。
+  読み込んだだけで走る文の規則は確かめない。
 - 例外は `--live` のページの見方（`features/live.js`・`views/live.js`・`live-model.js`・`live-diff.js`・
   `live.css`）。`--live` でないレビューはページ用のファイルを読み込まない約束（`R-VERIFY`）
   なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
