@@ -137,7 +137,8 @@ async fn approval_passthrough_on_submit() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn submit_concurrent_409() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     let _ = server
         .post(
             "api/comment",
@@ -150,7 +151,7 @@ async fn submit_concurrent_409() {
 
     // 受理側が本文を読んでいる間に 2 つ目を届かせ、409 を確実に観測する。
     // 2 つ目はサーバと同じランタイムを使わない素の接続で送る。
-    server.source.set_content_delay(Duration::from_millis(300));
+    source.set_content_delay(Duration::from_millis(300));
     let (signal, wait) = std::sync::mpsc::channel::<()>();
     let address = ("127.0.0.1", server.port);
     let origin = server.origin.clone();
@@ -172,7 +173,7 @@ async fn submit_concurrent_409() {
 
     until_reached(
         "the first submit reading content",
-        server.source.content_started.notified(),
+        source.content_started.notified(),
         &mut first_task,
     )
     .await;
@@ -310,12 +311,13 @@ async fn submitted_comments_carry_only_the_keys_of_the_contract() {
 
 #[tokio::test]
 async fn submit_reads_each_commented_file_once_for_both_sides() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     for side in ["old", "new", "new"] {
         let response = server.post("api/comment", json!({"op":"add","file_id":"f1","side":side,"start_line":1,"end_line":1,"body":side})).await;
         assert_eq!(response.status(), 200);
     }
-    server.source.reads.store(0, Ordering::SeqCst);
+    source.reads.store(0, Ordering::SeqCst);
     assert_eq!(
         server
             .post("api/submit", json!({"verdict":"approved"}))
@@ -323,7 +325,7 @@ async fn submit_reads_each_commented_file_once_for_both_sides() {
             .status(),
         200
     );
-    assert_eq!(server.source.reads.load(Ordering::SeqCst), 1);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
     let result = server.finish().await;
     let comments = result["comments"].as_array().unwrap();
     assert_eq!(comments.len(), 3);

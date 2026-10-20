@@ -523,7 +523,7 @@ async fn a_runtime_error_ends_the_waiting_request_with_its_reason_and_serve_retu
         inner: FakeSource::new(),
         fail: AtomicBool::new(false),
     });
-    let server = AgentServer::start_with(source.clone(), Ipv4Addr::LOCALHOST).await;
+    let server = AgentServer::start_with(source.clone()).await;
     let waiting = {
         let url = server.agent_url(&server.agent_token, "wait");
         tokio::spawn(async move {

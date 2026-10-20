@@ -44,20 +44,22 @@ async fn review_api_returns_groups_and_files() {
 
 #[tokio::test]
 async fn content_reads_zero_during_startup_and_review() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     let response = server.get("api/review").await;
     assert_eq!(response.status(), 200);
     let _ = response.text().await.unwrap();
 
-    assert_eq!(server.source.reads(), 0);
+    assert_eq!(source.reads(), 0);
 }
 
 #[tokio::test]
 async fn content_reads_happen_on_file_request() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     let response = server.get("api/file/f1").await;
     assert_eq!(response.status(), 200);
-    assert_eq!(server.source.reads(), 1);
+    assert_eq!(source.reads(), 1);
 }
 
 #[tokio::test]
@@ -239,7 +241,14 @@ async fn the_agent_listener_stays_on_loopback_when_the_page_listens_on_all_inter
         listener.local_addr().unwrap().ip(),
         std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
     );
-    let server = AgentServer::start_with(Arc::new(FakeSource::new()), Ipv4Addr::UNSPECIFIED).await;
+    let server = AgentServer::launch(
+        Launch {
+            bind: Ipv4Addr::UNSPECIFIED,
+            ..Launch::new(Arc::new(FakeSource::new()))
+        },
+        Arc::new(RecordingSink::default()),
+    )
+    .await;
     let (status, _) = server.wait(Some(10)).await;
     assert_eq!(status, 200);
 }

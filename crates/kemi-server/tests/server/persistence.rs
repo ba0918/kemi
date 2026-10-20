@@ -143,24 +143,9 @@ async fn session_copy_waits_for_both_units() {
         contents,
     });
     let sink = Arc::new(RecordingSink::default());
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
-    let params = ServeParams {
-        source,
-        assets: Arc::new(FakeAssets),
-        token: "test-token".to_string(),
-        results: None,
-        session: Some(sink.clone()),
-        notices: Arc::new(RecordingNotices::default()),
-        share_address: None,
-        agent: None,
-        live: None,
-        initial_explanation: None,
-        clock: kemi_server::system_clock(),
-    };
-    tokio::spawn(serve(listener, params));
+    let server = TestServer::start_with_session(source, sink.clone()).await;
 
-    http().get(format!("{url}api/review")).send().await.unwrap();
+    server.get("api/review").await;
 
     let copy = saved_copy(&sink).await;
     assert_eq!(copy.startup_unit, Some(GroupBy::File));
@@ -173,12 +158,13 @@ async fn session_copy_waits_for_both_units() {
 async fn session_with_a_saved_copy_is_not_frozen_again() {
     let sink = Arc::new(RecordingSink::default());
     sink.copy_already_saved.store(true, Ordering::SeqCst);
-    let server = TestServer::start_with_session(Arc::new(FakeSource::new()), sink.clone()).await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_with_session(source.clone(), sink.clone()).await;
 
     server.get("api/review").await;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    assert_eq!(server.source.reads.load(Ordering::SeqCst), 0);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 0);
     assert!(sink.copies.lock().unwrap().is_empty());
     assert!(sink.unusable.lock().unwrap().is_empty());
 }
@@ -266,11 +252,10 @@ async fn session_sink_failure_does_not_stop_the_review() {
 
 #[tokio::test]
 async fn result_save_failure_is_reported_and_shown_without_changing_the_submit() {
-    let server = TestServer::start_with_sinks(
-        Arc::new(FakeSource::new()),
-        None,
-        Some(Arc::new(FailingResults)),
-    )
+    let server = TestServer::launch(Launch {
+        results: Some(Arc::new(FailingResults)),
+        ..Launch::new(Arc::new(FakeSource::new()))
+    })
     .await;
 
     let response = server
@@ -425,7 +410,7 @@ async fn suspend_after_submit_returns_the_committed_document() {
         });
         let sink = Arc::new(RecordingSink::default());
         sink.copy_already_saved.store(true, Ordering::SeqCst);
-        let mut server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
+        let mut server = AgentServer::start_with_sink(source, sink).await;
         until_reached(
             "the server becoming ready",
             server.control.ready(),

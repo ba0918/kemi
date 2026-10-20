@@ -147,7 +147,7 @@ async fn start_review(authority: &str) -> Running {
 }
 
 async fn start_review_of(target: LiveTarget, root: std::path::PathBuf) -> Running {
-    start_review_with_session(target, root, None).await
+    start_live(LiveLaunch::new(target, root)).await
 }
 
 async fn start_review_with_session(
@@ -155,39 +155,64 @@ async fn start_review_with_session(
     root: std::path::PathBuf,
     session: Option<Arc<dyn SessionSink>>,
 ) -> Running {
-    start_restored_review(target, root, session, Vec::new(), 0).await
+    start_live(LiveLaunch {
+        session,
+        ..LiveLaunch::new(target, root)
+    })
+    .await
 }
 
-/// 復元したレビューのように、保存してあったスナップショットを持って始める。
-async fn start_restored_review(
+/// `--live` のレビューの起動の仕方。指定しないものは既定（ファイルの無いソースで、セッション・
+/// エージェント・復元したスナップショットは無く、コードの表示は出さない）。
+struct LiveLaunch {
     target: LiveTarget,
     root: std::path::PathBuf,
+    source: Arc<dyn ReviewSource>,
     session: Option<Arc<dyn SessionSink>>,
+    agent: Option<kemi_server::AgentParams>,
+    code_view: bool,
     snapshots: Vec<PageSnapshot>,
     last_snapshot_number: u32,
-) -> Running {
+}
+
+impl LiveLaunch {
+    fn new(target: LiveTarget, root: std::path::PathBuf) -> Self {
+        LiveLaunch {
+            target,
+            root,
+            source: Arc::new(EmptySource),
+            session: None,
+            agent: None,
+            code_view: false,
+            snapshots: Vec::new(),
+            last_snapshot_number: 0,
+        }
+    }
+}
+
+async fn start_live(launch: LiveLaunch) -> Running {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let review_port = listener.local_addr().unwrap().port();
     let live_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let live_port = live_listener.local_addr().unwrap().port();
     let params = ServeParams {
-        source: Arc::new(EmptySource),
+        source: launch.source,
         assets: Arc::new(PageAssets),
         token: "test-token".to_string(),
         results: None,
-        session,
+        session: launch.session,
         notices: Arc::new(Quiet),
         share_address: None,
-        agent: None,
+        agent: launch.agent,
         live: Some(LiveParams {
             listener: live_listener,
-            target,
-            root,
+            target: launch.target,
+            root: launch.root,
             cookie: RELAY.to_string(),
             mock_secret: MOCK_SECRET.to_string(),
-            code_view: false,
-            snapshots,
-            last_snapshot_number,
+            code_view: launch.code_view,
+            snapshots: launch.snapshots,
+            last_snapshot_number: launch.last_snapshot_number,
         }),
         initial_explanation: None,
         clock: kemi_server::system_clock(),
@@ -1506,46 +1531,29 @@ async fn resumed_code_failure_case(update_explanation: bool) {
     let source = Arc::new(ToggleScan {
         fail: std::sync::atomic::AtomicBool::new(true),
     });
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let url = format!(
-        "http://127.0.0.1:{}/s/test-token/",
-        listener.local_addr().unwrap().port()
-    );
-    let relay = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let agent_listener = kemi_server::bind_agent_listener().await.unwrap();
     let agent_port = agent_listener.local_addr().unwrap().port();
-    let params = ServeParams {
+    let running = start_live(LiveLaunch {
         source: source.clone(),
-        assets: Arc::new(PageAssets),
-        token: "test-token".into(),
-        results: None,
         session: Some(sink.clone()),
-        notices: Arc::new(Quiet),
-        share_address: None,
         agent: update_explanation.then_some(kemi_server::AgentParams {
             listener: agent_listener,
             token: "agent-token".into(),
             review: id.clone(),
             control: kemi_server::ServeControl::new(),
         }),
-        live: Some(LiveParams {
-            listener: relay,
-            target: LiveTarget::Url {
+        code_view: true,
+        ..LiveLaunch::new(
+            LiveTarget::Url {
                 authority: authority.clone(),
                 start: "/".into(),
                 display: format!("http://{authority}/"),
             },
-            root: scratch.0.clone(),
-            cookie: RELAY.into(),
-            mock_secret: MOCK_SECRET.into(),
-            code_view: true,
-            snapshots: vec![],
-            last_snapshot_number: 0,
-        }),
-        initial_explanation: None,
-        clock: kemi_server::system_clock(),
-    };
-    let task = tokio::spawn(serve(listener, params));
+            scratch.0.clone(),
+        )
+    })
+    .await;
+    let url = running.review.clone();
     let response = http().get(format!("{url}api/review")).send().await.unwrap();
     assert_eq!(response.status(), 200);
     let body: serde_json::Value = response.json().await.unwrap();
@@ -1575,7 +1583,7 @@ async fn resumed_code_failure_case(update_explanation: bool) {
         restored["explanation"]["current_revision"],
         if update_explanation { 2 } else { 1 }
     );
-    task.abort();
+    drop(running);
     dev.abort();
 }
 
@@ -1611,17 +1619,19 @@ async fn start_stored_review(
     )
     .unwrap();
     let last_snapshot_number = stored.last_snapshot_number();
-    start_restored_review(
-        LiveTarget::Url {
-            authority: authority.to_string(),
-            start: "/".to_string(),
-            display: format!("http://{authority}/"),
-        },
-        sessions.0.clone(),
-        Some(Arc::new(stored)),
+    start_live(LiveLaunch {
+        session: Some(Arc::new(stored)),
         snapshots,
         last_snapshot_number,
-    )
+        ..LiveLaunch::new(
+            LiveTarget::Url {
+                authority: authority.to_string(),
+                start: "/".to_string(),
+                display: format!("http://{authority}/"),
+            },
+            sessions.0.clone(),
+        )
+    })
     .await
 }
 

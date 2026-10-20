@@ -27,14 +27,15 @@ async fn file_rows_collapse_and_expand() {
 
 #[tokio::test]
 async fn binary_file_has_no_rows() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     let body: Value = server.get("api/file/f2").await.json().await.unwrap();
 
     assert_eq!(body["binary"], true);
     assert_eq!(body["old_size"], 10);
     assert_eq!(body["new_size"], 20);
     assert_eq!(body["rows"].as_array().unwrap().len(), 0);
-    assert_eq!(server.source.reads(), 0);
+    assert_eq!(source.reads(), 0);
 }
 
 #[tokio::test]
@@ -105,14 +106,15 @@ async fn render_requires_the_token() {
 
 #[tokio::test]
 async fn render_reads_content_only_when_the_rendered_view_is_requested() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     let _ = server.get("api/review").await.text().await.unwrap();
-    assert_eq!(server.source.reads(), 0);
+    assert_eq!(source.reads(), 0);
 
     let response = server.get("api/render/f5").await;
 
     assert_eq!(response.status(), 200);
-    assert_eq!(server.source.reads(), 1);
+    assert_eq!(source.reads(), 1);
 }
 
 #[tokio::test]
@@ -225,7 +227,7 @@ async fn crlf_markdown_is_measured_the_same_way_before_and_at_rendering() {
             new: Some(text.into_bytes()),
         },
     );
-    let server = TestServer::start_source(Arc::new(source), Ipv4Addr::LOCALHOST, None).await;
+    let server = TestServer::start_source(Arc::new(source)).await;
 
     let file: Value = server
         .get("api/file/f13?highlight=off")
@@ -333,7 +335,7 @@ async fn untracked_files_over_the_limit_are_not_rendered_because_their_content_w
     std::fs::write(repo.path.join("shot.png"), &big).unwrap();
     std::fs::write(repo.path.join("notes.md"), &big).unwrap();
     let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = LiveServer::start(source).await;
+    let server = TestServer::start_watched(source).await;
 
     let review = server.get_json("api/review").await;
     let id_of = |path: &str| {
@@ -408,7 +410,7 @@ async fn render_of_an_image_gives_both_sides_and_marks_a_rename_with_identical_b
 async fn relative_images_in_the_review_use_the_review_url_and_others_use_the_repository_url() {
     let source =
         Arc::new(guide_with_two_images().with_repository(&[("docs/img/other.png", &[0x89, 1])]));
-    let server = TestServer::start_source(source, Ipv4Addr::LOCALHOST, None).await;
+    let server = TestServer::start_source(source).await;
 
     let body: Value = server.get("api/render/f5").await.json().await.unwrap();
     let sources = image_sources(body["html"].as_str().unwrap());
@@ -444,7 +446,7 @@ async fn relative_images_in_the_review_use_the_review_url_and_others_use_the_rep
 #[tokio::test]
 async fn relative_images_the_source_cannot_serve_are_404_from_the_repository_url() {
     let source = Arc::new(guide_with_two_images().with_repository(&[]));
-    let server = TestServer::start_source(source, Ipv4Addr::LOCALHOST, None).await;
+    let server = TestServer::start_source(source).await;
 
     let body: Value = server.get("api/render/f5").await.json().await.unwrap();
     let sources = image_sources(body["html"].as_str().unwrap());
@@ -464,9 +466,7 @@ async fn relative_images_the_source_cannot_serve_are_404_from_the_repository_url
 
 #[tokio::test]
 async fn relative_images_are_frames_when_the_source_cannot_read_the_repository() {
-    let server =
-        TestServer::start_source(Arc::new(guide_with_two_images()), Ipv4Addr::LOCALHOST, None)
-            .await;
+    let server = TestServer::start_source(Arc::new(guide_with_two_images())).await;
 
     let body: Value = server.get("api/render/f5").await.json().await.unwrap();
     let html = body["html"].as_str().unwrap();
@@ -491,7 +491,7 @@ async fn expanding_one_row_of_a_large_file_keeps_line_numbers_and_disabled_highl
             new: Some(text.into_bytes()),
         },
     ));
-    let server = TestServer::start_source(source, Ipv4Addr::LOCALHOST, None).await;
+    let server = TestServer::start_source(source).await;
     let file: Value = server
         .get("api/file/f20?highlight=off&from=0&to=1")
         .await
@@ -511,7 +511,8 @@ async fn expanding_one_row_of_a_large_file_keeps_line_numbers_and_disabled_highl
 
 #[tokio::test]
 async fn conversation_markdown_renders_without_image_requests_and_does_not_read_files() {
-    let server = TestServer::start().await;
+    let source = Arc::new(FakeSource::new());
+    let server = TestServer::start_source(source.clone()).await;
     let response = server
         .post(
             "api/parts",
@@ -527,7 +528,7 @@ async fn conversation_markdown_renders_without_image_requests_and_does_not_read_
             .contains("<strong>hello</strong>")
     );
     assert!(!value["html"].as_str().unwrap().contains("<img"));
-    assert_eq!(server.source.reads(), 0);
+    assert_eq!(source.reads(), 0);
 }
 
 #[tokio::test]

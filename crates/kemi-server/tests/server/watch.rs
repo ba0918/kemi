@@ -7,7 +7,7 @@ async fn live_worktree_change_sends_update() {
     repo.commit("base");
     repo.write("a.txt", "initial change\n");
     let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = LiveServer::start(source).await;
+    let server = TestServer::start_watched(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
     repo.write("a.txt", "two\n");
@@ -27,7 +27,7 @@ async fn live_manifest_path_change_sends_update() {
     let json =
         r#"{"groups":[{"diffs":[{"path":"a.txt","old_path":"old.txt","new_path":"new.txt"}]}]}"#;
     let source = Arc::new(ManifestSource::from_json(json, &dir.path).unwrap());
-    let server = LiveServer::start(source).await;
+    let server = TestServer::start_watched(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
     dir.write("new.txt", "two\n");
@@ -52,7 +52,7 @@ async fn live_ref_change_sends_update_and_other_git_writes_are_ignored() {
             group_by: GroupBy::Commit,
         },
     ));
-    let server = LiveServer::start(source).await;
+    let server = TestServer::start_watched(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
 
@@ -90,13 +90,13 @@ async fn live_worktree_read_does_not_send_update() {
     repo.commit("base");
     repo.write("a.txt", "initial change\n");
     let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = LiveServer::start(source).await;
+    let server = TestServer::start_watched(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
     // api/review はファイルを読む。読み取り（Access）は更新ではない。
     let response = http()
         .get(format!(
-            "http://127.0.0.1:{}/s/live-token/api/review",
+            "http://127.0.0.1:{}/s/test-token/api/review",
             server.port
         ))
         .send()
@@ -115,7 +115,7 @@ async fn live_worktree_read_does_not_send_update() {
 #[tokio::test]
 async fn live_rewritten_history_comment_outdated_with_original_group() {
     let (repo, base) = range_repo();
-    let server = LiveServer::start(Arc::new(range_source(
+    let server = TestServer::start_watched(Arc::new(range_source(
         &repo,
         &base,
         "HEAD",

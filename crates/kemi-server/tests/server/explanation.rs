@@ -95,8 +95,7 @@ async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_
     state.channel.note_message("m1");
     state.explanation.as_mut().unwrap().versions.reverse();
     *sink.initial.lock().unwrap() = Some(state);
-    let server =
-        AgentServer::start_with_sink(Arc::new(FakeSource::new()), Ipv4Addr::LOCALHOST, sink).await;
+    let server = AgentServer::start_with_sink(Arc::new(FakeSource::new()), sink).await;
     let review: Value = server.page.get("api/review").await.json().await.unwrap();
     assert_eq!(review["comments"][0]["outdated"], true);
     assert!(
@@ -176,11 +175,14 @@ async fn agent_context_waits_for_the_request_body_before_answering() {
 #[tokio::test]
 async fn initial_explanation_is_saved_before_the_first_response_without_a_conversation_event() {
     let sink = Arc::new(RecordingSink::default());
-    let server = AgentServer::start_with_explanation(
-        Arc::new(FakeSource::new()),
-        Ipv4Addr::LOCALHOST,
+    let server = AgentServer::launch(
+        Launch {
+            initial_explanation: Some(
+                serde_json::from_value(json!({"sections":explanation_sections()})).unwrap(),
+            ),
+            ..Launch::new(Arc::new(FakeSource::new()))
+        },
         sink.clone(),
-        Some(serde_json::from_value(json!({"sections":explanation_sections()})).unwrap()),
     )
     .await;
     let review: Value = server.page.get("api/review").await.json().await.unwrap();
@@ -291,7 +293,7 @@ async fn parts_reply_accepts_typed_content_and_refuses_an_entire_batch_with_a_ba
 #[tokio::test]
 async fn context_uses_known_source_lines_and_real_sides_without_reading_content_again() {
     let source = kemi_core::source::manifest::ManifestSource::from_json(&json!({"title":"Manifest","groups":[{"id":"g","title":"G","diffs":[{"path":"a.txt","status":"add","old":"one\ntwo\n","new":"ONE\ntwo\nthree\n"},{"path":"b.txt","status":"modify","new":"present\n"}]}]}).to_string(),std::path::Path::new(".")).unwrap();
-    let server = AgentServer::start_with(Arc::new(source), Ipv4Addr::LOCALHOST).await;
+    let server = AgentServer::start_with(Arc::new(source)).await;
     let context: Value = server
         .agent_post("context", json!({}))
         .await
@@ -601,11 +603,12 @@ async fn initial_explanation_accepts_opposite_units_while_the_full_build_is_gate
             gated: startup.other(),
             gate: Mutex::new(gate),
         });
-        let server = AgentServer::start_with_explanation(
-            source,
-            Ipv4Addr::LOCALHOST,
+        let server = AgentServer::launch(
+            Launch {
+                initial_explanation: Some(explanation),
+                ..Launch::new(source)
+            },
             sink,
-            Some(explanation),
         )
         .await;
         let first = tokio::time::timeout(WAIT_LIMIT, server.page.get("api/review"))
@@ -894,7 +897,7 @@ async fn submit_claiming_first_refuses_the_explanation_while_result_content_is_g
         gate: gate.clone(),
         blocked: AtomicBool::new(false),
     });
-    let server = AgentServer::start_with(source.clone(), Ipv4Addr::LOCALHOST).await;
+    let server = AgentServer::start_with(source.clone()).await;
     let context: Value = server
         .agent_post("context", json!({}))
         .await
@@ -925,12 +928,7 @@ async fn submit_claiming_first_refuses_the_explanation_while_result_content_is_g
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn submit_started_after_the_explanation_save_began_includes_the_explanation() {
     let sink = Arc::new(RecordingSink::default());
-    let server = AgentServer::start_with_sink(
-        Arc::new(FakeSource::new()),
-        Ipv4Addr::LOCALHOST,
-        sink.clone(),
-    )
-    .await;
+    let server = AgentServer::start_with_sink(Arc::new(FakeSource::new()), sink.clone()).await;
     let context: Value = server
         .agent_post("context", json!({}))
         .await

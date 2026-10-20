@@ -328,9 +328,36 @@ struct TestServer {
     url: String,
     origin: String,
     port: u16,
-    source: Arc<FakeSource>,
     notices: Arc<RecordingNotices>,
     task: JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
+}
+
+/// テストのサーバの起動の仕方。指定しないものは既定（ループバックで待ち受け、セッション・
+/// 結果ファイル・エージェント・起動時の説明は無く、壁時計を読む）。
+struct Launch {
+    source: Arc<dyn ReviewSource>,
+    bind: Ipv4Addr,
+    share_address: Option<Ipv4Addr>,
+    session: Option<Arc<dyn SessionSink>>,
+    results: Option<Arc<dyn ResultSink>>,
+    agent: Option<AgentParams>,
+    initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
+    clock: kemi_server::Clock,
+}
+
+impl Launch {
+    fn new(source: Arc<dyn ReviewSource>) -> Self {
+        Launch {
+            source,
+            bind: Ipv4Addr::LOCALHOST,
+            share_address: None,
+            session: None,
+            results: None,
+            agent: None,
+            initial_explanation: None,
+            clock: kemi_server::system_clock(),
+        }
+    }
 }
 
 /// サーバが起動側に知らせたことを記録する。
@@ -353,44 +380,48 @@ impl RecordingNotices {
 
 impl TestServer {
     async fn start() -> Self {
-        TestServer::start_bound(Ipv4Addr::LOCALHOST, None).await
+        TestServer::start_source(Arc::new(FakeSource::new())).await
     }
 
     /// wildcard バインドや共有アドレスを再現する。url はテストが繋げる loopback のまま
     /// （表示 URL の組み立ては `session_url` / `session_host` を直接検証する）。
     async fn start_bound(bind: Ipv4Addr, share_address: Option<Ipv4Addr>) -> Self {
-        TestServer::start_source(Arc::new(FakeSource::new()), bind, share_address).await
+        TestServer::launch(Launch {
+            bind,
+            share_address,
+            ..Launch::new(Arc::new(FakeSource::new()))
+        })
+        .await
     }
 
-    async fn start_source(
-        source: Arc<FakeSource>,
-        bind: Ipv4Addr,
-        share_address: Option<Ipv4Addr>,
-    ) -> Self {
-        let listener = TcpListener::bind((bind, 0)).await.unwrap();
+    async fn start_source(source: Arc<dyn ReviewSource>) -> Self {
+        TestServer::launch(Launch::new(source)).await
+    }
+
+    async fn launch(launch: Launch) -> Self {
+        let listener = TcpListener::bind((launch.bind, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
         let origin = url.split("/s/").next().unwrap().to_string();
         let notices = Arc::new(RecordingNotices::default());
         let params = ServeParams {
-            source: source.clone(),
+            source: launch.source,
             assets: Arc::new(FakeAssets),
             token: "test-token".to_string(),
-            results: None,
-            session: None,
+            results: launch.results,
+            session: launch.session,
             notices: notices.clone(),
-            share_address,
-            agent: None,
+            share_address: launch.share_address,
+            agent: launch.agent,
             live: None,
-            initial_explanation: None,
-            clock: kemi_server::system_clock(),
+            initial_explanation: launch.initial_explanation,
+            clock: launch.clock,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
             url,
             origin,
             port,
-            source,
             notices,
             task,
         }
@@ -592,38 +623,12 @@ impl Drop for TempRepo {
     }
 }
 
-struct LiveServer {
-    port: u16,
-    notices: Arc<RecordingNotices>,
-    task: JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
-}
-
-impl LiveServer {
-    async fn start(source: Arc<dyn ReviewSource>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let notices = Arc::new(RecordingNotices::default());
-        let params = ServeParams {
-            source,
-            assets: Arc::new(FakeAssets),
-            token: "live-token".to_string(),
-            results: None,
-            session: None,
-            notices: notices.clone(),
-            share_address: None,
-            agent: None,
-            live: None,
-            initial_explanation: None,
-            clock: kemi_server::system_clock(),
-        };
-        let task = tokio::spawn(serve(listener, params));
+impl TestServer {
+    async fn start_watched(source: Arc<dyn ReviewSource>) -> Self {
+        let server = TestServer::start_source(source).await;
         // 監視スレッドがパスを登録するのを待つ。
         tokio::time::sleep(Duration::from_millis(400)).await;
-        LiveServer {
-            port,
-            notices,
-            task,
-        }
+        server
     }
 
     fn stop(self) {
@@ -644,7 +649,7 @@ impl SseStream {
             .await
             .unwrap();
         let request = format!(
-            "GET /s/live-token/api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+            "GET /s/test-token/api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
         );
         stream.write_all(request.as_bytes()).await.unwrap();
         let mut sse = SseStream {
@@ -721,29 +726,11 @@ impl SseStream {
 use kemi_core::domain::focus::FocusTargets;
 use kemi_core::source::{FileOrigin, FocusSource};
 
-impl LiveServer {
-    fn url(&self) -> String {
-        format!("http://127.0.0.1:{}/s/live-token/", self.port)
-    }
-
+impl TestServer {
     async fn get_json(&self, path: &str) -> Value {
-        let response = http()
-            .get(format!("{}{path}", self.url()))
-            .send()
-            .await
-            .unwrap();
+        let response = self.get(path).await;
         assert_eq!(response.status(), 200, "GET {path}");
         response.json().await.unwrap()
-    }
-
-    async fn post(&self, path: &str, body: Value) -> reqwest::Response {
-        post_json(
-            &self.url(),
-            &format!("http://127.0.0.1:{}", self.port),
-            path,
-            body,
-        )
-        .await
     }
 
     /// もう片方の単位が `state` になるまで api/review を読み直す。
@@ -754,17 +741,6 @@ impl LiveServer {
             |review| review["units"][1]["state"] == state,
         )
         .await
-    }
-
-    async fn finish(self) -> Value {
-        match tokio::time::timeout(WAIT_LIMIT, self.task)
-            .await
-            .expect("server did not stop")
-            .expect("server task panicked")
-            .expect("server returned error")
-        {
-            ServeOutcome::Submitted(document) => document,
-        }
     }
 }
 
@@ -911,7 +887,7 @@ async fn check_initial_copy_order(reverse: bool) {
         generation: None,
     });
     let sink = Arc::new(RecordingSink::default());
-    let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink.clone()).await;
+    let server = AgentServer::start_with_sink(source, sink.clone()).await;
     let d1: Value = server.page.get("api/review").await.json().await.unwrap();
     tokio::time::timeout(WAIT_LIMIT, gates[0].entered.notified())
         .await
@@ -1337,42 +1313,12 @@ impl SessionSink for SlowSink {
 }
 
 impl TestServer {
-    async fn start_with_session(source: Arc<FakeSource>, sink: Arc<dyn SessionSink>) -> Self {
-        TestServer::start_with_sinks(source, Some(sink), None).await
-    }
-
-    async fn start_with_sinks(
-        source: Arc<FakeSource>,
-        session: Option<Arc<dyn SessionSink>>,
-        results: Option<Arc<dyn ResultSink>>,
-    ) -> Self {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
-        let origin = url.split("/s/").next().unwrap().to_string();
-        let notices = Arc::new(RecordingNotices::default());
-        let params = ServeParams {
-            source: source.clone(),
-            assets: Arc::new(FakeAssets),
-            token: "test-token".to_string(),
-            results,
-            session,
-            notices: notices.clone(),
-            share_address: None,
-            agent: None,
-            live: None,
-            initial_explanation: None,
-            clock: kemi_server::system_clock(),
-        };
-        let task = tokio::spawn(serve(listener, params));
-        TestServer {
-            url,
-            origin,
-            port,
-            source,
-            notices,
-            task,
-        }
+    async fn start_with_session(source: Arc<dyn ReviewSource>, sink: Arc<dyn SessionSink>) -> Self {
+        TestServer::launch(Launch {
+            session: Some(sink),
+            ..Launch::new(source)
+        })
+        .await
     }
 }
 
@@ -1564,43 +1510,22 @@ struct AgentServer {
 
 impl AgentServer {
     async fn start() -> Self {
-        AgentServer::start_with(Arc::new(FakeSource::new()), Ipv4Addr::LOCALHOST).await
+        AgentServer::start_with(Arc::new(FakeSource::new())).await
     }
 
-    async fn start_with(source: Arc<dyn ReviewSource>, bind: Ipv4Addr) -> Self {
-        AgentServer::start_with_sink(source, bind, Arc::new(RecordingSink::default())).await
+    async fn start_with(source: Arc<dyn ReviewSource>) -> Self {
+        AgentServer::start_with_sink(source, Arc::new(RecordingSink::default())).await
     }
 
     /// 保留したレビューを `--resume` で開き直したように、保存した状態から始める。
     async fn resume(saved: SessionState) -> Self {
         let sink = Arc::new(RecordingSink::default());
         *sink.initial.lock().unwrap() = Some(saved);
-        AgentServer::start_with_sink(Arc::new(FakeSource::new()), Ipv4Addr::LOCALHOST, sink).await
+        AgentServer::start_with_sink(Arc::new(FakeSource::new()), sink).await
     }
 
-    async fn start_with_sink(
-        source: Arc<dyn ReviewSource>,
-        bind: Ipv4Addr,
-        sink: Arc<RecordingSink>,
-    ) -> Self {
-        AgentServer::start_with_explanation(source, bind, sink, None).await
-    }
-
-    /// 起動時の説明（`--explanation`）を入れて始める。
-    async fn start_with_explanation(
-        source: Arc<dyn ReviewSource>,
-        bind: Ipv4Addr,
-        sink: Arc<RecordingSink>,
-        initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
-    ) -> Self {
-        AgentServer::launch(
-            source,
-            bind,
-            sink,
-            initial_explanation,
-            kemi_server::system_clock(),
-        )
-        .await
+    async fn start_with_sink(source: Arc<dyn ReviewSource>, sink: Arc<RecordingSink>) -> Self {
+        AgentServer::launch(Launch::new(source), sink).await
     }
 
     /// エージェントの状態の時刻を `clock` から読むサーバ。写しは既にある扱いにして、凍結の
@@ -1609,58 +1534,33 @@ impl AgentServer {
         let sink = Arc::new(RecordingSink::default());
         sink.copy_already_saved.store(true, Ordering::SeqCst);
         AgentServer::launch(
-            Arc::new(FakeSource::new()),
-            Ipv4Addr::LOCALHOST,
+            Launch {
+                clock,
+                ..Launch::new(Arc::new(FakeSource::new()))
+            },
             sink,
-            None,
-            clock,
         )
         .await
     }
 
-    async fn launch(
-        source: Arc<dyn ReviewSource>,
-        bind: Ipv4Addr,
-        sink: Arc<RecordingSink>,
-        initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
-        clock: kemi_server::Clock,
-    ) -> Self {
-        let listener = TcpListener::bind((bind, 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
-        let origin = url.split("/s/").next().unwrap().to_string();
+    /// `launch` に、`sink` を保存先にしてエージェント用のリスナーを足したサーバ。
+    async fn launch(launch: Launch, sink: Arc<RecordingSink>) -> Self {
         let agent_listener = bind_agent_listener().await.unwrap();
         let agent_port = agent_listener.local_addr().unwrap().port();
-        let notices = Arc::new(RecordingNotices::default());
         let control = kemi_server::ServeControl::new();
-        let params = ServeParams {
-            source,
-            assets: Arc::new(FakeAssets),
-            token: "test-token".to_string(),
-            results: None,
+        let page = TestServer::launch(Launch {
             session: Some(sink.clone()),
-            notices: notices.clone(),
-            share_address: None,
             agent: Some(AgentParams {
                 listener: agent_listener,
                 token: "agent-secret".to_string(),
                 review: "01TESTREVIEW".to_string(),
                 control: control.clone(),
             }),
-            live: None,
-            initial_explanation,
-            clock,
-        };
-        let task = tokio::spawn(serve(listener, params));
+            ..launch
+        })
+        .await;
         AgentServer {
-            page: TestServer {
-                url,
-                origin,
-                port,
-                source: Arc::new(FakeSource::new()),
-                notices,
-                task,
-            },
+            page,
             agent_port,
             agent_token: "agent-secret".to_string(),
             sink,
