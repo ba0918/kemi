@@ -1,8 +1,6 @@
 //! git を読む入力ソース（R-INPUT-2〜4）。
 
 mod sizes;
-#[cfg(test)]
-use sizes::side_size;
 use sizes::side_sizes;
 
 use std::collections::HashMap;
@@ -430,10 +428,6 @@ impl GitSource {
         (files, planned)
     }
 }
-
-#[cfg(test)]
-#[path = "git/candidate_tests.rs"]
-mod candidate_tests;
 
 impl ReviewSource for GitSource {
     fn reference_metadata(&self, file_id: &str) -> Option<super::ReferenceMetadata> {
@@ -1465,6 +1459,10 @@ mod tests;
 #[cfg(test)]
 #[path = "git/watch_tests.rs"]
 mod watch_tests;
+
+#[cfg(test)]
+#[path = "git/candidate_tests.rs"]
+mod candidate_tests;
 
 #[cfg(test)]
 #[path = "git/explanation_reference_tests.rs"]

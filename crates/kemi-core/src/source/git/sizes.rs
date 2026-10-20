@@ -84,3 +84,79 @@ pub(super) fn side_size(side: &SideRef) -> u64 {
         SideRef::Git { repo, spec } => object_size(repo, spec).ok().flatten().unwrap_or(0),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+    use crate::source::git::git_spec;
+    use crate::source::testutil::TempRepo;
+
+    #[test]
+    fn batched_side_sizes_preserve_missing_objects_and_unusual_paths() {
+        let repo = TempRepo::new();
+        #[cfg(unix)]
+        let raw_name = {
+            use std::os::unix::ffi::OsStrExt;
+            OsStr::from_bytes(b"binary-\xff.bin")
+        };
+        let names = [OsStr::new("plain.bin"), OsStr::new("with space.bin")];
+        for name in names {
+            std::fs::write(repo.path.join(name), [0, 1, 2]).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            std::fs::write(repo.path.join(raw_name), [0, 1, 2, 3]).unwrap();
+            std::fs::write(repo.path.join("with\nnewline.bin"), [0, 1, 2]).unwrap();
+        }
+        repo.add_and_commit("binary files");
+        let mut sides: Vec<_> = names
+            .iter()
+            .map(|name| SideRef::Git {
+                repo: repo.path.clone(),
+                spec: git_spec("HEAD:", Path::new(name)),
+            })
+            .collect();
+        let mut expected = vec![3, 3];
+        #[cfg(unix)]
+        {
+            sides.push(SideRef::Git {
+                repo: repo.path.clone(),
+                spec: git_spec("HEAD:", Path::new(raw_name)),
+            });
+            sides.push(SideRef::Git {
+                repo: repo.path.clone(),
+                spec: git_spec("HEAD:", Path::new("with\nnewline.bin")),
+            });
+            expected.extend([4, 3]);
+        }
+        sides.extend([
+            SideRef::Git {
+                repo: repo.path.clone(),
+                spec: OsString::from("HEAD:missing.bin"),
+            },
+            SideRef::Git {
+                repo: repo.path.clone(),
+                spec: OsString::from(":plain.bin"),
+            },
+            SideRef::Absent,
+            SideRef::Inline(vec![0; 7]),
+            SideRef::Disk(repo.path.join("plain.bin")),
+            SideRef::Disk(repo.path.join("missing.bin")),
+        ]);
+        expected.extend([0, 3, 0, 7, 3, 0]);
+        assert_eq!(side_sizes(&sides.iter().collect::<Vec<_>>()), expected);
+        assert_eq!(sides.iter().map(side_size).collect::<Vec<_>>(), expected);
+        let other = TempRepo::new();
+        std::fs::write(other.path.join("plain.bin"), [0; 5]).unwrap();
+        other.add_and_commit("other repository");
+        sides.push(SideRef::Git {
+            repo: other.path.clone(),
+            spec: OsString::from("HEAD:plain.bin"),
+        });
+        expected.push(5);
+        assert_eq!(side_sizes(&sides.iter().collect::<Vec<_>>()), expected);
+        assert_eq!(sides.iter().map(side_size).collect::<Vec<_>>(), expected);
+    }
+}

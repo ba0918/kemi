@@ -2,69 +2,6 @@ use super::*;
 use crate::source::testutil::TempRepo;
 
 #[test]
-fn batched_side_sizes_preserve_missing_objects_and_unusual_paths() {
-    let repo = TempRepo::new();
-    #[cfg(unix)]
-    let raw_name = {
-        use std::os::unix::ffi::OsStrExt;
-        OsStr::from_bytes(b"binary-\xff.bin")
-    };
-    let names = [OsStr::new("plain.bin"), OsStr::new("with space.bin")];
-    for name in names {
-        std::fs::write(repo.path.join(name), [0, 1, 2]).unwrap();
-    }
-    #[cfg(unix)]
-    {
-        std::fs::write(repo.path.join(raw_name), [0, 1, 2, 3]).unwrap();
-        std::fs::write(repo.path.join("with\nnewline.bin"), [0, 1, 2]).unwrap();
-    }
-    repo.add_and_commit("binary files");
-    let mut sides: Vec<_> = names
-        .iter()
-        .map(|name| SideRef::Git {
-            repo: repo.path.clone(),
-            spec: git_spec("HEAD:", Path::new(name)),
-        })
-        .collect();
-    #[cfg(unix)]
-    {
-        sides.push(SideRef::Git {
-            repo: repo.path.clone(),
-            spec: git_spec("HEAD:", Path::new(raw_name)),
-        });
-        sides.push(SideRef::Git {
-            repo: repo.path.clone(),
-            spec: git_spec("HEAD:", Path::new("with\nnewline.bin")),
-        });
-    }
-    sides.extend([
-        SideRef::Git {
-            repo: repo.path.clone(),
-            spec: OsString::from("HEAD:missing.bin"),
-        },
-        SideRef::Git {
-            repo: repo.path.clone(),
-            spec: OsString::from(":plain.bin"),
-        },
-        SideRef::Absent,
-        SideRef::Inline(vec![0; 7]),
-        SideRef::Disk(repo.path.join("plain.bin")),
-        SideRef::Disk(repo.path.join("missing.bin")),
-    ]);
-    let expected: Vec<_> = sides.iter().map(side_size).collect();
-    assert_eq!(side_sizes(&sides.iter().collect::<Vec<_>>()), expected);
-    let other = TempRepo::new();
-    std::fs::write(other.path.join("plain.bin"), [0; 5]).unwrap();
-    other.add_and_commit("other repository");
-    sides.push(SideRef::Git {
-        repo: other.path.clone(),
-        spec: OsString::from("HEAD:plain.bin"),
-    });
-    let expected: Vec<_> = sides.iter().map(side_size).collect();
-    assert_eq!(side_sizes(&sides.iter().collect::<Vec<_>>()), expected);
-}
-
-#[test]
 fn unaccepted_candidate_cannot_replace_published_content_references() {
     let repo = TempRepo::new();
     repo.write("a.txt", "one\n");
