@@ -461,6 +461,28 @@ fn worktree_untracked_over_limit_has_stats_without_content() {
 }
 
 #[test]
+fn worktree_untracked_at_the_limit_has_its_content_read() {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "a\n");
+    repo.add_and_commit("base");
+    let source = source(&repo, GitMode::Worktree);
+
+    let exact = "x".repeat(UNTRACKED_LIMIT as usize);
+    repo.write("exact.txt", &exact);
+    let review = source.review().unwrap();
+    let entry = find_file(&review, "exact.txt");
+
+    assert_eq!(entry.status, Status::Add);
+    assert!(!entry.content_skipped);
+    assert!(!entry.binary);
+    assert_eq!((entry.add, entry.del), (1, 0));
+    assert_eq!(
+        source.content(&entry.id).unwrap().new.unwrap(),
+        exact.as_bytes()
+    );
+}
+
+#[test]
 fn staged_shows_index_side_not_worktree() {
     let repo = TempRepo::new();
     repo.write("a.txt", "base\n");
