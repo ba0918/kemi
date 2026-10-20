@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
-use super::{git_with_stdin, object_size, path_bytes};
+use super::command::{git_with_stdin, object_size};
+use super::parse::path_bytes;
 use crate::source::SideRef;
 
 pub(super) fn side_sizes(sides: &[&SideRef]) -> Vec<u64> {
