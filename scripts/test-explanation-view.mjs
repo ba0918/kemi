@@ -126,6 +126,12 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.equal(await evaluate(`document.body.textContent.includes('Comment stays')`), true);
   const failures = await evaluate(`Array.from(document.querySelectorAll('pre')).map(e=>{try{return JSON.parse(e.textContent).title}catch{return null}}).filter(Boolean)`);
   assert.deepEqual(failures.sort(), ['Label collision','Outside canvas','Route intrusion'].sort());
+  // 描けなかった図の理由と元の JSON は、写せるようにドラッグで選べる。
+  const original = `Array.from(document.querySelectorAll('pre')).find(e=>{try{return JSON.parse(e.textContent).title==='Label collision'}catch{return false}})`;
+  const span = await evaluate(`(()=>{const pre=${original};pre.scrollIntoView({block:'start'});const r=document.createRange();r.setStart(pre.firstChild,0);r.setEnd(pre.firstChild,12);const b=r.getBoundingClientRect();return {x:Math.round(b.left+1),y:Math.round(b.top+b.height/2),end:Math.round(b.right-1)}})()`);
+  await browser('mouse', 'move', String(span.x), String(span.y)); await browser('mouse', 'down'); await browser('mouse', 'move', String(span.end), String(span.y)); await browser('mouse', 'up');
+  assert.ok((await evaluate(`getSelection().toString()`)).length > 0, 'the original JSON of a failed diagram can be selected by dragging');
+  await evaluate(`getSelection().removeAllRanges();true`);
   for(const title of ['Alt and loop','Decision and return','Allowed contact and crossing','Long end label','Tall font start']) assert.equal(await evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')===${JSON.stringify(title)})`),true);
   await evaluate(`Array.from(document.querySelectorAll('[role="group"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations diagram controls').focus();true`);
   const transform = () => evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations').style.transform`);

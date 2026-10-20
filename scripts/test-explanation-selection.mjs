@@ -163,6 +163,17 @@ try {
   const transform=()=>evaluate(`document.querySelector('svg[aria-label="Example exchange"]').style.transform`);
   const panned=await transform();await browser('press','ArrowRight');
   assert.notEqual(await transform(),panned,'arrow keys pan the inline diagram');
+  // 図の上で押してドラッグしても、文字は選ばれず図が動く。1 回目は文字の上から、2 回目は図が動いたあとの同じ点（文字の手前の空き）から押す。
+  const label=await evaluate(`(()=>{const t=Array.from(document.querySelectorAll('svg[aria-label="Example exchange"] text')).find(e=>e.textContent==='Request').getBoundingClientRect();return {x:Math.round(t.x+t.width/2),y:Math.round(t.y+t.height/2)}})()`);
+  for (const round of [1,2]) {
+    const before=await transform();
+    await browser('mouse','move',String(label.x),String(label.y));await browser('mouse','down');
+    for (const step of [4,20,40,60])await browser('mouse','move',String(label.x+step),String(label.y+step/2));
+    await browser('mouse','up');await frames();
+    assert.equal(await evaluate(`getSelection().toString()`),'',`dragging on the diagram selects nothing (round ${round})`);
+    assert.notEqual(await transform(),before,`dragging on the diagram pans it (round ${round})`);
+  }
+  await browser('mouse','move','5','5');
   await evaluate(`document.activeElement.blur();true`);await frames();
   assert.equal(await opacity(),0);
   await hover('none');await frames();

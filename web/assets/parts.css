@@ -17,8 +17,8 @@
 .part-markdown td, .part-markdown th { border: 1px solid currentColor; padding: .3rem; }
 .part-markdown .kb-img-frame { display: inline-flex; flex-direction: column; padding: .4rem; border: 1px dashed currentColor; }
 .part-markdown pre { white-space: pre-wrap; }
-.part-diagram-surface { overflow: hidden; position: relative; min-height: 64px; border: 1px solid var(--line); border-radius: 0 0 8px 8px; background:var(--bg); touch-action: pan-y; }
-.part-diagram-surface.failed { overflow: auto; }
+.part-diagram-surface { overflow: hidden; position: relative; min-height: 64px; border: 1px solid var(--line); border-radius: 0 0 8px 8px; background:var(--bg); touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+.part-diagram-surface.failed { overflow: auto; -webkit-user-select: text; user-select: text; }
 .part-diagram-surface svg { transform-origin: 0 0; display: block; font: 14px sans-serif; color: inherit; }
 .part-diagram-surface svg rect, .part-diagram-surface svg polygon { fill: var(--bg, white); stroke: currentColor; stroke-width: 1.5; }
 .part-diagram-surface svg path, .part-diagram-surface svg line { stroke: currentColor; }
