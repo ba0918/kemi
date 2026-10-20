@@ -359,6 +359,15 @@ export function fileCacheKey(entry) {
 }
 
 /**
+ * 行データと描画表示を取るときの表示色とハイライトの指定。キャッシュの鍵（fileCacheKey）と同じ値から作る。
+ * @param {string} fileId
+ * @returns {{ dark: boolean, highlight: "on" | "off" | undefined }}
+ */
+export function colorOptions(fileId) {
+  return { dark: state.dark, highlight: state.highlightOverrides.get(fileId) };
+}
+
+/**
  * @param {string} fileId
  * @returns {string}
  */

@@ -1,6 +1,6 @@
 // @ts-check
-// 差分の表示そのもの: 仮想スクロールの窓、行の高さの測り直し、上端の行の記録、
-// 折りたたみの展開と畳み直し、表示モードと折返し。
+// 差分の表示そのもの: 行データの取得とキャッシュ、仮想スクロールの窓、行の高さの測り直し、
+// 上端の行の記録、折りたたみの展開と畳み直し、表示モードと折返し。
 
 import { syncHorizontal } from "./horizontal-scroll.js";
 import * as api from "../api.js";
@@ -9,6 +9,7 @@ import { dom, el, focusKeyWithin, restoreFocusKey } from "../dom.js";
 import {
   OVERSCAN,
   ROW_HEIGHT,
+  colorOptions,
   currentEntry,
   displayMode,
   displayWrap,
@@ -52,6 +53,28 @@ let staleRows = new Set();
 
 /** 次に描いたときに、見えている行の高さを測り直すか。 */
 let measureNext = false;
+
+/**
+ * ファイルの行データを、今の表示色とハイライトの指定で取る。
+ * @param {Entry} entry
+ * @returns {Promise<any>}
+ */
+export function fetchFileData(entry) {
+  return api.getFile(entry.file.id, null, colorOptions(entry.file.id));
+}
+
+/**
+ * 取った行データをキャッシュに入れる。最初に読んだ行を、畳み直しの判定の元（collapsedRows）として覚える。
+ * @param {string} key fileCacheKey の鍵
+ * @param {any} data api/file の応答
+ * @returns {any} キャッシュに入れたもの
+ */
+export function storeFileData(key, data) {
+  const rows = data.rows || [];
+  const stored = { ...data, rows, collapsedRows: rows };
+  state.cache.set(key, stored);
+  return stored;
+}
 
 /**
  * 基準値と違う高さの行は、中身が変わったかもしれない。窓の外の行も含めて、次に
@@ -448,14 +471,7 @@ async function expandSkipAt(index) {
   let from = Number(skip.from);
   const to = Number(skip.to);
   while (from < to) {
-    const data = await api.getFile(
-      entry.file.id,
-      { from, to },
-      {
-        dark: state.dark,
-        highlight: state.highlightOverrides.get(entry.file.id),
-      },
-    );
+    const data = await api.getFile(entry.file.id, { from, to }, colorOptions(entry.file.id));
     if (generation !== state.selectGeneration || cacheKey !== state.cacheKey) {
       // 取得中にファイルや表示条件が変わった。古い応答で表示とキャッシュを上書きしない。
       return false;

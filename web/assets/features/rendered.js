@@ -4,6 +4,7 @@
 
 import * as api from "../api.js";
 import {
+  colorOptions,
   currentEntry,
   fileCacheKey,
   isShowingFile,
@@ -42,10 +43,7 @@ export async function applyRenderedView(entry) {
     renderFileHeader();
     renderNotice();
     try {
-      data = await api.getRender(entry.file.id, {
-        dark: state.dark,
-        highlight: state.highlightOverrides.get(entry.file.id),
-      });
+      data = await api.getRender(entry.file.id, colorOptions(entry.file.id));
     } catch (error) {
       // 押してから描画に失敗したファイルは、ソース表示のままヘッダに理由を出す。
       data = { failed: error instanceof Error ? error.message : String(error) };

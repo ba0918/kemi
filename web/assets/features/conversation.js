@@ -19,7 +19,7 @@ import {
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
 import { followsNewest, replaceComment, threadLastSeq } from "../conversation-model.js";
 import { hasLines } from "../model.js";
-import { onResize, remeasureAndRender } from "./display.js";
+import { fetchFileData, onResize, remeasureAndRender, storeFileData } from "./display.js";
 import { jumpToEntry } from "./files.js";
 import { refreshRendered } from "./rendered.js";
 import { openCommentEditor, updateComments } from "./comments.js";
@@ -165,10 +165,7 @@ async function loadThreadLines(comment) {
   /** @type {any} */
   let data;
   try {
-    data = await api.getFile(entry.file.id, null, {
-      dark: state.dark,
-      highlight: state.highlightOverrides.get(entry.file.id),
-    });
+    data = await fetchFileData(entry);
   } catch {
     return;
   }
@@ -177,8 +174,7 @@ async function loadThreadLines(comment) {
   if (reviews !== state.reviews || fileCacheKey(entry) !== key || state.cache.has(key)) {
     return;
   }
-  const rows = data.rows || [];
-  state.cache.set(key, { ...data, rows, collapsedRows: rows });
+  storeFileData(key, data);
   // 後で返信や解決があっても、そのファイルを選んだときに読み直した当時のコメントが出ないよう、
   // 差し替えの届く控えへ入れておく。
   if (!state.commentStore.has(entry.file.id)) {

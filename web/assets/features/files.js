@@ -22,11 +22,13 @@ import {
 } from "../model.js";
 import {
   captureAnchor,
+  fetchFileData,
   recomputeDisplay,
   renderDiff,
   renderFloating,
   resetHeights,
   scheduleRender,
+  storeFileData,
 } from "./display.js";
 import { applyPendingJump, revealInTree } from "./navigation.js";
 import { renderConversation } from "../views/conversation.js";
@@ -177,7 +179,6 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
   state.current = entry;
   state.landing = null;
   const id = entry.file.id;
-  const override = state.highlightOverrides.get(id);
   const key = fileCacheKey(entry);
   state.cacheKey = key;
   const generation = ++state.selectGeneration;
@@ -198,10 +199,7 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
     /** @type {any} */
     let data;
     try {
-      data = await api.getFile(id, null, {
-        dark: state.dark,
-        highlight: override,
-      });
+      data = await fetchFileData(entry);
     } catch (error) {
       if (generation === state.selectGeneration) {
         // 読み込み中のまま止まらないよう戻す。選び直せば取り直す。
@@ -217,8 +215,7 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
       // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。
       return;
     }
-    const rows = data.rows || [];
-    state.cache.set(key, { ...data, rows, collapsedRows: rows });
+    storeFileData(key, data);
   }
   state.loading = false;
   const data = state.cache.get(key);

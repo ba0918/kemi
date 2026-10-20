@@ -1,7 +1,6 @@
 // @ts-check
 // 変更間の移動（n / p）と、移った先の表示。
 
-import * as api from "../api.js";
 import { actions } from "../actions.js";
 import { dom } from "../dom.js";
 import {
@@ -21,7 +20,7 @@ import {
   navPrevTarget,
   nextFileIndex,
 } from "../model.js";
-import { scheduleRender } from "./display.js";
+import { fetchFileData, scheduleRender, storeFileData } from "./display.js";
 import { navView, stopTops } from "../views/nav.js";
 import { blockElements, blockTop } from "../views/rendered.js";
 import { showToast } from "../views/overlay.js";
@@ -155,10 +154,7 @@ async function loadForNavigation(entry, generation) {
   /** @type {any} */
   let data;
   try {
-    data = await api.getFile(entry.file.id, null, {
-      dark: state.dark,
-      highlight: state.highlightOverrides.get(entry.file.id),
-    });
+    data = await fetchFileData(entry);
   } catch {
     return null;
   }
@@ -166,10 +162,7 @@ async function loadForNavigation(entry, generation) {
     // 読み直し（テーマや更新）で消えたキャッシュへ、古い行を戻さない。
     return null;
   }
-  const rows = data.rows || [];
-  const stored = { ...data, rows, collapsedRows: rows };
-  state.cache.set(key, stored);
-  return stored;
+  return storeFileData(key, data);
 }
 
 /** ファイルを表示し終えた後の移り先（次のファイルの最初の変更や、由来の該当行）へ移る。 */
