@@ -14,7 +14,6 @@ import {
 } from "../state.js";
 import { countLabel, lineHasAnchor, originJumpTarget, plusSides, sideTone, toneSign } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "./comment.js";
-import { renderFileHeader } from "./file-header.js";
 import { showToast } from "./overlay.js";
 
 /** @typedef {import("../model.js").DisplayLine} DisplayLine */
@@ -78,7 +77,7 @@ function renderLine(line) {
     expand.textContent = `↕ Show ${countLabel(skip && skip.count ? skip.count : 0, "line")}`;
     expand.disabled = state.loading;
     expand.addEventListener("click", () => {
-      void actions.expandSkipAt(line.logicalIndex).then(() => renderFileHeader());
+      void actions.expandSkip(line.logicalIndex);
     });
     row.append(expand);
     const range = state.skipRanges.get(line.logicalIndex);

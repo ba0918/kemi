@@ -50,7 +50,7 @@
  *   confirmDeleteComment: (comment: any) => void,
  *   copyPath: (path: string, element: HTMLButtonElement) => void,
  *   expandAll: () => void,
- *   expandSkipAt: (index: number) => Promise<boolean>,
+ *   expandSkip: (index: number) => Promise<void>,
  *   extendSelection: (side: string, number: number) => void,
  *   editComment: (payload: any) => void,
  *   goToComment: (comment: any, unit: string | null) => void,

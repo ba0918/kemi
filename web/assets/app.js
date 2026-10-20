@@ -8,7 +8,7 @@ import { renderPartMarkdown } from './features/parts.js';
 import {
   collapseAll,
   expandAll,
-  expandSkipAt,
+  expandSkip,
   onResize,
   scheduleRender,
   scrollToRulerPosition,
@@ -348,7 +348,7 @@ bindActions({
   copyPath,
   editComment,
   expandAll,
-  expandSkipAt,
+  expandSkip,
   extendSelection,
   goToComment,
   openEditorAt,

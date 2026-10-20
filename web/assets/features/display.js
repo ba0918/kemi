@@ -415,11 +415,21 @@ export function recomputeDisplay(anchor = captureAnchor()) {
 }
 
 /**
- * 1 つの折りたたみを、サーバの残りが尽きるまで展開する。
+ * 折りたたみの「Show N lines」。開いた後にファイルの帯も描き直す（開けなかったときも）。
+ * @param {number} index
+ */
+export async function expandSkip(index) {
+  await expandSkipAt(index);
+  renderFileHeader();
+}
+
+/**
+ * 1 つの折りたたみを、サーバの残りが尽きるまで展開する。ファイルの帯は描き直さない
+ * （全行の展開では、展開し終えてから 1 回だけ描く）。
  * @param {number} index
  * @returns {Promise<boolean>} 展開できたら true。
  */
-export async function expandSkipAt(index) {
+async function expandSkipAt(index) {
   const entry = currentEntry();
   const skip = state.rows[index];
   if (
