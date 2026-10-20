@@ -45,11 +45,13 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `features/` の中の順番は
    `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
-- `features/live/` は `live` の部品で、親の `features/live.js` が import する。部品の順は state、channel、
-  stage、snapshots、mock、changes で、部品は自分より前の部品だけを import し、親は import しない。`features/live/state.js` は画面を
-  開いている間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と親が読み書きする。部品から親の
-  関数（描き直し、見方・側・表示幅・ページの切り替え）を呼ぶときは `state.js` の `liveActions` を通す。中身は
-  親が `startLive` の最初に `bindLiveActions` で 1 回だけ入れる。
+- `features/live/` は `live` の部品で、親の `features/live.js`（起動と結線、見方・側・表示幅・ページの切り替え、
+  ページからの知らせの振り分け、帯と比べる相手の描画）が import する。部品の順は state（共有の状態）、
+  channel（ページとの往復）、stage（枠の置き方）、snapshots、mock、changes（変化の一覧と印）、compose
+  （ページへのコメントを書く）で、部品は自分より前の部品だけを import し、親は import しない。
+  `features/live/state.js` は画面を開いている間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と
+  親が読み書きする。部品から親の関数（描き直し、見方・側・表示幅・ページの切り替え）を呼ぶときは
+  `state.js` の `liveActions` を通す。中身は親が `startLive` の最初に `bindLiveActions` で 1 回だけ入れる。
 - `state.js` は `storage.js` と `model.js` を import してよい。`diagrams/` の中のファイルは互いに import してよい。
   ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
@@ -75,7 +77,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   ページの中で動き、レビュー画面とは `postMessage` だけで話す。中継のポートの `/__kemi/page.js`
   で配る。要素の記述・スナップショット・変化の印に加え、ページへのコメントの場所（指している要素と
   文書の座標）を決め、場所の描き込みと、その周りの画像を作る。押す・描く操作そのものはレビュー
-  画面が枠の上に重ねた層（`features/live.js`）で受ける。
+  画面が枠の上に重ねた層（`features/live/compose.js`）で受ける。
 - `--live` のページへのコメントの印とページのツリーの数は、`views/conversation.js` が会話を描くたびに
   `actions.pageCommentsChanged` で合わせる。`--live` でないレビューでは何もしない。
 

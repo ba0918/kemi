@@ -191,6 +191,7 @@ export function currentReference() {
  *   render: () => void,
  *   renderBand: () => void,
  *   renderReference: () => void,
+ *   setView: (view: "page" | "code") => void,
  *   setSide: (side: "live" | "ref") => void,
  *   setWidth: (width: number) => void,
  *   openPage: (page: string) => void,
