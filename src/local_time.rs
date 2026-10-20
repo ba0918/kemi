@@ -228,15 +228,21 @@ mod tests {
              .ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }}",
             seconds.map(|second| second.to_string()).join(", ")
         );
-        let expected = std::process::Command::new("powershell")
+        let expected = match std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output();
-        let Ok(expected) = expected else {
-            return;
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            // 手元に PowerShell が無ければ比べずに戻る。CI の Windows にはあるので、そこで
+            // 走らないなら、比べないまま通らないように落とす。
+            failed => {
+                assert!(
+                    std::env::var_os("CI").is_none(),
+                    "PowerShell did not give the local times: {failed:?}"
+                );
+                return;
+            }
         };
-        if !expected.status.success() {
-            return;
-        }
         let expected = String::from_utf8_lossy(&expected.stdout);
         let expected: Vec<&str> = expected.lines().map(str::trim).collect();
 
