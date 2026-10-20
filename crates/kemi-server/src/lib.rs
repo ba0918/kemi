@@ -381,6 +381,17 @@ pub(crate) struct Stopping {
     pub(crate) submit_state: Mutex<SubmitState>,
 }
 
+impl Stopping {
+    /// 止まったか、submit を受理済みで、もう状態を変えないか（R-SUBMIT）。
+    pub(crate) fn is_closing(&self) -> bool {
+        *self.shutdown.borrow()
+            || matches!(
+                *self.submit_state.lock().expect("submit poisoned"),
+                SubmitState::Claimed
+            )
+    }
+}
+
 /// エージェントとのつながり。メモリだけの状態、API のトークン、`kemi wait` を起こす通知。
 pub(crate) struct AgentChannel {
     /// エージェントとのつながりの、メモリだけに置く部分（R-AGENT-STATE）。`kemi wait` が

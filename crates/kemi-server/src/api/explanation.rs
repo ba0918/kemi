@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use super::{ApiError, ensure_display_persisted};
 use crate::explanation::reference_map;
-use crate::{AppState, Event, PersistGuarded, SubmitState};
+use crate::{AppState, Event, PersistGuarded};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -242,15 +242,7 @@ pub(crate) async fn explain(
                 .map_err(ApiError::internal)?,
         );
     }
-    let gate = state.persist.lock().expect("persist poisoned");
-    if *state.stopping.shutdown.borrow()
-        || matches!(
-            *state.stopping.submit_state.lock().expect("submit poisoned"),
-            SubmitState::Claimed
-        )
-    {
-        return Err(ApiError::conflict("the review is being submitted"));
-    }
+    let gate = super::mutation_gate(&state)?;
     let sink = state
         .session_sink
         .as_ref()

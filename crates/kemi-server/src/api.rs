@@ -51,12 +51,7 @@ fn mutation_gate(
     state: &AppState,
 ) -> Result<std::sync::MutexGuard<'_, crate::PersistGuarded>, ApiError> {
     let gate = state.persist.lock().expect("persist poisoned");
-    if *state.stopping.shutdown.borrow()
-        || matches!(
-            *state.stopping.submit_state.lock().expect("submit poisoned"),
-            crate::SubmitState::Claimed
-        )
-    {
+    if state.stopping.is_closing() {
         return Err(ApiError::conflict("the review is being submitted"));
     }
     Ok(gate)

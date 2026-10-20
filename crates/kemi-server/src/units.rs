@@ -277,12 +277,7 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
     };
     let start_build = {
         let _gate = state.persist.lock().expect("persist poisoned");
-        if *state.stopping.shutdown.borrow()
-            || matches!(
-                *state.stopping.submit_state.lock().expect("submit poisoned"),
-                crate::SubmitState::Claimed
-            )
-        {
+        if state.stopping.is_closing() {
             return Err(crate::ServerError::Stopped("the review is stopping".into()));
         }
         let mut review = state.review.write().expect("review lock poisoned");
