@@ -349,7 +349,7 @@
       return;
     }
     const { marks: layer } = layers();
-    /** @type {Map<Element, boolean>} */
+    /** @type {Map<Element, BoxLook>} */
     const clips = new Map();
     /** @type {{ element: Element, border: string }[]} */
     const wanted = [];
@@ -373,10 +373,15 @@
   }
 
   /**
+   * 要素の、中身をはみ出させないか（clipping）と、画面に固定しているか（fixed）。
+   * @typedef {{ clipping: boolean, fixed: boolean }} BoxLook
+   */
+
+  /**
    * 要素を切って見せる祖先。中身をはみ出させない箱で、画面に固定した要素より外のものは除く（固定した
    * 要素は外の箱のスクロールで動かず、切られもしない）。ページ全体のスクロールは画面が切るので除く。
    * @param {Element} element
-   * @param {Map<Element, boolean>} clips 祖先ごとに、中身をはみ出させないか（1 回の描き直しの中で覚える）
+   * @param {Map<Element, BoxLook>} clips 要素ごとの見た目（1 回の描き直しの中で覚える。印の祖先は重なることが多い）
    */
   function clippersOf(element, clips) {
     /** @type {Element[]} */
@@ -384,16 +389,17 @@
     /** @type {Element | null} */
     let current = element;
     while (current && current !== document.body && current !== document.documentElement) {
-      if (current !== element) {
-        let clipping = clips.get(current);
-        if (clipping === undefined) {
-          const computed = getComputedStyle(current);
-          clipping = computed.overflowX !== 'visible' || computed.overflowY !== 'visible';
-          clips.set(current, clipping);
-        }
-        if (clipping) clippers.push(current);
+      let look = clips.get(current);
+      if (look === undefined) {
+        const computed = getComputedStyle(current);
+        look = {
+          clipping: computed.overflowX !== 'visible' || computed.overflowY !== 'visible',
+          fixed: computed.position === 'fixed',
+        };
+        clips.set(current, look);
       }
-      if (getComputedStyle(current).position === 'fixed') break;
+      if (current !== element && look.clipping) clippers.push(current);
+      if (look.fixed) break;
       /** @type {Node | null} */
       const root = current.parentNode;
       current = root instanceof ShadowRoot ? root.host : current.parentElement;
