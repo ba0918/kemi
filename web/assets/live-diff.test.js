@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { changesByElement, diffDescriptions, marksOf } from "./live-diff.js";
+import { changesByElement, diffDescriptions, markedPositions, marksOf } from "./live-diff.js";
 
 /**
  * @typedef {{ tag: string, id?: string, cls?: string, text?: string, box: number[], style?: Record<string, string>, children?: Spec[] }} Spec
@@ -286,4 +286,20 @@ test("a changed background of body is a main change", () => {
     elements.map(({ kind, tag }) => ({ kind, tag })),
     [{ kind: "main", tag: "body" }],
   );
+});
+
+test("a removed element is found where the element map puts it in the reparsed snapshot", () => {
+  // 空白で区切った「位置,番号,個数」: 番号 0〜2 は位置 0〜2、番号 3〜4 は読み直すと 1 つ後ろの位置 4〜5 に並ぶ（tbody が足されたなど）。
+  const content = "0,0,3 4,3,2";
+  assert.deepEqual([...markedPositions(content, [1])], [1]);
+  assert.deepEqual([...markedPositions(content, [3, 4])], [4, 5]);
+  assert.deepEqual([...markedPositions(content, [2, 3])], [2, 4]);
+});
+
+test("a number outside every run of the element map, or with no map at all, gets no mark", () => {
+  // 読み直した文書に無い要素（番号 3）と、並びの終わりの次（番号 5）。
+  assert.deepEqual([...markedPositions("0,0,3 7,4,1", [3, 5])], []);
+  assert.deepEqual([...markedPositions("0,0,3 7,4,1", [4, 5])], [7]);
+  assert.deepEqual([...markedPositions("", [0, 1])], []);
+  assert.deepEqual([...markedPositions("0,0,3", [])], []);
 });

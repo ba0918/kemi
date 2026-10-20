@@ -581,6 +581,30 @@ export function changesByElement(changes) {
   return [...elements.values()];
 }
 
+/**
+ * スナップショットに添えた要素の対応（web/live/page.js の elementMap）から、印を付ける要素の、HTML を読み直した文書での
+ * 位置を求める。対応は「位置,番号,個数」の並びを空白で区切ったもので、番号から続く個数の要素が、その位置から続けて
+ * 並ぶ。どの並びにも入らない番号（読み直した文書に無い要素）は印を付けない。
+ * @param {string} content 対応の文字列（無ければ空）
+ * @param {number[]} indices 印を付ける要素の記述の番号
+ * @returns {Set<number>}
+ */
+export function markedPositions(content, indices) {
+  const runs = content
+    .split(" ")
+    .filter((run) => run !== "")
+    .map((run) => run.split(",").map(Number));
+  /** @type {Set<number>} */
+  const wanted = new Set();
+  for (const index of indices) {
+    const run = runs.find(([, first, count]) => index >= first && index < first + count);
+    if (run) {
+      wanted.add(run[0] + index - run[1]);
+    }
+  }
+  return wanted;
+}
+
 /** 1 つの要素に変化が重なるときに残す印の順（前が強い）。 */
 const MARK_ORDER = ["main", "added", "removed", "shifted"];
 

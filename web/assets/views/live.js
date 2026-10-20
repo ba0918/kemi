@@ -4,6 +4,7 @@
 // `--live` のレビューでだけ読み込む。
 
 import { button, el, svgIcon, textEl } from "../dom.js";
+import { markedPositions } from "../live-diff.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model.js";
 
 /**
@@ -1228,19 +1229,8 @@ const ELEMENT_MAP = "kemi-elements";
 export function markRemovedInSnapshot(html, indices) {
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const map = parsed.head.querySelector(`meta[name="${ELEMENT_MAP}"]`);
-  const runs = (map?.getAttribute("content") ?? "")
-    .split(" ")
-    .filter((run) => run !== "")
-    .map((run) => run.split(",").map(Number));
+  const wanted = markedPositions(map?.getAttribute("content") ?? "", indices);
   map?.remove();
-  /** @type {Set<number>} */
-  const wanted = new Set();
-  for (const index of indices) {
-    const run = runs.find(([, first, count]) => index >= first && index < first + count);
-    if (run) {
-      wanted.add(run[0] + index - run[1]);
-    }
-  }
   /** @type {Element[]} */
   const marked = [];
   let position = 0;
