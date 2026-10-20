@@ -173,16 +173,15 @@ pub(super) async fn comment_api(
         } => {
             let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
-            let previous = session.clone();
-            let comment = session
+            let index = session
                 .state
                 .comments
-                .iter_mut()
-                .find(|comment| comment.id == id)
+                .iter()
+                .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
             // 行レンジ・side・quote・作成時の内容ハッシュも、ページの場所と画像も変えない
             // （R-COMMENT、live.md の R-PAGE-COMMENT）。
-            match comment.file_mut() {
+            match session.state.comments[index].file() {
                 Some(file) => {
                     let range = file
                         .start_line
@@ -190,7 +189,6 @@ pub(super) async fn comment_api(
                         .map(|(start, end)| LineRange { start, end });
                     comment::validate_comment(file.side, range, suggestion.as_deref())
                         .map_err(|error| ApiError::bad_request(comment_error_message(error)))?;
-                    file.suggestion = suggestion.map(|replacement| Suggestion { replacement });
                 }
                 None if suggestion.is_some() => {
                     return Err(ApiError::bad_request(comment_error_message(
@@ -198,6 +196,12 @@ pub(super) async fn comment_api(
                     )));
                 }
                 None => {}
+            }
+            // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+            let previous = session.clone();
+            let comment = &mut session.state.comments[index];
+            if let Some(file) = comment.file_mut() {
+                file.suggestion = suggestion.map(|replacement| Suggestion { replacement });
             }
             comment.body = body;
             let value = page_comment_json(comment);
@@ -245,13 +249,14 @@ pub(super) async fn comment_api(
         CommentRequest::Reply { id, body } => {
             let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
-            let previous = session.clone();
             let index = session
                 .state
                 .comments
                 .iter()
                 .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
+            // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+            let previous = session.clone();
             session.state.last_reply += 1;
             let reply = Reply {
                 id: format!("r{}", session.state.last_reply),
@@ -277,13 +282,15 @@ pub(super) async fn comment_api(
         CommentRequest::Resolve { id, resolved } => {
             let gate = super::mutation_gate(&state)?;
             let mut session = state.session.lock().expect("session poisoned");
-            let previous = session.clone();
-            let comment = session
+            let index = session
                 .state
                 .comments
-                .iter_mut()
-                .find(|comment| comment.id == id)
+                .iter()
+                .position(|comment| comment.id == id)
                 .ok_or_else(comment_not_found)?;
+            // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+            let previous = session.clone();
+            let comment = &mut session.state.comments[index];
             comment.resolved = resolved;
             let value = page_comment_json(comment);
             if let Err(error) = kemi_core::session::validate_additional(&session.state) {
