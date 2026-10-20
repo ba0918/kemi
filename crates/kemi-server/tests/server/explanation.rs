@@ -220,6 +220,44 @@ async fn explanation_context_and_updates_are_separate_from_conversation_and_reje
 }
 
 #[tokio::test]
+async fn the_review_carries_only_the_current_explanation_version_and_old_ones_are_fetched_apart() {
+    let server = AgentServer::start().await;
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let mut update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        200
+    );
+    update["expected_revision"] = json!(1);
+    update["sections"][0]["blocks"][0]["part"]["body"] = json!("changed");
+    assert_eq!(
+        server.agent_post("explain", update.clone()).await.status(),
+        200
+    );
+
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+
+    assert_eq!(review["explanation"]["current_revision"], 2);
+    let versions = review["explanation"]["versions"].as_array().unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0]["revision"], 2);
+    assert_eq!(versions[0]["sections"], update["sections"]);
+    let old: Value = server
+        .page
+        .get("api/explanation?revision=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(old["sections"], explanation_sections());
+}
+
+#[tokio::test]
 async fn parts_reply_accepts_typed_content_and_refuses_an_entire_batch_with_a_bad_later_write() {
     let server = AgentServer::start().await;
     let comment = server.page.add_comment_with_body(11, "question").await;

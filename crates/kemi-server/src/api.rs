@@ -26,6 +26,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use kemi_core::domain::content;
+use kemi_core::domain::explanation::ExplanationHistory;
 use kemi_core::domain::origin::Unknown;
 use kemi_core::domain::review::{FileEntry, GroupBy, ReviewMeta, Side};
 use kemi_core::source::{FileOrigin, ReviewSource, SourceError};
@@ -424,7 +425,7 @@ async fn review(
             json!(session.state.display.as_ref().map(|d| &d.current))
         };
         body["code_unavailable"] = json!(review.code_error);
-        body["explanation"] = json!(session.state.explanation);
+        body["explanation"] = current_explanation_json(session.state.explanation.as_ref());
         (
             body,
             session.state.page_comment_saved,
@@ -471,6 +472,17 @@ pub(super) fn ensure_display_persisted(state: &AppState) -> Result<(), ApiError>
         .display_ready
         .store(true, std::sync::atomic::Ordering::SeqCst);
     Ok(())
+}
+
+/// 画面に渡す説明。画面が読むのは今の版だけで、古い版は `api/explanation?revision=` で
+/// 取りに来る。履歴の全版（最大 8 MB）を、一覧を取り直すたびに送らない。
+fn current_explanation_json(history: Option<&ExplanationHistory>) -> Value {
+    history.map_or(Value::Null, |history| {
+        json!({
+            "current_revision": history.current_revision,
+            "versions": history.current().into_iter().collect::<Vec<_>>(),
+        })
+    })
 }
 
 fn review_json(review: &ReviewMeta, session: &Session) -> Value {

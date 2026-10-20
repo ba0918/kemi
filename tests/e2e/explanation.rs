@@ -96,7 +96,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
     assert_eq!(review["diff_display_version"], format!("{id}:1"));
     assert_eq!(review["explanation"]["current_revision"], 2);
     assert_eq!(
-        review["explanation"]["versions"][1]["base_display_version"],
+        kemi.get_json("api/explanation?revision=2").await["base_display_version"],
         format!("{id}:2")
     );
     assert_eq!(std::fs::read(&payload).unwrap(), before);
