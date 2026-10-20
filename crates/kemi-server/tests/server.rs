@@ -519,7 +519,9 @@ async fn until_reached<T: std::fmt::Debug>(
     reached: impl Future<Output = ()>,
     peer: &mut JoinHandle<T>,
 ) {
+    // 合図の後に相手が正しく終わり、両方が同時に用意できたときに失敗にしないよう、合図を先に見る。
     tokio::select! {
+        biased;
         () = reached => {}
         result = peer => panic!("the request ended before {what}: {result:?}"),
         () = tokio::time::sleep(WAIT_LIMIT) => {
