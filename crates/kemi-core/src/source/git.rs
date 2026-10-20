@@ -913,7 +913,14 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
             .map_err(|_| SourceError::Git("parallel numstat failed".to_string()))??;
         entries.append(&mut shard);
     }
-    entries.sort_by(|left, right| left.new_path.cmp(&right.new_path));
+    // 1 回の git diff と同じ、パスのバイト列の順に戻す。Path の比較は構成要素ごとなので、
+    // `a.rs` と `a/b.rs` の前後が git と逆になる。
+    entries.sort_by(|left, right| {
+        left.new_path
+            .as_os_str()
+            .as_encoded_bytes()
+            .cmp(right.new_path.as_os_str().as_encoded_bytes())
+    });
     Ok(entries)
 }
 

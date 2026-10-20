@@ -412,6 +412,44 @@ fn worktree_rename_is_detected_among_many_changes() {
     assert_eq!((entry.add, entry.del), (0, 0));
 }
 
+/// 変更が多いとパスで分けて並列に引く。まとめた一覧も、1 回の `git diff` と同じ
+/// git の出力の順（パスのバイト列の順、R-VIEW）にする。`a.rs` と `a/` のように、
+/// 構成要素ごとの比較とバイト列の比較で前後が入れ替わるパスを含める。
+#[test]
+fn worktree_with_many_changes_lists_files_in_the_order_git_diff_prints() {
+    let repo = TempRepo::new();
+    let body: String = (1..=20).map(|n| format!("line{n}\n")).collect();
+    repo.write("a000.txt", &body);
+    repo.write("src/a.rs", "one\n");
+    repo.write("src/a/b.rs", "one\n");
+    for index in 0..300 {
+        repo.write(&format!("m{index:03}.txt"), "one\n");
+    }
+    repo.add_and_commit("base");
+
+    repo.git(&["mv", "a000.txt", "src/a-renamed.txt"]);
+    repo.write("src/a.rs", "one\ntwo\n");
+    repo.write("src/a/b.rs", "one\ntwo\n");
+    for index in 0..300 {
+        repo.write(&format!("m{index:03}.txt"), "one\ntwo\n");
+    }
+
+    let review = source(&repo, GitMode::Worktree).review().unwrap();
+    let listed: Vec<&str> = review.groups[0]
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    let printed = repo.git(&["diff", "-O/dev/null", "--name-only", "-z", "-M", "HEAD"]);
+    let expected: Vec<&str> = printed
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .collect();
+
+    assert_eq!(listed.len(), 303);
+    assert_eq!(listed, expected);
+}
+
 #[test]
 fn worktree_untracked_over_limit_has_stats_without_content() {
     let repo = TempRepo::new();
