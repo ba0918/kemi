@@ -445,6 +445,18 @@ export function draftElsewhere(draft, url, width) {
   return { url: draft.url, width: draft.width };
 }
 
+/**
+ * 書きかけのコメントを保存できるか（R-PAGE-COMMENT）: 場所が 1 つ以上あり、本文が空でなく、どの場所も指さない `#n` が
+ * 本文に無く、書きかけの URL と表示幅を見ている（画像は場所のあるページで作るので、保存はそこに戻ってから）。
+ * @param {PlaceDraft} draft
+ * @param {string} url 見ている URL
+ * @param {number} width 見ている表示幅
+ * @returns {boolean}
+ */
+export function draftSavable(draft, url, width) {
+  return draft.places.length > 0 && draft.body.trim() !== "" && strayRefs(draft).length === 0 && draftElsewhere(draft, url, width) === null;
+}
+
 /** 保存したコメントの短い名前の長さの上限（文字数）。 */
 const SHORT_NAME_LIMIT = 40;
 

@@ -24,6 +24,7 @@ import {
   overlayPlacement,
   pageKey,
   draftElsewhere,
+  draftSavable,
   editBody,
   editedSpan,
   emptyDraft,
@@ -1331,8 +1332,7 @@ function renderCompose() {
   compose.undo.disabled = places.length === 0 || live.saving;
   compose.cancel.disabled = live.saving;
   compose.body.readOnly = live.saving;
-  compose.save.disabled =
-    places.length === 0 || away !== null || live.saving || live.draft.body.trim() === "" || stray.length > 0 || state.submitted;
+  compose.save.disabled = !draftSavable(live.draft, live.page, live.width) || live.saving || state.submitted;
   compose.error.hidden = live.composeError === "";
   compose.error.textContent = live.composeError;
 }
@@ -1346,12 +1346,10 @@ async function savePageComment() {
     return;
   }
   const draft = live.draft;
-  const body = draft.body.trim();
-  // 画像は場所のあるページで作るので、保存は書きかけの URL と表示幅に戻ってから（R-PAGE-COMMENT）。
-  // どの場所も指さない `#n` が本文にある間は保存しない（R-PAGE-COMMENT）。
-  if (draft.places.length === 0 || body === "" || strayRefs(draft).length > 0 || draftElsewhere(draft, live.page, live.width)) {
+  if (!draftSavable(draft, live.page, live.width)) {
     return;
   }
+  const body = draft.body.trim();
   setSaving(true);
   const frame = shell.liveFrame.contentWindow;
   let image = null;

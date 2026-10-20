@@ -7,6 +7,7 @@ import {
   bandNotice,
   buildPageTree,
   draftElsewhere,
+  draftSavable,
   editBody,
   editedSpan,
   emptyDraft,
@@ -523,6 +524,22 @@ test("a draft with places is elsewhere at another URL or width", () => {
   assert.deepEqual(draftElsewhere(draft, "/other", 390), { url: "/", width: 390 });
   assert.deepEqual(draftElsewhere(draft, "/", 1280), { url: "/", width: 390 });
   assert.equal(draftElsewhere(emptyDraft("/", 390), "/other", 1280), null);
+});
+
+test("a draft is saved only with a place, some text, no stray reference, and at its own URL and width", () => {
+  let draft = addPlace(emptyDraft("/", 390), place("element", "#a"), "/", 390);
+  draft = editBody(draft, "see #1", { start: 0, end: 0 });
+  assert.equal(draftSavable(draft, "/", 390), true);
+  // 場所が無い、本文が空白だけ、どの場所も指さない `#n` がある（R-PAGE-COMMENT）。
+  assert.equal(draftSavable({ ...editBody(draft, "looks off", { start: 0, end: draft.body.length }), places: [] }, "/", 390), false);
+  assert.equal(draftSavable(editBody(draft, " \n ", { start: 0, end: draft.body.length }), "/", 390), false);
+  assert.equal(draftSavable(editBody(draft, "see #2", { start: 5, end: 6 }), "/", 390), false);
+  assert.equal(draftSavable(removePlace(addPlace(draft, place("pen"), "/", 390), 2), "/", 390), true);
+  assert.equal(draftSavable(editBody(addPlace(draft, place("pen"), "/", 390), "see #2", { start: 5, end: 6 }), "/", 390), true);
+  assert.equal(draftSavable(removePlace(editBody(addPlace(draft, place("pen"), "/", 390), "see #2", { start: 5, end: 6 }), 2), "/", 390), false);
+  // 保存は書きかけの URL と表示幅に戻ってから。
+  assert.equal(draftSavable(draft, "/other", 390), false);
+  assert.equal(draftSavable(draft, "/", 1280), false);
 });
 
 test("the start snapshot waits until the saved snapshots are known, and is not taken again after resuming", () => {
