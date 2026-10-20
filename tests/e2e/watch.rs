@@ -47,14 +47,14 @@ async fn worktree_change_in_a_directory_created_while_watching_sends_update() {
             .await
     );
     std::fs::create_dir_all(dir.path.join("fresh/inner")).unwrap();
-    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+    // 前の変化の通知が残っていると、次の書き込みを見ずに通ってしまう。
+    updates.settle(std::time::Duration::from_millis(1500)).await;
 
-    dir.write("fresh/inner/c.txt", "c\n");
+    let updated = updates
+        .after_repeating(|attempt| dir.write("fresh/inner/c.txt", &format!("c {attempt}\n")))
+        .await;
 
-    assert!(
-        updates.count(std::time::Duration::from_secs(3)).await > 0,
-        "a change in a new directory sent no update"
-    );
+    assert!(updated, "a change in a new directory sent no update");
     kemi.kill();
 }
 
@@ -72,12 +72,15 @@ async fn worktree_change_under_a_directory_renamed_away_and_back_sends_update() 
     );
     std::fs::rename(dir.path.join("moved"), dir.path.join("away")).unwrap();
     std::fs::rename(dir.path.join("away"), dir.path.join("moved")).unwrap();
-    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+    // 前の変化の通知が残っていると、次の書き込みを見ずに通ってしまう。
+    updates.settle(std::time::Duration::from_millis(1500)).await;
 
-    dir.write("moved/inner/c.txt", "c\n");
+    let updated = updates
+        .after_repeating(|attempt| dir.write("moved/inner/c.txt", &format!("c {attempt}\n")))
+        .await;
 
     assert!(
-        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        updated,
         "a change under a directory renamed back sent no update"
     );
     kemi.kill();
@@ -95,12 +98,15 @@ async fn worktree_change_in_a_directory_no_longer_ignored_by_gitignore_sends_upd
             .await
     );
     dir.write(".gitignore", "*.log\n");
-    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+    // 前の変化の通知が残っていると、次の書き込みを見ずに通ってしまう。
+    updates.settle(std::time::Duration::from_millis(1500)).await;
 
-    dir.write("build/new.txt", "n\n");
+    let updated = updates
+        .after_repeating(|attempt| dir.write("build/new.txt", &format!("n {attempt}\n")))
+        .await;
 
     assert!(
-        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        updated,
         "a change in a directory .gitignore stopped ignoring sent no update"
     );
     kemi.kill();
@@ -120,12 +126,15 @@ async fn worktree_change_in_a_directory_no_longer_ignored_by_info_exclude_sends_
             .await
     );
     dir.write(".git/info/exclude", "");
-    while updates.count(std::time::Duration::from_millis(1500)).await > 0 {}
+    // 前の変化の通知が残っていると、次の書き込みを見ずに通ってしまう。
+    updates.settle(std::time::Duration::from_millis(1500)).await;
 
-    dir.write("scratch/new.txt", "n\n");
+    let updated = updates
+        .after_repeating(|attempt| dir.write("scratch/new.txt", &format!("n {attempt}\n")))
+        .await;
 
     assert!(
-        updates.count(std::time::Duration::from_secs(3)).await > 0,
+        updated,
         "a change in a directory info/exclude stopped ignoring sent no update"
     );
     kemi.kill();

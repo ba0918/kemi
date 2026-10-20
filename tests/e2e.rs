@@ -1207,17 +1207,36 @@ impl Updates {
         count
     }
 
-    /// `update` が届くまで `change` を繰り返す。見張りの登録は起動の応答を待たせず裏で
-    /// 進むので、登録の前の書き込みは取りこぼしうる。届いたら、続く通知が静まるまで待つ。
+    /// `update` が届くまで `change` を繰り返す。見張りの登録（変化の後の登録し直しも）は
+    /// 裏で進むので、登録の前の書き込みは取りこぼしうる。届いたら、続く通知が静まるまで待つ。
     async fn after_repeating(&mut self, mut change: impl FnMut(usize)) -> bool {
         for attempt in 0..30 {
             change(attempt);
             if self.count(std::time::Duration::from_millis(1000)).await > 0 {
-                while self.count(std::time::Duration::from_millis(800)).await > 0 {}
+                self.settle(std::time::Duration::from_millis(800)).await;
                 return true;
             }
         }
         false
+    }
+
+    /// `quiet` のあいだ `update` が届かなくなるまで待つ。通知が止まらない退行でテストが
+    /// 止まり続けないよう、全体に期限を設け、過ぎたら受けた数を出して落とす。
+    async fn settle(&mut self, quiet: std::time::Duration) {
+        const LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+        let deadline = tokio::time::Instant::now() + LIMIT;
+        let mut received = 0;
+        loop {
+            let count = self.count(quiet).await;
+            if count == 0 {
+                return;
+            }
+            received += count;
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "updates kept coming for {LIMIT:?} ({received} received)"
+            );
+        }
     }
 }
 
