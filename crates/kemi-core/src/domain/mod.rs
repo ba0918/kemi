@@ -6,6 +6,7 @@ pub mod diff;
 pub mod digest;
 pub mod display_version;
 pub mod explanation;
+pub(crate) mod fnv;
 pub mod focus;
 pub mod live;
 pub mod noise;

@@ -1,5 +1,6 @@
 //! コメントと suggestion（R-COMMENT）の検証と状態。
 
+use crate::domain::fnv::Fnv1a;
 use crate::domain::review::{LineRange, Place, Side};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,16 +87,12 @@ pub fn quote_for(lines: &[String], range: LineRange) -> Result<Vec<String>, Comm
 
 /// 正規化済みの行内容のハッシュ。outdated 判定に使う（D6 のハッシュ選択）。
 pub fn content_hash(lines: &[String]) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut hash = Fnv1a::new();
     for line in lines {
-        for byte in line.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        hash ^= u64::from(b'\n');
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        hash.write(line.as_bytes());
+        hash.write(b"\n");
     }
-    format!("{hash:016x}")
+    hash.finish_hex()
 }
 
 pub fn is_outdated(created_hash: &str, current_hash: &str) -> bool {

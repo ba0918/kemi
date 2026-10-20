@@ -6,6 +6,8 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use crate::domain::fnv::Fnv1a;
+
 /// 全リポジトリ合計で残す件数。
 const KEEP: usize = 20;
 
@@ -76,12 +78,9 @@ fn state_root(
 
 /// リポジトリ（git の外なら起動したディレクトリ）の識別。パスのバイト列の FNV-1a。
 pub fn workspace_key(path: &Path) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in path.as_os_str().as_encoded_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
+    let mut hash = Fnv1a::new();
+    hash.write(path.as_os_str().as_encoded_bytes());
+    hash.finish_hex()
 }
 
 fn file_name(millis: u128, key: &str, pid: u32, attempt: u32) -> String {
