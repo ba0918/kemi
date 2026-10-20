@@ -1,5 +1,28 @@
 use super::*;
 
+/// f5（docs/guide.md）の相対パス画像: img/shot.png はレビュー対象の f6 に一致し、
+/// img/other.png はレビュー対象に無い。
+fn guide_with_two_images() -> FakeSource {
+    let mut source = FakeSource::new();
+    source.contents.insert(
+        "f5".to_string(),
+        FileContent {
+            old: None,
+            new: Some(b"![a](img/shot.png)\n\n![b](img/other.png)\n".to_vec()),
+        },
+    );
+    source
+}
+
+fn image_sources(html: &str) -> Vec<String> {
+    html.match_indices("<img src=\"")
+        .map(|(at, prefix)| {
+            let rest = &html[at + prefix.len()..];
+            rest[..rest.find('"').unwrap()].to_string()
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn file_rows_collapse_and_expand() {
     let server = TestServer::start().await;

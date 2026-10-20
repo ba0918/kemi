@@ -7,16 +7,24 @@
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
+use kemi_core::domain::agent::{AgentEvent, Handed, HandedComment};
 use kemi_core::domain::content::AUTO_MAX_BYTES;
+use kemi_core::domain::focus::FocusTargets;
 use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status};
-use kemi_core::source::{FileContent, ReviewSource, SourceError};
+use kemi_core::session::{
+    SessionCopy, SessionError, SessionInfo, SessionMode, SessionState, SessionStore,
+};
+use kemi_core::source::git::{GitMode, GitSource, GroupBy, UNTRACKED_LIMIT};
+use kemi_core::source::manifest::ManifestSource;
+use kemi_core::source::{FileContent, FileOrigin, FocusSource, ReviewSource, SourceError};
 use kemi_server::{
-    Asset, Assets, Notice, NoticeSink, ResultSaveError, ResultSink, ServeOutcome, ServeParams,
-    serve, session_host, session_url,
+    AgentParams, Asset, Assets, Notice, NoticeSink, ResultSaveError, ResultSink, ServeOutcome,
+    ServeParams, SessionSink, bind_agent_listener, serve, session_host, session_url,
 };
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -455,22 +463,6 @@ impl TestServer {
     }
 }
 
-/// テスト中のサーバへ、Host と Origin を指定して state の POST を送る。
-fn state_post(server: &TestServer, host: &str, origin: &str, body: &str) -> u16 {
-    raw_post_with_host(
-        ("127.0.0.1", server.port),
-        host,
-        "/s/test-token/api/state",
-        origin,
-        body,
-    )
-}
-
-fn raw_post(address: (&str, u16), path: &str, origin: &str, body: &str) -> u16 {
-    let host = format!("{}:{}", address.0, address.1);
-    raw_post_with_host(address, &host, path, origin, body)
-}
-
 fn raw_post_with_host(
     address: (&str, u16),
     host: &str,
@@ -552,11 +544,6 @@ async fn until_reached<T: std::fmt::Debug>(
 
 // ---- R-LIVE（監視）の結合テスト ----
 
-use kemi_core::source::git::{GitMode, GitSource, GroupBy, UNTRACKED_LIMIT};
-use kemi_core::source::manifest::ManifestSource;
-use std::path::PathBuf;
-use std::time::Instant;
-
 struct TempRepo {
     path: PathBuf,
 }
@@ -636,111 +623,13 @@ impl TestServer {
     }
 }
 
-struct SseStream {
-    stream: tokio::net::TcpStream,
-    buffer: String,
-}
-
-impl SseStream {
-    async fn connect(port: u16) -> Self {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .unwrap();
-        let request = format!(
-            "GET /s/test-token/api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.unwrap();
-        let mut sse = SseStream {
-            stream,
-            buffer: String::new(),
-        };
-        let mut chunk = [0u8; 2048];
-        let read = tokio::time::timeout(WAIT_LIMIT, sse.stream.read(&mut chunk))
-            .await
-            .unwrap()
-            .unwrap();
-        sse.buffer
-            .push_str(&String::from_utf8_lossy(&chunk[..read]));
-        sse
-    }
-
-    async fn next_update(&mut self, timeout: Duration) -> bool {
-        use tokio::io::AsyncReadExt;
-
-        let deadline = Instant::now() + timeout;
-        loop {
-            if self.drain_updates() > 0 {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let mut chunk = [0u8; 2048];
-            match tokio::time::timeout(remaining, self.stream.read(&mut chunk)).await {
-                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => return false,
-                Ok(Ok(read)) => self
-                    .buffer
-                    .push_str(&String::from_utf8_lossy(&chunk[..read])),
-            }
-        }
-    }
-
-    async fn count_updates(&mut self, duration: Duration) -> usize {
-        use tokio::io::AsyncReadExt;
-
-        let deadline = Instant::now() + duration;
-        let mut count = self.drain_updates();
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return count;
-            }
-            let mut chunk = [0u8; 2048];
-            match tokio::time::timeout(remaining, self.stream.read(&mut chunk)).await {
-                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => return count,
-                Ok(Ok(read)) => {
-                    self.buffer
-                        .push_str(&String::from_utf8_lossy(&chunk[..read]));
-                    count += self.drain_updates();
-                }
-            }
-        }
-    }
-
-    fn drain_updates(&mut self) -> usize {
-        let needle = "event: update";
-        let mut count = 0;
-        while let Some(index) = self.buffer.find(needle) {
-            count += 1;
-            self.buffer.drain(..index + needle.len());
-        }
-        count
-    }
-}
-
 // ---- R-UNIT（2 つのグループ単位）と R-ORIGIN の取得 ----
-
-use kemi_core::domain::focus::FocusTargets;
-use kemi_core::source::{FileOrigin, FocusSource};
 
 impl TestServer {
     async fn get_json(&self, path: &str) -> Value {
         let response = self.get(path).await;
         assert_eq!(response.status(), 200, "GET {path}");
         response.json().await.unwrap()
-    }
-
-    /// もう片方の単位が `state` になるまで api/review を読み直す。
-    async fn wait_unit(&self, state: &str) -> Value {
-        eventually(
-            &format!("the other unit becoming {state}"),
-            async || self.get_json("api/review").await,
-            |review| review["units"][1]["state"] == state,
-        )
-        .await
     }
 }
 
@@ -768,15 +657,6 @@ fn range_source(repo: &TempRepo, from: &str, to: &str, group_by: GroupBy) -> Git
     )
 }
 
-fn files_of(review: &Value) -> Vec<Value> {
-    review["groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|group| group["files"].as_array().unwrap().clone())
-        .collect()
-}
-
 fn file_in<'a>(review: &'a Value, group: usize, path: &str) -> &'a Value {
     review["groups"][group]["files"]
         .as_array()
@@ -796,165 +676,6 @@ struct GatedSource {
 struct GenerationGate {
     entered: tokio::sync::Notify,
     release: Mutex<std::sync::mpsc::Receiver<()>>,
-}
-struct GenerationSource {
-    inner: Arc<dyn ReviewSource>,
-    gates: Arc<Vec<GenerationGate>>,
-    next: Arc<AtomicUsize>,
-    generation: Option<usize>,
-}
-impl ReviewSource for GenerationSource {
-    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
-        Ok(Some(Arc::new(Self {
-            inner: self.inner.fork()?.unwrap_or_else(|| self.inner.clone()),
-            gates: self.gates.clone(),
-            next: self.next.clone(),
-            generation: Some(self.next.fetch_add(1, Ordering::SeqCst)),
-        })))
-    }
-    fn review(&self) -> Result<ReviewMeta, SourceError> {
-        self.inner.review()
-    }
-    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
-        self.inner.content(id)
-    }
-    fn units(&self) -> Vec<GroupBy> {
-        self.inner.units()
-    }
-    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
-        if unit == GroupBy::Commit
-            && let Some(index) = self.generation
-            && let Some(gate) = self.gates.get(index)
-        {
-            gate.entered.notify_one();
-            let _ = gate.release.lock().unwrap().recv();
-        }
-        self.inner.review_unit(unit)
-    }
-}
-
-struct UnitFailureSource {
-    inner: Arc<dyn ReviewSource>,
-    fail: Arc<AtomicBool>,
-}
-impl ReviewSource for UnitFailureSource {
-    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
-        Ok(Some(Arc::new(Self {
-            inner: self.inner.fork()?.unwrap_or_else(|| self.inner.clone()),
-            fail: self.fail.clone(),
-        })))
-    }
-    fn review(&self) -> Result<ReviewMeta, SourceError> {
-        self.inner.review()
-    }
-    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
-        self.inner.content(id)
-    }
-    fn units(&self) -> Vec<GroupBy> {
-        self.inner.units()
-    }
-    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
-        if unit == GroupBy::Commit && self.fail.load(Ordering::SeqCst) {
-            Err(SourceError::Git("cannot compute opposite unit".into()))
-        } else {
-            self.inner.review_unit(unit)
-        }
-    }
-}
-
-async fn check_initial_copy_order(reverse: bool) {
-    let repo = TempRepo::new();
-    repo.write("a.txt", "base\n");
-    let base = repo.commit("base");
-    repo.write("a.txt", "D1\n");
-    repo.commit("D1");
-    let (release1, receiver1) = std::sync::mpsc::channel();
-    let (release2, receiver2) = std::sync::mpsc::channel();
-    let gates = Arc::new(vec![
-        GenerationGate {
-            entered: tokio::sync::Notify::new(),
-            release: Mutex::new(receiver1),
-        },
-        GenerationGate {
-            entered: tokio::sync::Notify::new(),
-            release: Mutex::new(receiver2),
-        },
-    ]);
-    let source = Arc::new(GenerationSource {
-        inner: Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
-        gates: gates.clone(),
-        next: Arc::new(AtomicUsize::new(0)),
-        generation: None,
-    });
-    let sink = Arc::new(RecordingSink::default());
-    let server = AgentServer::start_with_sink(source, sink.clone()).await;
-    let d1: Value = server.page.get("api/review").await.json().await.unwrap();
-    tokio::time::timeout(WAIT_LIMIT, gates[0].entered.notified())
-        .await
-        .unwrap();
-    repo.write("b.txt", "D2\n");
-    repo.commit("D2");
-    let d2: Value = tokio::time::timeout(WAIT_LIMIT, async {
-        server
-            .page
-            .get("api/review?refresh=1")
-            .await
-            .json()
-            .await
-            .unwrap()
-    })
-    .await
-    .unwrap();
-    assert_eq!(d2["diff_display_version"], "01TESTREVIEW:2");
-    tokio::time::timeout(WAIT_LIMIT, gates[1].entered.notified())
-        .await
-        .unwrap();
-    if reverse {
-        release2.send(()).unwrap();
-        eventually(
-            "the D2 opposite unit becoming readable",
-            async || server.page.get("api/review?unit=commit").await.status(),
-            |status| *status == 200,
-        )
-        .await;
-        assert!(sink.copies.lock().unwrap().is_empty());
-    }
-    release1.send(()).unwrap();
-    // D1 の写しは D2 のもう片方の単位を待たずに終わる。
-    eventually(
-        "the D1 copy finishing",
-        async || {
-            sink.states
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|s| s.display.clone())
-                .collect::<Vec<_>>()
-        },
-        |displays| displays.iter().any(|d| d.frozen.is_some()),
-    )
-    .await;
-    let copies = sink.copies.lock().unwrap();
-    let copy = copies.last().unwrap();
-    assert_eq!(copy.units.len(), 2);
-    assert_eq!(copy.units[0].review.groups[0].files.len(), 1);
-    assert_eq!(copy.units[1].review.groups.len(), 1);
-    drop(copies);
-    let saved = sink.last_state();
-    let display = saved.display.unwrap();
-    assert_eq!(
-        display.current,
-        d2["diff_display_version"].as_str().unwrap()
-    );
-    assert_eq!(
-        display.frozen.as_deref(),
-        d1["diff_display_version"].as_str()
-    );
-    assert_eq!(display.issued, 2);
-    if !reverse {
-        release2.send(()).unwrap();
-    }
-    server.page.task.abort();
 }
 
 impl ReviewSource for GatedSource {
@@ -1055,14 +776,6 @@ impl TestServer {
         .unwrap()
     }
 
-    async fn submit_document(self) -> Value {
-        let response = self
-            .post("api/submit", json!({"verdict": "approved"}))
-            .await;
-        assert_eq!(response.status(), 200);
-        self.finish().await
-    }
-
     async fn submit_comments(self) -> Vec<Value> {
         let response = self
             .post("api/submit", json!({"verdict": "approved"}))
@@ -1073,14 +786,6 @@ impl TestServer {
 }
 
 // ---- R-SESSION（セッションの保存と凍結、submit での削除） ----
-
-use std::sync::atomic::AtomicBool;
-use std::sync::{Condvar, Mutex};
-
-use kemi_core::session::{
-    SessionCopy, SessionError, SessionInfo, SessionMode, SessionState, SessionStore,
-};
-use kemi_server::SessionSink;
 
 /// 保存先の呼び出しを記録する sink。`fail` で保存の失敗を再現する。
 #[derive(Default)]
@@ -1322,103 +1027,7 @@ impl TestServer {
     }
 }
 
-/// 凍結した写しが保存されるまで待つ。
-async fn saved_copy(sink: &RecordingSink) -> SessionCopy {
-    eventually(
-        "the session copy being saved",
-        async || sink.copies.lock().unwrap().first().cloned(),
-        Option::is_some,
-    )
-    .await
-    .unwrap()
-}
-
-/// 2 つ目のグループ単位の作成が遅いソース。凍結は両方がそろうまで待つ。
-struct TwoUnitSource {
-    first: ReviewMeta,
-    second: ReviewMeta,
-    contents: HashMap<String, FileContent>,
-}
-
-impl ReviewSource for TwoUnitSource {
-    fn review(&self) -> Result<ReviewMeta, SourceError> {
-        Ok(self.first.clone())
-    }
-
-    fn units(&self) -> Vec<GroupBy> {
-        vec![GroupBy::File, GroupBy::Commit]
-    }
-
-    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
-        if unit == GroupBy::Commit {
-            std::thread::sleep(Duration::from_millis(200));
-            Ok(self.second.clone())
-        } else {
-            Ok(self.first.clone())
-        }
-    }
-
-    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
-        self.contents
-            .get(file_id)
-            .cloned()
-            .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))
-    }
-}
-
-/// 書けない結果ファイルを装う。
-struct FailingResults;
-
-impl ResultSink for FailingResults {
-    fn save(&self, _text: &str) -> Result<std::path::PathBuf, ResultSaveError> {
-        Err(ResultSaveError::Unlocated("no home directory".to_string()))
-    }
-
-    fn location(&self) -> Option<String> {
-        None
-    }
-}
-
-fn incompressible(size: usize) -> Vec<u8> {
-    let mut state = 0x9e37_79b9_7f4a_7c15u64;
-    (0..size)
-        .map(|_| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            (state & 0xff) as u8
-        })
-        .collect()
-}
-
-// ---- R-RENDER（Markdown の相対パス画像） ----
-
-/// f5（docs/guide.md）の相対パス画像: img/shot.png はレビュー対象の f6 に一致し、
-/// img/other.png はレビュー対象に無い。
-fn guide_with_two_images() -> FakeSource {
-    let mut source = FakeSource::new();
-    source.contents.insert(
-        "f5".to_string(),
-        FileContent {
-            old: None,
-            new: Some(b"![a](img/shot.png)\n\n![b](img/other.png)\n".to_vec()),
-        },
-    );
-    source
-}
-
-fn image_sources(html: &str) -> Vec<String> {
-    html.match_indices("<img src=\"")
-        .map(|(at, prefix)| {
-            let rest = &html[at + prefix.len()..];
-            rest[..rest.find('"').unwrap()].to_string()
-        })
-        .collect()
-}
-
 // ---- R-AGENT-HAND（ページ側の API: 渡す・返信・解決・発言と、その通知） ----
-
-use kemi_core::domain::agent::{AgentEvent, Handed, HandedComment};
 
 impl TestServer {
     async fn with_recording_session() -> (Self, Arc<RecordingSink>) {
@@ -1446,34 +1055,6 @@ impl TestServer {
     }
 }
 
-/// 保存された状態にたまっている、まだ受け取られていない「渡した」の 1 回分ずつ。
-fn saved_handed(sink: &RecordingSink) -> Vec<Handed> {
-    sink.last_state()
-        .channel
-        .events
-        .into_iter()
-        .map(|event| match event {
-            AgentEvent::Handed(handed) => handed,
-        })
-        .collect()
-}
-
-fn changes(handed: &Handed) -> Vec<(&'static str, String, Option<String>)> {
-    handed
-        .comments
-        .iter()
-        .map(|change| match change {
-            HandedComment::Added(comment) => {
-                ("added", comment.id.clone(), Some(comment.body.clone()))
-            }
-            HandedComment::Edited(comment) => {
-                ("edited", comment.id.clone(), Some(comment.body.clone()))
-            }
-            HandedComment::Deleted(id) => ("deleted", id.clone(), None),
-        })
-        .collect()
-}
-
 /// SSE を開き、`event: <name>` の行の後の data を 1 つ読む。
 async fn next_sse_event(response: &mut reqwest::Response, name: &str) -> Value {
     let needle = format!("event: {name}\ndata: ");
@@ -1496,8 +1077,6 @@ async fn next_sse_event(response: &mut reqwest::Response, name: &str) -> Value {
 }
 
 // ---- R-AGENT-CLI / R-AGENT-WRITE / R-AGENT-STATE / R-AGENT-LINK（エージェント用の API） ----
-
-use kemi_server::{AgentParams, bind_agent_listener};
 
 /// エージェント用のリスナーも立てたサーバ。
 struct AgentServer {
@@ -1642,62 +1221,6 @@ fn handed_events(answer: &Value) -> Vec<&Value> {
         .collect()
 }
 
-/// 起動時は読めるが、取り直しの読み取りで失敗する入力。
-struct FailingRefreshSource {
-    inner: FakeSource,
-    fail: AtomicBool,
-}
-
-impl ReviewSource for FailingRefreshSource {
-    fn review(&self) -> Result<ReviewMeta, SourceError> {
-        if self.fail.load(Ordering::SeqCst) {
-            return Err(SourceError::Git("disk went away".to_string()));
-        }
-        self.inner.review()
-    }
-
-    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
-        if self.fail.load(Ordering::SeqCst) {
-            return Err(SourceError::Git("disk went away".into()));
-        }
-        self.inner.content(file_id)
-    }
-}
-
-fn agent_reply(comment_id: &str, body: &str) -> Value {
-    json!({ "type": "reply", "comment_id": comment_id, "body": body })
-}
-
-/// 書き込みが 1 件も残っていないこと。
-async fn assert_nothing_written(server: &AgentServer) {
-    let review: Value = server.page.get("api/review").await.json().await.unwrap();
-    assert_eq!(review["comments"][0]["replies"], json!([]));
-    assert_eq!(review["messages"], json!([]));
-}
-
-async fn assert_nothing_written_without_comments(server: &AgentServer) {
-    let review: Value = server.page.get("api/review").await.json().await.unwrap();
-    assert_eq!(review["messages"], json!([]));
-}
-
-impl AgentServer {
-    /// 渡した 1 回分の行（スレッドか、発言だけなら null, 状態）。
-    async fn hand_lines(&self) -> Vec<(Value, String)> {
-        let review: Value = self.page.get("api/review").await.json().await.unwrap();
-        review["agent"]["lines"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|line| {
-                (
-                    line["thread"].clone(),
-                    line["state"].as_str().unwrap().to_string(),
-                )
-            })
-            .collect()
-    }
-}
-
 /// エージェント用の API に要求の頭だけを送り、本文はまだ送らない接続。
 async fn agent_request_head(
     server: &AgentServer,
@@ -1778,154 +1301,6 @@ async fn response_status(stream: &mut tokio::net::TcpStream) -> u16 {
         .unwrap();
     let text = String::from_utf8_lossy(&response);
     text.split(' ').nth(1).unwrap().parse().unwrap()
-}
-
-fn explanation_sections() -> Value {
-    json!([{"id":"overview","title":"Overview","blocks":[{"id":"intent","part":{"type":"text","body":"**Intent**"},"references":[]}]}])
-}
-
-async fn file_body_boundary(op: &str) {
-    let server = AgentServer::start().await;
-    let comment = server.page.add_comment_with_body(11, "question").await;
-    let review: Value = server.page.get("api/review").await.json().await.unwrap();
-    let request = |body: &str| match op {
-        "add" => {
-            json!({"op":"add","file_id":review["groups"][0]["files"][0]["id"],"side":"new","body":body})
-        }
-        "message" => json!({"body":body}),
-        _ => json!({"op":op,"id":comment["id"],"body":body}),
-    };
-    let endpoint = if op == "message" {
-        "api/message"
-    } else {
-        "api/comment"
-    };
-    let boundary = "あ".repeat(21_845) + "x";
-    assert_eq!(
-        server
-            .page
-            .post(endpoint, request(&boundary))
-            .await
-            .status(),
-        200
-    );
-    let before: Value = server.page.get("api/review").await.json().await.unwrap();
-    let saved = server.sink.last_state();
-    let rejected = server.page.post(endpoint, request(&(boundary + "x"))).await;
-    assert_eq!(rejected.status(), 413);
-    assert!(rejected.text().await.unwrap().contains("body"));
-    let after: Value = server.page.get("api/review").await.json().await.unwrap();
-    assert_eq!(before["comments"], after["comments"]);
-    assert_eq!(before["messages"], after["messages"]);
-    assert_eq!(before["agent"], after["agent"]);
-    assert_eq!(server.sink.last_state(), saved);
-    assert_eq!(
-        server.page.post(endpoint, request("next")).await.status(),
-        200
-    );
-    let next = server.sink.last_state();
-    assert_eq!(next.last_seq, saved.last_seq + u32::from(op != "edit"));
-    assert_eq!(
-        next.last_comment,
-        saved.last_comment + u32::from(op == "add")
-    );
-    assert_eq!(next.last_reply, saved.last_reply + u32::from(op == "reply"));
-    assert_eq!(
-        next.last_message,
-        saved.last_message + u32::from(op == "message")
-    );
-}
-
-async fn explanation_body_boundary(op: &str) {
-    let server = AgentServer::start().await;
-    let context: Value = server
-        .agent_post("context", json!({}))
-        .await
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(server.agent_post("explain", json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(), 200);
-    let comment: Value = server.page.post("api/comment", json!({"op":"add_explanation","explanation_revision":1,"block_id":"intent","body":"question"})).await.json().await.unwrap();
-    let boundary = "あ".repeat(21_845) + "x";
-    assert_eq!(boundary.len(), 65_536);
-    assert_eq!(
-        server
-            .page
-            .post(
-                "api/comment",
-                json!({"op":op,"id":comment["id"],"body":boundary})
-            )
-            .await
-            .status(),
-        200
-    );
-    let before: Value = server.page.get("api/review").await.json().await.unwrap();
-    let saved = server.sink.last_state();
-    let rejected = server
-        .page
-        .post(
-            "api/comment",
-            json!({"op":op,"id":comment["id"],"body":boundary.clone()+"x"}),
-        )
-        .await;
-    assert_eq!(rejected.status(), 413);
-    let reason: Value = rejected.json().await.unwrap();
-    assert!(reason.to_string().contains("body"));
-    let after: Value = server.page.get("api/review").await.json().await.unwrap();
-    assert_eq!(before["comments"], after["comments"]);
-    let after_saved = server.sink.last_state();
-    assert_eq!(saved.comments, after_saved.comments);
-    assert_eq!(saved.channel, after_saved.channel);
-    assert_eq!(saved.last_comment, after_saved.last_comment);
-    assert_eq!(saved.last_reply, after_saved.last_reply);
-    assert_eq!(saved.last_seq, after_saved.last_seq);
-    let _next: Value = server
-        .page
-        .post(
-            "api/comment",
-            json!({"op":"reply","id":comment["id"],"body":"next reply"}),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let next_saved = server.sink.last_state();
-    assert_eq!(next_saved.last_seq, saved.last_seq + 1);
-    assert_eq!(
-        next_saved.channel.unhanded.comments,
-        saved.channel.unhanded.comments
-    );
-    assert_eq!(
-        next_saved.channel.unhanded.replies.len(),
-        saved.channel.unhanded.replies.len() + 1
-    );
-    assert_eq!(next_saved.channel.events, saved.channel.events);
-}
-
-/// text・code・図のブロックを一つずつ持つ説明を入れたサーバ。
-async fn server_with_selectable_explanation() -> AgentServer {
-    let server = AgentServer::start().await;
-    let context: Value = server
-        .agent_post("context", json!({}))
-        .await
-        .json()
-        .await
-        .unwrap();
-    let sections = json!([{"id":"overview","title":"Overview","blocks":[
-        {"id":"intent","part":{"type":"text","body":"Read the intent, then the intent again."},"references":[]},
-        {"id":"snippet","part":{"type":"code","body":"let a = 1;","language":"rust","role":"example"},"references":[]},
-        {"id":"grid","part":{"type":"diagram","source":"a = A\n| a |","title":"Grid","role":"example"},"references":[]}
-    ]}]);
-    assert_eq!(server.agent_post("explain", json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":sections})).await.status(), 200);
-    server
-}
-
-fn explanation_comment_request(block_id: &str, selection: Option<Value>) -> Value {
-    let mut request = json!({"op":"add_explanation","explanation_revision":1,"block_id":block_id,"body":"question"});
-    if let Some(selection) = selection {
-        request["selection"] = selection;
-    }
-    request
 }
 
 /// 内容の取得（`content`）を、`blocked` の間は合図があるまで止める。

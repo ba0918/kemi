@@ -1,5 +1,21 @@
 use super::*;
 
+/// テスト中のサーバへ、Host と Origin を指定して state の POST を送る。
+fn state_post(server: &TestServer, host: &str, origin: &str, body: &str) -> u16 {
+    raw_post_with_host(
+        ("127.0.0.1", server.port),
+        host,
+        "/s/test-token/api/state",
+        origin,
+        body,
+    )
+}
+
+async fn assert_nothing_written_without_comments(server: &AgentServer) {
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["messages"], json!([]));
+}
+
 #[test]
 fn session_host_uses_the_share_address_only_for_a_wildcard_bind() {
     let concrete = Ipv4Addr::new(192, 168, 1, 5);

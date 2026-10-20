@@ -1,5 +1,188 @@
 use super::*;
 
+struct GenerationSource {
+    inner: Arc<dyn ReviewSource>,
+    gates: Arc<Vec<GenerationGate>>,
+    next: Arc<AtomicUsize>,
+    generation: Option<usize>,
+}
+
+impl ReviewSource for GenerationSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(Self {
+            inner: self.inner.fork()?.unwrap_or_else(|| self.inner.clone()),
+            gates: self.gates.clone(),
+            next: self.next.clone(),
+            generation: Some(self.next.fetch_add(1, Ordering::SeqCst)),
+        })))
+    }
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(id)
+    }
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == GroupBy::Commit
+            && let Some(index) = self.generation
+            && let Some(gate) = self.gates.get(index)
+        {
+            gate.entered.notify_one();
+            let _ = gate.release.lock().unwrap().recv();
+        }
+        self.inner.review_unit(unit)
+    }
+}
+
+struct UnitFailureSource {
+    inner: Arc<dyn ReviewSource>,
+    fail: Arc<AtomicBool>,
+}
+
+impl ReviewSource for UnitFailureSource {
+    fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
+        Ok(Some(Arc::new(Self {
+            inner: self.inner.fork()?.unwrap_or_else(|| self.inner.clone()),
+            fail: self.fail.clone(),
+        })))
+    }
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        self.inner.review()
+    }
+    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
+        self.inner.content(id)
+    }
+    fn units(&self) -> Vec<GroupBy> {
+        self.inner.units()
+    }
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == GroupBy::Commit && self.fail.load(Ordering::SeqCst) {
+            Err(SourceError::Git("cannot compute opposite unit".into()))
+        } else {
+            self.inner.review_unit(unit)
+        }
+    }
+}
+
+async fn check_initial_copy_order(reverse: bool) {
+    let repo = TempRepo::new();
+    repo.write("a.txt", "base\n");
+    let base = repo.commit("base");
+    repo.write("a.txt", "D1\n");
+    repo.commit("D1");
+    let (release1, receiver1) = std::sync::mpsc::channel();
+    let (release2, receiver2) = std::sync::mpsc::channel();
+    let gates = Arc::new(vec![
+        GenerationGate {
+            entered: tokio::sync::Notify::new(),
+            release: Mutex::new(receiver1),
+        },
+        GenerationGate {
+            entered: tokio::sync::Notify::new(),
+            release: Mutex::new(receiver2),
+        },
+    ]);
+    let source = Arc::new(GenerationSource {
+        inner: Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        gates: gates.clone(),
+        next: Arc::new(AtomicUsize::new(0)),
+        generation: None,
+    });
+    let sink = Arc::new(RecordingSink::default());
+    let server = AgentServer::start_with_sink(source, sink.clone()).await;
+    let d1: Value = server.page.get("api/review").await.json().await.unwrap();
+    tokio::time::timeout(WAIT_LIMIT, gates[0].entered.notified())
+        .await
+        .unwrap();
+    repo.write("b.txt", "D2\n");
+    repo.commit("D2");
+    let d2: Value = tokio::time::timeout(WAIT_LIMIT, async {
+        server
+            .page
+            .get("api/review?refresh=1")
+            .await
+            .json()
+            .await
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(d2["diff_display_version"], "01TESTREVIEW:2");
+    tokio::time::timeout(WAIT_LIMIT, gates[1].entered.notified())
+        .await
+        .unwrap();
+    if reverse {
+        release2.send(()).unwrap();
+        eventually(
+            "the D2 opposite unit becoming readable",
+            async || server.page.get("api/review?unit=commit").await.status(),
+            |status| *status == 200,
+        )
+        .await;
+        assert!(sink.copies.lock().unwrap().is_empty());
+    }
+    release1.send(()).unwrap();
+    // D1 の写しは D2 のもう片方の単位を待たずに終わる。
+    eventually(
+        "the D1 copy finishing",
+        async || {
+            sink.states
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|s| s.display.clone())
+                .collect::<Vec<_>>()
+        },
+        |displays| displays.iter().any(|d| d.frozen.is_some()),
+    )
+    .await;
+    let copies = sink.copies.lock().unwrap();
+    let copy = copies.last().unwrap();
+    assert_eq!(copy.units.len(), 2);
+    assert_eq!(copy.units[0].review.groups[0].files.len(), 1);
+    assert_eq!(copy.units[1].review.groups.len(), 1);
+    drop(copies);
+    let saved = sink.last_state();
+    let display = saved.display.unwrap();
+    assert_eq!(
+        display.current,
+        d2["diff_display_version"].as_str().unwrap()
+    );
+    assert_eq!(
+        display.frozen.as_deref(),
+        d1["diff_display_version"].as_str()
+    );
+    assert_eq!(display.issued, 2);
+    if !reverse {
+        release2.send(()).unwrap();
+    }
+    server.page.task.abort();
+}
+
+fn files_of(review: &Value) -> Vec<Value> {
+    review["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["files"].as_array().unwrap().clone())
+        .collect()
+}
+
+impl TestServer {
+    /// もう片方の単位が `state` になるまで api/review を読み直す。
+    async fn wait_unit(&self, state: &str) -> Value {
+        eventually(
+            &format!("the other unit becoming {state}"),
+            async || self.get_json("api/review").await,
+            |review| review["units"][1]["state"] == state,
+        )
+        .await
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn initial_copy_stays_at_d1_while_d2_is_published_and_its_opposite_unit_is_pending() {
     check_initial_copy_order(false).await;

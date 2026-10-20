@@ -1,5 +1,90 @@
 use super::*;
 
+struct SseStream {
+    stream: tokio::net::TcpStream,
+    buffer: String,
+}
+
+impl SseStream {
+    async fn connect(port: u16) -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let request = format!(
+            "GET /s/test-token/api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut sse = SseStream {
+            stream,
+            buffer: String::new(),
+        };
+        let mut chunk = [0u8; 2048];
+        let read = tokio::time::timeout(WAIT_LIMIT, sse.stream.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        sse.buffer
+            .push_str(&String::from_utf8_lossy(&chunk[..read]));
+        sse
+    }
+
+    async fn next_update(&mut self, timeout: Duration) -> bool {
+        use tokio::io::AsyncReadExt;
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.drain_updates() > 0 {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let mut chunk = [0u8; 2048];
+            match tokio::time::timeout(remaining, self.stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => return false,
+                Ok(Ok(read)) => self
+                    .buffer
+                    .push_str(&String::from_utf8_lossy(&chunk[..read])),
+            }
+        }
+    }
+
+    async fn count_updates(&mut self, duration: Duration) -> usize {
+        use tokio::io::AsyncReadExt;
+
+        let deadline = Instant::now() + duration;
+        let mut count = self.drain_updates();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return count;
+            }
+            let mut chunk = [0u8; 2048];
+            match tokio::time::timeout(remaining, self.stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => return count,
+                Ok(Ok(read)) => {
+                    self.buffer
+                        .push_str(&String::from_utf8_lossy(&chunk[..read]));
+                    count += self.drain_updates();
+                }
+            }
+        }
+    }
+
+    fn drain_updates(&mut self) -> usize {
+        let needle = "event: update";
+        let mut count = 0;
+        while let Some(index) = self.buffer.find(needle) {
+            count += 1;
+            self.buffer.drain(..index + needle.len());
+        }
+        count
+    }
+}
+
 #[tokio::test]
 async fn live_worktree_change_sends_update() {
     let repo = TempRepo::new();

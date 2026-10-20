@@ -1,5 +1,84 @@
 use super::*;
 
+/// 保存された状態にたまっている、まだ受け取られていない「渡した」の 1 回分ずつ。
+fn saved_handed(sink: &RecordingSink) -> Vec<Handed> {
+    sink.last_state()
+        .channel
+        .events
+        .into_iter()
+        .map(|event| match event {
+            AgentEvent::Handed(handed) => handed,
+        })
+        .collect()
+}
+
+fn changes(handed: &Handed) -> Vec<(&'static str, String, Option<String>)> {
+    handed
+        .comments
+        .iter()
+        .map(|change| match change {
+            HandedComment::Added(comment) => {
+                ("added", comment.id.clone(), Some(comment.body.clone()))
+            }
+            HandedComment::Edited(comment) => {
+                ("edited", comment.id.clone(), Some(comment.body.clone()))
+            }
+            HandedComment::Deleted(id) => ("deleted", id.clone(), None),
+        })
+        .collect()
+}
+
+fn agent_reply(comment_id: &str, body: &str) -> Value {
+    json!({ "type": "reply", "comment_id": comment_id, "body": body })
+}
+
+/// 書き込みが 1 件も残っていないこと。
+async fn assert_nothing_written(server: &AgentServer) {
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(review["comments"][0]["replies"], json!([]));
+    assert_eq!(review["messages"], json!([]));
+}
+
+/// 起動時は読めるが、取り直しの読み取りで失敗する入力。
+struct FailingRefreshSource {
+    inner: FakeSource,
+    fail: AtomicBool,
+}
+
+impl ReviewSource for FailingRefreshSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(SourceError::Git("disk went away".to_string()));
+        }
+        self.inner.review()
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(SourceError::Git("disk went away".into()));
+        }
+        self.inner.content(file_id)
+    }
+}
+
+impl AgentServer {
+    /// 渡した 1 回分の行（スレッドか、発言だけなら null, 状態）。
+    async fn hand_lines(&self) -> Vec<(Value, String)> {
+        let review: Value = self.page.get("api/review").await.json().await.unwrap();
+        review["agent"]["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| {
+                (
+                    line["thread"].clone(),
+                    line["state"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+}
+
 #[tokio::test]
 async fn two_clients_share_comments_and_seen_without_an_author_field() {
     let server = TestServer::start().await;
@@ -1076,6 +1155,58 @@ async fn events_answered_to_a_wait_that_never_finished_are_returned_by_the_next_
 
     assert_eq!(status, 200);
     assert_eq!(handed_events(&answer).len(), 1, "{answer}");
+}
+
+async fn file_body_boundary(op: &str) {
+    let server = AgentServer::start().await;
+    let comment = server.page.add_comment_with_body(11, "question").await;
+    let review: Value = server.page.get("api/review").await.json().await.unwrap();
+    let request = |body: &str| match op {
+        "add" => {
+            json!({"op":"add","file_id":review["groups"][0]["files"][0]["id"],"side":"new","body":body})
+        }
+        "message" => json!({"body":body}),
+        _ => json!({"op":op,"id":comment["id"],"body":body}),
+    };
+    let endpoint = if op == "message" {
+        "api/message"
+    } else {
+        "api/comment"
+    };
+    let boundary = "あ".repeat(21_845) + "x";
+    assert_eq!(
+        server
+            .page
+            .post(endpoint, request(&boundary))
+            .await
+            .status(),
+        200
+    );
+    let before: Value = server.page.get("api/review").await.json().await.unwrap();
+    let saved = server.sink.last_state();
+    let rejected = server.page.post(endpoint, request(&(boundary + "x"))).await;
+    assert_eq!(rejected.status(), 413);
+    assert!(rejected.text().await.unwrap().contains("body"));
+    let after: Value = server.page.get("api/review").await.json().await.unwrap();
+    assert_eq!(before["comments"], after["comments"]);
+    assert_eq!(before["messages"], after["messages"]);
+    assert_eq!(before["agent"], after["agent"]);
+    assert_eq!(server.sink.last_state(), saved);
+    assert_eq!(
+        server.page.post(endpoint, request("next")).await.status(),
+        200
+    );
+    let next = server.sink.last_state();
+    assert_eq!(next.last_seq, saved.last_seq + u32::from(op != "edit"));
+    assert_eq!(
+        next.last_comment,
+        saved.last_comment + u32::from(op == "add")
+    );
+    assert_eq!(next.last_reply, saved.last_reply + u32::from(op == "reply"));
+    assert_eq!(
+        next.last_message,
+        saved.last_message + u32::from(op == "message")
+    );
 }
 
 #[tokio::test]

@@ -1,5 +1,20 @@
 use super::*;
 
+fn raw_post(address: (&str, u16), path: &str, origin: &str, body: &str) -> u16 {
+    let host = format!("{}:{}", address.0, address.1);
+    raw_post_with_host(address, &host, path, origin, body)
+}
+
+impl TestServer {
+    async fn submit_document(self) -> Value {
+        let response = self
+            .post("api/submit", json!({"verdict": "approved"}))
+            .await;
+        assert_eq!(response.status(), 200);
+        self.finish().await
+    }
+}
+
 #[tokio::test]
 async fn submit_schema_follows_contract() {
     let server = TestServer::start().await;

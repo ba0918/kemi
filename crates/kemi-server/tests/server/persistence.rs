@@ -1,5 +1,74 @@
 use super::*;
 
+/// 凍結した写しが保存されるまで待つ。
+async fn saved_copy(sink: &RecordingSink) -> SessionCopy {
+    eventually(
+        "the session copy being saved",
+        async || sink.copies.lock().unwrap().first().cloned(),
+        Option::is_some,
+    )
+    .await
+    .unwrap()
+}
+
+/// 2 つ目のグループ単位の作成が遅いソース。凍結は両方がそろうまで待つ。
+struct TwoUnitSource {
+    first: ReviewMeta,
+    second: ReviewMeta,
+    contents: HashMap<String, FileContent>,
+}
+
+impl ReviewSource for TwoUnitSource {
+    fn review(&self) -> Result<ReviewMeta, SourceError> {
+        Ok(self.first.clone())
+    }
+
+    fn units(&self) -> Vec<GroupBy> {
+        vec![GroupBy::File, GroupBy::Commit]
+    }
+
+    fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
+        if unit == GroupBy::Commit {
+            std::thread::sleep(Duration::from_millis(200));
+            Ok(self.second.clone())
+        } else {
+            Ok(self.first.clone())
+        }
+    }
+
+    fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
+        self.contents
+            .get(file_id)
+            .cloned()
+            .ok_or_else(|| SourceError::UnknownFileId(file_id.to_string()))
+    }
+}
+
+/// 書けない結果ファイルを装う。
+struct FailingResults;
+
+impl ResultSink for FailingResults {
+    fn save(&self, _text: &str) -> Result<std::path::PathBuf, ResultSaveError> {
+        Err(ResultSaveError::Unlocated("no home directory".to_string()))
+    }
+
+    fn location(&self) -> Option<String> {
+        None
+    }
+}
+
+fn incompressible(size: usize) -> Vec<u8> {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    (0..size)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state & 0xff) as u8
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn session_state_is_saved_on_every_change() {
     let sink = Arc::new(RecordingSink::default());
