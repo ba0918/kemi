@@ -24,7 +24,40 @@ pub struct DisplayVersions {
     pub frozen: Option<String>,
     pub issued: u128,
 }
+
+/// レビューの始まり方。起動時の表示版の決め方が変わる。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// 新しいレビュー。
+    Fresh,
+    /// 保留したレビューの復元。`rereads` は、写しでなく今の内容を読み直したか（コードを
+    /// 読めた `--live`）。
+    Resumed { rereads: bool },
+}
+
 impl DisplayVersions {
+    /// 起動時の表示版。保存した版が無ければ最初の版から始める。復元で今の内容を読み直した
+    /// なら次の世代を発行し、写しから開くなら凍結した版を今の版に戻す。
+    pub fn at_start(
+        saved: Option<Self>,
+        review_id: &str,
+        start: Start,
+    ) -> Result<Self, DisplayVersionError> {
+        // id が表示版の形にならないレビューは、保存した版があっても始めない。
+        let initial = Self::initial(review_id)?;
+        let mut display = saved.unwrap_or(initial);
+        match start {
+            Start::Fresh => {}
+            Start::Resumed { rereads: true } => display = display.next(review_id)?,
+            Start::Resumed { rereads: false } => {
+                if let Some(frozen) = &display.frozen {
+                    display.current = frozen.clone();
+                }
+            }
+        }
+        Ok(display)
+    }
+
     pub fn initial(review_id: &str) -> Result<Self, DisplayVersionError> {
         Ok(Self {
             current: next_token(review_id, 0)?,
@@ -90,6 +123,8 @@ pub fn next_token(review_id: &str, issued: u128) -> Result<String, DisplayVersio
 
 #[cfg(test)]
 mod tests {
+    use super::{DisplayVersions, Start};
+
     #[test]
     fn known_old_and_current_generations_do_not_require_a_token_index() {
         assert_eq!(
@@ -120,6 +155,67 @@ mod tests {
                 "{token}"
             );
         }
+    }
+
+    fn saved(current: &str, frozen: Option<&str>, issued: u128) -> DisplayVersions {
+        DisplayVersions {
+            current: current.to_string(),
+            frozen: frozen.map(str::to_string),
+            issued,
+        }
+    }
+
+    #[test]
+    fn a_new_review_starts_at_the_first_generation() {
+        assert_eq!(
+            DisplayVersions::at_start(None, "review", Start::Fresh).unwrap(),
+            saved("review:1", None, 1)
+        );
+    }
+
+    #[test]
+    fn a_review_resumed_from_its_copy_shows_the_frozen_generation() {
+        let display = saved("review:3", Some("review:2"), 3);
+
+        assert_eq!(
+            DisplayVersions::at_start(Some(display), "review", Start::Resumed { rereads: false })
+                .unwrap(),
+            saved("review:2", Some("review:2"), 3)
+        );
+    }
+
+    #[test]
+    fn a_resumed_review_without_a_frozen_generation_keeps_its_current_one() {
+        let display = saved("review:3", None, 3);
+
+        assert_eq!(
+            DisplayVersions::at_start(
+                Some(display.clone()),
+                "review",
+                Start::Resumed { rereads: false }
+            )
+            .unwrap(),
+            display
+        );
+        assert_eq!(
+            DisplayVersions::at_start(None, "review", Start::Resumed { rereads: false }).unwrap(),
+            saved("review:1", None, 1)
+        );
+    }
+
+    #[test]
+    fn a_resumed_review_that_rereads_its_contents_issues_the_next_generation() {
+        let display = saved("review:3", Some("review:2"), 3);
+
+        assert_eq!(
+            DisplayVersions::at_start(Some(display), "review", Start::Resumed { rereads: true })
+                .unwrap(),
+            saved("review:4", Some("review:2"), 4)
+        );
+        assert_eq!(
+            DisplayVersions::at_start(None, "review", Start::Resumed { rereads: true }).unwrap(),
+            saved("review:2", None, 2)
+        );
     }
 
     #[test]

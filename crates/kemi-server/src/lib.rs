@@ -19,6 +19,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, RwLock};
 
 use kemi_core::domain::agent::AgentLink;
+use kemi_core::domain::display_version::{DisplayVersions, Start, known_generation};
 use kemi_core::domain::review::Side;
 use kemi_core::session::SessionError;
 use kemi_core::source::ReviewSource;
@@ -609,18 +610,16 @@ fn initial_session_state(
                 .and_then(|display| display.current.split_once(':').map(|(id, _)| id.to_owned()))
         })
         .unwrap_or_else(kemi_core::session::new_ulid);
-    let mut display = initial_state.display.clone().unwrap_or(
-        kemi_core::domain::display_version::DisplayVersions::initial(&display_id)
-            .map_err(|e| ServerError::Stopped(e.to_string()))?,
-    );
-    if resumed && params.live.is_some() && code_error.is_none() {
-        display = display
-            .next(&display_id)
-            .map_err(|e| ServerError::Stopped(e.to_string()))?;
-    } else if resumed && let Some(frozen) = &display.frozen {
-        display.current = frozen.clone();
-    }
-    initial_state.display = Some(display);
+    let start = if resumed {
+        Start::Resumed {
+            rereads: params.live.is_some() && code_error.is_none(),
+        }
+    } else {
+        Start::Fresh
+    };
+    let display = DisplayVersions::at_start(initial_state.display.take(), &display_id, start)
+        .map_err(|e| ServerError::Stopped(e.to_string()))?;
+    initial_state.display = Some(display.clone());
     if let Some(document) = params
         .session
         .as_ref()
@@ -631,10 +630,6 @@ fn initial_session_state(
                 "initial explanation requires an agent endpoint".into(),
             ));
         }
-        let display = initial_state
-            .display
-            .as_ref()
-            .expect("initial display assigned");
         let pages: Vec<_> = params
             .live
             .as_ref()
@@ -644,7 +639,7 @@ fn initial_session_state(
             initial_source.as_ref(),
             &review,
             &units,
-            display,
+            &display,
             &display_id,
             &pages,
         )?);
@@ -656,20 +651,8 @@ fn initial_session_state(
             .save_explanation_state(initial_state.clone())
             .map_err(ServerError::Session)?;
     }
-    let generation = kemi_core::domain::display_version::known_generation(
-        &initial_state
-            .display
-            .as_ref()
-            .expect("initial display assigned")
-            .current,
-        &display_id,
-        initial_state
-            .display
-            .as_ref()
-            .expect("initial display assigned")
-            .issued,
-    )
-    .map_err(|e| ServerError::Stopped(e.to_string()))?;
+    let generation = known_generation(&display.current, &display_id, display.issued)
+        .map_err(|e| ServerError::Stopped(e.to_string()))?;
     let mut review_state = units::ReviewState::new(&units, review);
     review_state.code_error = code_error;
     if let Some(other) = &mut review_state.other {
@@ -685,12 +668,7 @@ fn initial_session_state(
             startup: review_state.startup.clone(),
             other: review_state.other.clone(),
             generation,
-            token: initial_state
-                .display
-                .as_ref()
-                .expect("initial display assigned")
-                .current
-                .clone(),
+            token: display.current,
         });
     Ok(InitialSessionState {
         initial_source,
