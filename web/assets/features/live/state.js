@@ -190,6 +190,7 @@ export function currentReference() {
  * @typedef {{
  *   render: () => void,
  *   renderBand: () => void,
+ *   renderReference: () => void,
  *   setSide: (side: "live" | "ref") => void,
  * }} LiveActions
  */
