@@ -61,6 +61,7 @@ import { renderConversation } from "../views/conversation.js";
 import { renderHeader } from "../views/header.js";
 import { refreshCommentBadges } from "../views/tree.js";
 import { currentReference, live, pageComments, setShell, shell } from "./live/state.js";
+import { ask, deliverAnswer } from "./live/channel.js";
 
 /**
  * @typedef {import("./live/state.js").LiveInfo} LiveInfo
@@ -92,33 +93,6 @@ let drawing = null;
 
 /** @type {import("../views/live.js").LiveTopbar | null} */
 let topbar = null;
-
-/** 写しか記述を頼んで返事を待っているもの。 */
-/** @type {Map<number, (message: any) => void>} */
-const pendingCaptures = new Map();
-let nextCapture = 1;
-
-/**
- * 中継したページに頼みごとをして、返事を待つ。時間内に返らなければ error を持つ返事にする。
- * @param {Window} frame
- * @param {"capture" | "describe" | "place" | "image" | "saved-at" | "glow-element" | "glow-places"} type
- * @param {number} timeout
- * @param {Record<string, unknown>} [details] 頼みごとの中身
- * @returns {Promise<any>}
- */
-async function ask(frame, type, timeout, details = {}) {
-  const id = nextCapture++;
-  const answer = await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve({ error: "the page did not answer" }), timeout);
-    pendingCaptures.set(id, (message) => {
-      clearTimeout(timer);
-      resolve(message);
-    });
-    frame.postMessage({ kemi: "live", ...details, type, id }, live.origin);
-  });
-  pendingCaptures.delete(id);
-  return answer;
-}
 
 /**
  * ページの見方を始める。
@@ -498,8 +472,7 @@ function receive(event) {
   if (!message || message.kemi !== "live") {
     return;
   }
-  if (["captured", "described", "placed", "imaged", "saved-found", "glowed"].includes(message.type)) {
-    pendingCaptures.get(Number(message.id))?.(message);
+  if (deliverAnswer(message)) {
     return;
   }
   if (message.type === "saved-hover") {

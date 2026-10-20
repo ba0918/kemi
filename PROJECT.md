@@ -45,7 +45,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `features/` の中の順番は
    `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
-- `features/live/` は `live` の部品で、親の `features/live.js` が import する。部品の順は state で、
+- `features/live/` は `live` の部品で、親の `features/live.js` が import する。部品の順は state、channel で、
   部品は自分より前の部品だけを import し、親は import しない。`features/live/state.js` は画面を開いている
   間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と親が読み書きする。
 - `state.js` は `storage.js` と `model.js` を import してよい。`diagrams/` の中のファイルは互いに import してよい。
