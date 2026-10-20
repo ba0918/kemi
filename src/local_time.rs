@@ -180,8 +180,15 @@ mod tests {
     #[cfg(all(unix, target_pointer_width = "64"))]
     #[test]
     fn local_time_matches_the_date_command() {
+        // GNU の date は `-d @<秒>`、macOS の date は `-r <秒>` で時刻を受ける。
+        let at = if cfg!(target_os = "macos") {
+            ["-r", "1700000000"]
+        } else {
+            ["-d", "@1700000000"]
+        };
         let expected = std::process::Command::new("date")
-            .args(["-d", "@1700000000", "+%Y-%m-%d %H:%M"])
+            .args(at)
+            .arg("+%Y-%m-%d %H:%M")
             .output();
         let Ok(expected) = expected else {
             return;
@@ -190,6 +197,33 @@ mod tests {
             return;
         }
         let expected = String::from_utf8_lossy(&expected.stdout).trim().to_string();
+
+        assert_eq!(format_local(1_700_000_000_000), expected);
+    }
+
+    /// Windows の FFI を .NET のローカル時刻と比べる。
+    /// Why not 夏時間のある地域では比べない: FileTimeToLocalFileTime は変換する時刻のではなく
+    /// 今の夏時間の補正を使うので、夏時間の間に走らせると 11 月の時刻と 1 時間ずれ、結果が
+    /// 季節で変わる。CI の Windows（UTC）や夏時間の無い地域では比べる。
+    #[cfg(windows)]
+    #[test]
+    fn local_time_matches_powershell() {
+        let script = "if ([TimeZoneInfo]::Local.SupportsDaylightSavingTime) { 'dst' } else { \
+            [DateTimeOffset]::FromUnixTimeSeconds(1700000000).LocalDateTime\
+            .ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }";
+        let expected = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .output();
+        let Ok(expected) = expected else {
+            return;
+        };
+        if !expected.status.success() {
+            return;
+        }
+        let expected = String::from_utf8_lossy(&expected.stdout).trim().to_string();
+        if expected == "dst" {
+            return;
+        }
 
         assert_eq!(format_local(1_700_000_000_000), expected);
     }
