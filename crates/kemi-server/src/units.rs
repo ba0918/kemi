@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use kemi_core::domain::review::{FileEntry, GroupBy, ReviewMeta};
-use kemi_core::source::{ReviewSource, SourceError};
+use kemi_core::source::ReviewSource;
 use serde_json::{Value, json};
 
 use crate::{AppState, Event};
@@ -122,18 +122,9 @@ pub(crate) fn start_if_waiting(state: &Arc<AppState>) {
         other.state = BuildState::Building;
         other.generation
     };
-    {
-        let mut initial = state
-            .initial_review
-            .lock()
-            .expect("initial review poisoned");
-        if let Some(initial) = initial.as_mut()
-            && initial.generation == generation
-            && let Some(other) = initial.other.as_mut()
-        {
-            other.state = BuildState::Building;
-        }
-    }
+    with_initial_other(state, generation, |other| {
+        other.state = BuildState::Building
+    });
     spawn_build(state.clone(), state.sources.current(), generation);
 }
 
@@ -164,18 +155,9 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
                 None => return,
             }
         };
-        {
-            let mut initial = state
-                .initial_review
-                .lock()
-                .expect("initial review poisoned");
-            if let Some(initial) = initial.as_mut()
-                && initial.generation == generation
-                && let Some(other) = initial.other.as_mut()
-            {
-                other.state = BuildState::Building;
-            }
-        }
+        with_initial_other(&state, generation, |other| {
+            other.state = BuildState::Building
+        });
         let result = tokio::task::spawn_blocking(move || source.review_unit(unit)).await;
         let _gate = state.persist.lock().expect("persist poisoned");
         if *state.stopping.shutdown.borrow() {
@@ -186,33 +168,19 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
                 .take();
             return;
         }
-        let result = result.map(|result| result.map(Arc::new));
-        {
-            let mut initial = state
-                .initial_review
-                .lock()
-                .expect("initial review poisoned");
-            if let Some(initial) = initial.as_mut()
-                && initial.generation == generation
-                && let Some(other) = initial.other.as_mut()
-            {
-                match &result {
-                    Ok(Ok(meta)) => {
-                        other.meta = Some(Arc::clone(meta));
-                        other.state = BuildState::Ready;
-                    }
-                    Ok(Err(error)) => other.state = BuildState::Failed(error.to_string()),
-                    Err(error) => other.state = BuildState::Failed(error.to_string()),
-                }
-            }
-        }
+        let built = match result {
+            Ok(Ok(meta)) => Ok(Arc::new(meta)),
+            Ok(Err(error)) => Err(error.to_string()),
+            Err(error) => Err(error.to_string()),
+        };
+        with_initial_other(&state, generation, |other| record(other, &built));
         {
             let mut review = state.review.write().expect("review lock poisoned");
             let Some(other) = review.other.as_mut() else {
                 return;
             };
             if other.generation == generation {
-                record(other, result);
+                record(other, &built);
             }
         }
         let _ = state.events.send(Event::Unit);
@@ -320,17 +288,28 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
     Ok(())
 }
 
-/// 作成の結果を記録する。失敗してもレビューは終えない（R-UNIT, R-SUBMIT）。
-fn record(
-    other: &mut OtherUnit,
-    result: Result<Result<Arc<ReviewMeta>, SourceError>, tokio::task::JoinError>,
-) {
-    match result {
-        Ok(Ok(meta)) => {
-            other.meta = Some(meta);
+/// 凍結の入力がまだ同じ世代の単位を待っていれば、その単位の状態を変える。
+fn with_initial_other(state: &AppState, generation: u128, change: impl FnOnce(&mut OtherUnit)) {
+    let mut initial = state
+        .initial_review
+        .lock()
+        .expect("initial review poisoned");
+    if let Some(initial) = initial.as_mut()
+        && initial.generation == generation
+        && let Some(other) = initial.other.as_mut()
+    {
+        change(other);
+    }
+}
+
+/// 作成の結果（できたメタデータか、失敗の理由）を記録する。失敗してもレビューは
+/// 終えない（R-UNIT, R-SUBMIT）。
+fn record(other: &mut OtherUnit, built: &Result<Arc<ReviewMeta>, String>) {
+    match built {
+        Ok(meta) => {
+            other.meta = Some(Arc::clone(meta));
             other.state = BuildState::Ready;
         }
-        Ok(Err(error)) => other.state = BuildState::Failed(error.to_string()),
-        Err(error) => other.state = BuildState::Failed(error.to_string()),
+        Err(reason) => other.state = BuildState::Failed(reason.clone()),
     }
 }
