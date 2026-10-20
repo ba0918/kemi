@@ -223,8 +223,6 @@ const live = {
   pageCommentSaved: false,
   /** 書いているコメントの場所。 */
   draft: emptyDraft("/", DEFAULT_WIDTH),
-  /** コメントを保存している途中。 */
-  saving: false,
   /** 書く欄に出す知らせ（場所を置けなかった、保存できなかった）。 */
   composeError: "",
   /** 最後に描いたときの画面が狭い画面だったか。境をまたいだら描き直す。 */
@@ -579,7 +577,7 @@ function setSide(side) {
  */
 function setWidth(width) {
   // 保存している間は、画像を作る表示幅を変えない（R-PAGE-COMMENT の画像は場所のある表示幅で作る）。
-  if (live.saving) {
+  if (state.liveSaving) {
     return;
   }
   live.width = width;
@@ -608,7 +606,7 @@ function applyWidthInput() {
 
 /** 見る対象を手で読み込み直す（R-PAGE-VIEW）。保存している間は、画像を作るページを読み込み直さない。 */
 function reloadPage() {
-  if (!shell || live.saving) {
+  if (!shell || state.liveSaving) {
     return;
   }
   shell.liveFrame.src = live.origin + live.page;
@@ -620,7 +618,7 @@ function reloadPage() {
  */
 function openPage(page) {
   // 保存している間は、画像を作るページを移らない（読み込み直しも含む）。
-  if (!shell || live.saving) {
+  if (!shell || state.liveSaving) {
     return;
   }
   if (page !== live.page) {
@@ -1095,7 +1093,7 @@ async function finishStroke() {
   cancelStroke();
   const frame = shell?.liveFrame.contentWindow;
   // 書きかけの場所と別の URL か表示幅では足さない（書く欄がそのことと戻る操作を出している）。
-  if (!stroke || !frame || live.tool === "interact" || live.saving || draftElsewhere(live.draft, live.page, live.width)) {
+  if (!stroke || !frame || live.tool === "interact" || state.liveSaving || draftElsewhere(live.draft, live.page, live.width)) {
     return;
   }
   const kind = live.tool;
@@ -1111,7 +1109,7 @@ async function finishStroke() {
     points: kind === "element" ? stroke.points.slice(0, 1) : stroke.points,
   });
   // 返事を待つ間に保存を始めていれば、書きかけは変えない。
-  if (live.saving) {
+  if (state.liveSaving) {
     return;
   }
   if (answer.kind !== kind) {
@@ -1152,7 +1150,7 @@ function showDraftBody() {
  */
 function insertReference(n) {
   const body = shell?.compose.body;
-  if (!body || live.saving) {
+  if (!body || state.liveSaving) {
     return;
   }
   const edit = { start: body.selectionStart, end: body.selectionEnd };
@@ -1263,7 +1261,7 @@ let glowAfterLoad = null;
  */
 export function showPageComment(comment) {
   // 保存している間は移れない（showPage が何もしない）ので、狭い画面のシートも閉じない。
-  if (!comment.page || live.saving) {
+  if (!comment.page || state.liveSaving) {
     return;
   }
   if (state.narrow) {
@@ -1308,7 +1306,7 @@ async function glowPlaces(comment, n, mode) {
  */
 function showPage(url, width) {
   // 保存している間は表示幅もページも変えられないので、見方だけを切り替えることもしない。
-  if (live.saving) {
+  if (state.liveSaving) {
     return false;
   }
   if (live.view !== "page") {
@@ -1350,17 +1348,17 @@ function renderCompose() {
       insert: insertReference,
       glow: (n, mode) => void glowPlaces(null, n, mode),
     },
-    live.saving,
+    state.liveSaving,
   );
   const stray = strayRefs(live.draft);
   renderStrayRefs(compose, stray, (ref) => {
     compose.body.focus();
     compose.body.setSelectionRange(ref.start, ref.end);
   });
-  compose.undo.disabled = places.length === 0 || live.saving;
-  compose.cancel.disabled = live.saving;
-  compose.body.readOnly = live.saving;
-  compose.save.disabled = !draftSavable(live.draft, live.page, live.width) || live.saving || state.submitted;
+  compose.undo.disabled = places.length === 0 || state.liveSaving;
+  compose.cancel.disabled = state.liveSaving;
+  compose.body.readOnly = state.liveSaving;
+  compose.save.disabled = !draftSavable(live.draft, live.page, live.width) || state.liveSaving || state.submitted;
   compose.error.hidden = live.composeError === "";
   compose.error.textContent = live.composeError;
 }
@@ -1370,7 +1368,7 @@ function renderCompose() {
  * 画像なしで保存する（R-PAGE-COMMENT の画像は作れないこともある）。保存した後は場所を変えない。
  */
 async function savePageComment() {
-  if (!shell || live.saving || state.submitted) {
+  if (!shell || state.liveSaving || state.submitted) {
     return;
   }
   const draft = live.draft;
@@ -1435,7 +1433,6 @@ async function savePageComment() {
  * @param {boolean} saving
  */
 function setSaving(saving) {
-  live.saving = saving;
   state.liveSaving = saving;
   renderBand();
   renderCompose();
@@ -1858,9 +1855,9 @@ function renderBand() {
   renderTopbar();
   for (const choice of shell.widthSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(Number(choice.dataset.width) === live.width));
-    choice.disabled = live.saving;
+    choice.disabled = state.liveSaving;
   }
-  shell.widthInput.disabled = live.saving;
+  shell.widthInput.disabled = state.liveSaving;
   for (const choice of shell.sideSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.side === live.side));
   }
@@ -1873,7 +1870,7 @@ function renderBand() {
   for (const choice of shell.zoomSeg.querySelectorAll("button")) {
     choice.setAttribute("aria-pressed", String(choice.dataset.zoom === live.zoom));
   }
-  shell.reloadButton.disabled = live.saving;
+  shell.reloadButton.disabled = state.liveSaving;
   shell.marksButton.title = live.marks ? "Hide change marks" : "Show change marks";
   shell.marksButton.setAttribute("aria-pressed", String(live.marks));
   // 比べる相手の選択は、比べる相手を出している間だけ出す（R-PAGE-REF）。
@@ -2226,7 +2223,7 @@ function renderTree() {
       ...changeHandlers,
     },
     changesToList(),
-    live.saving,
+    state.liveSaving,
   );
 }
 
