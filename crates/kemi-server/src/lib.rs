@@ -533,39 +533,19 @@ fn bootstrap_review(params: &ServeParams) -> Result<BootstrapReview, ServerError
         .session
         .as_ref()
         .is_some_and(|sink| sink.is_resumed());
-    let mut code_error = None;
-    let initial_source = match params.source.fork() {
-        Ok(source) => source.unwrap_or_else(|| params.source.clone()),
-        Err(error) if resumed && params.live.is_some() => {
-            code_error = Some(error.to_string());
-            params.source.clone()
+    let tolerate = resumed && params.live.is_some();
+    let (initial_source, read) = match params.source.fork() {
+        Ok(forked) => {
+            let source = forked.unwrap_or_else(|| params.source.clone());
+            let read = source.review();
+            (source, read)
         }
-        Err(error) => return Err(ServerError::Source(error)),
+        Err(error) => (params.source.clone(), Err(error)),
     };
-    let review = match if code_error.is_some() {
-        None
-    } else {
-        Some(initial_source.review())
-    } {
-        Some(Ok(review)) => review,
-        result if resumed && params.live.is_some() => {
-            if let Some(Err(error)) = result {
-                code_error = Some(error.to_string());
-            }
-            kemi_core::domain::review::ReviewMeta {
-                title: params
-                    .session
-                    .as_ref()
-                    .and_then(|sink| sink.initial_title())
-                    .unwrap_or_else(|| "Live review".into()),
-                subtitle: String::new(),
-                meta: serde_json::Value::Null,
-                groups: vec![],
-                approval: vec![],
-            }
-        }
-        Some(Err(error)) => return Err(ServerError::Source(error)),
-        None => return Err(ServerError::Stopped("source preparation failed".into())),
+    let (review, code_error) = match read {
+        Ok(review) => (review, None),
+        Err(error) if tolerate => (code_unavailable_review(params), Some(error.to_string())),
+        Err(error) => return Err(ServerError::Source(error)),
     };
     // セッションの情報に、起動時の単位の題と全ファイル数を残す（R-SESSION）。
     if let Some(sink) = &params.session
@@ -582,6 +562,21 @@ fn bootstrap_review(params: &ServeParams) -> Result<BootstrapReview, ServerError
         resumed,
         code_error,
     })
+}
+
+/// コードを読めない復元した `--live` のレビュー。ファイルは無く、題はセッションに残した題。
+fn code_unavailable_review(params: &ServeParams) -> kemi_core::domain::review::ReviewMeta {
+    kemi_core::domain::review::ReviewMeta {
+        title: params
+            .session
+            .as_ref()
+            .and_then(|sink| sink.initial_title())
+            .unwrap_or_else(|| "Live review".into()),
+        subtitle: String::new(),
+        meta: serde_json::Value::Null,
+        groups: vec![],
+        approval: vec![],
+    }
 }
 
 /// 表示版・初期の解説・世代・凍結の入力を決める。
