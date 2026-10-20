@@ -81,8 +81,15 @@ fn bind_rejects_hostname_ipv6_and_result_or_digest_combinations() {
     dir.write("manifest.json", MANIFEST);
     // 入力モードは有効にして、終了コード 2 が --bind の扱いだけに由来するようにする。
     let cases: &[&[&str]] = &[
-        &["manifest.json", "--bind", "localhost"],
-        &["manifest.json", "--bind", "::1"],
+        &[
+            "manifest.json",
+            "--bind",
+            "localhost",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+        &["manifest.json", "--bind", "::1", "--no-open", "--port", "0"],
         &["--result", "--bind", "0.0.0.0"],
         &["manifest.json", "--digest", "--bind", "localhost"],
     ];

@@ -170,7 +170,11 @@ fn resume_of_an_unfinished_session_exits_2_with_the_reason() {
     .unwrap();
     drop(open);
 
-    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+    let output = run_with_state(
+        &dir.path,
+        &["--resume", id, "--no-open", "--port", "0"],
+        &state.path,
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
@@ -191,7 +195,11 @@ fn resume_of_a_session_without_its_copy_file_exits_2_and_is_not_listed() {
     );
     std::fs::remove_file(sessions_dir(&state.path).join(format!("{id}.payload"))).unwrap();
 
-    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+    let output = run_with_state(
+        &dir.path,
+        &["--resume", id, "--no-open", "--port", "0"],
+        &state.path,
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
@@ -212,7 +220,11 @@ fn resume_of_an_unreadable_session_exits_2_with_the_reason() {
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     std::fs::write(sessions.join(format!("{id}.session")), b"not a session").unwrap();
 
-    let output = run_with_state(&dir.path, &["--resume", id], &state.path);
+    let output = run_with_state(
+        &dir.path,
+        &["--resume", id, "--no-open", "--port", "0"],
+        &state.path,
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
@@ -229,7 +241,11 @@ async fn resume_of_a_running_session_exits_2() {
     kemi.wait_serving().await;
     let id = session_id(&wait_for_session(&state.path).await);
 
-    let output = run_with_state(&dir.path, &["--resume", &id], &state.path);
+    let output = run_with_state(
+        &dir.path,
+        &["--resume", &id, "--no-open", "--port", "0"],
+        &state.path,
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
