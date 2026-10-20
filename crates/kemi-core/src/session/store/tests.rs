@@ -517,6 +517,116 @@ fn version_four_restores_parts_full_explanation_quotes_and_generation_without_re
     );
 }
 
+/// 版 4 の保存値の 1 か所を壊す関数。
+type Corruption = fn(&mut serde_json::Value, &str);
+
+#[test]
+fn version_four_with_a_broken_generation_or_explanation_history_is_corrupt() {
+    use serde_json::{Value, json};
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    drop(store.create(info(id, 100)).unwrap());
+    let block = code_block();
+    let valid = version_four_with_explanation_comment(
+        id,
+        &block,
+        json!({"revision":1,"block_id":"b","quote":{"section_title":"Section","block":block}}),
+    );
+    let write = |value: &Value| {
+        std::fs::write(
+            session_path(&scratch.dir(), id),
+            encoding::encode_session(4, &serde_json::to_vec(value).unwrap()),
+        )
+        .unwrap();
+    };
+    write(&valid);
+    assert!(
+        store.read(id).is_ok(),
+        "the unbroken value must be readable"
+    );
+    let cases: Vec<(&str, Corruption, &str)> = vec![
+        (
+            "issued with a leading zero",
+            |value, _| value["state"]["issued_display_generation"] = json!("02"),
+            "invalid decimal generation",
+        ),
+        (
+            "issued that is not a decimal",
+            |value, _| value["state"]["issued_display_generation"] = json!("x"),
+            "invalid decimal generation",
+        ),
+        (
+            "issued beyond u128",
+            |value, _| {
+                value["state"]["issued_display_generation"] =
+                    json!("340282366920938463463374607431768211456");
+            },
+            "outside u128",
+        ),
+        (
+            "only the current generation",
+            |value, _| value["state"]["issued_display_generation"] = Value::Null,
+            "incomplete generation state",
+        ),
+        (
+            "only the issued generation",
+            |value, _| value["state"]["diff_display_version"] = Value::Null,
+            "incomplete generation state",
+        ),
+        (
+            "current beyond the issued generation",
+            |value, id| value["state"]["diff_display_version"] = json!(format!("{id}:3")),
+            "has not been issued",
+        ),
+        (
+            "frozen beyond the issued generation",
+            |value, id| value["state"]["frozen_display_version"] = json!(format!("{id}:3")),
+            "has not been issued",
+        ),
+        (
+            "current of another review",
+            |value, _| {
+                value["state"]["diff_display_version"] = json!("01HF7YAT00DDDDDDDDDDDDDDDD:1");
+            },
+            "another review",
+        ),
+        (
+            "current revision not retained",
+            |value, _| value["state"]["explanation"]["current_revision"] = json!(2),
+            "current version not retained",
+        ),
+        (
+            "duplicate revision",
+            |value, _| {
+                let versions = &mut value["state"]["explanation"]["versions"];
+                let first = versions[0].clone();
+                versions.as_array_mut().unwrap().push(first);
+            },
+            "duplicate revision",
+        ),
+        (
+            "explanation based on an unissued generation",
+            |value, id| {
+                value["state"]["explanation"]["versions"][0]["base_display_version"] =
+                    json!(format!("{id}:3"));
+            },
+            "has not been issued",
+        ),
+    ];
+    for (name, corrupt, expected) in cases {
+        let mut value = valid.clone();
+        corrupt(&mut value, id);
+        write(&value);
+        match store.read(id) {
+            Err(SessionError::Corrupt { reason, .. }) => {
+                assert!(reason.contains(expected), "{name}: {reason}");
+            }
+            other => panic!("{name}: {other:?}"),
+        }
+    }
+}
+
 #[test]
 fn version_four_keeps_the_saved_selection_of_an_explanation_comment() {
     let scratch = Scratch::new();
