@@ -475,13 +475,12 @@ function firstIndexAtOrAfter(offsets, value, total) {
 
 /**
  * @param {string} key
- * @param {"unified"|"split"} _mode
  * @param {number} count
  * @param {number} index
  * @param {boolean} [wrap]
  * @returns {{ type: string, index?: number, mode?: string, value?: boolean, direction?: 1 | -1 }}
  */
-export function keyAction(key, _mode, count, index, wrap = false) {
+export function keyAction(key, count, index, wrap = false) {
   switch (key) {
     case "j":
       return { type: "file", index: Math.min(count - 1, index + 1) };

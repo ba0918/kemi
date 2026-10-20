@@ -92,7 +92,7 @@ import { renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
 import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
-import { currentEntry, displayMode, displayWrap, state } from "./state.js";
+import { currentEntry, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
 import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, openExplanationEditor } from './features/explanation.js';
 
@@ -139,13 +139,7 @@ function handleKey(event) {
   if (event.ctrlKey || event.metaKey || event.altKey || !dom.modal.hidden) {
     return;
   }
-  const action = keyAction(
-    event.key,
-    displayMode(),
-    state.visible.length,
-    state.index,
-    displayWrap(),
-  );
+  const action = keyAction(event.key, state.visible.length, state.index, displayWrap());
   if (action.type === "file") {
     void selectIndex(Number(action.index), { scrollTop: true });
   } else if (action.type === "mode") {

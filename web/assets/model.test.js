@@ -308,12 +308,12 @@ test("windowFor_supports_varying_heights", () => {
 });
 
 test("keyAction_moves_between_files_and_toggles_view", () => {
-  assert.deepEqual(keyAction("j", "unified", 3, 0), { type: "file", index: 1 });
-  assert.deepEqual(keyAction("k", "unified", 3, 0), { type: "file", index: 0 });
-  assert.deepEqual(keyAction("s", "unified", 3, 0), { type: "mode", mode: "split" });
-  assert.deepEqual(keyAction("u", "split", 3, 0), { type: "mode", mode: "unified" });
-  assert.deepEqual(keyAction("w", "unified", 3, 0), { type: "wrap", value: true });
-  assert.deepEqual(keyAction("x", "unified", 3, 0), { type: "none" });
+  assert.deepEqual(keyAction("j", 3, 0), { type: "file", index: 1 });
+  assert.deepEqual(keyAction("k", 3, 0), { type: "file", index: 0 });
+  assert.deepEqual(keyAction("s", 3, 0), { type: "mode", mode: "split" });
+  assert.deepEqual(keyAction("u", 3, 0), { type: "mode", mode: "unified" });
+  assert.deepEqual(keyAction("w", 3, 0), { type: "wrap", value: true });
+  assert.deepEqual(keyAction("x", 3, 0), { type: "none" });
 });
 
 test("filterAndSortFiles_keeps_input_order_by_default", () => {
@@ -957,9 +957,9 @@ test("ruler_marks_stay_bounded_for_huge_files", () => {
 });
 
 test("keyAction_moves_between_changes_and_toggles_seen", () => {
-  assert.deepEqual(keyAction("n", "unified", 3, 0), { type: "nav", direction: 1 });
-  assert.deepEqual(keyAction("p", "unified", 3, 0), { type: "nav", direction: -1 });
-  assert.deepEqual(keyAction("v", "unified", 3, 0), { type: "seen" });
+  assert.deepEqual(keyAction("n", 3, 0), { type: "nav", direction: 1 });
+  assert.deepEqual(keyAction("p", 3, 0), { type: "nav", direction: -1 });
+  assert.deepEqual(keyAction("v", 3, 0), { type: "seen" });
 });
 
 test("chip_shows_the_first_line_of_the_body", () => {
@@ -1350,7 +1350,7 @@ test("最初のブロックより前のコメントは文書の先頭に置か�
 });
 
 test("r は描画表示とソース表示の切り替え", () => {
-  assert.deepEqual(keyAction("r", "unified", 3, 0), { type: "rendered" });
+  assert.deepEqual(keyAction("r", 3, 0), { type: "rendered" });
 });
 
 // 狭い画面のタップの選択（R-NARROW）。表示中の行番号は、タップした側で画面に出ている行の集合。
