@@ -19,7 +19,7 @@ export const OVERSCAN = 12;
 export const NAV_MARGIN = 48;
 
 /** 会話パネルの既定の幅と、縁を掴んで変えられる幅の範囲（px）。 */
-export const CONVERSATION_WIDTH = 440;
+const CONVERSATION_WIDTH = 440;
 export const CONVERSATION_MIN_WIDTH = 320;
 export const CONVERSATION_MAX_WIDTH = 960;
 

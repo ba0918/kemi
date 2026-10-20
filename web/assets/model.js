@@ -1001,7 +1001,7 @@ export function firstLine(body) {
  * @param {string | {body: string|null, parts?: unknown[]|null}} content
  * @returns {string}
  */
-export function conversationText(content) {
+function conversationText(content) {
   if (typeof content === "string") return content;
   if (content.body !== null) return content.body;
   return content.parts ? JSON.stringify(content.parts, null, 2) : "";

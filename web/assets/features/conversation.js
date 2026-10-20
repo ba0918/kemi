@@ -265,7 +265,7 @@ export async function savePageCommentBody(comment, body) {
 /**
  * @param {string} filter
  */
-export function setConversationFilter(filter) {
+function setConversationFilter(filter) {
   if (filter !== "all" && filter !== "unresolved" && filter !== "file") {
     return;
   }

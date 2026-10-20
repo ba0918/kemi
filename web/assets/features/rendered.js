@@ -88,7 +88,7 @@ function showSource() {
 }
 
 /** ブロックの列とコメントから、札の置き場と止まる場所を決め直す。 */
-export function recomputeRenderedThreads() {
+function recomputeRenderedThreads() {
   const blocks = state.rendered ? state.rendered.blocks : [];
   state.renderedThreads = placeRenderedComments(blocks, state.comments);
   state.renderedStops = renderedStops(blocks, state.comments);

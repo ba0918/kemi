@@ -62,7 +62,7 @@ export function toggleComments() {
   refreshRendered();
 }
 
-export function openDrawer() {
+function openDrawer() {
   state.drawerOpen = true;
   dom.explanationToc.dataset.drawer='open';
   renderDrawer();
