@@ -17,6 +17,14 @@ const browser = async (...args) => {
 const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
 const file = (id) => ({ id, path: `${id}.js`, old_path: null, status: 'modified', add: 2, del: 2, binary: false, old_size: 100, new_size: 100, focus: false, note: '', noise: false, seen: false, collapsed: false });
 const rows = Array.from({ length: 500 }, (_, i) => ({ kind: i === 2 ? 'insert' : i===0 || i===300 ? 'replace' : 'equal', old: i === 2 ? null : { number: i + 1, text: i === 0 ? 'old '.repeat(150) + 'OLD_END' : 'short old' }, new: { number: i + 1, text: i === 0 ? 'new '.repeat(250) + 'NEW_END' : i === 300 ? 'longer '.repeat(400) + 'LATER_END' : 'short new' } }));
+// 折りたたみが 2 つあるファイル。2 つ目の折りたたみの行は、検査が離すまで返さない（全行の展開の途中を作る）。
+const twofoldRows = Array.from({ length: 30 }, (_, i) => {
+  const text = i >= 5 && i < 15 ? `fold one ${i}` : i >= 20 && i < 28 ? `fold two ${i}` : `twofold ${i}`;
+  return { kind: i === 0 ? 'replace' : 'equal', old: { number: i + 1, text: i === 0 ? 'before' : text }, new: { number: i + 1, text } };
+});
+const skipOf = (from, to) => ({ kind: 'skip', from, to, count: to - from, old_start: from + 1, new_start: from + 1 });
+let holdSecondFold = null;
+let secondFoldAsked = () => {};
 const comment = { id:'sample-comment', group_id:'sample', path:'long.js', side:'new', start_line:1, end_line:1, body:'Compare this line\nAdditional detail', outdated:false, suggestion:null };
 let refreshed = false;
 let eventStream;
@@ -28,7 +36,15 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/api/review' && url.searchParams.has('refresh') && pendingReview) await pendingReview;
   if (url.pathname.startsWith('/api/')) {
     res.setHeader('Content-Type', 'application/json');
-    if (url.pathname === '/api/review') res.end(JSON.stringify({ title: 'Horizontal comparison', subtitle: '', unit:'file', groups: [{ id: 'sample', title: 'Sample', files: [file('long'), file('short'), file('large')] }], comments: [comment] }));
+    if (url.pathname === '/api/review') res.end(JSON.stringify({ title: 'Horizontal comparison', subtitle: '', unit:'file', groups: [{ id: 'sample', title: 'Sample', files: [file('long'), file('short'), file('large'), file('twofold')] }], comments: [comment] }));
+    else if (url.pathname === '/api/file/twofold') {
+      const from = url.searchParams.get('from');
+      if (from === '20') { secondFoldAsked(); await holdSecondFold; }
+      const selected = from === null
+        ? [...twofoldRows.slice(0, 5), skipOf(5, 15), ...twofoldRows.slice(15, 20), skipOf(20, 28), ...twofoldRows.slice(28)]
+        : twofoldRows.slice(Number(from), Number(url.searchParams.get('to')));
+      res.end(JSON.stringify({ rows:selected, comments:[], binary:false, context:3, next:null, highlight:{capable:true,enabled:false} }));
+    }
     else if (url.pathname.startsWith('/api/file/')) {
       let selected = rows;
       if(url.pathname.endsWith('/short') || refreshed) selected = [{ kind: 'replace', old:{number:1,text:'old'},new:{number:1,text:'new'} }];
@@ -216,6 +232,26 @@ try {
   assert.ok(largeEnd.count<100);
   assert.ok(largeEnd.left>0);
   assert.ok(largeEnd.range>largeStart.range);
+  // 全行の展開の途中で表示中のファイルを選び直す（ツリーで同じファイルを押す）。読み終えた 1 つ目の折りたたみは
+  // 表示にもキャッシュにも開いた形で入り、取得中だった 2 つ目は閉じたまま残る。選び直しても同じ形が出る。
+  await browser('click','[data-file-id="twofold"]');
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('twofold 16')`);
+  let releaseSecondFold;
+  holdSecondFold = new Promise(resolve => { releaseSecondFold = resolve; });
+  const asked = new Promise(resolve => { secondFoldAsked = resolve; });
+  await browser('click','[data-focus-key="file-expand"]');
+  await asked;
+  await browser('click','[data-file-id="twofold"]');
+  releaseSecondFold();
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('fold one 9')`);
+  assert.equal(await evaluate(`document.querySelector('#diff-content').textContent.includes('fold two 24')`), false, '取得中だった折りたたみは閉じたまま');
+  assert.equal(await evaluate(`document.querySelectorAll('#diff-content .expand-button').length`), 1);
+  await browser('click','[data-file-id="short"]');
+  await browser('wait','--fn',`!document.querySelector('#diff-content').textContent.includes('twofold')`);
+  await browser('click','[data-file-id="twofold"]');
+  await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('twofold 16')`);
+  assert.equal(await evaluate(`document.querySelector('#diff-content').textContent.includes('fold one 9')`), true, 'キャッシュにも同じ形で入っている');
+  console.log('PASS 全行の展開の途中で表示中のファイルを選び直しても、読み終えた折りたたみは表示とキャッシュの両方で開いた形');
   console.log(JSON.stringify({test:'50万行の疎な変更',viewport:await evaluate('({width:innerWidth,height:innerHeight})'),loadMs,verticalAndHorizontalMs:performance.now()-moveStart,renderedRows:largeEnd.count}));
   await browser('click','[data-file-id="long"]');
   await browser('wait','--fn',`document.querySelector('#diff-content').textContent.includes('NEW_END')`);
