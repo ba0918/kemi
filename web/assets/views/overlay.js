@@ -3,7 +3,7 @@
 
 import { dom, button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
-import { countLabel } from "../model.js";
+import { countLabel, unitLabel } from "../model.js";
 
 /** 短い通知を消すタイマー。 */
 let toastTimer = 0;
@@ -48,6 +48,46 @@ export function openModal(options) {
   dom.modalCancel.textContent = options.cancelLabel;
   modalAction = options.action;
   dom.modal.hidden = false;
+}
+
+/**
+ * 送信の確認の本文。送るコメントの件数（両方のグループ単位の合計）と表示中の単位の見たファイル数、
+ * 見ていないファイルとまだ渡していないものの注意、取り消せないことを並べる（R-SUBMIT）。
+ * @param {{
+ *   summary: { comments: number, suggestions: number, seen: number, total: number, unseen: number },
+ *   unit: string | null,
+ *   unhanded: string | null,
+ *   approve: boolean,
+ * }} options unit は表示中のグループ単位、unhanded はまだ渡していないものの注意（無ければ null）
+ * @returns {HTMLElement[]}
+ */
+export function submitConfirmBody({ summary, unit, unhanded, approve }) {
+  const list = el("dl", "sum");
+  const seenLabel = unit ? `Seen files (${unitLabel(unit)})` : "Seen files";
+  list.append(
+    textEl("dt", "", "Comments"),
+    textEl("dd", "", `${countLabel(summary.comments, "comment")} (${summary.suggestions} with a suggestion)`),
+    textEl("dt", "", seenLabel),
+    textEl("dd", "", `${summary.seen} / ${summary.total}`),
+  );
+  /** @type {HTMLElement[]} */
+  const body = [list];
+  if (summary.unseen > 0) {
+    body.push(textEl("p", "warn", `${countLabel(summary.unseen, "file")} not seen yet.`));
+  }
+  if (unhanded) {
+    const notice = textEl("p", "warn", unhanded);
+    notice.id = "unhanded-notice";
+    body.push(notice);
+  }
+  body.push(
+    textEl(
+      "p",
+      "",
+      `This ends the review and returns the ${approve ? "approve" : "request changes"} verdict and the comments to the terminal as JSON. This cannot be undone.`,
+    ),
+  );
+  return body;
 }
 
 export function closeModal() {
