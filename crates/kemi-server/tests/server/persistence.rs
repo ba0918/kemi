@@ -157,6 +157,7 @@ async fn session_copy_waits_for_both_units() {
         share_address: None,
         agent: None,
         live: None,
+        initial_explanation: None,
     };
     tokio::spawn(serve(listener, params));
 

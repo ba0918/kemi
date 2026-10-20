@@ -1,6 +1,6 @@
 //! セッションの保存先の配線（R-SESSION）。サーバへ渡す sink の実装と、CLI の一覧。
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use std::collections::BTreeSet;
 
@@ -15,7 +15,6 @@ use crate::local_time;
 
 /// プロセス 1 つ分の開いているセッション。
 pub struct StoredSession {
-    explanation: OnceLock<kemi_core::domain::explanation::ExplanationDocument>,
     open: Mutex<OpenSession>,
     resumed: bool,
 }
@@ -24,7 +23,6 @@ impl StoredSession {
     /// 新しいセッションを始める。ロックを取り、id を決める。
     pub fn start(store: &SessionStore, info: SessionInfo) -> Result<Self, SessionError> {
         Ok(StoredSession {
-            explanation: OnceLock::new(),
             resumed: false,
             open: Mutex::new(store.create(info)?),
         })
@@ -33,7 +31,6 @@ impl StoredSession {
     /// 復元できるセッションを開く。ロック中のセッションは `Locked` になる。
     pub fn resume(store: &SessionStore, id: &str) -> Result<Self, SessionError> {
         Ok(StoredSession {
-            explanation: OnceLock::new(),
             resumed: true,
             open: Mutex::new(store.open(id)?),
         })
@@ -43,15 +40,6 @@ impl StoredSession {
         let open = self.open.lock().expect("session poisoned");
         open.is_resumable()
             .then(|| format!("kemi: resume with: kemi --resume {}", open.id()))
-    }
-
-    pub fn set_initial_explanation(
-        &self,
-        document: kemi_core::domain::explanation::ExplanationDocument,
-    ) {
-        self.explanation
-            .set(document)
-            .expect("initial explanation is assigned only once before serving");
     }
 
     pub fn info(&self) -> SessionInfo {
@@ -94,9 +82,6 @@ impl SessionSink for StoredSession {
             .lock()
             .expect("session poisoned")
             .save_explanation_state(state)
-    }
-    fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
-        self.explanation.get().cloned()
     }
     fn initial_title(&self) -> Option<String> {
         Some(

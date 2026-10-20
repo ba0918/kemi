@@ -176,12 +176,11 @@ async fn agent_context_waits_for_the_request_body_before_answering() {
 #[tokio::test]
 async fn initial_explanation_is_saved_before_the_first_response_without_a_conversation_event() {
     let sink = Arc::new(RecordingSink::default());
-    *sink.explanation.lock().unwrap() =
-        Some(serde_json::from_value(json!({"sections":explanation_sections()})).unwrap());
-    let server = AgentServer::start_with_sink(
+    let server = AgentServer::start_with_explanation(
         Arc::new(FakeSource::new()),
         Ipv4Addr::LOCALHOST,
         sink.clone(),
+        Some(serde_json::from_value(json!({"sections":explanation_sections()})).unwrap()),
     )
     .await;
     let review: Value = server.page.get("api/review").await.json().await.unwrap();
@@ -553,8 +552,7 @@ async fn initial_explanation_accepts_opposite_units_while_the_full_build_is_gate
         let mut sections = explanation_sections();
         sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":unit,"group_id":group,"path":"b.txt","side":"new","start_line":null,"end_line":null}]);
         let sink = Arc::new(RecordingSink::default());
-        *sink.explanation.lock().unwrap() =
-            Some(serde_json::from_value(json!({"sections":sections})).unwrap());
+        let explanation = serde_json::from_value(json!({"sections":sections})).unwrap();
         let reads = Arc::new(AtomicUsize::new(0));
         let (release, gate) = std::sync::mpsc::channel();
         let source = Arc::new(GatedSource {
@@ -565,7 +563,13 @@ async fn initial_explanation_accepts_opposite_units_while_the_full_build_is_gate
             gated: startup.other(),
             gate: Mutex::new(gate),
         });
-        let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
+        let server = AgentServer::start_with_explanation(
+            source,
+            Ipv4Addr::LOCALHOST,
+            sink,
+            Some(explanation),
+        )
+        .await;
         let first = tokio::time::timeout(Duration::from_secs(2), server.page.get("api/review"))
             .await
             .expect("initial response waited for all opposite metadata");

@@ -514,6 +514,7 @@ async fn prepare_review(
     stored_session: Option<&Arc<session::StoredSession>>,
     results_key: String,
     live: Option<&LiveRun>,
+    initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
 ) -> ReviewStartup {
     let listener = match TcpListener::bind((cli.bind, cli.port)).await {
         Ok(listener) => listener,
@@ -594,6 +595,7 @@ async fn prepare_review(
         share_address,
         agent,
         live,
+        initial_explanation,
     };
     ReviewStartup {
         listener,
@@ -612,6 +614,7 @@ async fn run_review(
     stored_session: Option<Arc<session::StoredSession>>,
     results_key: String,
     live: Option<LiveRun>,
+    initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
 ) -> ! {
     // --serve は互換のための受理のみ。既定で常にサーブする。
     let _ = cli.serve;
@@ -638,6 +641,7 @@ async fn run_review(
         stored_session.as_ref(),
         results_key,
         live.as_ref(),
+        initial_explanation,
     )
     .await;
     let remove_endpoint = || {
@@ -800,7 +804,7 @@ async fn run_resume(cli: &Cli) -> ! {
         },
     };
     let results_key = stored.info().workspace_key;
-    run_review(cli, source, Some(Arc::new(stored)), results_key, live).await
+    run_review(cli, source, Some(Arc::new(stored)), results_key, live, None).await
 }
 
 /// `<id>.files/` のスナップショットを読み戻す。読めないものは飛ばして警告し、復元は続ける。
@@ -977,7 +981,7 @@ async fn main() {
     }
 
     let stored_session = open_session(&cli, live.as_ref());
-    if let Some(file) = &cli.explanation {
+    let initial_explanation = cli.explanation.as_ref().map(|file| {
         let text = std::fs::read_to_string(file)
             .unwrap_or_else(|error| fail(&format!("cannot read the explanation: {error}")));
         let document =
@@ -985,11 +989,11 @@ async fn main() {
                 .unwrap_or_else(|error| fail(&format!("invalid explanation: {error}")));
         kemi_core::domain::explanation::validate_document(&document)
             .unwrap_or_else(|error| fail(&error.to_string()));
-        let stored = stored_session
-            .as_ref()
-            .unwrap_or_else(|| fail("initial explanation requires persistent session storage"));
-        stored.set_initial_explanation(document);
-    }
+        if stored_session.is_none() {
+            fail("initial explanation requires persistent session storage");
+        }
+        document
+    });
     let results_key = result::workspace_key(&workspace_root(Path::new(".")));
     let live = live.map(|(page, root)| LiveRun {
         page,
@@ -997,5 +1001,13 @@ async fn main() {
         snapshots: Vec::new(),
         last_snapshot_number: 0,
     });
-    run_review(&cli, source, stored_session, results_key, live).await
+    run_review(
+        &cli,
+        source,
+        stored_session,
+        results_key,
+        live,
+        initial_explanation,
+    )
+    .await
 }

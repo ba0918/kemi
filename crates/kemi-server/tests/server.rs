@@ -379,6 +379,7 @@ impl TestServer {
             share_address,
             agent: None,
             live: None,
+            initial_explanation: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -564,6 +565,7 @@ impl LiveServer {
             share_address: None,
             agent: None,
             live: None,
+            initial_explanation: None,
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。
@@ -1068,7 +1070,6 @@ use kemi_server::SessionSink;
 #[derive(Default)]
 struct RecordingSink {
     explanation_gate: Mutex<Option<Arc<GenerationGate>>>,
-    explanation: Mutex<Option<kemi_core::domain::explanation::ExplanationDocument>>,
     accepted: Mutex<Vec<SessionState>>,
     title: Mutex<String>,
     total_files: Mutex<usize>,
@@ -1110,9 +1111,6 @@ impl SessionSink for RecordingSink {
     }
     fn save_issued_state(&self, state: SessionState) -> Result<(), SessionError> {
         self.save_state(state)
-    }
-    fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
-        self.explanation.lock().unwrap().clone()
     }
     fn is_resumed(&self) -> bool {
         self.initial.lock().unwrap().is_some()
@@ -1323,6 +1321,7 @@ impl TestServer {
             share_address: None,
             agent: None,
             live: None,
+            initial_explanation: None,
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -1599,6 +1598,16 @@ impl AgentServer {
         bind: Ipv4Addr,
         sink: Arc<RecordingSink>,
     ) -> Self {
+        AgentServer::start_with_explanation(source, bind, sink, None).await
+    }
+
+    /// 起動時の説明（`--explanation`）を入れて始める。
+    async fn start_with_explanation(
+        source: Arc<dyn ReviewSource>,
+        bind: Ipv4Addr,
+        sink: Arc<RecordingSink>,
+        initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
+    ) -> Self {
         let listener = TcpListener::bind((bind, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
@@ -1622,6 +1631,7 @@ impl AgentServer {
                 control: control.clone(),
             }),
             live: None,
+            initial_explanation,
         };
         let task = tokio::spawn(serve(listener, params));
         AgentServer {

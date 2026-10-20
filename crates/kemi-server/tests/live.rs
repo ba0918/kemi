@@ -185,6 +185,7 @@ async fn start_restored_review(
             snapshots,
             last_snapshot_number,
         }),
+        initial_explanation: None,
     };
     let task = tokio::spawn(serve(listener, params));
     Running {
@@ -1597,6 +1598,7 @@ async fn resumed_code_failure_case(update_explanation: bool) {
             snapshots: vec![],
             last_snapshot_number: 0,
         }),
+        initial_explanation: None,
     };
     let task = tokio::spawn(serve(listener, params));
     let response = reqwest::get(format!("{url}api/review")).await.unwrap();

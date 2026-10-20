@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use kemi_core::domain::agent::AgentLink;
 use kemi_core::domain::display_version::{DisplayVersions, Start, known_generation};
+use kemi_core::domain::explanation::ExplanationDocument;
 use kemi_core::domain::review::Side;
 use kemi_core::session::SessionError;
 use kemi_core::source::ReviewSource;
@@ -204,9 +205,6 @@ pub trait SessionSink: Send + Sync {
         &self,
         state: kemi_core::session::SessionState,
     ) -> Result<(), SessionError>;
-    fn initial_explanation(&self) -> Option<kemi_core::domain::explanation::ExplanationDocument> {
-        None
-    }
     fn initial_title(&self) -> Option<String> {
         None
     }
@@ -276,6 +274,9 @@ pub struct ServeParams {
     pub agent: Option<AgentParams>,
     /// `--live` の中継（live.md の R-PAGE-PROXY）。`--live` でなければ `None`。
     pub live: Option<LiveParams>,
+    /// 起動時に入れる説明（`--explanation`）。セッションとエージェント用の API がある
+    /// レビューでだけ使える。
+    pub initial_explanation: Option<ExplanationDocument>,
 }
 
 /// エージェント用の API の待ち受け（R-AGENT-LINK）。
@@ -503,7 +504,7 @@ struct InitialSessionState {
 
 pub async fn serve(
     listener: TcpListener,
-    params: ServeParams,
+    mut params: ServeParams,
 ) -> Result<ServeOutcome, ServerError> {
     let address = listener.local_addr().map_err(ServerError::Io)?;
     let bind = match address.ip() {
@@ -516,8 +517,9 @@ pub async fn serve(
     };
     let allowed = AllowedHosts::new(bind, params.share_address, address.port());
 
+    let initial_explanation = params.initial_explanation.take();
     let bootstrap = bootstrap_review(&params)?;
-    let initial = initial_session_state(&params, bootstrap)?;
+    let initial = initial_session_state(&params, bootstrap, initial_explanation)?;
     run_servers(listener, params, address, allowed, initial).await
 }
 
@@ -582,6 +584,7 @@ fn bootstrap_review(params: &ServeParams) -> Result<BootstrapReview, ServerError
 fn initial_session_state(
     params: &ServeParams,
     bootstrap: BootstrapReview,
+    initial_explanation: Option<ExplanationDocument>,
 ) -> Result<InitialSessionState, ServerError> {
     let BootstrapReview {
         initial_source,
@@ -618,16 +621,17 @@ fn initial_session_state(
     let display = DisplayVersions::at_start(initial_state.display.take(), &display_id, start)
         .map_err(|e| ServerError::Stopped(e.to_string()))?;
     initial_state.display = Some(display.clone());
-    if let Some(document) = params
-        .session
-        .as_ref()
-        .and_then(|sink| sink.initial_explanation())
-    {
+    if let Some(document) = initial_explanation {
         if params.agent.is_none() {
             return Err(ServerError::Stopped(
                 "initial explanation requires an agent endpoint".into(),
             ));
         }
+        let Some(sink) = &params.session else {
+            return Err(ServerError::Stopped(
+                "initial explanation requires a persistent session".into(),
+            ));
+        };
         let pages: Vec<_> = params
             .live
             .as_ref()
@@ -642,11 +646,7 @@ fn initial_session_state(
             &pages,
         )?);
         kemi_core::session::validate_additional(&initial_state).map_err(ServerError::Session)?;
-        params
-            .session
-            .as_ref()
-            .expect("initial explanation has a sink")
-            .save_explanation_state(initial_state.clone())
+        sink.save_explanation_state(initial_state.clone())
             .map_err(ServerError::Session)?;
     }
     let generation = known_generation(&display.current, &display_id, display.issued)
