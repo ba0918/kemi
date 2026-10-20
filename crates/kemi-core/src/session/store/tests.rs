@@ -1578,32 +1578,99 @@ fn session_cleanup_keeps_the_total_size() {
 fn session_cleanup_keeps_a_locked_session_out_of_the_count() {
     let scratch = Scratch::new();
     let store = SessionStore::new(scratch.dir());
+    for (id, updated) in [
+        ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
+        ("01HF7YAT00BBBBBBBBBBBBBBBB", 200),
+    ] {
+        let mut held = store.create(info(id, updated)).unwrap();
+        held.save_frozen_copy(prepared(copy()), SessionState::default())
+            .unwrap();
+    }
     let mut locked = store
-        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .create(info("01HF7YAT00CCCCCCCCCCCCCCCC", 300))
         .unwrap();
     locked
         .save_frozen_copy(prepared(copy()), SessionState::default())
         .unwrap();
-    let mut middle = store
-        .create(info("01HF7YAT00BBBBBBBBBBBBBBBB", 200))
-        .unwrap();
-    middle
-        .save_frozen_copy(prepared(copy()), SessionState::default())
-        .unwrap();
-    let mut newest = store
-        .create(info("01HF7YAT00CCCCCCCCCCCCCCCC", 300))
-        .unwrap();
-    newest
-        .save_frozen_copy(prepared(copy()), SessionState::default())
-        .unwrap();
 
-    // 最古を開いたまま 2 件だけ残す。ロック中は消えず、件数にも数えないので、
-    // 2 番目に古いものも残る。
+    // 最新を開いたまま 2 件だけ残す。ロック中は消えず、件数にも数えないので、
+    // 保留した古い 2 件も残る。
     cleanup(&scratch.dir(), 2, u64::MAX);
 
     assert!(store.read("01HF7YAT00AAAAAAAAAAAAAAAA").is_ok());
     assert!(store.read("01HF7YAT00BBBBBBBBBBBBBBBB").is_ok());
     assert!(store.read("01HF7YAT00CCCCCCCCCCCCCCCC").is_ok());
+}
+
+#[test]
+fn session_cleanup_keeps_a_locked_session_out_of_the_total_size() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    for (id, updated) in [
+        ("01HF7YAT00AAAAAAAAAAAAAAAA", 100),
+        ("01HF7YAT00BBBBBBBBBBBBBBBB", 200),
+        ("01HF7YAT00CCCCCCCCCCCCCCCC", 250),
+    ] {
+        let mut held = store.create(info(id, updated)).unwrap();
+        held.save_state_at(state_with_comment(), updated).unwrap();
+    }
+    // 最新のレビューは動いていて、写しが大きい。
+    let mut locked = store
+        .create(info("01HF7YAT00DDDDDDDDDDDDDDDD", 300))
+        .unwrap();
+    let mut large = copy();
+    large.contents.insert(
+        "big".to_string(),
+        content(None, Some(&incompressible(20_000))),
+    );
+    locked
+        .save_frozen_copy(prepared(large), SessionState::default())
+        .unwrap();
+    let size_of = |name: &str| std::fs::metadata(scratch.dir().join(name)).unwrap().len();
+    // 保留した新しい 2 件だけが収まる上限。ロック中の大きさを数えると、その 2 件も
+    // 収まらなくなる。
+    let limit = size_of("01HF7YAT00BBBBBBBBBBBBBBBB.session")
+        + size_of("01HF7YAT00CCCCCCCCCCCCCCCC.session")
+        + 10;
+
+    cleanup(&scratch.dir(), KEEP_SESSIONS, limit);
+
+    assert!(matches!(
+        store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
+        Err(SessionError::NotFound { .. })
+    ));
+    assert!(store.read("01HF7YAT00BBBBBBBBBBBBBBBB").is_ok());
+    assert!(store.read("01HF7YAT00CCCCCCCCCCCCCCCC").is_ok());
+    assert!(store.read("01HF7YAT00DDDDDDDDDDDDDDDD").is_ok());
+}
+
+#[test]
+fn sessions_updated_at_the_same_time_are_ordered_by_the_larger_id() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    for id in ["01HF7YAT00AAAAAAAAAAAAAAAA", "01HF7YAT00BBBBBBBBBBBBBBBB"] {
+        let mut held = store.create(info(id, 100)).unwrap();
+        held.save_frozen_copy(prepared(copy()), state_with_comment())
+            .unwrap();
+    }
+
+    assert_eq!(
+        store
+            .list()
+            .unwrap()
+            .iter()
+            .map(|summary| summary.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["01HF7YAT00BBBBBBBBBBBBBBBB", "01HF7YAT00AAAAAAAAAAAAAAAA"]
+    );
+
+    cleanup(&scratch.dir(), 1, u64::MAX);
+
+    assert!(matches!(
+        store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
+        Err(SessionError::NotFound { .. })
+    ));
+    assert!(store.read("01HF7YAT00BBBBBBBBBBBBBBBB").is_ok());
 }
 
 #[test]
@@ -1782,15 +1849,16 @@ fn session_lock_is_exclusive_until_dropped() {
 fn session_list_orders_by_updated_and_skips_unusable() {
     let scratch = Scratch::new();
     let store = SessionStore::new(scratch.dir());
+    // 新しい方の id を小さくして、id の順に並べても通らないようにする。
     let mut older = store
-        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .create(info("01HF7YAT00BBBBBBBBBBBBBBBB", 100))
         .unwrap();
     older.save_state_at(state_with_comment(), 100).unwrap();
     older
         .save_frozen_copy(prepared(copy()), state_with_comment())
         .unwrap();
     let mut newer = store
-        .create(info("01HF7YAT00BBBBBBBBBBBBBBBB", 200))
+        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 200))
         .unwrap();
     newer.save_state_at(state_with_comment(), 200).unwrap();
     newer
@@ -1809,7 +1877,7 @@ fn session_list_orders_by_updated_and_skips_unusable() {
 
     assert_eq!(
         listed.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
-        vec!["01HF7YAT00BBBBBBBBBBBBBBBB", "01HF7YAT00AAAAAAAAAAAAAAAA"]
+        vec!["01HF7YAT00AAAAAAAAAAAAAAAA", "01HF7YAT00BBBBBBBBBBBBBBBB"]
     );
     assert_eq!(listed[0].seen, 1);
     assert_eq!(listed[0].total_files, 2);
