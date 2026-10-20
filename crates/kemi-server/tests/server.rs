@@ -597,13 +597,6 @@ impl Drop for TempRepo {
 }
 
 impl TestServer {
-    async fn start_watched(source: Arc<dyn ReviewSource>) -> Self {
-        let server = TestServer::start_source(source).await;
-        // 監視スレッドがパスを登録するのを待つ。
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        server
-    }
-
     fn stop(self) {
         self.task.abort();
     }

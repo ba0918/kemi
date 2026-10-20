@@ -74,6 +74,25 @@ impl SseStream {
         }
     }
 
+    /// 見張りが効くまで、`touch` で見張られているものを書き換えては update を待つ。見張りの
+    /// 登録は別スレッドで行われ、終わった合図が無いので、update が届いたことで登録を観測する。
+    /// 書き換えては debounce（500 ms）より十分長く待ち、届かなかったときだけ書き換え直す
+    /// （間を詰めると debounce が延び続けて update が出ない）。前の書き換えの update が、
+    /// 受けた後になって届くのは、見張りか SSE がこの待ちに近いほど遅れたときに限る。
+    async fn until_watched(&mut self, mut touch: impl FnMut(u32)) {
+        let deadline = Instant::now() + WAIT_LIMIT;
+        for round in 1.. {
+            touch(round);
+            if self.next_update(Duration::from_secs(2)).await {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no update event within {WAIT_LIMIT:?}"
+            );
+        }
+    }
+
     fn drain_updates(&mut self) -> usize {
         let needle = "event: update";
         let mut count = 0;
@@ -92,14 +111,11 @@ async fn live_worktree_change_sends_update() {
     repo.commit("base");
     repo.write("a.txt", "initial change\n");
     let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
-    repo.write("a.txt", "two\n");
-    assert!(
-        sse.next_update(Duration::from_secs(2)).await,
-        "no update event"
-    );
+    sse.until_watched(|round| repo.write("a.txt", &format!("two {round}\n")))
+        .await;
 
     server.stop();
 }
@@ -112,14 +128,11 @@ async fn live_manifest_path_change_sends_update() {
     let json =
         r#"{"groups":[{"diffs":[{"path":"a.txt","old_path":"old.txt","new_path":"new.txt"}]}]}"#;
     let source = Arc::new(ManifestSource::from_json(json, &dir.path).unwrap());
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
-    dir.write("new.txt", "two\n");
-    assert!(
-        sse.next_update(Duration::from_secs(2)).await,
-        "no update event"
-    );
+    sse.until_watched(|round| dir.write("new.txt", &format!("two {round}\n")))
+        .await;
 
     server.stop();
 }
@@ -137,9 +150,15 @@ async fn live_ref_change_sends_update_and_other_git_writes_are_ignored() {
             group_by: GroupBy::Commit,
         },
     ));
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
+    // 対象の ref を進めて、見張りが効いてから確かめる（効く前なら何も確かめずに通る）。
+    sse.until_watched(|round| {
+        repo.write("probe.txt", &format!("{round}\n"));
+        repo.commit(&format!("probe {round}"));
+    })
+    .await;
 
     // `--to`（HEAD）以外の ref、たとえば別ブランチの更新は監視対象ではない。
     repo.git(&["branch", "other"]);
@@ -161,7 +180,7 @@ async fn live_ref_change_sends_update_and_other_git_writes_are_ignored() {
     repo.write("b.txt", "two\n");
     repo.commit("second");
     assert!(
-        sse.next_update(Duration::from_secs(2)).await,
+        sse.next_update(WAIT_LIMIT).await,
         "no update event for the new commit"
     );
 
@@ -175,9 +194,12 @@ async fn live_worktree_read_does_not_send_update() {
     repo.commit("base");
     repo.write("a.txt", "initial change\n");
     let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
 
     let mut sse = SseStream::connect(server.port).await;
+    // 見張りが効いてから確かめる（効く前なら何も確かめずに通る）。
+    sse.until_watched(|round| repo.write("a.txt", &format!("change {round}\n")))
+        .await;
     // api/review はファイルを読む。読み取り（Access）は更新ではない。
     let response = http()
         .get(format!(
@@ -200,7 +222,7 @@ async fn live_worktree_read_does_not_send_update() {
 #[tokio::test]
 async fn live_rewritten_history_comment_outdated_with_original_group() {
     let (repo, base) = range_repo();
-    let server = TestServer::start_watched(Arc::new(range_source(
+    let server = TestServer::start_source(Arc::new(range_source(
         &repo,
         &base,
         "HEAD",

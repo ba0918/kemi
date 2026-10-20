@@ -358,7 +358,7 @@ async fn untracked_files_over_the_limit_are_not_rendered_because_their_content_w
     std::fs::write(repo.path.join("shot.png"), &big).unwrap();
     std::fs::write(repo.path.join("notes.md"), &big).unwrap();
     let source = Arc::new(GitSource::new(repo.path.clone(), GitMode::Worktree));
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
 
     let review = server.get_json("api/review").await;
     let id_of = |path: &str| {

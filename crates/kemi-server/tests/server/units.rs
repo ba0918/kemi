@@ -261,7 +261,7 @@ async fn unit_background_first_review_does_not_wait_for_the_other_unit() {
         gated: GroupBy::Commit,
         gate: std::sync::Mutex::new(gate),
     });
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
 
     let review = tokio::time::timeout(WAIT_LIMIT, server.get_json("api/review"))
         .await
@@ -288,7 +288,7 @@ async fn the_unit_event_carries_the_units_of_the_review() {
         gated: GroupBy::Commit,
         gate: std::sync::Mutex::new(gate),
     });
-    let server = TestServer::start_watched(source).await;
+    let server = TestServer::start_source(source).await;
     let mut events = http()
         .get(format!("{}api/events", server.url))
         .send()
@@ -313,7 +313,7 @@ async fn the_unit_event_carries_the_units_of_the_review() {
 async fn unit_failure_keeps_review_and_retries() {
     let (repo, base) = range_repo();
     let fail = Arc::new(AtomicBool::new(true));
-    let server = TestServer::start_watched(Arc::new(UnitFailureSource {
+    let server = TestServer::start_source(Arc::new(UnitFailureSource {
         inner: Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
         fail: fail.clone(),
     }))
@@ -345,8 +345,7 @@ async fn unit_failure_keeps_review_and_retries() {
 async fn unit_comments_both_in_submit_with_their_group_ids() {
     let (repo, base) = range_repo();
     let server =
-        TestServer::start_watched(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)))
-            .await;
+        TestServer::start_source(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
     let final_form = server.get_json("api/review").await;
     server.wait_unit("ready").await;
     let per_commit = server.get_json("api/review?unit=commit").await;
@@ -388,8 +387,7 @@ async fn unit_comments_both_in_submit_with_their_group_ids() {
 async fn unit_seen_separate_per_unit() {
     let (repo, base) = range_repo();
     let server =
-        TestServer::start_watched(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)))
-            .await;
+        TestServer::start_source(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
     let final_form = server.get_json("api/review").await;
     server.wait_unit("ready").await;
     let final_a = file_in(&final_form, 0, "a.txt")["id"].clone();
@@ -424,7 +422,7 @@ async fn unit_focus_applies_to_both_units() {
         &repo.path,
     )
     .unwrap();
-    let server = TestServer::start_watched(Arc::new(source)).await;
+    let server = TestServer::start_source(Arc::new(source)).await;
 
     let final_form = server.get_json("api/review").await;
     server.wait_unit("ready").await;
@@ -449,8 +447,7 @@ async fn origin_api_returns_blocks_for_final_files_only() {
     let (repo, base) = range_repo();
     let last = repo.git(&["rev-parse", "HEAD"]);
     let server =
-        TestServer::start_watched(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)))
-            .await;
+        TestServer::start_source(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
     let final_form = server.get_json("api/review").await;
     server.wait_unit("ready").await;
     let per_commit = server.get_json("api/review?unit=commit").await;
@@ -486,8 +483,7 @@ async fn origin_api_large_file_opt_in() {
     repo.write("big.txt", &lines.replacen("line 5000\n", "changed\n", 1));
     repo.commit("change");
     let server =
-        TestServer::start_watched(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)))
-            .await;
+        TestServer::start_source(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
     let review = server.get_json("api/review").await;
     let id = review["groups"][0]["files"][0]["id"]
         .as_str()
@@ -510,8 +506,7 @@ async fn origin_git_failure_keeps_review_and_comments_submittable() {
     let (repo, base) = range_repo();
     let middle = repo.git(&["rev-parse", "HEAD~1"]);
     let server =
-        TestServer::start_watched(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)))
-            .await;
+        TestServer::start_source(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
     let final_form = server.get_json("api/review").await;
     server.wait_unit("ready").await;
     let final_a = file_in(&final_form, 0, "a.txt")["id"].clone();
@@ -564,8 +559,7 @@ async fn origin_git_failure_keeps_review_and_comments_submittable() {
 async fn live_refresh_both_units_adds_new_commit_unseen() {
     let (repo, base) = range_repo();
     let server =
-        TestServer::start_watched(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File)))
-            .await;
+        TestServer::start_source(Arc::new(range_source(&repo, &base, "HEAD", GroupBy::File))).await;
     server.get_json("api/review").await;
     server.wait_unit("ready").await;
     let per_commit = server.get_json("api/review?unit=commit").await;
@@ -615,7 +609,7 @@ async fn range_startup_reads_no_content_including_background_build() {
         inner: Box::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
         reads: reads.clone(),
     };
-    let server = TestServer::start_watched(Arc::new(source)).await;
+    let server = TestServer::start_source(Arc::new(source)).await;
 
     server.get_json("api/review").await;
     server.wait_unit("ready").await;
