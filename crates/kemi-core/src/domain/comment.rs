@@ -166,15 +166,15 @@ mod tests {
     }
 
     #[test]
-    fn comment_content_hash_is_stable_and_line_sensitive() {
-        assert_eq!(
-            content_hash(&lines(&["a", "b"])),
-            content_hash(&lines(&["a", "b"]))
-        );
-        assert_ne!(
-            content_hash(&lines(&["a", "b"])),
-            content_hash(&lines(&["a", "c"]))
-        );
+    fn comment_content_hash_is_stable_line_sensitive_and_decides_outdated() {
+        let created = content_hash(&lines(&["a", "b"]));
+        let same = content_hash(&lines(&["a", "b"]));
+        let changed = content_hash(&lines(&["a", "c"]));
+
+        assert_eq!(created, same);
+        assert_ne!(created, changed);
+        assert!(!is_outdated(&created, &same));
+        assert!(is_outdated(&created, &changed));
     }
 
     fn place(n: u32) -> Place {
@@ -232,13 +232,5 @@ mod tests {
         assert_eq!(PlaceKind::parse("arrow"), Some(PlaceKind::Arrow));
         assert_eq!(PlaceKind::parse("pen"), Some(PlaceKind::Pen));
         assert_eq!(PlaceKind::parse("circle"), None);
-    }
-
-    #[test]
-    fn comment_is_outdated_when_content_hash_differs() {
-        let created = content_hash(&lines(&["a", "b"]));
-        let changed = content_hash(&lines(&["a", "c"]));
-        assert!(is_outdated(&created, &changed));
-        assert!(!is_outdated(&created, &created));
     }
 }
