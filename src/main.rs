@@ -327,9 +327,7 @@ fn print_result(cli: &Cli) -> ! {
         fail("cannot read the latest result file");
     };
     let code = verdict.exit_code();
-    print!("{text}");
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    report::write_stdout(&text);
     std::process::exit(code);
 }
 
@@ -824,7 +822,7 @@ fn fail_keeping_session(message: &str, stored_session: Option<&StoredSession>) -
 
 fn finish_submitted(document: serde_json::Value) -> ! {
     match serde_json::to_string(&document) {
-        Ok(json) => println!("{json}"),
+        Ok(json) => report::write_stdout(&format!("{json}\n")),
         Err(error) => fail(&format!("cannot build the submit JSON: {error}")),
     }
     let code = document
@@ -959,13 +957,11 @@ fn list_sessions(store: &SessionStore, sessions: &[SessionSummary]) -> ! {
     if sessions.is_empty() {
         fail(&no_resumable_reason(store));
     }
-    use std::io::Write;
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    for summary in sessions {
-        let _ = writeln!(out, "{}", session::list_line(summary));
-    }
-    let _ = out.flush();
+    let lines: String = sessions
+        .iter()
+        .map(|summary| format!("{}\n", session::list_line(summary)))
+        .collect();
+    report::write_stdout(&lines);
     std::process::exit(report::SUCCESS);
 }
 
@@ -996,7 +992,7 @@ async fn main() {
     };
 
     if cli.version {
-        println!("kemi {}", env!("CARGO_PKG_VERSION"));
+        report::write_stdout(&format!("kemi {}\n", env!("CARGO_PKG_VERSION")));
         return;
     }
     if cli.help {
@@ -1054,7 +1050,7 @@ async fn main() {
                 let digest = kemi_core::domain::digest::build_digest(&review, cli.digest_top);
                 match serde_json::to_string(&digest) {
                     Ok(json) => {
-                        println!("{json}");
+                        report::write_stdout(&format!("{json}\n"));
                         return;
                     }
                     Err(error) => fail(&format!("cannot build the digest JSON: {error}")),

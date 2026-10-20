@@ -375,3 +375,107 @@ async fn stdin_dash_reads_manifest() {
         .unwrap();
     assert_eq!(review["title"], "e2e のレビュー");
 }
+
+// ---- stdout に書けないとき（R-SUBMIT） ----
+
+/// 読み手を先に閉じたパイプの書き手。ここへの書き込みは誤りになる。
+fn closed_pipe() -> std::io::PipeWriter {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    writer
+}
+
+fn assert_cannot_write_to_stdout(code: Option<i32>, stderr: &str, what: &str) {
+    assert_eq!(code, Some(2), "{what}: {stderr}");
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("kemi: cannot write to stdout: ")),
+        "{what}: {stderr}"
+    );
+}
+
+#[test]
+fn version_result_digest_and_session_list_exit_2_when_stdout_is_closed() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    kemi_core::result::save(
+        &results_dir(&state.path),
+        "00000000000000aa",
+        r#"{"kemi":3,"verdict":"approved"}"#,
+        1,
+        1,
+    )
+    .unwrap();
+    craft_session(
+        &state.path,
+        "01HF7YAT00AAAAAAAAAAAAAAAA",
+        SessionMode::Worktree,
+        "Working tree changes",
+    );
+
+    for args in [
+        vec!["--version"],
+        vec!["--result", "--any"],
+        vec!["manifest.json", "--digest"],
+        vec!["--resume"],
+    ] {
+        let output = kemi_command(&dir.path, &state.path)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(closed_pipe())
+            .output()
+            .unwrap();
+
+        assert_cannot_write_to_stdout(
+            output.status.code(),
+            &String::from_utf8_lossy(&output.stderr),
+            &format!("kemi {args:?}"),
+        );
+    }
+}
+
+/// submit の JSON を stdout に書けなくても、結果ファイルには残る（R-RESULT）。
+#[tokio::test]
+async fn submit_with_a_closed_stdout_exits_2_and_keeps_the_result_file() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let mut child = StopOnDrop(
+        kemi_command(&dir.path, &state.path)
+            .args(["manifest.json", "--no-open", "--port", "0"])
+            .stdin(Stdio::null())
+            .stdout(closed_pipe())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+    let mut line = String::new();
+    let url = loop {
+        line.clear();
+        assert!(
+            stderr.read_line(&mut line).unwrap() > 0,
+            "kemi exited without a URL"
+        );
+        if let Some(found) = line.strip_prefix("kemi: http") {
+            break format!("http{}", found.trim());
+        }
+    };
+
+    let response = reqwest::Client::new()
+        .post(format!("{url}api/submit"))
+        .header("Origin", url.split("/s/").next().unwrap())
+        .json(&serde_json::json!({ "verdict": "approved" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
+    let mut rest = String::new();
+    stderr.read_to_string(&mut rest).unwrap();
+
+    assert_cannot_write_to_stdout(status.code(), &rest, "submit");
+    assert_eq!(result_files(&state.path).len(), 1);
+}

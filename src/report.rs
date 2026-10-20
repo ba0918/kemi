@@ -41,6 +41,19 @@ pub(crate) fn fail(message: &str) -> ! {
     std::process::exit(ERROR);
 }
 
+/// stdout に書き切る。読み手が閉じたパイプなどで書けなければ、理由を出して終了コード 2 で
+/// 終わる（R-SUBMIT）。`println!` は書けないと panic し、契約に無い 101 で終わる。
+pub(crate) fn write_stdout(text: &str) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        fail(&format!("cannot write to stdout: {error}"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
