@@ -54,16 +54,21 @@ fn a_process_that_does_not_exit_is_bounded_and_reaped_by_its_owner() {
 
 #[cfg(unix)]
 #[test]
-fn input_for_a_process_that_exits_without_reading_it_is_not_an_error() {
-    let mut child = StopOnDrop(Command::new("true").stdin(Stdio::piped()).spawn().unwrap());
-    let stdin = child.0.stdin.take().unwrap();
-    assert!(
-        process::wait(&mut child.0, std::time::Duration::from_secs(20))
-            .unwrap()
-            .success()
-    );
+fn input_left_unread_by_a_process_is_an_error_unless_allowed() {
+    let feed_after_exit = || {
+        let mut child = StopOnDrop(Command::new("true").stdin(Stdio::piped()).spawn().unwrap());
+        let stdin = child.0.stdin.take().unwrap();
+        assert!(
+            process::wait(&mut child.0, std::time::Duration::from_secs(20))
+                .unwrap()
+                .success()
+        );
+        process::feed(stdin, vec![b'x'; 1024 * 1024])
+    };
 
-    process::feed(stdin, vec![b'x'; 1024 * 1024])
-        .finish()
-        .unwrap();
+    assert_eq!(
+        feed_after_exit().finish().unwrap_err().kind(),
+        std::io::ErrorKind::BrokenPipe
+    );
+    feed_after_exit().finish_even_if_unread().unwrap();
 }

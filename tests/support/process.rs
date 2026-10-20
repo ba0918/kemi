@@ -99,16 +99,23 @@ pub fn feed(mut stdin: impl Write + Send + 'static, input: Vec<u8>) -> Feeding {
 }
 
 impl Feeding {
-    /// 書き終わるのを待つ。子が読まずに先に終わったときの BrokenPipe は、子の振る舞いとして
-    /// 受け入れる（stdin を読まずに断るコマンドもある）。
+    /// 書き終わるのを待つ。子が読まずに先に終わったら BrokenPipe の誤り。分かるのは、入力が
+    /// パイプに収まらないか、書き込みより先に子が終わったときだけ。
     pub fn finish(self) -> io::Result<()> {
-        match self.written.recv_timeout(TIMEOUT) {
-            Ok(Err(error)) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-            Ok(written) => written,
-            Err(_) => Err(io::Error::new(
+        self.written.recv_timeout(TIMEOUT).unwrap_or_else(|_| {
+            Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "process input was not written",
-            )),
+            ))
+        })
+    }
+
+    /// 書き終わるのを待つ。子が読まずに先に終わったときの BrokenPipe は、子の振る舞いとして
+    /// 受け入れる（stdin を読まずに断るコマンドもある）。
+    pub fn finish_even_if_unread(self) -> io::Result<()> {
+        match self.finish() {
+            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+            written => written,
         }
     }
 }

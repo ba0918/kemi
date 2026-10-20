@@ -429,10 +429,27 @@ fn run_with_state(dir: &Path, args: &[&str], state: &Path) -> std::process::Outp
     run_command(kemi_command(dir, state).args(args), None)
 }
 
+/// kemi の stdin に渡す入力。
+#[derive(Clone, Copy)]
+enum Input<'a> {
+    /// kemi が読み切るはずの入力。読まずに終わったと分かれば落とす。
+    Read(&'a str),
+    /// kemi が読まずに終わってもよい入力。stdin を読まないコマンドや、読む前に断る引数に渡す。
+    MayBeUnread(&'a str),
+}
+
+impl<'a> Input<'a> {
+    fn text(self) -> &'a str {
+        match self {
+            Input::Read(text) | Input::MayBeUnread(text) => text,
+        }
+    }
+}
+
 /// すぐ終わるはずのコマンドを、終わるまで走らせる。`input` は stdin に渡す（無ければ stdin は
 /// 空）。退行で kemi がサーブを始めたり待ち続けたりしてもテストが止まり続けないよう、終了の
 /// 待ちに期限を設け、過ぎたら止めて失敗させる。
-fn run_command(command: &mut Command, input: Option<&str>) -> std::process::Output {
+fn run_command(command: &mut Command, input: Option<Input>) -> std::process::Output {
     let mut child = StopOnDrop(
         command
             .stdin(if input.is_some() {
@@ -445,17 +462,24 @@ fn run_command(command: &mut Command, input: Option<&str>) -> std::process::Outp
             .spawn()
             .unwrap(),
     );
-    let feeding =
-        input.map(|input| process::feed(child.0.stdin.take().unwrap(), input.as_bytes().to_vec()));
+    let feeding = input.map(|input| {
+        let stdin = child.0.stdin.take().unwrap();
+        (
+            input,
+            process::feed(stdin, input.text().as_bytes().to_vec()),
+        )
+    });
     let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
     let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
-    let status =
-        process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap_or_else(|error| {
-            let args: Vec<_> = command.get_args().collect();
-            panic!("kemi {args:?}: {error}")
-        });
-    if let Some(feeding) = feeding {
-        feeding.finish().unwrap();
+    let args: Vec<_> = command.get_args().collect();
+    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20))
+        .unwrap_or_else(|error| panic!("kemi {args:?}: {error}"));
+    if let Some((input, feeding)) = feeding {
+        match input {
+            Input::Read(_) => feeding.finish(),
+            Input::MayBeUnread(_) => feeding.finish_even_if_unread(),
+        }
+        .unwrap_or_else(|error| panic!("kemi {args:?}: stdin: {error}"));
     }
     let mut out = Vec::new();
     stdout.read_to_end(&mut out).unwrap();
@@ -468,9 +492,13 @@ fn run_command(command: &mut Command, input: Option<&str>) -> std::process::Outp
     }
 }
 
-/// `kemi wait` / `kemi reply` / `kemi explain` を、`stdin` を渡して終わるまで走らせる。
+/// `kemi wait` / `kemi reply` / `kemi explain` を、`stdin` を渡して終わるまで走らせる。kemi が
+/// `stdin` を読まずに終わってよいときは、`run_command` に `Input::MayBeUnread` を渡す。
 fn run_agent(dir: &Path, state: &Path, args: &[&str], stdin: &str) -> std::process::Output {
-    run_command(kemi_command(dir, state).args(args), Some(stdin))
+    run_command(
+        kemi_command(dir, state).args(args),
+        Some(Input::Read(stdin)),
+    )
 }
 
 /// `kemi wait` を裏で待たせる。

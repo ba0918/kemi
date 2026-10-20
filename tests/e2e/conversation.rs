@@ -140,7 +140,11 @@ fn wait_and_reply_for_an_unknown_id_exit_2() {
         vec!["reply", "01HF7YAT00ZZZZZZZZZZZZZZZZ"],
         vec!["wait", "../../etc/passwd"],
     ] {
-        let output = run_agent(&dir.path, &state.path, &args, "{\"writes\":[]}");
+        // kemi wait は stdin を読まない。
+        let output = run_command(
+            kemi_command(&dir.path, &state.path).args(&args),
+            Some(Input::MayBeUnread("{\"writes\":[]}")),
+        );
         assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
         assert!(output.stdout.is_empty(), "kemi {args:?}");
         assert!(!output.stderr.is_empty(), "kemi {args:?}");
@@ -173,11 +177,10 @@ async fn an_agent_command_refuses_a_flag_it_does_not_take_in_english() {
     // 動いているレビューの id を使う。拒否が無ければ、書き込みを渡して 0 で終わる。
     let (kemi, id) = start_worktree_review(&dir, &state, &[]);
 
-    let output = run_agent(
-        &dir.path,
-        &state.path,
-        &["reply", &id, "--no-open"],
-        r#"{"writes":[]}"#,
+    // 引数を断るときは stdin を読む前に終わる。
+    let output = run_command(
+        kemi_command(&dir.path, &state.path).args(["reply", &id, "--no-open"]),
+        Some(Input::MayBeUnread(r#"{"writes":[]}"#)),
     );
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
