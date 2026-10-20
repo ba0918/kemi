@@ -390,6 +390,80 @@ export function overlayPlacement({ scale, viewportHeight, scrollX, scrollY, cont
 }
 
 /**
+ * 消えた要素の行を押したときに、比べる相手の側のその要素を見せる位置（R-PAGE-DIFF）。要素を枠の縦の真ん中に置く
+ * 位置（枠より高い要素は上端を枠の上端に）を求める。重ねて透かすときはページをその位置までスクロールさせ、ページが
+ * 短くてそこまでスクロールできなければ末尾より下へずらす（そろえたまま。live-compare.md の DC2）。並べるときと狭い
+ * 画面では、比べる相手を中身の高さで描いて外側でずらし、ずらすのは中身の末尾が枠の下端に来るまで。値はどれも
+ * 文書の座標（ページの CSS ピクセル）。
+ * @param {{ top: number, height: number, viewHeight: number, pageHeight: number, snapshotHeight: number, overlaid: boolean }} input
+ *   top と height は要素の上端と高さ、viewHeight は枠の高さ、pageHeight は動いているページの中身の高さ、
+ *   snapshotHeight はスナップショットの文書の高さ
+ * @returns {{ y: number, overscroll: boolean }} 重ねて透かすときは、ページをスクロールさせる位置と、末尾より下へずらすか。
+ *   そうでなければ、比べる相手をずらす量（overscroll は false）
+ */
+export function revealRemoved({ top, height, viewHeight, pageHeight, snapshotHeight, overlaid }) {
+  const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
+  if (overlaid) {
+    return { y: centered, overscroll: centered > Math.max(0, pageHeight - viewHeight) };
+  }
+  const contentHeight = Math.max(viewHeight, snapshotHeight);
+  return { y: Math.min(centered, contentHeight - viewHeight), overscroll: false };
+}
+
+/**
+ * 比べる相手をずらした形の置き方（消えた要素の行を押した後。R-PAGE-DIFF）。比べる相手の枠は中を動かせないので、
+ * 中身の高さ（枠より短ければ枠の高さ）で描き、外側で `y`（文書の座標）だけ上へずらす。`y` は、中身の上端から、
+ * 末尾が枠の下端に来るまでに収める。`origin` は比べる相手の文書の左上が枠の外側のどこにあるか（画面のピクセル）。
+ * @param {{ y: number, viewHeight: number, snapshotHeight: number, scale: number }} input
+ * @returns {{ y: number, height: number, transform: string, origin: { x: number, y: number } }}
+ */
+export function shiftedPlacement({ y, viewHeight, snapshotHeight, scale }) {
+  const height = Math.max(viewHeight, snapshotHeight);
+  const shift = Math.max(0, Math.min(y, height - viewHeight));
+  return {
+    y: shift,
+    height,
+    transform: `translate(0px, ${-shift * scale}px) scale(${scale})`,
+    origin: { x: 0, y: -shift * scale },
+  };
+}
+
+/** 比べる相手の側の光を、要素の箱から離す幅（画面のピクセル）。 */
+const GLOW_GAP = 4;
+
+/**
+ * 比べる相手の側で消えた要素を光らせる箱（画面のピクセル）。要素の箱（スナップショットの文書の座標の
+ * [左, 上, 幅, 高さ]）を倍率で縮めて、比べる相手の文書の左上の位置（origin）だけずらし、少し離して囲む。
+ * @param {{ origin: { x: number, y: number }, box: number[], scale: number }} input
+ * @returns {{ left: number, top: number, width: number, height: number }}
+ */
+export function glowBox({ origin, box, scale }) {
+  const [left, top, width, height] = box;
+  return {
+    left: origin.x + left * scale - GLOW_GAP,
+    top: origin.y + top * scale - GLOW_GAP,
+    width: width * scale + GLOW_GAP * 2,
+    height: height * scale + GLOW_GAP * 2,
+  };
+}
+
+/**
+ * 重ねて透かす間に末尾より下へずらしているとき、上へのホイールでまずずらした分を戻す（live-compare.md の DC2）。
+ * 戻しきれなかった残りをページに送る。ずらした分を戻しきったら、ずらすのをやめる。
+ * @param {{ deltaY: number, beyond: number, y: number }} input
+ *   deltaY はホイールの縦の量（負なら上。文書の座標）、beyond はページのスクロールで届かない分、y はずらして
+ *   見せている位置
+ * @returns {{ deltaY: number, y: number | null } | null} 戻さないときは null。y が null なら、ずらすのをやめる
+ */
+export function consumeOverscroll({ deltaY, beyond, y }) {
+  if (deltaY < 0 && beyond > 0) {
+    const back = Math.min(-deltaY, beyond);
+    return { deltaY: deltaY + back, y: back < beyond ? y - back : null };
+  }
+  return null;
+}
+
+/**
  * 等倍で枠より広いページの中の箱を見せるための、枠の横のスクロールの位置（R-PAGE-DIFF の行を押したとき）。
  * 箱が枠の中にあれば今のまま、はみ出していれば箱を枠の真ん中に、枠より広い箱はその左端を枠の左端に置く。
  * 値はどれも枠の中の画面のピクセル。

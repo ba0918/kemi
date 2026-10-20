@@ -18,6 +18,8 @@ import {
   chooseReference,
   chooseSnapshot,
   compareHeading,
+  consumeOverscroll,
+  glowBox,
   referenceName,
   referenceOptions,
   fitScale,
@@ -26,7 +28,9 @@ import {
   pageKey,
   parseWidth,
   placeSets,
+  revealRemoved,
   revealScrollLeft,
+  shiftedPlacement,
   snapshotLabel,
   startSnapshotDue,
   snapshotOptions,
@@ -584,4 +588,63 @@ test("a box outside the frame on either side is brought to the middle of the fra
 
 test("a box wider than the frame is shown from its left edge", () => {
   assert.equal(revealScrollLeft({ left: 900, width: 800, scrollLeft: 0, viewportWidth: 500 }), 900);
+});
+
+/** 消えた要素の行を押したときの入力。枠の高さ 500、ページとスナップショットの中身は 3000。 */
+const removedAt = (/** @type {Partial<Parameters<typeof revealRemoved>[0]>} */ input) =>
+  revealRemoved({ top: 1000, height: 100, viewHeight: 500, pageHeight: 3000, snapshotHeight: 3000, overlaid: false, ...input });
+
+test("a removed element is shown in the middle of the frame, and one taller than the frame from its top", () => {
+  assert.deepEqual(removedAt({}), { y: 800, overscroll: false });
+  assert.deepEqual(removedAt({ top: 1000, height: 800 }), { y: 1000, overscroll: false });
+  // 文書の上端より上には動かさない。
+  assert.deepEqual(removedAt({ top: 100 }), { y: 0, overscroll: false });
+});
+
+test("a shifted snapshot is moved no further than its end at the bottom of the frame, and not at all when shorter than the frame", () => {
+  assert.deepEqual(removedAt({ top: 2900 }), { y: 2500, overscroll: false });
+  assert.deepEqual(removedAt({ top: 200, snapshotHeight: 300 }), { y: 0, overscroll: false });
+});
+
+test("while overlaid, the page is scrolled to the removed element, and moved beyond its end only when it cannot scroll that far", () => {
+  // ページは 3000 - 500 = 2500 までスクロールできる（live-compare.md の DC2: そろえたまま見せる）。
+  assert.deepEqual(removedAt({ overlaid: true, top: 2700 }), { y: 2500, overscroll: false });
+  assert.deepEqual(removedAt({ overlaid: true, top: 2701 }), { y: 2501, overscroll: true });
+  // スナップショットの高さでは収めない（重ねた比べる相手は外側でずらす）。
+  assert.deepEqual(removedAt({ overlaid: true, top: 2900, snapshotHeight: 300 }), { y: 2700, overscroll: true });
+  // 今のページが枠より短いと、少しでも下ならずらす。
+  assert.deepEqual(removedAt({ overlaid: true, top: 400, pageHeight: 300 }), { y: 200, overscroll: true });
+  assert.deepEqual(removedAt({ overlaid: true, top: 100, pageHeight: 300 }), { y: 0, overscroll: false });
+});
+
+test("a shifted snapshot is drawn at its full height and moved up by the shift, kept between its top and its end", () => {
+  assert.deepEqual(shiftedPlacement({ y: 800, viewHeight: 500, snapshotHeight: 3000, scale: 0.5 }), {
+    y: 800,
+    height: 3000,
+    transform: "translate(0px, -400px) scale(0.5)",
+    origin: { x: 0, y: -400 },
+  });
+  assert.equal(shiftedPlacement({ y: 9000, viewHeight: 500, snapshotHeight: 3000, scale: 1 }).y, 2500);
+  const atTop = shiftedPlacement({ y: -40, viewHeight: 500, snapshotHeight: 3000, scale: 1 });
+  assert.deepEqual([atTop.y, atTop.transform], [0, "translate(0px, 0px) scale(1)"]);
+  assert.deepEqual(shiftedPlacement({ y: 100, viewHeight: 500, snapshotHeight: 300, scale: 1 }).height, 500);
+  assert.equal(shiftedPlacement({ y: 100, viewHeight: 500, snapshotHeight: 300, scale: 1 }).y, 0);
+});
+
+test("the glow on the snapshot surrounds the scaled element box a little apart, where the snapshot is drawn", () => {
+  assert.deepEqual(glowBox({ origin: { x: -20, y: -400 }, box: [100, 1000, 60, 30], scale: 0.5 }), {
+    left: 26,
+    top: 96,
+    width: 38,
+    height: 23,
+  });
+});
+
+test("an upward wheel first takes back the move beyond the end of the page, and sends only the rest to the page", () => {
+  assert.deepEqual(consumeOverscroll({ deltaY: -40, beyond: 100, y: 2600 }), { deltaY: 0, y: 2560 });
+  assert.deepEqual(consumeOverscroll({ deltaY: -150, beyond: 100, y: 2600 }), { deltaY: -50, y: null });
+  assert.deepEqual(consumeOverscroll({ deltaY: -100, beyond: 100, y: 2600 }), { deltaY: 0, y: null });
+  // 下へのホイールと、ずらしていない間は、そのままページに送る。
+  assert.equal(consumeOverscroll({ deltaY: 40, beyond: 100, y: 2600 }), null);
+  assert.equal(consumeOverscroll({ deltaY: -40, beyond: 0, y: 2600 }), null);
 });

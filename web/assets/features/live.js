@@ -16,10 +16,12 @@ import {
   addPlace,
   bandNotice,
   commentShortName,
+  consumeOverscroll,
   buildPageTree,
   chooseReference,
   compareHeading,
   fitScale,
+  glowBox,
   liveOrigin,
   overlayPlacement,
   pageKey,
@@ -34,7 +36,9 @@ import {
   referenceName,
   referenceOptions,
   removePlace,
+  revealRemoved,
   revealScrollLeft,
+  shiftedPlacement,
   strayRefs,
   snapshotLabel,
   startSnapshotDue,
@@ -985,12 +989,13 @@ function startComposing(shell) {
       const x = event.deltaX * unit - (viewport.scrollLeft - before);
       let y = event.deltaY * unit;
       // 末尾より下へずらしている間は、上へのホイールでまずその分を戻す。
-      const beyond = overscrolled();
-      if (live.overscroll !== null && y < 0 && beyond > 0) {
-        const back = Math.min(-y, beyond);
-        live.overscroll = back < beyond ? { ...live.overscroll, y: live.overscroll.y - back } : null;
-        y += back;
-        layoutFrames();
+      if (live.overscroll !== null) {
+        const consumed = consumeOverscroll({ deltaY: y, beyond: overscrolled(), y: live.overscroll.y });
+        if (consumed !== null) {
+          live.overscroll = consumed.y === null ? null : { ...live.overscroll, y: consumed.y };
+          y = consumed.deltaY;
+          layoutFrames();
+        }
       }
       shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x, y }, live.origin);
     },
@@ -1978,16 +1983,21 @@ function showRemovedElement(index) {
     live.refGlow = null;
     layoutFrames();
   }, REF_GLOW);
-  const viewHeight = shell.refViewport.clientHeight / live.scale;
-  const centered = Math.max(0, top - Math.max(0, viewHeight - height) / 2);
   const overlaid = !state.narrow && live.compare === "overlay";
+  const reveal = revealRemoved({
+    top,
+    height,
+    viewHeight: shell.refViewport.clientHeight / live.scale,
+    pageHeight: live.scroll.height,
+    snapshotHeight: live.descriptions.get(id)?.height ?? 0,
+    overlaid,
+  });
   if (overlaid) {
     // 今のページが短くてそこまでスクロールできないときは、届かない分だけ両方の枠を外側でずらす（そろえたまま）。
-    live.overscroll = centered > Math.max(0, live.scroll.height - viewHeight) ? { key: refShiftKey(), y: centered } : null;
-    shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: centered - live.scroll.y }, live.origin);
+    live.overscroll = reveal.overscroll ? { key: refShiftKey(), y: reveal.y } : null;
+    shell.liveFrame.contentWindow?.postMessage({ kemi: "live", type: "scroll-by", x: 0, y: reveal.y - live.scroll.y }, live.origin);
   } else {
-    const contentHeight = Math.max(viewHeight, live.descriptions.get(id)?.height ?? 0);
-    live.refShift = { key: refShiftKey(), y: Math.min(centered, contentHeight - viewHeight) };
+    live.refShift = { key: refShiftKey(), y: reveal.y };
   }
   layoutFrames();
   // 重ねた比べる相手は、ページの横のスクロールの分だけ左にずらして描いている（layoutFrames）。描いている所で合わせる。
@@ -2456,11 +2466,15 @@ function layoutFrames() {
     });
     origin = { x: -live.scroll.x * scale, y: -(live.scroll.y + beyond) * scale };
   } else if (live.refShift !== null) {
-    const contentHeight = Math.max(height, live.descriptions.get(shownId)?.height ?? 0);
-    const y = Math.max(0, Math.min(live.refShift.y, contentHeight - height));
-    live.refShift = { ...live.refShift, y };
-    placement = { height: contentHeight, transform: `translate(0px, ${-y * scale}px) scale(${scale})` };
-    origin = { x: 0, y: -y * scale };
+    const shifted = shiftedPlacement({
+      y: live.refShift.y,
+      viewHeight: height,
+      snapshotHeight: live.descriptions.get(shownId)?.height ?? 0,
+      scale,
+    });
+    live.refShift = { ...live.refShift, y: shifted.y };
+    placement = { height: shifted.height, transform: shifted.transform };
+    origin = shifted.origin;
   }
   for (const target of [shell.refFrame, shell.refMockFrame]) {
     target.style.width = `${live.width}px`;
@@ -2471,12 +2485,11 @@ function layoutFrames() {
   const glow = live.refGlow !== null && live.refGlow.snapshot === shownId && origin !== null ? live.refGlow.box : null;
   shell.refGlow.hidden = glow === null;
   if (glow !== null && origin !== null) {
-    const [left, top, width, boxHeight] = glow;
-    const gap = 4;
-    shell.refGlow.style.left = `${origin.x + left * scale - gap}px`;
-    shell.refGlow.style.top = `${origin.y + top * scale - gap}px`;
-    shell.refGlow.style.width = `${width * scale + gap * 2}px`;
-    shell.refGlow.style.height = `${boxHeight * scale + gap * 2}px`;
+    const box = glowBox({ origin, box: glow, scale });
+    shell.refGlow.style.left = `${box.left}px`;
+    shell.refGlow.style.top = `${box.top}px`;
+    shell.refGlow.style.width = `${box.width}px`;
+    shell.refGlow.style.height = `${box.height}px`;
   }
   shell.stage.style.setProperty("--lv-scale", String(scale));
   if (live.scale !== scale) {
