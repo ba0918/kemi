@@ -85,6 +85,27 @@ export function replaceComment(comments, updated) {
 }
 
 /**
+ * 読んだファイルの内容でサーバが決め直した outdated（R-COMMENT）を、同じ id のコメントへ映した並び。
+ * 映すのは outdated だけ。返信や解決は、読んでいる間に届いた通知で手元のほうが新しいことがある。
+ * 変わるものが無ければ同じ並びを返す。
+ * @param {any[]} comments
+ * @param {any[]} fetched 読んだファイルのコメント
+ * @returns {any[]}
+ */
+export function withOutdatedFrom(comments, fetched) {
+  const outdated = new Map(fetched.map((comment) => [comment.id, Boolean(comment.outdated)]));
+  /** @param {any} comment */
+  const changed = (comment) =>
+    outdated.has(comment.id) && outdated.get(comment.id) !== Boolean(comment.outdated);
+  if (!comments.some(changed)) {
+    return comments;
+  }
+  return comments.map((comment) =>
+    changed(comment) ? { ...comment, outdated: outdated.get(comment.id) } : comment,
+  );
+}
+
+/**
  * 発言を足した新しい並び。書いた画面には応答と通知の両方で届くので、同じ id は足さない。
  * @param {any[]} messages
  * @param {any} message

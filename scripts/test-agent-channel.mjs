@@ -21,7 +21,8 @@
 // と変わり、状態が未接続 → 待機中 → 作業中 → 返事済みと変わる、渡した直後は渡すが押せず返信を書くと
 // 押せる、kemi wait を一度も呼ばないレビューやエージェントがつながれないレビューでも渡すが押せないまま出て、
 // submit は今どおり終わる、スレッドを開いている間に別のスレッドへ返信が届くと知らせと見出しの新着の数が出て、
-// 知らせを押すとそのスレッドが開く、n で読んで飛ばしたファイルを後で開いても差分の札がその間の解決を映す。
+// 知らせを押すとそのスレッドが開く、n で読んで飛ばしたファイルを後で開いても差分の札がその間の解決を映す、
+// 開く前にディスクで書き換わったファイルを開くと、札と会話パネルのスレッドの両方が古いコメントと示す。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -853,3 +854,31 @@ try {
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
 
+// (17) まだ開いていないファイルが、ページを開いた後にディスクで書き換わり、コメントの側の内容が変わった。
+// 更新バッジを押さずにそのファイルを開くと、読んだ内容でサーバがコメントを古いと決め直すので、差分の札と
+// 会話パネルのスレッドの両方が古いコメントとして示す（R-COMMENT）。
+const staleFixture = await makeFixture();
+const staleState = await mkdtemp(join(tmpdir(), 'kemi-agent-stale-state-'));
+const staleKemi = await startKemi(staleFixture, staleState);
+try {
+  const staleFiles = (await (await fetch(new URL('api/review', staleKemi.url))).json()).groups[0].files;
+  const other = staleFiles.find((file) => file.path === 'b.txt');
+  await post(staleKemi.url, 'api/comment', { op: 'add', file_id: other.id, side: 'new', start_line: 1, end_line: 1, body: 'on the first line of b' });
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', staleKemi.url);
+  await waitFor(`document.querySelector('#file-header .path')?.textContent === 'a.txt' && document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await writeFile(join(staleFixture, 'b.txt'), ['rewritten\n', ...LINES(5).slice(1)].join(''));
+  await waitFor(shown('#update-badge'));
+  await selectFile('b.txt');
+  const staleChip = `document.querySelector('#diff-content .cchip[data-id="c1"]')`;
+  await waitFor(`${staleChip} !== null`);
+  assert.equal(await evaluate(`${staleChip}.classList.contains('outdated')`), true, 'the chip is outdated');
+  await evaluate(`${staleChip}.click(); true`);
+  await waitFor(`${panelOpen} && ${threadOpen('on the first line of b')}`);
+  assert.equal(await evaluate(`document.querySelector('#cv-thread .t-outdated-mark') !== null`), true, 'the thread shows the comment as outdated');
+  console.log('PASS 開く前にディスクで書き換わったファイルを開くと、札と会話パネルのスレッドの両方が古いコメントと示す');
+} finally {
+  staleKemi.child.kill('SIGTERM');
+  await staleKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}

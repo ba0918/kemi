@@ -17,6 +17,7 @@ import {
   threadChip,
   threadUnread,
   unreadCount,
+  withOutdatedFrom,
 } from "./conversation-model.js";
 
 test("会話の旧plain本文は装飾せず最初の行を示す", () => {
@@ -169,6 +170,26 @@ test("知らないコメントが届いても一覧は変わらない", () => {
   const comments = [{ id: "c1", body: "one", replies: [] }];
 
   assert.deepEqual(replaceComment(comments, { id: "c9", body: "x", replies: [] }), comments);
+});
+
+test("読んだファイルで古いと決め直したコメントは、手元の並びでも古いコメントになり、返信は手元のまま", () => {
+  const comments = [
+    { id: "c1", body: "one", outdated: false, replies: [{ id: "r1", author: "agent", body: "done" }] },
+    { id: "c2", body: "two", outdated: false, replies: [] },
+  ];
+  const fetched = [{ id: "c1", body: "one", outdated: true, replies: [] }];
+
+  const next = withOutdatedFrom(comments, fetched);
+
+  assert.deepEqual(next[0], { ...comments[0], outdated: true });
+  assert.equal(next[1], comments[1]);
+  assert.equal(comments[0].outdated, false, "the original list is not changed");
+});
+
+test("読んだファイルのコメントの outdated が手元と同じなら、並びを作り直さない", () => {
+  const comments = [{ id: "c1", body: "one", outdated: true, replies: [] }];
+
+  assert.equal(withOutdatedFrom(comments, [{ id: "c1", outdated: true }, { id: "c9", outdated: false }]), comments);
 });
 
 test("発言は id が同じものを二度足さない", () => {

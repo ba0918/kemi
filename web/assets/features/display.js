@@ -18,6 +18,7 @@ import {
   state,
 } from "../state.js";
 import { saveMode } from "../storage.js";
+import { withOutdatedFrom } from "../conversation-model.js";
 import {
   anchorIndex,
   carryHeights,
@@ -73,6 +74,9 @@ export function storeFileData(key, data) {
   const rows = data.rows || [];
   const stored = { ...data, rows, collapsedRows: rows };
   state.cache.set(key, stored);
+  // サーバは読んだ内容でそのファイルのコメントの outdated を決め直す（R-COMMENT）。差分の札と
+  // 会話パネルが同じ印を出すよう、ページのコメントにも映す。
+  state.allComments = withOutdatedFrom(state.allComments, data.comments || []);
   return stored;
 }
 
