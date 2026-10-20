@@ -918,7 +918,7 @@ async fn submit_claiming_first_refuses_the_explanation_while_result_content_is_g
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn explanation_saving_first_is_included_in_submit_started_while_the_save_is_gated() {
+async fn submit_started_after_the_explanation_save_began_includes_the_explanation() {
     let sink = Arc::new(RecordingSink::default());
     let server = AgentServer::start_with_sink(
         Arc::new(FakeSource::new()),
@@ -949,6 +949,10 @@ async fn explanation_saving_first_is_included_in_submit_started_while_the_save_i
             .unwrap()
     });
     gate.entered.notified().await;
+    // 説明の保存が始まってから submit を出す。submit が保存の門に着いて待っていることは外から
+    // 観測できず、門はすぐ開けるので、ほとんどの実行で submit は保存が終わった後に届く。保存と
+    // submit の競合の検査ではない。逆の順（submit が先に請求する）は
+    // submit_claiming_first_refuses_the_explanation_while_result_content_is_gated が確かめる。
     let url = server.page.url.clone();
     let origin = server.page.origin.clone();
     let submit = tokio::spawn(async move {
