@@ -310,14 +310,10 @@ fn issued_generation_is_persisted_without_changing_timestamp_or_payload_and_io_f
     );
 }
 
-#[test]
-fn explanation_state_saving_advances_updated_time_only_after_atomic_success_without_payload_io() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
-    let mut open = store.create(info(id, 100)).unwrap();
+/// 説明の版 1 つと、最初の表示版の世代を持つ状態。
+fn explanation_state(id: &str) -> SessionState {
     let document:crate::domain::explanation::ExplanationDocument=serde_json::from_value(serde_json::json!({"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"Body"},"references":[]}]}]})).unwrap();
-    let state = SessionState {
+    SessionState {
         display: Some(crate::domain::display_version::DisplayVersions::initial(id).unwrap()),
         explanation: Some(crate::domain::explanation::ExplanationHistory {
             current_revision: 1,
@@ -328,7 +324,16 @@ fn explanation_state_saving_advances_updated_time_only_after_atomic_success_with
             }],
         }),
         ..SessionState::default()
-    };
+    }
+}
+
+#[test]
+fn explanation_state_saving_advances_updated_time_only_after_atomic_success_without_payload_io() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    let mut open = store.create(info(id, 100)).unwrap();
+    let state = explanation_state(id);
     open.save_explanation_state_at(state.clone(), 200).unwrap();
     assert_eq!(open.info().updated, 200);
     assert_eq!(store.read(id).unwrap().info.updated, 200);
@@ -342,6 +347,54 @@ fn explanation_state_saving_advances_updated_time_only_after_atomic_success_with
         std::fs::read(session_path(&scratch.dir(), id)).unwrap(),
         bytes
     );
+}
+
+#[test]
+fn explanation_state_arriving_after_delete_writes_nothing() {
+    // submit を確定してセッションを消した後に、処理中だった説明の保存が届く。
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    let mut open = store.create(info(id, 100)).unwrap();
+    open.save_state_at(state_with_comment(), 200).unwrap();
+    open.delete().unwrap();
+
+    assert!(matches!(
+        open.save_explanation_state_at(explanation_state(id), 300),
+        Err(SessionError::Unusable { .. })
+    ));
+
+    assert!(!session_path(&scratch.dir(), id).exists());
+    assert!(matches!(store.read(id), Err(SessionError::NotFound { .. })));
+}
+
+#[test]
+fn issued_state_arriving_after_a_live_review_was_suspended_writes_nothing() {
+    // 会話の無い `--live` のレビューは、保留で `<id>.session` を消す。その後に届いた世代の
+    // 保存が書くと、写しを見ずに復元できるとされる空の `--live` のセッションが一覧に出る。
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    let mut open = store.create(live_info(id, 100)).unwrap();
+    let first = SessionState {
+        display: Some(crate::domain::display_version::DisplayVersions::initial(id).unwrap()),
+        ..SessionState::default()
+    };
+    open.save_issued_state(first.clone()).unwrap();
+    open.close_suspended().unwrap();
+    assert!(!session_path(&scratch.dir(), id).exists());
+    let next = SessionState {
+        display: Some(first.display.as_ref().unwrap().next(id).unwrap()),
+        ..first
+    };
+
+    assert!(matches!(
+        open.save_issued_state(next),
+        Err(SessionError::Unusable { .. })
+    ));
+
+    assert!(!session_path(&scratch.dir(), id).exists());
+    assert!(store.list().unwrap().is_empty());
 }
 
 #[test]
