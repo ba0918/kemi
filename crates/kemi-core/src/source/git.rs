@@ -142,11 +142,6 @@ impl GitSource {
             .collect()
     }
 
-    pub fn open(mode: GitMode) -> Result<Self, SourceError> {
-        let repo = repo_root(Path::new("."))?;
-        Ok(GitSource::new(repo, mode))
-    }
-
     pub(crate) fn detached(&self) -> Result<Self, SourceError> {
         let (mode, labels) = match &self.mode {
             GitMode::Range { from, to, group_by } => (
