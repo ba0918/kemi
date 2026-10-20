@@ -201,7 +201,8 @@ impl GitSource {
             });
         }
 
-        let files = self.build_entries(&entries, &generated, "worktree", |entry| {
+        let group_id = "worktree";
+        let files = self.build_entries(&entries, &generated, group_id, |entry| {
             select_sides(
                 entry,
                 |path| SideRef::Git {
@@ -212,21 +213,9 @@ impl GitSource {
             )
         });
 
-        let group_id = "worktree".to_string();
+        let title = "Working tree changes";
         Ok((
-            ReviewMeta {
-                title: "Working tree changes".to_string(),
-                subtitle: String::new(),
-                meta: serde_json::Value::Null,
-                groups: vec![Group {
-                    id: group_id.clone(),
-                    title: "Working tree changes".to_string(),
-                    why: String::new(),
-                    watch: String::new(),
-                    files: files.0,
-                }],
-                approval: Vec::new(),
-            },
+            single_group(title.to_string(), group_id, title.to_string(), files.0),
             Plan { files: files.1 },
         ))
     }
@@ -235,7 +224,8 @@ impl GitSource {
         let attributes = read_attributes(&self.repo);
         let generated = GeneratedAttributes::parse(&attributes);
         let entries = diff_entries(&self.repo, &["--cached"])?;
-        let files = self.build_entries(&entries, &generated, "staged", |entry| {
+        let group_id = "staged";
+        let files = self.build_entries(&entries, &generated, group_id, |entry| {
             select_sides(
                 entry,
                 |path| SideRef::Git {
@@ -249,21 +239,9 @@ impl GitSource {
             )
         });
 
-        let group_id = "staged".to_string();
+        let title = "Staged changes";
         Ok((
-            ReviewMeta {
-                title: "Staged changes".to_string(),
-                subtitle: String::new(),
-                meta: serde_json::Value::Null,
-                groups: vec![Group {
-                    id: group_id.clone(),
-                    title: "Staged changes".to_string(),
-                    why: String::new(),
-                    watch: String::new(),
-                    files: files.0,
-                }],
-                approval: Vec::new(),
-            },
+            single_group(title.to_string(), group_id, title.to_string(), files.0),
             Plan { files: files.1 },
         ))
     }
@@ -330,7 +308,8 @@ impl GitSource {
             .to_string();
         let range = format!("{from_sha}...{to_sha}");
         let entries = diff_entries(&self.repo, &[&range])?;
-        let files = self.build_entries(&entries, &generated, "all", |entry| {
+        let group_id = "all";
+        let files = self.build_entries(&entries, &generated, group_id, |entry| {
             select_sides(
                 entry,
                 |path| SideRef::Git {
@@ -367,19 +346,12 @@ impl GitSource {
             files: origin_files,
         });
         Ok((
-            ReviewMeta {
-                title: format!("{from}..{to}"),
-                subtitle: String::new(),
-                meta: serde_json::Value::Null,
-                groups: vec![Group {
-                    id: "all".to_string(),
-                    title: format!("{from}...{to}"),
-                    why: String::new(),
-                    watch: String::new(),
-                    files: files.0,
-                }],
-                approval: Vec::new(),
-            },
+            single_group(
+                format!("{from}..{to}"),
+                group_id,
+                format!("{from}...{to}"),
+                files.0,
+            ),
             Plan { files: files.1 },
         ))
     }
@@ -1339,6 +1311,28 @@ pub(crate) fn split_z(bytes: &[u8]) -> Vec<&[u8]> {
         .split(|byte| *byte == 0)
         .filter(|token| !token.is_empty())
         .collect()
+}
+
+/// グループ 1 つのレビュー（worktree・staged・最終形）。
+fn single_group(
+    title: String,
+    group_id: &str,
+    group_title: String,
+    files: Vec<FileEntry>,
+) -> ReviewMeta {
+    ReviewMeta {
+        title,
+        subtitle: String::new(),
+        meta: serde_json::Value::Null,
+        groups: vec![Group {
+            id: group_id.to_string(),
+            title: group_title,
+            why: String::new(),
+            watch: String::new(),
+            files,
+        }],
+        approval: Vec::new(),
+    }
 }
 
 fn read_attributes(repo: &Path) -> String {
