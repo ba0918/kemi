@@ -337,21 +337,25 @@ impl IndexedPlan {
 /// 片方を差し替えても、もう片方のファイル id は引けるままにする。
 pub(crate) struct PlanStore {
     state: Mutex<HashMap<Option<GroupBy>, IndexedPlan>>,
-    metadata: Mutex<HashMap<String, ReferenceMetadata>>,
 }
 
 impl PlanStore {
     pub fn reference_metadata(&self, file_id: &str) -> Option<ReferenceMetadata> {
-        self.metadata
+        self.state
             .lock()
-            .expect("reference metadata poisoned")
-            .get(file_id)
-            .cloned()
+            .expect("plan store poisoned")
+            .values()
+            .find_map(|plan| plan.planned(file_id))
+            .map(|file| ReferenceMetadata {
+                old_present: !matches!(file.old, SideRef::Absent),
+                new_present: !matches!(file.new, SideRef::Absent),
+                old_lines: file.old_lines,
+                new_lines: file.new_lines,
+            })
     }
     pub fn new() -> Self {
         PlanStore {
             state: Mutex::new(HashMap::new()),
-            metadata: Mutex::new(HashMap::new()),
         }
     }
 
@@ -360,25 +364,10 @@ impl PlanStore {
     }
 
     pub fn update_unit(&self, unit: Option<GroupBy>, plan: Plan) {
-        let mut state = self.state.lock().expect("plan store poisoned");
-        let mut metadata = self.metadata.lock().expect("reference metadata poisoned");
-        if let Some(old) = state.get(&unit) {
-            for file in &old.files {
-                metadata.remove(&file.id);
-            }
-        }
-        for file in &plan.files {
-            metadata.insert(
-                file.id.clone(),
-                ReferenceMetadata {
-                    old_present: !matches!(file.old, SideRef::Absent),
-                    new_present: !matches!(file.new, SideRef::Absent),
-                    old_lines: file.old_lines,
-                    new_lines: file.new_lines,
-                },
-            );
-        }
-        state.insert(unit, IndexedPlan::new(plan));
+        self.state
+            .lock()
+            .expect("plan store poisoned")
+            .insert(unit, IndexedPlan::new(plan));
     }
 
     pub fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
