@@ -5,7 +5,6 @@
 // `--live` のレビューでだけ読み込む。
 
 import { button, el, svgIcon, textEl } from "../dom.js";
-import { markedPositions } from "../live-diff.js";
 import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model.js";
 
 /**
@@ -757,59 +756,4 @@ export function renderCompareOptions(select, options, chosen, rule) {
     }
   }
   select.value = chosen;
-}
-
-/**
- * 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。色と太さは
- * web/live/page.js の MARK_BORDERS の main と同じ値（変えるときは両方）。
- */
-const REMOVED_MARK_STYLE = "[data-kemi-removed] { outline: 2px solid rgb(214, 69, 69) !important; outline-offset: -2px !important; }";
-
-/** 記述の番号と HTML を読み直した文書での要素の位置の対応を入れる <meta> の name（web/live/page.js の ELEMENT_MAP）。 */
-const ELEMENT_MAP = "kemi-elements";
-
-/**
- * 比べる相手の側の印（消えた要素）を付けたスナップショットの HTML。HTML を読み直すと要素の並びが DOM と
- * 変わることがあるので、ページがスナップショットに添えた対応（記述の番号ごとの、読み直した文書での要素の
- * 位置。web/live/page.js の elementMap）で要素を探し、属性を付ける。位置は対応の <meta> を外してから、
- * 要素を文書の順に（<template> は中身を）数える。shadow root の中には文書の <style> が効かないので、
- * 印を付けた shadow root ごとにも <style> を足す。`mapped` は、ページが対応を添えていたか（無ければ印は付けられない）。
- * @param {string} html
- * @param {number[]} indices 印を付ける要素の記述の番号
- * @returns {{ html: string, mapped: boolean }}
- */
-export function markRemovedInSnapshot(html, indices) {
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  const map = parsed.head.querySelector(`meta[name="${ELEMENT_MAP}"]`);
-  const wanted = markedPositions(map?.getAttribute("content") ?? "", indices);
-  map?.remove();
-  /** @type {Element[]} */
-  const marked = [];
-  let position = 0;
-  /** @param {Element} element */
-  const visit = (element) => {
-    if (wanted.has(position)) {
-      marked.push(element);
-    }
-    position += 1;
-    const children = element instanceof HTMLTemplateElement ? element.content.children : element.children;
-    for (const child of [...children]) {
-      visit(child);
-    }
-  };
-  visit(parsed.documentElement);
-  /** @type {Set<Node>} */
-  const styled = new Set();
-  for (const element of marked) {
-    element.setAttribute("data-kemi-removed", "");
-    const root = element.getRootNode();
-    if (!styled.has(root)) {
-      styled.add(root);
-      const style = parsed.createElement("style");
-      style.textContent = REMOVED_MARK_STYLE;
-      (root instanceof DocumentFragment ? root : parsed.head).append(style);
-    }
-  }
-  const doctype = parsed.doctype ? `<!doctype ${parsed.doctype.name}>` : "";
-  return { html: doctype + parsed.documentElement.outerHTML, mapped: map !== null };
 }

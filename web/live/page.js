@@ -274,7 +274,7 @@
 
   /**
    * 印の枠の色と線。主な変化は赤、増えたは緑、ずれただけは控えめに薄い紫の破線。レビュー画面の消えた要素の印
-   * （views/live.js の REMOVED_MARK_STYLE）と一覧の点の色（live.css）も同じ値（変えるときは両方）。
+   * （features/live/snapshots.js の REMOVED_MARK_STYLE）と一覧の点の色（live.css）も同じ値（変えるときは両方）。
    */
   /** @type {Record<string, string>} */
   const MARK_BORDERS = {
@@ -1681,18 +1681,18 @@
 
   // ---- 写しの要素と記述の番号の対応 ----
   // レビュー画面は消えた要素の印を付けるため、スナップショットの HTML を読み直して記述の要素を探す
-  // （views/live.js の markRemovedInSnapshot）。読み直すと要素の並びが DOM と変わることがある（スクリプトが
+  // （features/live/snapshots.js の markRemovedInSnapshot）。読み直すと要素の並びが DOM と変わることがある（スクリプトが
   // 組んだ表に tbody が足される、p の中の div が外に出るなど）ので、ここで同じように読み直し、記述の番号ごとに
   // 読み直した文書での要素の位置を求めて HTML に添える。要素ごとの目印は HTML を大きくし 2 MB の上限に
   // 掛かるので、写す間だけ付けて外し、続いて並ぶ番号をまとめた対応だけを 1 つの <meta> に入れる。
 
   /** 写す間だけ、記述した要素の写しに付ける目印（記述の番号）。 */
   const ELEMENT_STAMP = 'data-kemi-element';
-  /** 対応を入れる <meta> の name。レビュー画面（views/live.js）が読んで外す。 */
+  /** 対応を入れる <meta> の name。レビュー画面（features/live/snapshots.js）が読んで外す。 */
   const ELEMENT_MAP = 'kemi-elements';
 
   /**
-   * 要素とその中の要素を、文書の順に（<template> は中身を）たどる。位置の数え方は views/live.js と同じ。
+   * 要素とその中の要素を、文書の順に（<template> は中身を）たどる。位置の数え方は features/live/snapshots.js と同じ。
    * @param {Element} element
    * @param {(element: Element) => void} visit
    */

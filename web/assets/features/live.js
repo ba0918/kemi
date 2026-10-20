@@ -34,14 +34,12 @@ import {
   removePlace,
   strayRefs,
   snapshotLabel,
-  startSnapshotDue,
   undoPlace,
 } from "../live-model.js";
 import { changesByElement, diffDescriptions, marksOf, sameChanges, unpackDescription } from "../live-diff.js";
 import {
   buildShell,
   buildTopbar,
-  markRemovedInSnapshot,
   renderCompareOptions,
   renderMockFiles,
   renderPlaces,
@@ -69,18 +67,15 @@ import {
   whileLaidOut,
   wheelUnit,
 } from "./live/stage.js";
+import { loadSnapshot, markRemovedInSnapshot, recordCurrent, reloadSnapshots, takeStartSnapshot } from "./live/snapshots.js";
+
+export { captureBeforeHand } from "./live/snapshots.js";
 
 /**
  * @typedef {import("./live/state.js").LiveInfo} LiveInfo
  * @typedef {import("../live-diff.js").Description} Description
  * @typedef {import("../live-diff.js").Change} Change
  */
-
-/** スナップショット 1 つの上限（R-PAGE-SNAPSHOT）。 */
-const SNAPSHOT_LIMIT = 2 * 1024 * 1024;
-
-/** ページが写しを返すまで待つ上限。 */
-const CAPTURE_TIMEOUT = 15000;
 
 /** ページが記述を返すまで待つ上限。 */
 const DESCRIBE_TIMEOUT = 5000;
@@ -267,27 +262,6 @@ export function startLive(info) {
   // 取りこぼした通知がそれだったかは分からないので、取りこぼしでも読み直す。
   api.onServerEvent("snapshots", () => void reloadSnapshots());
   api.onServerEvent("lagged", () => void reloadSnapshots());
-}
-
-/** 預けたスナップショットの一覧を読み直す。 */
-async function reloadSnapshots() {
-  const list = await api.listSnapshots().catch(() => null);
-  if (list === null) {
-    return;
-  }
-  live.snapshots = list.snapshots ?? [];
-  // 一覧から消えたもの（20 MB の規則で消したもの。R-PAGE-SESSION）の中身・記述・対応の有無は手放す。比べる相手には
-  // 一覧のものしか選ばれず、二度と読まれないのに、画面を開いている間ずっと残る（中身は 1 つ 2 MB まで）。選んだ時点
-  // （chosen）は残す: 選んだ時点が消えたら、記録されていないと出す。
-  const listed = new Set(live.snapshots.map((snapshot) => snapshot.id));
-  for (const held of [live.bodies, live.descriptions, live.mapped]) {
-    for (const id of held.keys()) {
-      if (!listed.has(id)) {
-        held.delete(id);
-      }
-    }
-  }
-  render();
 }
 
 /**
@@ -763,25 +737,6 @@ async function undoRemovedMock() {
   }
 }
 
-/** 開始時のスナップショット。開始時につながらなければ、最初につながったとき（R-PAGE-SNAPSHOT）。 */
-function takeStartSnapshot() {
-  const snapshots = live.snapshotsListed ? live.snapshots : null;
-  if (!startSnapshotDue({ taken: live.startTaken, reachable: live.reachable, snapshots })) {
-    return;
-  }
-  live.startTaken = true;
-  void capture("start");
-}
-
-/**
- * エージェントに渡す前に、渡す画面で表示中のページのスナップショットを取る
- * （R-PAGE-SNAPSHOT）。渡した後に取ると、渡されたエージェントがもうページを変えていることが
- * ある。取れなくても渡すのは止めない（取れなかったことは画面に出る）。
- */
-export async function captureBeforeHand() {
-  await capture("handed");
-}
-
 // ---- ページへのコメント（live.md の R-PAGE-COMMENT） ----
 // 道具を選んでいる間は、動いているページの枠の上に重ねた層で押す・描く操作を受け、枠の中の座標をページに送る。
 // どの要素を指すかと文書の座標はページの中（page.js）が決める（別のオリジンで、レビュー画面からは読めない）。
@@ -1251,92 +1206,6 @@ function setSaving(saving) {
   renderConversation();
 }
 
-/**
- * 表示中のページのスナップショットを取り、預ける。2 MB を超えるものは取らず、そのことを
- * 出す。比べる相手は 1 つ前のまま（R-PAGE-SNAPSHOT）。
- * @param {"start" | "handed" | "manual"} kind
- */
-async function capture(kind) {
-  const frame = shell?.liveFrame.contentWindow;
-  if (!frame || !live.reachable) {
-    // 開始時のものは、つながったときに取り直す。
-    if (kind !== "start") {
-      live.refNotice = "Not recorded: the page is not loaded";
-      render();
-    }
-    return;
-  }
-  const page = live.page;
-  const width = live.width;
-  if (kind === "manual") {
-    live.recorded = null;
-  }
-  const answer = await whileLaidOut(() => ask(frame, "capture", CAPTURE_TIMEOUT));
-  if (typeof answer.html !== "string") {
-    live.refNotice = `Not recorded: ${answer.error ?? "the page could not be copied"}`;
-    render();
-    return;
-  }
-  if (new Blob([answer.html]).size > SNAPSHOT_LIMIT) {
-    live.refNotice = "Not recorded: the snapshot is larger than 2 MB";
-    render();
-    return;
-  }
-  const description = await readUploadedDescription(answer.description);
-  try {
-    const takenPage = pageKey(String(answer.path ?? page));
-    const taken = await api.takeSnapshot({
-      page: takenPage,
-      width,
-      kind,
-      html: answer.html,
-      description: description === null ? null : answer.description,
-    });
-    // 取ったことで古いものが消えると、一覧の読み直しが先に届いて、もう入っていることがある。
-    if (!live.snapshots.some((snapshot) => snapshot.id === taken.id)) {
-      live.snapshots.push(taken);
-    }
-    live.bodies.set(taken.id, answer.html);
-    live.descriptions.set(taken.id, description);
-    live.refNotice = "";
-    // 手で取ったら、そのページの比べる相手を取ったものに切り替え、取れたことを知らせる。見比べ方は変えない（R-PAGE-REF）。
-    if (kind === "manual") {
-      live.chosen.set(takenPage, taken.id);
-      live.recorded = { page: takenPage, id: taken.id };
-      // 取り消しを断った知らせは帯で取れたことの知らせより先に出るので、新しい知らせで置き換える。
-      if (live.undoMockFailed?.page === takenPage) {
-        live.undoMockFailed = null;
-      }
-    }
-  } catch (error) {
-    live.refNotice = `Not recorded: ${error instanceof Error ? error.message : String(error)}`;
-  }
-  render();
-}
-
-async function recordCurrent() {
-  if (!live.reachable || live.recording) {
-    return;
-  }
-  const fromGuide = document.activeElement instanceof HTMLElement && document.activeElement.matches(".lv-use-current");
-  live.recording = true;
-  try {
-    render();
-    await capture("manual");
-  } finally {
-    const restoreFocus = fromGuide && document.activeElement === document.body;
-    live.recording = false;
-    render();
-    if (restoreFocus && shell) {
-      const target = shell.pageTree.querySelector(".lv-use-current")
-        ?? shell.pageTree.querySelector('.lv-page[data-current="true"] button');
-      if (target instanceof HTMLElement) {
-        target.focus();
-      }
-    }
-  }
-}
-
 function render() {
   live.renderedNarrow = state.narrow;
   const shown = live.view === "page" ? { page: live.page, width: live.width } : null;
@@ -1354,28 +1223,6 @@ function render() {
   layoutFrames();
   // 並べている間に見方や側が変わると、並べたまま隠れるものも変わる。
   syncLaidOutInert();
-}
-
-/**
- * スナップショットと一緒に預けた記述（gzip で縮めた base64 の文字列）を読む。読めなければ null（比べない）。
- * @param {unknown} value
- * @returns {Promise<Description | null>}
- */
-async function readUploadedDescription(value) {
-  if (typeof value !== "string" || value === "") {
-    return null;
-  }
-  try {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-    return unpackDescription(JSON.parse(text));
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -1901,33 +1748,4 @@ async function showSnapshot(id) {
     live.mapped.set(id, marked.mapped);
     renderChanges(shell.pageTree, changeHandlers, changesToList());
   }
-}
-
-/** 取り寄せ中のスナップショット（id → 取り寄せ）。同じものを 2 度取りに行かない。 */
-/** @type {Map<string, Promise<string>>} */
-const loadingSnapshots = new Map();
-
-/**
- * スナップショットの中身と記述。手元に無ければ取り寄せて覚える。中身を返す。
- * @param {string} id
- * @returns {Promise<string>}
- */
-function loadSnapshot(id) {
-  const html = live.bodies.get(id);
-  if (html !== undefined && live.descriptions.has(id)) {
-    return Promise.resolve(html);
-  }
-  let loading = loadingSnapshots.get(id);
-  if (!loading) {
-    loading = api.getSnapshot(id).then(async (snapshot) => {
-      const body = String(snapshot.html ?? "");
-      const description = await readUploadedDescription(snapshot.description);
-      live.bodies.set(id, body);
-      live.descriptions.set(id, description);
-      return body;
-    });
-    loading.finally(() => loadingSnapshots.delete(id)).catch(() => {});
-    loadingSnapshots.set(id, loading);
-  }
-  return loading;
 }
