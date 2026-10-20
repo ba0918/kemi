@@ -891,7 +891,7 @@ export function hasLoadedStops(rows, comments) {
   if (rows.some((row) => isChangeKind(row.kind))) {
     return true;
   }
-  return navStops(toDisplayLines(withRowIndex(rows), "unified"), comments).length > 0;
+  return navStops(toDisplayLines(rows, "unified"), comments).length > 0;
 }
 
 /**
