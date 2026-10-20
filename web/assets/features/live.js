@@ -661,10 +661,15 @@ function receive(event) {
       height: Number(message.height) || 0,
     };
     // 末尾より下へずらしている間にページが上へスクロールした（人が動かした）ら、ずらすのをやめる。
-    if (live.overscroll !== null && live.scroll.y < before - 1) {
+    const ended = live.overscroll !== null && live.scroll.y < before - 1;
+    if (ended) {
       live.overscroll = null;
     }
-    layoutFrames();
+    // 枠の置き方がスクロールの位置で変わるのは重ねて透かす間だけ。ほかの見比べ方では置き直さない（スクロールの知らせは
+    // 1 フレームに 1 回来る）。重ねて透かすへ切り替えたときは、描き直しがここで覚えた位置で置く。
+    if (ended || (live.compare === "overlay" && !state.narrow)) {
+      layoutFrames();
+    }
     return;
   }
   if (message.type !== "page") {

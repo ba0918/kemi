@@ -45,7 +45,7 @@
 //   対象だけのときは一覧の見出しにモックの名前とメニューが出る。範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
 //   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
 //   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
-// - 重ねて透かす: スクロールがそろう、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
+// - 重ねて透かす: スクロールがそろう（並べる間にスクロールしてから切り替えても）、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
 // - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
 //   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色の見本つきで主な変化に入る。
 //   ボタンの文字色・背景色・枠を同時に変えると一覧ではそのボタンが 1 行になり、押すとそのボタンまでスクロールして印が光る。
@@ -917,6 +917,24 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
     } else {
       console.log(`CHECK スクロールした位置で、重ねた比べる相手と見る対象の画素が ${compared.different} / ${compared.total}（${(compared.ratio * 100).toFixed(3)}%）違う。差の画像: ${join(shots, 'overlay-diff.png')}（人が確かめる）`);
     }
+
+    // 並べる間にスクロールしてから重ねて透かすへ切り替えても、比べる相手はその位置にそろう（スクロールの知らせで
+    // 枠を置き直すのは重ねて透かす間だけなので、切り替えの描き直しが覚えた位置で置く）。並べる間の知らせが届いたかは
+    // 見えないので、切り替えて読んで戻すまでを 1 回の評価の中で行い、その間に届く知らせで置き直されたものは読まない。
+    const shiftOf = `(transform) => Number(/translate\\(0px, (-?[\\d.]+)px\\)/.exec(transform)?.[1] ?? 0)`;
+    const atBand3 = await evaluate(`(${shiftOf})(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform)`);
+    assert.ok(atBand3 < 0, `the overlaid reference moves with the scroll: ${atBand3}`);
+    await chooseCompare('side');
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#band-6'; return true; })()`);
+    await waitFor(`(() => {
+      const choose = (mode) => document.querySelector('.lv-mode button[data-compare="' + mode + '"]').click();
+      choose('overlay');
+      const shift = (${shiftOf})(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform);
+      choose('side');
+      return shift < ${atBand3};
+    })()`);
+    await chooseCompare('overlay');
+    console.log('PASS 並べる間にスクロールしてから重ねて透かすへ切り替えても、比べる相手は切り替えたときにその位置にそろう');
 
     // 見る対象を変えると、透かし具合で見え方が変わる。
     await writeFile(join(dev.dir, 'tall.html'), (await readFile(join(dev.dir, 'tall.html'), 'utf8')).replaceAll('hsl(', 'hsl(180deg + '));
