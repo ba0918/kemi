@@ -825,6 +825,8 @@ fn worktree_diff_entries(repo: &Path) -> Result<Vec<DiffEntry>, SourceError> {
 /// 全ファイルの差分判定をやり直すため、1 万ファイルでは約 0.5 秒かかる）。
 fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
     let mut paths: Vec<PathBuf> = Vec::new();
+    // 未追跡のファイルは `git diff HEAD` に出ないので、ここでは数えない（一覧には
+    // review_worktree が足す）。数えると、変更の少ない作業ツリーまで並列の経路に入る。
     // 改名は削除と追加の組で検出される。組の片方だけを pathspec に渡すと改名が
     // 割れるため、削除・追加になり得るパスは 1 つの呼び出しに束ねる。
     let mut rename_candidates: Vec<PathBuf> = Vec::new();
@@ -848,12 +850,6 @@ fn worktree_numstat(repo: &Path) -> Result<Vec<Numstat>, SourceError> {
             }
             paths.push(path);
         }
-    }
-    for path in split_z(&git_raw(
-        repo,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )?) {
-        paths.push(path_from_bytes(path));
     }
     paths.sort();
     paths.dedup();
