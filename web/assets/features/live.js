@@ -441,6 +441,17 @@ async function reloadSnapshots() {
     return;
   }
   live.snapshots = list.snapshots ?? [];
+  // 一覧から消えたもの（20 MB の規則で消したもの。R-PAGE-SESSION）の中身・記述・対応の有無は手放す。比べる相手には
+  // 一覧のものしか選ばれず、二度と読まれないのに、画面を開いている間ずっと残る（中身は 1 つ 2 MB まで）。選んだ時点
+  // （chosen）は残す: 選んだ時点が消えたら、記録されていないと出す。
+  const listed = new Set(live.snapshots.map((snapshot) => snapshot.id));
+  for (const held of [live.bodies, live.descriptions, live.mapped]) {
+    for (const id of held.keys()) {
+      if (!listed.has(id)) {
+        held.delete(id);
+      }
+    }
+  }
   render();
 }
 
