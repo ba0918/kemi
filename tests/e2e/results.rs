@@ -136,22 +136,42 @@ async fn result_flag_with_a_broken_latest_file_exits_2_and_prints_nothing() {
 
 #[tokio::test]
 async fn result_keeps_twenty_across_repositories() {
-    // Why not 最初の 1 件が消えたことまで見ない: どれを消すかは送信時刻で決まり、動かして
-    // いる機械の時計が戻ると submit の順と食い違う。送信時刻の古い方から消すことは、
-    // 送信時刻を与える crates/kemi-core/src/result.rs のテストで確かめる。
-    let first_repo = TempDir::new();
-    let second_repo = TempDir::new();
+    // 2 つのワークスペースの結果を、送信時刻を 1970 年の直後にして 20 件置く。kemi の submit
+    // の送信時刻はどれよりも新しいので、機械の時計が多少戻っても、消えるのは種の最古の 1 件。
+    // 残す件数と消す順そのものは、送信時刻を与える crates/kemi-core/src/result.rs のテストが
+    // 確かめる。ここはバイナリの保存で刈り込みが起きることを見る。
+    let dir = TempDir::new();
     let state = TempDir::new();
-    for index in 1..=21 {
-        let dir = if index % 2 == 0 {
-            &second_repo.path
-        } else {
-            &first_repo.path
-        };
-        submit_manifest(dir, &state.path, "approved", &format!("{index} 件目")).await;
-    }
+    let seeds: Vec<PathBuf> = (0..20u32)
+        .map(|index| {
+            let key = if index % 2 == 0 {
+                "00000000000000aa"
+            } else {
+                "00000000000000bb"
+            };
+            kemi_core::result::save(
+                &results_dir(&state.path),
+                key,
+                r#"{"kemi":3,"verdict":"approved"}"#,
+                1000 + u128::from(index),
+                1,
+            )
+            .unwrap()
+        })
+        .collect();
 
-    assert_eq!(result_files(&state.path).len(), 20);
+    let (_, stdout, code) = submit_manifest(&dir.path, &state.path, "approved", "21 件目").await;
+
+    assert_eq!(code, Some(0));
+    let files = result_files(&state.path);
+    assert_eq!(files.len(), 20);
+    assert!(!seeds[0].exists(), "the oldest result must be pruned");
+    assert!(
+        files
+            .iter()
+            .any(|file| std::fs::read_to_string(file).unwrap() == stdout),
+        "the submitted result must be kept"
+    );
 }
 
 #[tokio::test]
