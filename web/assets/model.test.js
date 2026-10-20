@@ -243,6 +243,25 @@ test("unified_reordering_keeps_logical_index_for_expanding_skips", () => {
   assert.equal(lines[5].skip, rows[3]);
 });
 
+test("位置の付いていない行は、withRowIndex と同じく折りたたみの from と to で位置を数える", () => {
+  const rows = [
+    { kind: "skip", count: 3, from: 0, to: 3 },
+    replaceAt(4, "o4", "n4"),
+    equal(5, "e"),
+    { kind: "skip", count: 10, from: 5, to: 15 },
+    inserted(16, "x"),
+  ];
+
+  for (const mode of /** @type {const} */ (["unified", "split"])) {
+    const raw = toDisplayLines(rows, mode, { origin: true });
+    const indexed = toDisplayLines(withRowIndex(rows), mode, { origin: true });
+    assert.deepEqual(
+      raw.map((line) => [line.kind, line.row, line.block]),
+      indexed.map((line) => [line.kind, line.row, line.block]),
+    );
+  }
+});
+
 test("unified_shows_a_500k_line_file_rewritten_wholesale", () => {
   const count = 500_000;
   const rows = Array.from({ length: count }, (_, index) => replaceAt(index + 1, `o${index}`, `n${index}`));

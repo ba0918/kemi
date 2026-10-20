@@ -31,7 +31,6 @@ import {
   rowAtOffset,
   toDisplayLines,
   windowFor,
-  withRowIndex,
 } from "../model.js";
 import { renderCommentOrEditor, renderEditor } from "../views/comment.js";
 import { renderBlock } from "../views/diff-rows.js";
@@ -384,7 +383,7 @@ export function recomputeDisplay(anchor = captureAnchor()) {
   const sameFile = fileId !== null && fileId === state.displayFileId;
   const previous = sameFile ? state.display : [];
   const previousHeights = sameFile ? state.heights : [];
-  state.display = toDisplayLines(withRowIndex(state.rows), displayMode(), {
+  state.display = toDisplayLines(state.rows, displayMode(), {
     origin: originShown(),
   });
   state.displayFileId = fileId;

@@ -65,7 +65,8 @@ function isChangeKind(kind) {
 /**
  * 論理行を表示行に変換する。1 列（unified）では、連続する変更を「消した行の塊 →
  * 足した行の塊」の順に並べる（書き換えの旧と新を 1 行ずつ交互にしない）。
- * `origin` を指定すると、各変更ブロックのすぐ上に由来の行を置く。
+ * `origin` を指定すると、各変更ブロックのすぐ上に由来の行を置く。行の位置（`row`）が
+ * 付いていない行は、withRowIndex と同じ規則で数える。
  * @param {LogicalRow[]} rows
  * @param {"unified"|"split"} mode
  * @param {{ origin?: boolean }} [options]
@@ -79,6 +80,8 @@ export function toDisplayLines(rows, mode, options = {}) {
   /** @type {DisplayLine[]} */
   let added = [];
   let inBlock = false;
+  // 位置はここで数える。withRowIndex を通すと、作り直すたびに全行の写しを 1 回余計に作る。
+  let next = 0;
   const flush = () => {
     // Why not push(...removed, ...added): 丸ごと書き換えた大きなファイルでは塊が
     // 数十万行になり、引数の数の上限を超えて RangeError になる。
@@ -92,12 +95,20 @@ export function toDisplayLines(rows, mode, options = {}) {
     added = [];
   };
   rows.forEach((row, logicalIndex) => {
+    let position = next;
+    if (row.kind === "skip") {
+      position = Number(row.from ?? next);
+      next = Number(row.to ?? position);
+    } else {
+      next += 1;
+    }
+    const at = row.row ?? position;
     const base = {
       oldSegments: [],
       newSegments: [],
       skip: null,
       logicalIndex,
-      row: row.row ?? logicalIndex,
+      row: at,
     };
     const changed = row.kind === "replace" || row.kind === "delete" || row.kind === "insert";
     if (!changed) {
@@ -111,7 +122,7 @@ export function toDisplayLines(rows, mode, options = {}) {
           kind: "origin",
           oldLine: null,
           newLine: null,
-          block: row.row ?? logicalIndex,
+          block: at,
         });
       }
     }
