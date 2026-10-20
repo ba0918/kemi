@@ -730,42 +730,41 @@ async fn resume_of_a_live_review_accepts_a_live_port_and_listens_there() {
     kemi.add_live_comment("keep").await;
     signal(&kemi.child, "-INT");
     kemi.wait_with_stderr();
-    // ポートを解放してから子が bind するまでに、別のテストが取得しうるため。
+    // ポートを解放してから子が bind するまでに、別のテストが取得しうるため。中継の待ち受けは
+    // URL の行より前なので、取られた kemi は URL を出さずに終わる。
     for attempt in 0..5 {
         let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = free.local_addr().unwrap().port();
         drop(free);
         let port_text = port.to_string();
-        let mut resumed = Kemi::spawn_with_state(
-            &dir.path,
-            &["--resume", &id, "--live-port", &port_text, "--no-open"],
-            &state.path,
-        );
-        let mut stderr = String::new();
-        let mut line = String::new();
-        loop {
-            line.clear();
-            if resumed.stderr.read_line(&mut line).unwrap() == 0 {
-                break;
-            }
-            stderr.push_str(&line);
-            if let Some(live) = line.trim().strip_prefix("kemi: live ") {
-                assert_eq!(live, format!("http://127.0.0.1:{port}/app"));
+        let exited = match Kemi::try_start(kemi_command(&dir.path, &state.path).args([
+            "--resume",
+            &id,
+            "--live-port",
+            &port_text,
+            "--no-open",
+        ])) {
+            Ok(mut resumed) => {
+                assert_eq!(resumed.live_url(), format!("http://127.0.0.1:{port}/app"));
                 resumed.kill();
                 return;
             }
-        }
-        let status = resumed.child.wait().unwrap();
+            Err(exited) => exited,
+        };
+        let code = exited.status.as_ref().ok().and_then(|status| status.code());
         assert!(
-            status.code() == Some(2)
-                && stderr.lines().any(|line| {
+            code == Some(2)
+                && exited.stderr.lines().any(|line| {
                     line.starts_with(&format!("kemi: cannot listen on 127.0.0.1:{port}: "))
                 }),
-            "中継ポートの待ち受け失敗以外で終了した: {status:?}\n{stderr}"
+            "中継ポートの待ち受け失敗以外で終了した: {:?}\n{}",
+            exited.status,
+            exited.stderr
         );
         assert!(
             attempt < 4,
-            "中継ポートの待ち受けを5回試しても失敗した: {stderr}"
+            "中継ポートの待ち受けを5回試しても失敗した: {}",
+            exited.stderr
         );
     }
 }

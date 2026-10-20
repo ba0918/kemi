@@ -159,6 +159,24 @@ impl Kemi {
     }
 
     fn start_with_input(command: &mut Command, input: Option<&str>) -> Self {
+        Self::try_start_with_input(command, input).unwrap_or_else(|exited| {
+            panic!(
+                "kemi が URL を出さずに終了しました\n終了状態: {:?}\nURL より前の stderr:\n{}",
+                exited.status, exited.stderr
+            )
+        })
+    }
+
+    /// 起動し、stderr の URL の行を待つ。URL を出さずに終わったら、その終わり方を返す。
+    #[cfg(unix)]
+    fn try_start(command: &mut Command) -> Result<Self, ExitedWithoutUrl> {
+        Self::try_start_with_input(command, None)
+    }
+
+    fn try_start_with_input(
+        command: &mut Command,
+        input: Option<&str>,
+    ) -> Result<Self, ExitedWithoutUrl> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -194,18 +212,17 @@ impl Kemi {
             line.clear();
             let read = kemi.stderr.read_line(&mut line).unwrap();
             if read == 0 {
-                let status = process::wait(&mut kemi.child, std::time::Duration::from_secs(20));
-                panic!(
-                    "kemi が URL を出さずに終了しました\n終了状態: {status:?}\nURL より前の stderr:\n{}",
-                    kemi.preamble.concat()
-                );
+                return Err(ExitedWithoutUrl {
+                    status: process::wait(&mut kemi.child, std::time::Duration::from_secs(20)),
+                    stderr: kemi.preamble.concat(),
+                });
             }
             if let Some(found) = line.strip_prefix("kemi: http") {
                 break format!("http{found}").trim().to_string();
             }
             kemi.preamble.push(line.clone());
         };
-        kemi
+        Ok(kemi)
     }
 
     fn origin(&self) -> String {
@@ -396,6 +413,13 @@ impl Drop for Kemi {
     fn drop(&mut self) {
         stop(&mut self.child);
     }
+}
+
+/// URL の行を出さずに終わった kemi。
+struct ExitedWithoutUrl {
+    status: std::io::Result<std::process::ExitStatus>,
+    /// 終わるまでに stderr へ出たすべて。
+    stderr: String,
 }
 
 /// プロセスの終了を待つ。時間内に終わらなければパニックする。
