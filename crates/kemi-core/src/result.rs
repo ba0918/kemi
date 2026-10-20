@@ -7,6 +7,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::domain::fnv::Fnv1a;
+use crate::private_fs::{Existing, create_private_dir, write_via_temporary};
 
 /// 全リポジトリ合計で残す件数。
 const KEEP: usize = 20;
@@ -159,16 +160,7 @@ pub fn save(dir: &Path, key: &str, text: &str, millis: u128, pid: u32) -> std::i
     // ファイルシステムでは保存そのものが失敗する。名前には pid が入るので、別の
     // プロセスと同じ名前を取り合うことは無い。
     let temporary = dir.join(format!(".{name}.tmp"));
-    let written = create_private_file(&temporary)
-        .and_then(|mut file| {
-            use std::io::Write;
-            file.write_all(text.as_bytes())
-        })
-        .and_then(|()| std::fs::rename(&temporary, &path));
-    if let Err(error) = written {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error);
-    }
+    write_via_temporary(&temporary, &path, text.as_bytes(), Existing::Fail)?;
     let names = list_names(dir);
     for name in to_prune(&names, KEEP) {
         let _ = std::fs::remove_file(dir.join(name));
@@ -181,42 +173,6 @@ pub fn load_latest(dir: &Path, key: Option<&str>) -> Option<String> {
     let names = list_names(dir);
     let name = latest(&names, key)?;
     std::fs::read_to_string(dir.join(name)).ok()
-}
-
-/// 所有者だけが使えるディレクトリ（0700）を作る。新しく作る途中のディレクトリも 0700 に
-/// なる。既にある結果のディレクトリは 0700 に直すが、その親は利用者の持ち物なので触らない。
-#[cfg(unix)]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-}
-
-#[cfg(not(unix))]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)
-}
-
-/// 所有者だけが読み書きできるファイル（0600）を新しく作る。既にあれば失敗する。
-#[cfg(unix)]
-fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-}
-
-#[cfg(not(unix))]
-fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
 }
 
 #[cfg(test)]

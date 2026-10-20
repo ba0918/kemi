@@ -3,6 +3,7 @@
 
 pub mod domain;
 pub mod parts;
+mod private_fs;
 pub mod render;
 pub mod result;
 pub mod session;
