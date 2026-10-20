@@ -108,10 +108,26 @@ pub struct RetainedVersions<'a> {
     pub other_saved_bytes: usize,
 }
 
-pub fn canonical_size(value: &serde_json::Value) -> usize {
-    serde_json::to_vec(value)
-        .expect("JSON Value contains only serializable JSON data")
-        .len()
+/// 正準 JSON（空白なし）にしたときのバイト数。長さはオブジェクトのキーの順に依らないので、
+/// `serde_json::Value` を経由せず、書いたバイト数を数えるだけにする。
+pub fn canonical_size<T: Serialize + ?Sized>(value: &T) -> usize {
+    let mut counter = ByteCounter(0);
+    serde_json::to_writer(&mut counter, value).expect("the value serializes to JSON");
+    counter.0
+}
+
+/// 書かれたバイト数だけを数える書き先。
+struct ByteCounter(usize);
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub fn history_candidate(
@@ -123,14 +139,7 @@ pub fn history_candidate(
     let mut candidate = versions.to_vec();
     candidate.push(incoming);
     candidate.sort_by_key(|v| v.revision);
-    let mut sizes: Vec<_> = candidate
-        .iter()
-        .map(|v| {
-            canonical_size(
-                &serde_json::to_value(v).expect("ExplanationVersion contains only JSON values"),
-            )
-        })
-        .collect();
+    let mut sizes: Vec<_> = candidate.iter().map(canonical_size).collect();
     loop {
         let bytes = sizes.iter().copied().fold(0usize, usize::saturating_add);
         if candidate.len() <= MAX_RETAINED_VERSIONS

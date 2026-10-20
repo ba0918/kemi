@@ -2,6 +2,8 @@
 // の explanation_validation.rs から適合。許諾文は同じディレクトリの parts.rs に保持する。
 use std::collections::HashSet;
 
+use serde::Serialize;
+
 use super::parts::{Canvas, FlowKind, Message, Part, Point, SequenceEvent};
 
 /// 選択引用の occurrence の上限。ブラウザの Number で失わない整数の上限。
@@ -142,12 +144,68 @@ fn messages(path: &str, values: &[Message], ids: &HashSet<&str>) -> Checked {
     }
     Ok(())
 }
-pub fn string_bytes(value: &serde_json::Value) -> usize {
-    match value {
-        serde_json::Value::String(value) => value.len(),
-        serde_json::Value::Array(values) => values.iter().map(string_bytes).sum(),
-        serde_json::Value::Object(values) => values.values().map(string_bytes).sum(),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+/// JSON にしたときの文字列値（オブジェクトのキーを除く）の UTF-8 バイト数の合計。
+/// `serde_json::Value` を作らず、直列化の途中で文字列の値だけを数える。
+pub fn string_bytes<T: Serialize + ?Sized>(value: &T) -> usize {
+    let mut bytes = 0;
+    let mut serializer = serde_json::Serializer::with_formatter(
+        std::io::sink(),
+        StringValueBytes {
+            in_key: false,
+            bytes: &mut bytes,
+        },
+    );
+    value
+        .serialize(&mut serializer)
+        .expect("the value serializes to JSON");
+    bytes
+}
+
+/// 文字列値のバイト数を数える直列化の書式。エスケープは元の 1 バイトとして数える。
+struct StringValueBytes<'a> {
+    in_key: bool,
+    bytes: &'a mut usize,
+}
+
+impl serde_json::ser::Formatter for StringValueBytes<'_> {
+    fn begin_object_key<W>(&mut self, _writer: &mut W, _first: bool) -> std::io::Result<()>
+    where
+        W: ?Sized + std::io::Write,
+    {
+        self.in_key = true;
+        Ok(())
+    }
+
+    fn end_object_key<W>(&mut self, _writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + std::io::Write,
+    {
+        self.in_key = false;
+        Ok(())
+    }
+
+    fn write_string_fragment<W>(&mut self, _writer: &mut W, fragment: &str) -> std::io::Result<()>
+    where
+        W: ?Sized + std::io::Write,
+    {
+        if !self.in_key {
+            *self.bytes += fragment.len();
+        }
+        Ok(())
+    }
+
+    fn write_char_escape<W>(
+        &mut self,
+        _writer: &mut W,
+        _char_escape: serde_json::ser::CharEscape,
+    ) -> std::io::Result<()>
+    where
+        W: ?Sized + std::io::Write,
+    {
+        if !self.in_key {
+            *self.bytes += 1;
+        }
+        Ok(())
     }
 }
 /// 1 つの返信・発言の parts の文字列値の合計バイト数。説明の上限とは別の項目。
@@ -158,10 +216,7 @@ pub fn validate_parts(parts: &[Part]) -> Checked {
     let mut budget = 0;
     for (i, part) in parts.iter().enumerate() {
         validate_part(part, &format!("parts[{i}]"))?;
-        budget += string_bytes(
-            &serde_json::to_value(part)
-                .expect("Part contains only JSON strings, integers and lists"),
-        );
+        budget += string_bytes(part);
         bound("parts UTF-8 bytes", budget, 0, MAX_PARTS_STRING_BYTES)?;
     }
     Ok(())

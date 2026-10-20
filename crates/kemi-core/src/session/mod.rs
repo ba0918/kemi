@@ -339,8 +339,8 @@ pub fn validate_additional(state: &SessionState) -> Result<(), SessionError> {
         let bytes = history
             .versions
             .iter()
-            .map(|v| canonical_size(&serde_json::to_value(v).expect("explanation is JSON")))
-            .sum::<usize>();
+            .map(canonical_size)
+            .fold(0usize, usize::saturating_add);
         crate::domain::parts_validation::bound(
             "explanation history canonical JSON bytes",
             bytes,

@@ -30,7 +30,7 @@ use crate::domain::review::{
 
 pub fn additional_saved_size(state: &SessionState) -> usize {
     fn saved_bytes(value: impl Serialize) -> usize {
-        canonical_size(&serde_json::to_value(value).expect("session DTO contains JSON values"))
+        canonical_size(&value)
     }
     fn new_comment(comment: &Comment) -> bool {
         matches!(comment.target, CommentTarget::Explanation(_))
