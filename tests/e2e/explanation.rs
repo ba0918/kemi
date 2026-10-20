@@ -531,6 +531,152 @@ async fn initial_explanation_warns_about_the_lan_after_the_url() {
     kemi.kill();
 }
 
+/// レビューの準備を止める門。作業ツリーの `*.txt` を読むときに git が通す clean フィルタが
+/// `started` を作り、`released` ができるまで戻らない。準備は起動側がシグナルの受け口を
+/// 作った後にサーバの中で走るので、`started` ができた時点でその間にいる。
+#[cfg(unix)]
+struct PreparationGate {
+    dir: TempDir,
+}
+
+#[cfg(unix)]
+impl PreparationGate {
+    fn new(workspace: &TempDir) -> Self {
+        workspace.write(".gitattributes", "*.txt filter=gate\n");
+        PreparationGate {
+            dir: TempDir::new(),
+        }
+    }
+
+    /// フィルタを、kemi が起動する git にだけ設定する（フィクスチャの git には効かない）。
+    fn apply<'a>(&self, command: &'a mut Command) -> &'a mut Command {
+        let filter = format!(
+            "sh -c 'touch \"{}\"; while [ ! -e \"{}\" ]; do sleep 0.01; done; cat'",
+            self.dir.path.join("started").display(),
+            self.dir.path.join("released").display()
+        );
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "filter.gate.clean")
+            .env("GIT_CONFIG_VALUE_0", filter)
+    }
+
+    fn wait_started(&self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !self.dir.path.join("started").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the review preparation never reached the gate"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn release(&self) {
+        std::fs::write(self.dir.path.join("released"), "").unwrap();
+    }
+}
+
+/// 門で止めた起動時の説明つきのレビューを起動する。
+#[cfg(unix)]
+fn spawn_gated(
+    workspace: &TempDir,
+    state: &TempDir,
+    gate: &PreparationGate,
+    args: &[&str],
+) -> StopOnDrop {
+    StopOnDrop(
+        gate.apply(&mut kemi_command(&workspace.path, &state.path))
+            .args(args)
+            .args([
+                "--explanation",
+                "explanation.json",
+                "--no-open",
+                "--port",
+                "0",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+/// 終わるのを待ち、(終了コード, stdout, stderr)。
+#[cfg(unix)]
+fn finish_gated(mut child: StopOnDrop) -> (Option<i32>, String, String) {
+    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
+    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
+    let mut out = String::new();
+    let mut err = String::new();
+    stdout.read_to_string(&mut out).unwrap();
+    stderr.read_to_string(&mut err).unwrap();
+    (status.code(), out, err)
+}
+
+/// 起動時の説明を用意している間の Ctrl+C は、URL を出さずに保留として終わる
+/// （output.md の R-SUBMIT、R-EXPLANATION-CLI）。
+#[cfg(unix)]
+#[test]
+fn interrupt_while_preparing_the_initial_explanation_suspends_without_a_url() {
+    let workspace = TempDir::new();
+    worktree_fixture(&workspace);
+    workspace.write("explanation.json", &one_block_explanation());
+    let gate = PreparationGate::new(&workspace);
+    let state = TempDir::new();
+    let child = spawn_gated(&workspace, &state, &gate, &["--worktree"]);
+
+    gate.wait_started();
+    signal(&child.0, "-INT");
+    gate.release();
+    let (code, stdout, stderr) = finish_gated(child);
+
+    assert_eq!(code, Some(130), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(!stderr.contains("kemi: http"), "{stderr}");
+    assert!(!stderr.contains("kemi: review "), "{stderr}");
+}
+
+/// 説明を保存した後に起動が失敗しても、復元できるセッションが残るなら復元の行を出して
+/// 終了コード 2 で終わる（output.md の R-SUBMIT、session.md の R-SESSION）。`--live` の
+/// セッションは説明だけでも復元できる。`<id>.endpoint` の場所をディレクトリで塞いで、
+/// つなぎ先を書けなくする。
+#[cfg(unix)]
+#[test]
+fn failing_to_publish_after_saving_the_initial_explanation_prints_the_resume_line() {
+    let workspace = TempDir::new();
+    worktree_fixture(&workspace);
+    workspace.write("page.html", "<h1>Page</h1>");
+    workspace.write("explanation.json", &one_block_explanation());
+    let gate = PreparationGate::new(&workspace);
+    let state = TempDir::new();
+    let child = spawn_gated(&workspace, &state, &gate, &["--live", "page.html"]);
+
+    gate.wait_started();
+    let lock = std::fs::read_dir(sessions_dir(&state.path))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "lock")
+        })
+        .unwrap();
+    let id = session_id(&lock);
+    std::fs::create_dir(endpoint_dir(&state.path).join(format!("{id}.endpoint"))).unwrap();
+    gate.release();
+    let (code, stdout, stderr) = finish_gated(child);
+
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(!stderr.contains("kemi: http"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("kemi: resume with: kemi --resume {id}")),
+        "{stderr}"
+    );
+}
+
 #[tokio::test]
 async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_success() {
     let workspace = TempDir::new();

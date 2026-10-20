@@ -653,14 +653,7 @@ async fn run_review(
 ) -> ! {
     // シグナルの受け口は URL を出す前に作る。URL を見てすぐ Ctrl+C しても、
     // 保留として 130 で終われるように（R-SESSION）。
-    #[cfg(unix)]
-    let mut signals = {
-        use tokio::signal::unix::{SignalKind, signal};
-        (
-            signal(SignalKind::interrupt()).expect("install the SIGINT handler"),
-            signal(SignalKind::terminate()).expect("install the SIGTERM handler"),
-        )
-    };
+    let mut interrupts = Interrupts::install();
     let ReviewStartup {
         listener,
         params,
@@ -687,56 +680,104 @@ async fn run_review(
     // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
     // シグナルを受けても捨てない。
     let mut serving = tokio::spawn(serve(listener, params));
-    if cli.explanation.is_some() {
+    // 起動時の説明は保存してから URL を出す（R-EXPLANATION-CLI）。それを待つ間の保留と
+    // 失敗も、サーブを始めた後と同じ片付けで終える。
+    let ending = if cli.explanation.is_some() {
         tokio::select! {
-            () = control.ready() => {
-                if let Some(endpoint) = &endpoint && let Err(error) = endpoint.publish() { serving.abort(); fail(&error); }
-                announcement.announce();
-            }
-            outcome = &mut serving => {
-                remove_endpoint();
-                match outcome { Ok(Err(error)) => fail(&error.to_string()), _ => fail("initial explanation could not start the review") }
-            }
+            biased;
+            joined = &mut serving => Some(match joined {
+                Ok(outcome) => Ending::Stopped(outcome),
+                Err(_) => fail("initial explanation could not start the review"),
+            }),
+            () = interrupts.recv() => Some(Ending::Interrupted),
+            () = control.ready() => match endpoint.as_ref().map(EndpointFile::publish).transpose() {
+                Ok(_) => {
+                    announcement.announce();
+                    None
+                }
+                Err(error) => Some(Ending::Failed(error)),
+            },
         }
-    }
-    #[cfg(unix)]
-    let outcome = tokio::select! {
-        biased;
-        outcome = &mut serving => Some(outcome),
-        _ = signals.0.recv() => None,
-        _ = signals.1.recv() => None,
+    } else {
+        None
     };
-    #[cfg(not(unix))]
-    let outcome = tokio::select! {
-        biased;
-        outcome = &mut serving => Some(outcome),
-        _ = tokio::signal::ctrl_c() => None,
+    let ending = match ending {
+        Some(ending) => ending,
+        None => tokio::select! {
+            biased;
+            joined = &mut serving => match joined {
+                Ok(outcome) => Ending::Stopped(outcome),
+                Err(error) => fail(&format!("the server stopped unexpectedly: {error}")),
+            },
+            () = interrupts.recv() => Ending::Interrupted,
+        },
     };
-    let outcome = outcome.map(|joined| match joined {
-        Ok(outcome) => outcome,
-        Err(error) => fail(&format!("the server stopped unexpectedly: {error}")),
-    });
     remove_endpoint();
 
-    finish_review(outcome, stored_session, &control, serving).await
+    finish_review(ending, stored_session, &control, serving).await
+}
+
+/// 保留の合図。unix は SIGINT と SIGTERM で、受け口を作った後に届いた合図は失わない。
+/// ほかは Ctrl+C。
+struct Interrupts {
+    #[cfg(unix)]
+    signals: (tokio::signal::unix::Signal, tokio::signal::unix::Signal),
+}
+
+impl Interrupts {
+    fn install() -> Self {
+        Interrupts {
+            #[cfg(unix)]
+            signals: {
+                use tokio::signal::unix::{SignalKind, signal};
+                (
+                    signal(SignalKind::interrupt()).expect("install the SIGINT handler"),
+                    signal(SignalKind::terminate()).expect("install the SIGTERM handler"),
+                )
+            },
+        }
+    }
+
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = self.signals.0.recv() => {}
+            _ = self.signals.1.recv() => {}
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+}
+
+/// レビューの終わり方。
+enum Ending {
+    /// サーバが止まった（submit か、サーバの中の実行時エラー）。
+    Stopped(Result<ServeOutcome, kemi_server::ServerError>),
+    /// サーバの外の実行時エラー（起動時の説明を保存した後に、つなぎ先を書けないなど）。
+    Failed(String),
+    /// SIGINT / SIGTERM による保留。
+    Interrupted,
 }
 
 /// 終わり方を stdout・セッションの片付け・終了コードにする。
 async fn finish_review(
-    outcome: Option<Result<ServeOutcome, kemi_server::ServerError>>,
+    ending: Ending,
     stored_session: Option<Arc<StoredSession>>,
     control: &ServeControl,
     mut serving: tokio::task::JoinHandle<Result<ServeOutcome, kemi_server::ServerError>>,
 ) -> ! {
-    match outcome {
-        Some(Ok(ServeOutcome::Submitted(document))) => finish_submitted(document),
-        Some(Err(error)) => {
-            close_suspended(stored_session.as_deref());
-            // 実行時エラーでも、復元できるセッションが残るなら案内を出す（R-SESSION）。
-            print_resume_hint(stored_session.as_deref());
-            fail(&error.to_string());
+    match ending {
+        Ending::Stopped(Ok(ServeOutcome::Submitted(document))) => finish_submitted(document),
+        Ending::Stopped(Err(error)) => {
+            fail_keeping_session(&error.to_string(), stored_session.as_deref())
         }
-        None => {
+        Ending::Failed(message) => {
+            serving.abort();
+            fail_keeping_session(&message, stored_session.as_deref());
+        }
+        Ending::Interrupted => {
             let (submitted, waiting) = match control.suspend() {
                 SuspendOutcome::Submitted { document, waiting } => (Some(document), waiting),
                 SuspendOutcome::Suspended { waiting } => (None, waiting),
@@ -771,6 +812,14 @@ async fn finish_review(
             std::process::exit(report::INTERRUPTED);
         }
     }
+}
+
+/// 実行時エラーで終わる。保留と同じくセッションを片付け、復元できるセッションが残るなら
+/// 案内を出す（R-SESSION）。
+fn fail_keeping_session(message: &str, stored_session: Option<&StoredSession>) -> ! {
+    close_suspended(stored_session);
+    print_resume_hint(stored_session);
+    fail(message);
 }
 
 fn finish_submitted(document: serde_json::Value) -> ! {
