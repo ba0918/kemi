@@ -2,6 +2,7 @@ use super::display_version::{DisplayVersionError, known_generation};
 use super::parts::Part;
 pub use super::parts_validation::MAX_OCCURRENCE;
 use super::parts_validation::{PartError, PartRule, bound, id, string_bytes, text, validate_part};
+use super::review::GroupBy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -25,6 +26,24 @@ impl ExplanationHistory {
 #[serde(deny_unknown_fields)]
 pub struct ExplanationDocument {
     pub sections: Vec<ExplanationSection>,
+}
+impl ExplanationDocument {
+    /// 単位を名指しするコードの参照を、節 → ブロック → 参照の順に `(単位, グループ, パス)` で返す。
+    pub fn unit_code_references(&self) -> impl Iterator<Item = (ReferenceUnit, &String, &String)> {
+        self.sections
+            .iter()
+            .flat_map(|section| &section.blocks)
+            .flat_map(|block| &block.references)
+            .filter_map(|reference| match reference {
+                ExplanationReference::Code {
+                    unit: Some(unit),
+                    group_id,
+                    path,
+                    ..
+                } => Some((*unit, group_id, path)),
+                ExplanationReference::Code { .. } | ExplanationReference::Page { .. } => None,
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +151,24 @@ pub struct ExplanationBlock {
 pub enum ReferenceUnit {
     File,
     Commit,
+}
+
+impl From<ReferenceUnit> for GroupBy {
+    fn from(unit: ReferenceUnit) -> Self {
+        match unit {
+            ReferenceUnit::File => GroupBy::File,
+            ReferenceUnit::Commit => GroupBy::Commit,
+        }
+    }
+}
+
+impl From<GroupBy> for ReferenceUnit {
+    fn from(unit: GroupBy) -> Self {
+        match unit {
+            GroupBy::File => ReferenceUnit::File,
+            GroupBy::Commit => ReferenceUnit::Commit,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

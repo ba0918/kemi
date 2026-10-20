@@ -11,7 +11,7 @@ use kemi_core::domain::explanation::{
     ExplanationVersion, ReferenceContext, ReferenceUnit, RetainedVersions, history_candidate,
     validate_update, validate_version,
 };
-use kemi_core::domain::review::{Comment, CommentTarget, GroupBy};
+use kemi_core::domain::review::{Comment, CommentTarget};
 use kemi_core::domain::submit::RESULT_CONTRACT_VERSION;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -60,27 +60,13 @@ fn update_references(
         match review.meta(Some(other.unit)) {
             Ok((_, meta)) => code.extend(reference_map(&meta, Some(other.unit), source)),
             Err(_) => {
-                let unit = match other.unit {
-                    GroupBy::File => ReferenceUnit::File,
-                    GroupBy::Commit => ReferenceUnit::Commit,
-                };
-                for reference in document
-                    .sections
-                    .iter()
-                    .flat_map(|s| &s.blocks)
-                    .flat_map(|b| &b.references)
-                {
-                    if let kemi_core::domain::explanation::ExplanationReference::Code {
-                        unit: Some(wanted),
-                        group_id,
-                        path,
-                        ..
-                    } = reference
-                        && *wanted == unit
-                    {
-                        requested.push((unit, group_id.clone(), path.clone()));
-                    }
-                }
+                let unit = ReferenceUnit::from(other.unit);
+                requested.extend(
+                    document
+                        .unit_code_references()
+                        .filter(|(wanted, ..)| *wanted == unit)
+                        .map(|(unit, group_id, path)| (unit, group_id.clone(), path.clone())),
+                );
             }
         }
     }

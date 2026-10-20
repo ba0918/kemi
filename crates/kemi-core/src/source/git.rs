@@ -485,15 +485,7 @@ impl ReviewSource for GitSource {
         let commits = String::from_utf8_lossy(&commits);
         let groups: std::collections::HashSet<_> = requested
             .iter()
-            .map(|(unit, group, _)| {
-                (
-                    match unit {
-                        ReferenceUnit::File => GroupBy::File,
-                        ReferenceUnit::Commit => GroupBy::Commit,
-                    },
-                    group.clone(),
-                )
-            })
+            .map(|(unit, group, _)| (GroupBy::from(*unit), group.clone()))
             .collect();
         let mut result = Vec::new();
         for (unit, group) in groups {
@@ -531,10 +523,7 @@ impl ReviewSource for GitSource {
                 }
                 GroupBy::File | GroupBy::Commit => continue,
             };
-            let reference_unit = match unit {
-                GroupBy::File => ReferenceUnit::File,
-                GroupBy::Commit => ReferenceUnit::Commit,
-            };
+            let reference_unit = ReferenceUnit::from(unit);
             for entry in entries {
                 let path = entry.path.to_string_lossy().into_owned();
                 if requested

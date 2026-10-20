@@ -1,8 +1,8 @@
 //! 説明の初期化と、入力ソースのメタデータから作るコード参照。
 
 use kemi_core::domain::explanation::{
-    CodeReferenceEntry, ExplanationDocument, ExplanationHistory, ExplanationReference,
-    ExplanationVersion, ReferenceContext, ReferenceUnit, validate_update, validate_version,
+    CodeReferenceEntry, ExplanationDocument, ExplanationHistory, ExplanationVersion,
+    ReferenceContext, ReferenceUnit, validate_update, validate_version,
 };
 use kemi_core::domain::review::{GroupBy, ReviewMeta, Status};
 
@@ -17,25 +17,9 @@ pub(crate) fn initial_history(
 ) -> Result<ExplanationHistory, crate::ServerError> {
     let mut code = reference_map(review, units.first().copied(), source);
     let requested: Vec<_> = document
-        .sections
-        .iter()
-        .flat_map(|section| &section.blocks)
-        .flat_map(|block| &block.references)
-        .filter_map(|reference| match reference {
-            ExplanationReference::Code {
-                unit: Some(unit),
-                group_id,
-                path,
-                ..
-            } if Some(match unit {
-                ReferenceUnit::File => GroupBy::File,
-                ReferenceUnit::Commit => GroupBy::Commit,
-            }) != units.first().copied() =>
-            {
-                Some((*unit, group_id.clone(), path.clone()))
-            }
-            ExplanationReference::Code { .. } | ExplanationReference::Page { .. } => None,
-        })
+        .unit_code_references()
+        .filter(|(unit, ..)| Some(GroupBy::from(*unit)) != units.first().copied())
+        .map(|(unit, group_id, path)| (unit, group_id.clone(), path.clone()))
         .collect();
     code.extend(
         source
@@ -74,10 +58,7 @@ pub(crate) fn reference_map(
     unit: Option<GroupBy>,
     source: &dyn kemi_core::source::ReviewSource,
 ) -> Vec<CodeReferenceEntry> {
-    let unit = unit.map(|unit| match unit {
-        GroupBy::File => ReferenceUnit::File,
-        GroupBy::Commit => ReferenceUnit::Commit,
-    });
+    let unit = unit.map(ReferenceUnit::from);
     meta.groups
         .iter()
         .flat_map(|group| {
