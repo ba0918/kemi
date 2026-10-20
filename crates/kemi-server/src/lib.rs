@@ -262,6 +262,15 @@ pub trait SessionSink: Send + Sync {
     ) -> kemi_core::session::FilesWrite;
 }
 
+/// 今の時刻（UNIX エポックからのミリ秒）を返す時計。エージェントの状態の「作業中のまま
+/// 10 分で応答なし」（R-AGENT-STATE）を決めるのに使う。起動側は [`system_clock`] を渡す。
+pub type Clock = Arc<dyn Fn() -> u128 + Send + Sync>;
+
+/// 壁時計。
+pub fn system_clock() -> Clock {
+    Arc::new(kemi_core::session::now_millis)
+}
+
 pub struct ServeParams {
     pub source: Arc<dyn ReviewSource>,
     pub assets: Arc<dyn Assets>,
@@ -281,6 +290,8 @@ pub struct ServeParams {
     /// 起動時に入れる説明（`--explanation`）。セッションとエージェント用の API がある
     /// レビューでだけ使える。
     pub initial_explanation: Option<ExplanationDocument>,
+    /// エージェントの状態に使う時計。テストは時刻を進められる時計を渡す。
+    pub clock: Clock,
 }
 
 /// エージェント用の API の待ち受け（R-AGENT-LINK）。
@@ -457,6 +468,14 @@ pub(crate) struct AppState {
     pub freeze_started: std::sync::atomic::AtomicBool,
     /// `--live` の中継の情報。トークンの URL で cookie を入れ、`api/review` に添える。
     pub live: Option<Arc<live::LiveInfo>>,
+    pub(crate) clock: Clock,
+}
+
+impl AppState {
+    /// 今の時刻（[`Clock`]）。エージェントの状態の時刻はすべてここから読む。
+    pub(crate) fn now(&self) -> u128 {
+        (self.clock)()
+    }
 }
 
 /// レビュー中の実行時エラーで停止する。stdout に JSON を出さず終了コード 2（R-SUBMIT）。

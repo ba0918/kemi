@@ -197,7 +197,7 @@ impl Drop for WaitGuard {
     fn drop(&mut self) {
         {
             let mut agent = self.state.agent.link.lock().expect("agent poisoned");
-            let now = kemi_core::session::now_millis();
+            let now = self.state.now();
             match &self.returned {
                 Some(handed) => agent.wait_returned(now, handed),
                 None => agent.wait_ended_empty(now),
@@ -421,7 +421,7 @@ async fn reply_api(
             .expect("agent poisoned")
             .agent_wrote(
                 session.state.channel.called,
-                kemi_core::session::now_millis(),
+                state.now(),
                 &touched,
                 !messages.is_empty(),
                 &session.state.comments,

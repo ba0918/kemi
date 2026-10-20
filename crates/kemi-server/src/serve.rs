@@ -254,10 +254,7 @@ async fn run_servers(
         None => None,
     };
 
-    let agent = AgentLink::new(
-        kemi_core::session::now_millis(),
-        &initial_state.channel.events,
-    );
+    let agent = AgentLink::new((params.clock)(), &initial_state.channel.events);
     let state = Arc::new(AppState {
         sources,
         initial_review: Mutex::new(initial_review),
@@ -293,6 +290,7 @@ async fn run_servers(
         },
         freeze_started: std::sync::atomic::AtomicBool::new(false),
         live: live.as_ref().map(|(_, info, _)| info.clone()),
+        clock: params.clock,
     });
 
     if let Some(agent) = &params.agent {

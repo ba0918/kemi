@@ -187,6 +187,7 @@ async fn start_restored_review(
             last_snapshot_number,
         }),
         initial_explanation: None,
+        clock: kemi_server::system_clock(),
     };
     let task = tokio::spawn(serve(listener, params));
     Running {
@@ -1529,6 +1530,7 @@ async fn resumed_code_failure_case(update_explanation: bool) {
             last_snapshot_number: 0,
         }),
         initial_explanation: None,
+        clock: kemi_server::system_clock(),
     };
     let task = tokio::spawn(serve(listener, params));
     let response = reqwest::get(format!("{url}api/review")).await.unwrap();

@@ -158,6 +158,7 @@ async fn session_copy_waits_for_both_units() {
         agent: None,
         live: None,
         initial_explanation: None,
+        clock: kemi_server::system_clock(),
     };
     tokio::spawn(serve(listener, params));
 

@@ -240,7 +240,7 @@ fn delete_comment(state: &AppState, id: String) -> Result<Json<Value>, ApiError>
         .expect("agent poisoned")
         .comment_deleted(
             session.state.channel.called,
-            kemi_core::session::now_millis(),
+            state.now(),
             &session.state.comments,
         );
     drop(session);

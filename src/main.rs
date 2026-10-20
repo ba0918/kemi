@@ -593,6 +593,7 @@ async fn prepare_review(
         agent,
         live,
         initial_explanation,
+        clock: kemi_server::system_clock(),
     };
     ReviewStartup {
         listener,

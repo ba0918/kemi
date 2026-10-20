@@ -95,7 +95,7 @@ pub(crate) fn agent_json(state: &AppState) -> Value {
         .channel
         .unhanded_count(&session.state.comments, &session.state.messages);
     let agent = state.agent.link.lock().expect("agent poisoned");
-    let status = agent.status(called, kemi_core::session::now_millis());
+    let status = agent.status(called, state.now());
     let lines: Vec<Value> = agent
         .lines(&session.state.comments)
         .into_iter()

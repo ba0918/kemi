@@ -827,6 +827,36 @@ async fn the_status_goes_from_not_connected_to_waiting_to_working() {
 }
 
 #[tokio::test]
+async fn working_for_ten_minutes_without_the_agent_turns_into_no_response_and_reaches_the_page() {
+    use kemi_core::domain::agent::UNRESPONSIVE_AFTER_MILLIS;
+    use std::sync::atomic::AtomicU64;
+    let now = Arc::new(AtomicU64::new(1_000_000));
+    let clock: kemi_server::Clock = {
+        let now = now.clone();
+        Arc::new(move || u128::from(now.load(Ordering::SeqCst)))
+    };
+    let server = AgentServer::start_with_clock(clock).await;
+    server.wait(Some(0)).await;
+    assert_eq!(server.agent_status().await, "working");
+    let mut events = server.page.get("api/events").await;
+
+    let ten_minutes = u64::try_from(UNRESPONSIVE_AFTER_MILLIS).unwrap();
+    now.fetch_add(ten_minutes - 1, Ordering::SeqCst);
+    assert_eq!(server.agent_status().await, "working");
+    now.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(server.agent_status().await, "no-response");
+
+    // 状態は時刻だけで変わるので、要求が無くても見回りが知らせる。見回りの間隔（15 秒）を
+    // 越えるまでサーバの時間を進める。進めた後は止めておかない（止めたままだと、通知を
+    // 読む前に読む期限まで時間が飛ぶことがある）。
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(60)).await;
+    tokio::time::resume();
+    let notified = next_sse_event(&mut events, "agent").await;
+    assert_eq!(notified["status"], "no-response");
+}
+
+#[tokio::test]
 async fn replying_to_one_of_two_handed_threads_keeps_it_working_and_to_both_makes_it_replied() {
     let server = AgentServer::start().await;
     let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();

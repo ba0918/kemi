@@ -27,4 +27,4 @@ two-face = { version = "0.5.2", default-features = false, features = ["syntect-d
 
 [dev-dependencies]
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync", "io-util"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync", "io-util", "test-util"] }

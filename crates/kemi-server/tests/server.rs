@@ -380,6 +380,7 @@ impl TestServer {
             agent: None,
             live: None,
             initial_explanation: None,
+            clock: kemi_server::system_clock(),
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -566,6 +567,7 @@ impl LiveServer {
             agent: None,
             live: None,
             initial_explanation: None,
+            clock: kemi_server::system_clock(),
         };
         let task = tokio::spawn(serve(listener, params));
         // 監視スレッドがパスを登録するのを待つ。
@@ -1322,6 +1324,7 @@ impl TestServer {
             agent: None,
             live: None,
             initial_explanation: None,
+            clock: kemi_server::system_clock(),
         };
         let task = tokio::spawn(serve(listener, params));
         TestServer {
@@ -1551,6 +1554,38 @@ impl AgentServer {
         sink: Arc<RecordingSink>,
         initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
     ) -> Self {
+        AgentServer::launch(
+            source,
+            bind,
+            sink,
+            initial_explanation,
+            kemi_server::system_clock(),
+        )
+        .await
+    }
+
+    /// エージェントの状態の時刻を `clock` から読むサーバ。写しは既にある扱いにして、凍結の
+    /// 裏の読み取りを動かさない。
+    async fn start_with_clock(clock: kemi_server::Clock) -> Self {
+        let sink = Arc::new(RecordingSink::default());
+        sink.copy_already_saved.store(true, Ordering::SeqCst);
+        AgentServer::launch(
+            Arc::new(FakeSource::new()),
+            Ipv4Addr::LOCALHOST,
+            sink,
+            None,
+            clock,
+        )
+        .await
+    }
+
+    async fn launch(
+        source: Arc<dyn ReviewSource>,
+        bind: Ipv4Addr,
+        sink: Arc<RecordingSink>,
+        initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
+        clock: kemi_server::Clock,
+    ) -> Self {
         let listener = TcpListener::bind((bind, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let url = session_url(&listener, "test-token", Ipv4Addr::LOCALHOST).unwrap();
@@ -1575,6 +1610,7 @@ impl AgentServer {
             }),
             live: None,
             initial_explanation,
+            clock,
         };
         let task = tokio::spawn(serve(listener, params));
         AgentServer {
