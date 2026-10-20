@@ -441,6 +441,96 @@ fn initial_explanation_exclusions_and_bad_inputs_never_start_a_review_or_print_s
     }
 }
 
+/// 本文 1 つだけの起動時の説明。
+fn one_block_explanation() -> String {
+    serde_json::json!({"sections":[{"id":"s","title":"Explanation","blocks":[{"id":"b","part":{"type":"text","body":"Explanation"},"references":[]}]}]}).to_string()
+}
+
+/// URL の行の後の stderr を `count` 行読む。
+fn lines_after_the_url(kemi: &mut Kemi, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|_| {
+            let mut line = String::new();
+            kemi.stderr.read_line(&mut line).unwrap();
+            line
+        })
+        .collect()
+}
+
+/// 起動時の説明があっても、契約の行は kemi: <url> → 結果の保存先 → kemi: review →
+/// kemi: live の順に出る（live.md の R-PAGE-MODE）。
+#[tokio::test]
+async fn initial_explanation_keeps_the_url_results_review_and_live_lines_in_order() {
+    let dir = TempDir::new();
+    worktree_fixture(&dir);
+    dir.write("page.html", "<h1>Page</h1>");
+    dir.write("explanation.json", &one_block_explanation());
+
+    let mut kemi = Kemi::spawn(
+        &dir.path,
+        &[
+            "--live",
+            "page.html",
+            "--explanation",
+            "explanation.json",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+    );
+
+    assert!(
+        kemi.preamble.is_empty(),
+        "nothing may precede the URL line: {:?}",
+        kemi.preamble
+    );
+    let lines = lines_after_the_url(&mut kemi, 3);
+    // 結果の保存先の行は文言を契約としないので、review と live の前に 1 行あることだけを見る。
+    assert!(
+        !lines[0].trim().is_empty()
+            && !lines[0].starts_with("kemi: review ")
+            && !lines[0].starts_with("kemi: live "),
+        "{lines:?}"
+    );
+    assert!(lines[1].starts_with("kemi: review "), "{lines:?}");
+    assert!(lines[2].starts_with("kemi: live "), "{lines:?}");
+    kemi.kill();
+}
+
+/// 起動時の説明があっても、公開の警告は URL の行の後に出る（serve.md の R-SERVE）。
+#[tokio::test]
+async fn initial_explanation_warns_about_the_lan_after_the_url() {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    dir.write("explanation.json", &one_block_explanation());
+
+    let mut kemi = Kemi::spawn(
+        &dir.path,
+        &[
+            "manifest.json",
+            "--explanation",
+            "explanation.json",
+            "--bind",
+            "0.0.0.0",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+    );
+
+    assert!(
+        kemi.preamble.is_empty(),
+        "nothing may precede the URL line: {:?}",
+        kemi.preamble
+    );
+    let lines = lines_after_the_url(&mut kemi, 1);
+    assert!(
+        lines[0].starts_with("kemi: exposed on the LAN;"),
+        "the URL line must be followed by the LAN warning: {lines:?}"
+    );
+    kemi.kill();
+}
+
 #[tokio::test]
 async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_success() {
     let workspace = TempDir::new();

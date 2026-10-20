@@ -135,9 +135,6 @@ impl EndpointFile {
             .map_err(|error| format!("cannot write the agent endpoint: {error}"))?;
         Ok(())
     }
-    fn announce(&self) {
-        eprintln!("{}", report::review_line(&self.id));
-    }
     fn remove(&self) {
         if let Err(error) = kemi_core::session::remove_endpoint(&self.dir, &self.id) {
             warn(&format!("cannot remove the agent endpoint: {error}"));
@@ -145,9 +142,9 @@ impl EndpointFile {
     }
 }
 
-/// エージェント用の API を立て、`<id>.endpoint` を書き、`kemi: review <id>` を出す
-/// （R-AGENT-CLI）。往復はセッションの id と置き場所に頼るので、セッションのあるレビュー
-/// だけ。立てられない・書けないときは警告だけで、今どおり submit だけでやりとりする。
+/// エージェント用の API を立て、`<id>.endpoint` を書く（R-AGENT-CLI）。往復はセッションの
+/// id と置き場所に頼るので、セッションのあるレビューだけ。立てられない・書けないときは
+/// 警告だけで、今どおり submit だけでやりとりする。`defer` では書くのを呼び出し側に任せる。
 async fn start_agent_channel(
     stored_session: Option<&StoredSession>,
     control: &ServeControl,
@@ -189,12 +186,9 @@ async fn start_agent_channel(
         id: id.clone(),
         endpoint,
     };
-    if !defer {
-        if let Err(error) = endpoint_file.publish() {
-            warn(&error);
-            return None;
-        }
-        endpoint_file.announce();
+    if !defer && let Err(error) = endpoint_file.publish() {
+        warn(&error);
+        return None;
     }
     Some((
         AgentParams {
@@ -469,9 +463,9 @@ struct LiveRun {
     code_view: bool,
 }
 
-/// 中継のリスナーを立て、`kemi: live <url>` を出す（R-PAGE-MODE）。`--bind` に従い、
-/// `--live-port` で固定できる（R-PAGE-PROXY）。
-async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LiveParams> {
+/// 中継のリスナーを立て、`kemi: live <url>` に出す中継の URL と一緒に返す（R-PAGE-MODE）。
+/// `--bind` に従い、`--live-port` で固定できる（R-PAGE-PROXY）。
+async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<(LiveParams, String)> {
     let target = LiveTarget::from_page(&live.page).ok()?;
     let start = target.start();
     let port = cli.live_port.unwrap_or(0);
@@ -483,11 +477,8 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
         Ok(address) => address.port(),
         Err(error) => fail(&format!("cannot listen on {}:{port}: {error}", cli.bind)),
     };
-    eprintln!(
-        "{}",
-        report::live_line(&format!("http://{host}:{actual}{start}"))
-    );
-    Some(LiveParams {
+    let url = format!("http://{host}:{actual}{start}");
+    let params = LiveParams {
         listener,
         target,
         root: live.root.clone(),
@@ -496,14 +487,54 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<LivePar
         code_view: live.code_view,
         snapshots: live.snapshots.clone(),
         last_snapshot_number: live.last_snapshot_number,
-    })
+    };
+    Some((params, url))
 }
 
 /// 保留で待っている kemi wait に理由を返すのに待つ上限。返し終えればすぐ終わる。
 const SUSPEND_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-fn announce_review_url(url: &str) {
-    eprintln!("{}", report::url_line(url));
+/// 起動を知らせる stderr の行と、自動で開くブラウザ。
+struct Announcement {
+    url: String,
+    /// 非ループバックで待つときの公開の警告（R-SERVE）。
+    warning: Option<String>,
+    /// 結果の保存先（R-RESULT）。決められないときは無い。
+    results: Option<String>,
+    /// エージェントとの往復があるときの、レビューの id（R-AGENT-CLI）。
+    review: Option<String>,
+    /// `--live` の中継の URL（R-PAGE-MODE）。
+    live: Option<String>,
+    /// 自動で開くときの URL。`0.0.0.0` で待つときも手元の loopback（R-SERVE）。
+    browser: Option<String>,
+}
+
+impl Announcement {
+    /// 行を `kemi: <url>` → 公開の警告 → 結果の保存先 → `kemi: review <id>` →
+    /// `kemi: live <url>` の順に出してから、ブラウザを開く（R-PAGE-MODE）。起動時の説明が
+    /// あると出すのは説明を保存した後になる（R-EXPLANATION-CLI）が、順は同じにする。
+    fn announce(&self) {
+        eprintln!("{}", report::url_line(&self.url));
+        if let Some(warning) = &self.warning {
+            eprintln!("{warning}");
+        }
+        match &self.results {
+            Some(dir) => warn(&format!("results are saved to: {dir}")),
+            None => warn(&format!(
+                "cannot determine where to save results ({})",
+                results_unset_reason()
+            )),
+        }
+        if let Some(id) = &self.review {
+            eprintln!("{}", report::review_line(id));
+        }
+        if let Some(url) = &self.live {
+            eprintln!("{}", report::live_line(url));
+        }
+        if let Some(url) = &self.browser {
+            open_browser(url);
+        }
+    }
 }
 
 /// サーブを始める前にそろえたもの。
@@ -512,11 +543,11 @@ struct ReviewStartup {
     params: ServeParams,
     control: ServeControl,
     endpoint: Option<EndpointFile>,
-    url: String,
-    browser_url: String,
+    announcement: Announcement,
 }
 
-/// 待ち受け・URL と警告・結果の置き場所・エージェント・`--live` を用意し、ブラウザを開く。
+/// 待ち受け・URL と警告・結果の置き場所・エージェント・`--live` を用意する。待ち受けは
+/// ここで済ませ、知らせる行は出さずに返す。
 async fn prepare_review(
     cli: &Cli,
     source: Arc<dyn ReviewSource>,
@@ -548,28 +579,15 @@ async fn prepare_review(
         Ok(url) => url,
         Err(error) => fail(&error.to_string()),
     };
-    if cli.explanation.is_none() {
-        announce_review_url(&url);
-    }
     let warning = if live.is_some() {
         live_exposure_warning(cli.bind, share_address)
     } else {
         exposure_warning(cli.bind, share_address)
     };
-    if let Some(warning) = warning {
-        eprintln!("{warning}");
-    }
     let results = ResultStore {
         dir: results_dir(),
         key: results_key,
     };
-    match results.location() {
-        Some(dir) => warn(&format!("results are saved to: {dir}")),
-        None => warn(&format!(
-            "cannot determine where to save results ({})",
-            results_unset_reason()
-        )),
-    }
     let control = ServeControl::new();
     let (agent, endpoint) = match start_agent_channel(
         stored_session.map(Arc::as_ref),
@@ -584,13 +602,21 @@ async fn prepare_review(
     if cli.explanation.is_some() && agent.is_none() {
         fail("initial explanation requires a persistent session and agent endpoint");
     }
-    let live = match live {
-        Some(live) => start_live(cli, live, session_host(cli.bind, share_address)).await,
-        None => None,
+    let (live, live_url) = match live {
+        Some(live) => match start_live(cli, live, session_host(cli.bind, share_address)).await {
+            Some((params, url)) => (Some(params), Some(url)),
+            None => (None, None),
+        },
+        None => (None, None),
     };
-    if !cli.no_open && cli.explanation.is_none() {
-        open_browser(&browser_url);
-    }
+    let announcement = Announcement {
+        url,
+        warning,
+        results: results.location(),
+        review: endpoint.as_ref().map(|endpoint| endpoint.id.clone()),
+        live: live_url,
+        browser: (!cli.no_open).then_some(browser_url),
+    };
 
     let params = ServeParams {
         source,
@@ -612,8 +638,7 @@ async fn prepare_review(
         params,
         control,
         endpoint,
-        url,
-        browser_url,
+        announcement,
     }
 }
 
@@ -641,8 +666,7 @@ async fn run_review(
         params,
         control,
         endpoint,
-        url,
-        browser_url,
+        announcement,
     } = prepare_review(
         cli,
         source,
@@ -657,6 +681,9 @@ async fn run_review(
             endpoint.remove();
         }
     };
+    if cli.explanation.is_none() {
+        announcement.announce();
+    }
     // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
     // シグナルを受けても捨てない。
     let mut serving = tokio::spawn(serve(listener, params));
@@ -664,9 +691,7 @@ async fn run_review(
         tokio::select! {
             () = control.ready() => {
                 if let Some(endpoint) = &endpoint && let Err(error) = endpoint.publish() { serving.abort(); fail(&error); }
-                announce_review_url(&url);
-                if let Some(endpoint) = &endpoint { endpoint.announce(); }
-                if !cli.no_open { open_browser(&browser_url); }
+                announcement.announce();
             }
             outcome = &mut serving => {
                 remove_endpoint();
