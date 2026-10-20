@@ -559,9 +559,10 @@ const CODE_TAB_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4L1.8 8l3.7 4M10.5 4l3.7 4-3.7 4M9.2 2.5L6.8 13.5"/></svg>';
 
 /**
- * ページの見方とコードの見方を切り替えるタブと、ページの見方の間に上部バーに出すもの（live.md の R-PAGE-MODE）。
+ * ページの見方とコードの見方を切り替えるタブ（features が見方の切り替えに並べる）と、ページの見方の間に上部バーに
+ * 出すもの（live.md の R-PAGE-MODE）。
  * @typedef {{
- *   tabs: HTMLElement,
+ *   tabs: HTMLButtonElement[],
  *   codeCount: HTMLElement,
  *   meta: HTMLElement,
  *   metaPage: HTMLElement,
@@ -571,9 +572,6 @@ const CODE_TAB_ICON =
  * @returns {LiveTopbar}
  */
 export function buildTopbar() {
-  const tabs = el("div", "lv-modetabs lv-view");
-  tabs.setAttribute("role", "group");
-  tabs.setAttribute("aria-label", "View");
   const pageTab = button("lv-modetab");
   pageTab.dataset.view = "page";
   pageTab.title = "The running page";
@@ -583,14 +581,13 @@ export function buildTopbar() {
   codeTab.title = "The changes in the working tree";
   const codeCount = textEl("span", "lv-modetab-count", "");
   codeTab.append(svgIcon(CODE_TAB_ICON), textEl("span", "lv-modetab-long", "Code changes"), textEl("span", "lv-modetab-short", "Code"), codeCount);
-  tabs.append(pageTab, codeTab);
   const meta = el("span", "lv-topmeta");
   const metaPage = el("span", "lv-topmeta-page");
   const metaWidth = el("span", "lv-topmeta-width");
   meta.append(textEl("b", "", "Live review"), " · ", metaPage, " · ", metaWidth);
   const agent = el("span", "agent-status lv-top-agent");
   agent.setAttribute("role", "status");
-  return { tabs, codeCount, meta, metaPage, metaWidth, agent };
+  return { tabs: [pageTab, codeTab], codeCount, meta, metaPage, metaWidth, agent };
 }
 
 /** 始め方の 3 つの手順（R-PAGE-COMMENT）。ページへのコメントを初めて保存するまで出す。 */

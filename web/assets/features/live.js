@@ -305,10 +305,10 @@ export function startLive(info) {
 
   topbar = buildTopbar();
   dom.viewSwitch.classList.add('lv-view','lv-modetabs');
-  for (const tab of topbar.tabs.querySelectorAll('button')) {
-    const view=/** @type {HTMLButtonElement} */(tab).dataset.view;
+  for (const tab of topbar.tabs) {
+    const view = tab.dataset.view;
     dom.viewSwitch.querySelector(`[data-review-view="${view}"]`)?.remove();
-    /** @type {HTMLButtonElement} */(tab).dataset.reviewView=view;
+    tab.dataset.reviewView = view;
     dom.viewSwitch.append(tab);
   }
   dom.titleBlock.before(topbar.meta, topbar.agent);
@@ -546,13 +546,13 @@ export async function refreshFromBadge() {
   renderTopbar();
 }
 
-/** 上部バーのタブの変更ファイルの数と、ページの見方の間に出すページと表示幅。 */
+/**
+ * 上部バーのタブの変更ファイルの数と、ページの見方の間に出すページと表示幅。タブの押した状態は、見方の切り替えの
+ * ほかのタブと一緒に views/explanation.js の renderExplanationStatus が付ける。
+ */
 function renderTopbar() {
   if (!topbar) {
     return;
-  }
-  for (const tab of dom.viewSwitch.querySelectorAll("button[data-view]")) {
-    tab.setAttribute("aria-pressed", String(/** @type {HTMLElement} */(tab).dataset.view === state.view));
   }
   /** @type {{ files: unknown[] }[]} */
   const groups = state.review?.groups ?? [];
