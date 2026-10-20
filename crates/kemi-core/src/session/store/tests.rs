@@ -1770,32 +1770,22 @@ fn session_cleanup_removes_orphan_lock_files() {
     std::fs::write(&lock_path, b"").unwrap();
     let written = modified(&lock_path);
 
+    let clean_at = |now| cleanup_at(&scratch.dir(), KEEP_SESSIONS, KEEP_BYTES, now);
+
     // 新しすぎるロックは、始まったばかりのセッションと競合しないよう残す。
-    prune_orphan_locks(
-        &scratch.dir(),
-        written + ORPHAN_LOCK_MIN_AGE - Duration::from_secs(1),
-        ORPHAN_LOCK_MIN_AGE,
-    );
+    clean_at(written + ORPHAN_LOCK_MIN_AGE - Duration::from_secs(1));
     assert!(lock_path.exists());
 
     // ロック中のものは他のプロセスのものなので残す。
     let held = SessionLock::acquire(&scratch.dir(), "01HF7YAT00AAAAAAAAAAAAAAAA").unwrap();
-    prune_orphan_locks(
-        &scratch.dir(),
-        written + ORPHAN_LOCK_MIN_AGE,
-        ORPHAN_LOCK_MIN_AGE,
-    );
+    clean_at(written + ORPHAN_LOCK_MIN_AGE);
     assert!(lock_path.exists());
     drop(held);
 
     // 使われていない古いロックは、猶予ちょうどで消える。
     std::fs::write(&lock_path, b"").unwrap();
     let written = modified(&lock_path);
-    prune_orphan_locks(
-        &scratch.dir(),
-        written + ORPHAN_LOCK_MIN_AGE,
-        ORPHAN_LOCK_MIN_AGE,
-    );
+    clean_at(written + ORPHAN_LOCK_MIN_AGE);
     assert!(!lock_path.exists());
 }
 
@@ -1821,6 +1811,31 @@ fn session_cleanup_removes_an_orphan_lock_even_within_the_limits() {
 
     assert!(!orphan.exists());
     assert!(store.read(id).is_ok());
+}
+
+#[test]
+fn cleanup_reads_no_session_when_the_unlocked_ones_are_within_the_limits() {
+    // 保留したセッションが上限ちょうどと、起動中のレビューが 1 件。ロック中は数えないので
+    // 上限の内側で、消すものは無い。最終更新を読むと、状態を書くたびに全セッションの
+    // 中身を読み直すことになる（R-SESSION の反例）。
+    let mut entries: Vec<CleanupEntry> = (0..3)
+        .map(|index| CleanupEntry {
+            id: format!("held-{index}"),
+            size: 10,
+            locked: false,
+        })
+        .collect();
+    entries.push(CleanupEntry {
+        id: "running".to_string(),
+        size: 1_000,
+        locked: true,
+    });
+
+    let removed = sessions_to_remove(entries, 3, 30, |id| {
+        panic!("the updated time of {id} must not be read")
+    });
+
+    assert!(removed.is_empty());
 }
 
 fn modified(path: &Path) -> SystemTime {
