@@ -1896,7 +1896,6 @@ function renderBand() {
   }
   shell.capture.hidden = live.tool === "interact" || state.submitted;
   shell.hint.hidden = live.pageCommentSaved;
-  shell.capture.dataset.tool = live.tool;
   renderPaneLabels();
   shell.liveNotice.hidden = live.reachable && live.rewrote.length === 0;
   if (!live.reachable) {

@@ -34,7 +34,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   bandAgent: HTMLElement,
  *   menu: HTMLElement,
  *   widthGroup: HTMLElement,
- *   stageHead: HTMLElement,
  *   widthSeg: HTMLElement,
  *   widthInput: HTMLInputElement,
  *   widthError: HTMLElement,
@@ -56,7 +55,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   sideSeg: HTMLElement,
  *   stage: HTMLElement,
  *   refPane: HTMLElement,
- *   refBar: HTMLElement,
  *   refLabel: HTMLElement,
  *   refNotice: HTMLElement,
  *   refNoticeText: HTMLElement,
@@ -70,7 +68,6 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  *   refEmptyText: HTMLElement,
  *   refRecordButton: HTMLButtonElement,
  *   livePane: HTMLElement,
- *   liveBar: HTMLElement,
  *   liveLabel: HTMLElement,
  *   liveNotice: HTMLElement,
  *   liveViewport: HTMLElement,
@@ -119,7 +116,7 @@ import { WIDTH_CHOICES, WIDTH_MAX, WIDTH_MIN, placeSummary } from "../live-model
  */
 
 /** コメントの場所を置く道具と、ページを普通に触る「操作」。名前とアイコン（画面モック docs/design/ui-mock-live-v2.html）。 */
-export const TOOLS = /** @type {const} */ ([
+const TOOLS = /** @type {const} */ ([
   [
     "element",
     "Element",
@@ -399,7 +396,6 @@ export function buildShell() {
     bandAgent,
     menu,
     widthGroup,
-    stageHead,
     widthSeg,
     widthInput,
     widthError,
@@ -421,7 +417,6 @@ export function buildShell() {
     sideSeg,
     stage,
     refPane: ref.pane,
-    refBar: ref.bar,
     refLabel: ref.label,
     refNotice,
     refNoticeText,
@@ -435,7 +430,6 @@ export function buildShell() {
     refEmptyText,
     refRecordButton,
     livePane: live.pane,
-    liveBar: live.bar,
     liveLabel: live.label,
     liveNotice,
     liveViewport: live.viewport,
@@ -727,7 +721,6 @@ export function renderStrayRefs(compose, stray, onShow) {
   compose.stray.hidden = stray.length === 0;
   for (const ref of stray) {
     const item = button("lv-stray-ref");
-    item.dataset.start = String(ref.start);
     item.append(textEl("span", "lv-ref-dead", `#${ref.n}`), ref.removed ? " points to a removed place" : " has no place");
     item.title = "Show it in the text";
     item.addEventListener("click", () => onShow(ref));
