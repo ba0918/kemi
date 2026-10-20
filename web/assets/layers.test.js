@@ -2,7 +2,7 @@
 // あわせて index.html の stylesheet の順を確かめる。
 // 辺にするのは行頭（字下げを含む）か `;` の後の静的な import / export … from だけ。JSDoc の import("…") は
 // 型だけの参照で読み込みを生まないので数えない。動的な import(…) は app.js が --live のモジュールを読む所だけに
-// 限ることを、別に確かめる。
+// 限ることを、別に確かめる。コメントや文字列の中の `; import` も文として数える（落ちたら書き方を変える）。
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
@@ -40,9 +40,9 @@ function importsOf(path) {
   const found = [...source.matchAll(statement)];
   // 読めない書き方（波括弧の中の文字列やクォートを含むコメントなど）の import は、黙って辺から外れると
   // 違反が通る。文の始まりの import と export … from の数と合わなければ落とす。import.meta と動的な
-  // import(…)、import で始まる別の語（important など）は文ではないので数えない。
+  // import(…)、オブジェクトのキーの import:、import で始まる別の語（important など）は文ではないので数えない。
   const starts =
-    [...source.matchAll(/(?:^|;)\s*import\b(?!\s*[.(])/gm)].length +
+    [...source.matchAll(/(?:^|;)\s*import\b(?!\s*[.(:])/gm)].length +
     [...source.matchAll(/(?:^|;)\s*export\s*(?:\*|\{)[^;]*?\bfrom\b/gm)].length;
   assert.equal(found.length, starts, `${path}: 読めない import / export … from がある`);
   return found.map((match) => posix.normalize(posix.join(posix.dirname(path), match[1])));
