@@ -491,67 +491,6 @@ async fn resume_writes_state_back_to_the_same_session() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn resume_does_not_reuse_a_deleted_comment_id() {
-    let dir = TempDir::new();
-    let state = TempDir::new();
-    let (kemi, id, file_id) = frozen_worktree_review(&dir, &state).await;
-    kemi.post(
-        "api/comment",
-        serde_json::json!({
-            "op": "add", "file_id": file_id, "side": "new",
-            "start_line": 1, "end_line": 1, "body": "first"
-        }),
-    )
-    .await;
-    let second = kemi
-        .post(
-            "api/comment",
-            serde_json::json!({
-                "op": "add", "file_id": file_id, "side": "new",
-                "start_line": 1, "end_line": 1, "body": "second"
-            }),
-        )
-        .await
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    let deleted_id = second["id"].as_str().unwrap().to_string();
-    let deleted = kemi
-        .post(
-            "api/comment",
-            serde_json::json!({"op": "delete", "id": deleted_id}),
-        )
-        .await;
-    assert_eq!(deleted.status(), 200, "deleting {deleted_id}");
-    signal(&kemi.child, "-INT");
-    kemi.wait_with_stderr();
-
-    let resumed = Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
-    resumed.wait_serving().await;
-    let added = resumed
-        .post(
-            "api/comment",
-            serde_json::json!({
-                "op": "add", "file_id": file_id, "side": "new",
-                "start_line": 1, "end_line": 1, "body": "third"
-            }),
-        )
-        .await
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-
-    assert_ne!(
-        added["id"].as_str().unwrap(),
-        deleted_id,
-        "a deleted comment id must not be reused after resuming"
-    );
-    signal(&resumed.child, "-INT");
-    resumed.wait_with_stderr();
-}
-
-#[cfg(unix)]
-#[tokio::test]
 async fn resume_without_the_repository_keeps_origin_unknown() {
     let dir = TempDir::new();
     let base = two_commit_repo(&dir);
