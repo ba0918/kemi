@@ -141,7 +141,7 @@ pub(crate) fn retry(state: &Arc<AppState>, unit: GroupBy) -> bool {
         other.state = BuildState::Building;
         other.generation
     };
-    notify_units(&state);
+    notify_units(state);
     spawn_build(state.clone(), state.sources.current(), generation);
     true
 }
@@ -284,7 +284,7 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
     if let Some(generation) = start_build {
         spawn_build(state.clone(), source, generation);
     }
-    notify_units(&state);
+    notify_units(state);
     Ok(())
 }
 
