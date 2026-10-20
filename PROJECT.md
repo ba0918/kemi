@@ -60,9 +60,12 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   あることも確かめる。`index.html` の stylesheet の順（部品の `parts.css`・`explanation.css` の後に
   `style.css`）も確かめる。詳細度の同じ規則は後に読んだ方が勝つので、この順が見た目を決める。
   読み込んだだけで走る文の規則は確かめない。
-- 例外は `--live` のページの見方（`features/live.js`・`views/live.js`・`live-model.js`・`live-diff.js`・
+- 例外は `--live` のページの見方（`features/live.js`・`views/live.js`（骨組み・上部バー・書く欄）・
+  `views/live-changes.js`（ページのツリーと変化の一覧）・`live-model.js`・`live-diff.js`・
   `live.css`）。`--live` でないレビューはページ用のファイルを読み込まない約束（`R-VERIFY`）
   なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
+  ファイルを分けるときもパスに `live` を含める（`--live` でないレビューで読み込んだ URL を、パスの
+  `live` で確かめているため）。
 - `web/live/page.js` は、中継したページに差し込むスクリプト。レビュー画面の層の外で、開発中の
   ページの中で動き、レビュー画面とは `postMessage` だけで話す。中継のポートの `/__kemi/page.js`
   で配る。要素の記述・スナップショット・変化の印に加え、ページへのコメントの場所（指している要素と

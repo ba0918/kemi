@@ -49,13 +49,12 @@ import {
   buildShell,
   buildTopbar,
   markRemovedInSnapshot,
-  renderChanges,
   renderCompareOptions,
   renderMockFiles,
-  renderPageTree,
   renderPlaces,
   renderStrayRefs,
 } from "../views/live.js";
+import { renderChanges, renderPageTree } from "../views/live-changes.js";
 import { handToAgent } from "./agent.js";
 import { closeSheet } from "./conversation.js";
 import { refresh } from "./files.js";
@@ -1943,7 +1942,7 @@ function renderStageName() {
 
 /**
  * 変化の一覧の操作。開いたずれただけと並べた数を、描き直しても保つために覚える。行を押したらその要素を見せる。
- * @type {import("../views/live.js").ChangeHandlers}
+ * @type {import("../views/live-changes.js").ChangeHandlers}
  */
 const changeHandlers = {
   onShifted: (open) => {
@@ -2180,7 +2179,7 @@ async function glowAndReveal(frame, type, details) {
 /**
  * ページのツリーに渡す、表示中のページの変化の一覧。比べられなければその知らせ。モックと比べるときは、一覧の代わりに
  * モックの名前の見出し（R-PAGE-VIEW）。
- * @returns {import("../views/live.js").ChangeListState | import("../views/live.js").ChangeNotice | import("../views/live.js").ChangeMock | null}
+ * @returns {import("../views/live-changes.js").ChangeListState | import("../views/live-changes.js").ChangeNotice | import("../views/live-changes.js").ChangeMock | null}
  */
 function changesToList() {
   const shown = currentReference();
