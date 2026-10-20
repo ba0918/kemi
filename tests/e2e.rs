@@ -5,10 +5,20 @@
     reason = "#[test] の外の補助関数も、失敗をそのままテストの失敗として見せる"
 )]
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status, Suggestion};
+use kemi_core::session::{
+    FrozenUnit, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
+};
+use kemi_core::source::FileContent;
+
+#[path = "support/process.rs"]
+mod process;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -58,6 +68,36 @@ const MANIFEST: &str = r#"{
   "approval": [{ "path": "a.txt", "identity": "sha256:e2e" }]
 }"#;
 
+fn digest_manifest() -> String {
+    serde_json::json!({
+        "title": "digest のテスト",
+        "groups": [
+            {
+                "id": "g1",
+                "title": "最初",
+                "why": "理由",
+                "watch": "watch",
+                "diffs": [
+                    { "path": "src/a.rs", "old": "a\nb\n", "new": "a\nB\nc\n" },
+                    { "path": "src/sub/b.rs", "new": "x\n" },
+                    { "path": "Cargo.lock", "old": "x\n", "new": "y\n" }
+                ]
+            },
+            {
+                "id": "g2",
+                "title": "次",
+                "diffs": [
+                    { "path": "README.md", "old": "one\ntwo\n", "new": "one\n" }
+                ]
+            }
+        ],
+        "approval": []
+    })
+    .to_string()
+}
+
+// ---- kemi の起動と終わりの待ち ----
+
 /// kemi を起動するコマンド。結果ファイルが利用者の本物の状態ディレクトリへ書かれない
 /// よう、`XDG_STATE_HOME` と `HOME` を必ず `state` の下に向ける。Windows の
 /// `<id>.endpoint` は `XDG_STATE_HOME` に関わらず `LOCALAPPDATA` の下に置かれるので、
@@ -84,39 +124,10 @@ fn stop(child: &mut Child) {
 /// `Kemi` を通さずに起動した子プロセスを、捨てるときに止める。
 struct StopOnDrop(Child);
 
-#[path = "support/process.rs"]
-mod process;
-
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
         stop(&mut self.0);
     }
-}
-
-/// e2e の HTTP の要求の期限。kemi が生きたまま応答しなくなっても、テストが止まり続けない
-/// ように（子は Drop で止まるが、Drop は panic の後にしか走らない）。
-const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// 応答の本文まで読み終えるのに期限のあるクライアント。
-fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .unwrap()
-}
-
-/// `api/events` の SSE を開く。受信は続くので、期限は応答の始まりまでにだけ付け、受信の
-/// 待ちは読む側が決める。
-async fn open_events(url: &str) -> reqwest::Response {
-    tokio::time::timeout(
-        HTTP_TIMEOUT,
-        reqwest::Client::new()
-            .get(format!("{url}api/events"))
-            .send(),
-    )
-    .await
-    .expect("the event stream did not open in time")
-    .unwrap()
 }
 
 struct Kemi {
@@ -219,15 +230,15 @@ impl Kemi {
             .unwrap()
     }
 
-    fn wait(mut self) -> (std::process::ExitStatus, String) {
-        let status = process::wait(&mut self.child, std::time::Duration::from_secs(20)).unwrap();
-        let mut stdout = String::new();
-        self.stdout.read_to_string(&mut stdout).unwrap();
-        (status, stdout)
+    #[cfg(unix)]
+    async fn get_json(&self, path: &str) -> serde_json::Value {
+        let response = self.get(path).await;
+        assert_eq!(response.status(), 200, "GET {path}");
+        response.json().await.unwrap()
     }
 
-    fn kill(mut self) {
-        stop(&mut self.child);
+    async fn review_json(&self) -> serde_json::Value {
+        self.get("api/review").await.json().await.unwrap()
     }
 
     /// サーバが応答するまで待つ。応答した時点で、サーブ前の stderr の行は出終わり、
@@ -236,6 +247,146 @@ impl Kemi {
         let response = self.get("api/review").await;
         assert_eq!(response.status(), 200);
         let _ = response.bytes().await;
+    }
+
+    fn wait(mut self) -> (std::process::ExitStatus, String) {
+        let status = process::wait(&mut self.child, std::time::Duration::from_secs(20)).unwrap();
+        let mut stdout = String::new();
+        self.stdout.read_to_string(&mut stdout).unwrap();
+        (status, stdout)
+    }
+
+    /// 終了を待ち、stdout と stderr の全部を返す。
+    #[cfg(unix)]
+    fn wait_with_stderr(mut self) -> (std::process::ExitStatus, String, String) {
+        let status = process::wait(&mut self.child, std::time::Duration::from_secs(20)).unwrap();
+        let mut stdout = String::new();
+        self.stdout.read_to_string(&mut stdout).unwrap();
+        let mut stderr = String::new();
+        self.stderr.read_to_string(&mut stderr).unwrap();
+        (status, stdout, stderr)
+    }
+
+    fn kill(mut self) {
+        stop(&mut self.child);
+    }
+
+    /// URL の後の stderr を `kemi: review <id>` の行まで読み、id を返す（R-AGENT-CLI）。
+    fn review_id(&mut self) -> String {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.stderr.read_line(&mut line).unwrap();
+            assert!(read > 0, "kemi printed no review line");
+            if let Some(id) = line.trim().strip_prefix("kemi: review ") {
+                return id.to_string();
+            }
+        }
+    }
+
+    /// `kemi: live <url>` の行を待つ。
+    fn live_url(&mut self) -> String {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.stderr.read_line(&mut line).unwrap();
+            assert!(read > 0, "kemi printed no live line");
+            if let Some(url) = line.trim().strip_prefix("kemi: live ") {
+                return url.to_string();
+            }
+        }
+    }
+
+    async fn wait_agent_status(&self, expected: &str) {
+        for _ in 0..500 {
+            if self.review_json().await["agent"]["status"] == expected {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the agent status never became {expected}");
+    }
+
+    async fn add_comment(&self, line: u32, body: &str) {
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add", "file_id": "f1", "side": "new",
+                    "start_line": line, "end_line": line, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+
+    async fn hand(&self) {
+        let response = self.post("api/hand", serde_json::json!({})).await;
+        assert_eq!(response.status(), 200);
+    }
+
+    async fn submit(&self, verdict: &str) -> serde_json::Value {
+        let response = self
+            .post("api/submit", serde_json::json!({ "verdict": verdict }))
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+
+    /// コードの見方の最初のファイルの id。`--live` の id はパスから決まる。
+    async fn first_file_id(&self) -> String {
+        self.review_json().await["groups"][0]["files"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// コードの見方の最初のファイルの 1 行目に、コメントを付ける。
+    async fn add_live_comment(&self, body: &str) {
+        let file_id = self.first_file_id().await;
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add", "file_id": file_id, "side": "new",
+                    "start_line": 1, "end_line": 1, "body": body
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+    }
+
+    /// 3 つの場所と画像を持つページへのコメントを足し、その JSON を返す。
+    async fn add_page_comment(&self, body: &str) -> serde_json::Value {
+        let response = self
+            .post(
+                "api/comment",
+                serde_json::json!({
+                    "op": "add_page",
+                    "page": { "url": "/products?x=1", "width": 390, "places": page_places() },
+                    "body": body,
+                    "image": page_image().1,
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+
+    /// 開始時のスナップショットを API で取る（ページ用のスクリプトの代わり）。
+    #[cfg(unix)]
+    async fn take_start_snapshot(&self) -> serde_json::Value {
+        let response = self
+            .post(
+                "api/snapshot",
+                serde_json::json!({
+                    "page": "/", "width": 390, "kind": "start",
+                    "html": "<p>at the start</p>", "description": "H4sIdescribed",
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
     }
 }
 
@@ -263,20 +414,6 @@ async fn wait_for_exit(kemi: &mut Kemi, timeout: std::time::Duration) -> std::pr
 fn run(dir: &Path, args: &[&str]) -> std::process::Output {
     let state = TempDir::new();
     run_with_state(dir, args, &state.path)
-}
-
-/// CLI の出力が英語であることの検証（R-DIST の成功条件）。ひらがな・カタカナ・
-/// 漢字（CJK 統合漢字と拡張 A）のいずれかを検出したら日本語とする。
-fn contains_japanese(text: &str) -> bool {
-    text.chars().any(|character| {
-        matches!(
-            character as u32,
-            0x3040..=0x309f
-                | 0x30a0..=0x30ff
-                | 0x3400..=0x4dbf
-                | 0x4e00..=0x9fff
-        )
-    })
 }
 
 fn run_with_state(dir: &Path, args: &[&str], state: &Path) -> std::process::Output {
@@ -322,6 +459,135 @@ fn run_command(command: &mut Command, input: Option<&str>) -> std::process::Outp
     }
 }
 
+/// `kemi wait` / `kemi reply` / `kemi explain` を、`stdin` を渡して終わるまで走らせる。
+fn run_agent(dir: &Path, state: &Path, args: &[&str], stdin: &str) -> std::process::Output {
+    run_command(kemi_command(dir, state).args(args), Some(stdin))
+}
+
+/// `kemi wait` を裏で待たせる。
+fn spawn_wait(dir: &Path, state: &Path, args: &[&str]) -> StopOnDrop {
+    StopOnDrop(
+        kemi_command(dir, state)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+/// 終わるのを待ち、(終了コード, stdout, stderr)。
+async fn finish_agent(child: StopOnDrop) -> (Option<i32>, String, String) {
+    tokio::task::spawn_blocking(move || finish_child(child))
+        .await
+        .unwrap()
+}
+
+/// 裏で走らせた子が終わるのを待ち、(終了コード, stdout, stderr)。
+fn finish_child(mut child: StopOnDrop) -> (Option<i32>, String, String) {
+    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
+    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
+    let mut out = String::new();
+    let mut err = String::new();
+    stdout.read_to_string(&mut out).unwrap();
+    stderr.read_to_string(&mut err).unwrap();
+    (status.code(), out, err)
+}
+
+#[cfg(unix)]
+fn signal(child: &Child, signal: &str) {
+    let status = Command::new("kill")
+        .arg(signal)
+        .arg(child.id().to_string())
+        .status()
+        .unwrap();
+    assert!(status.success(), "kill {signal} failed");
+}
+
+/// CLI の出力が英語であることの検証（R-DIST の成功条件）。ひらがな・カタカナ・
+/// 漢字（CJK 統合漢字と拡張 A）のいずれかを検出したら日本語とする。
+fn contains_japanese(text: &str) -> bool {
+    text.chars().any(|character| {
+        matches!(
+            character as u32,
+            0x3040..=0x309f
+                | 0x30a0..=0x30ff
+                | 0x3400..=0x4dbf
+                | 0x4e00..=0x9fff
+        )
+    })
+}
+
+// ---- HTTP とレビューの JSON ----
+
+/// e2e の HTTP の要求の期限。kemi が生きたまま応答しなくなっても、テストが止まり続けない
+/// ように（子は Drop で止まるが、Drop は panic の後にしか走らない）。
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 応答の本文まで読み終えるのに期限のあるクライアント。
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .unwrap()
+}
+
+/// `api/events` の SSE を開く。受信は続くので、期限は応答の始まりまでにだけ付け、受信の
+/// 待ちは読む側が決める。
+async fn open_events(url: &str) -> reqwest::Response {
+    tokio::time::timeout(
+        HTTP_TIMEOUT,
+        reqwest::Client::new()
+            .get(format!("{url}api/events"))
+            .send(),
+    )
+    .await
+    .expect("the event stream did not open in time")
+    .unwrap()
+}
+
+/// レビューの最初のグループで、パスが `path` のファイル。
+fn file_entry<'a>(review: &'a serde_json::Value, path: &str) -> &'a serde_json::Value {
+    review["groups"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == path)
+        .unwrap_or_else(|| panic!("no {path} in the review: {review}"))
+}
+
+/// レビューの最初のグループで、パスが `path` のファイルの id。
+fn file_id(review: &serde_json::Value, path: &str) -> String {
+    file_entry(review, path)["id"].as_str().unwrap().to_string()
+}
+
+/// JSON のオブジェクトのキーを名前の順に。
+fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+    let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+async fn review_paths(kemi: &Kemi) -> Vec<String> {
+    let review = kemi
+        .get("api/review?refresh=1")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    review["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["files"].as_array().unwrap().clone())
+        .map(|file| file["path"].as_str().unwrap().to_string())
+        .collect()
+}
+
+// ---- git のフィクスチャ ----
+
 /// フィクスチャを作る git。開発者の全体・システムの設定（署名の program、
 /// commit.gpgsign、diff.orderFile など）を読まない。読むと、同じテストが環境によって
 /// 失敗する。全体の設定の置き場は一時リポジトリの中の無いファイルにし、書かれても
@@ -348,32 +614,17 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-fn digest_manifest() -> String {
-    serde_json::json!({
-        "title": "digest のテスト",
-        "groups": [
-            {
-                "id": "g1",
-                "title": "最初",
-                "why": "理由",
-                "watch": "watch",
-                "diffs": [
-                    { "path": "src/a.rs", "old": "a\nb\n", "new": "a\nB\nc\n" },
-                    { "path": "src/sub/b.rs", "new": "x\n" },
-                    { "path": "Cargo.lock", "old": "x\n", "new": "y\n" }
-                ]
-            },
-            {
-                "id": "g2",
-                "title": "次",
-                "diffs": [
-                    { "path": "README.md", "old": "one\ntwo\n", "new": "one\n" }
-                ]
-            }
-        ],
-        "approval": []
-    })
-    .to_string()
+fn run_git(dir: &Path, args: &[&str]) -> Vec<u8> {
+    let output = fixture_git(dir).args(args).output().unwrap();
+    assert!(output.status.success());
+    output.stdout
+}
+
+/// コミットできる空のリポジトリ。
+fn git_repo(dir: &TempDir) {
+    git(&dir.path, &["init", "-q"]);
+    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
+    git(&dir.path, &["config", "user.name", "kemi"]);
 }
 
 /// base → 2 コミットの小さなリポジトリ。base の sha を返す。
@@ -392,94 +643,26 @@ fn two_commit_repo(dir: &TempDir) -> String {
     base.trim().to_string()
 }
 
-fn run_git(dir: &Path, args: &[&str]) -> Vec<u8> {
-    let output = fixture_git(dir).args(args).output().unwrap();
-    assert!(output.status.success());
-    output.stdout
+/// 変更のある worktree のフィクスチャ。
+fn worktree_fixture(dir: &TempDir) {
+    std::fs::write(dir.path.join("a.txt"), "one\ntwo\n").unwrap();
+    git_repo(dir);
+    git(&dir.path, &["config", "core.hooksPath", "/dev/null"]);
+    git(&dir.path, &["add", "-A"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path.join("a.txt"), "one\nTWO\n").unwrap();
 }
 
-// ---- R-RESULT（結果ファイルと kemi --result）----
-
-fn results_dir(state: &Path) -> PathBuf {
-    state.join("kemi").join("results")
-}
-
-fn result_files(state: &Path) -> Vec<PathBuf> {
-    files_with_extensions(&results_dir(state), &["json"])
-}
-
-/// `dir` の直下で拡張子が `extensions` のどれかのファイルを、名前の順に。`dir` が無ければ空。
-fn files_with_extensions(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.extension().is_some_and(|extension| {
-                        extensions.iter().any(|wanted| extension == *wanted)
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort();
-    files
-}
-
-/// manifest を送って submit し、(submit の応答, stdout, 終了コード) を返す。
-async fn submit_manifest(
-    dir: &Path,
-    state: &Path,
-    verdict: &str,
-    body: &str,
-) -> (serde_json::Value, String, Option<i32>) {
-    let manifest = MANIFEST.replace("e2e のレビュー", body);
-    std::fs::write(dir.join("manifest.json"), manifest).unwrap();
-    let kemi = Kemi::spawn_with_state(dir, &["manifest.json", "--no-open", "--port", "0"], state);
-    let response = kemi
-        .post("api/submit", serde_json::json!({ "verdict": verdict }))
-        .await;
-    assert_eq!(response.status(), 200);
-    let answer: serde_json::Value = response.json().await.unwrap();
-    let (status, stdout) = kemi.wait();
-    (answer, stdout, status.code())
-}
-
-/// コミットできる空のリポジトリ。
-fn git_repo(dir: &TempDir) {
-    git(&dir.path, &["init", "-q"]);
-    git(&dir.path, &["config", "user.email", "kemi@example.com"]);
-    git(&dir.path, &["config", "user.name", "kemi"]);
-}
-
-/// manifest のレビューを承認で終える。submit の応答、終了コード、stdout と、
-/// URL の行より後に stderr へ出た行を返す。
-async fn approve_manifest_review(
-    state: &Path,
-) -> (
-    serde_json::Value,
-    std::process::ExitStatus,
-    String,
-    Vec<String>,
-) {
-    let dir = TempDir::new();
-    dir.write("manifest.json", MANIFEST);
-    let mut kemi = Kemi::spawn_with_state(
-        &dir.path,
-        &["manifest.json", "--no-open", "--port", "0"],
-        state,
-    );
-    let response = kemi
-        .post("api/submit", serde_json::json!({"verdict": "approved"}))
-        .await;
-    assert_eq!(response.status(), 200);
-    let answer: serde_json::Value = response.json().await.unwrap();
-    let mut stderr = String::new();
-    kemi.stderr.read_to_string(&mut stderr).unwrap();
-    let (status, stdout) = kemi.wait();
-    let lines = stderr.lines().map(str::to_string).collect();
-    (answer, status, stdout, lines)
+/// `a.txt` だけに差分があり、`b.txt` は追跡しているが変わっていない作業ツリー。
+fn worktree_with_an_unchanged_file(dir: &TempDir) {
+    git_repo(dir);
+    dir.write(".gitignore", "build/\n*.log\n");
+    dir.write("a.txt", "a1\n");
+    dir.write("b.txt", "b1\n");
+    git(&dir.path, &["add", ".gitignore", "a.txt", "b.txt"]);
+    git(&dir.path, &["commit", "-q", "-m", "base"]);
+    dir.write("a.txt", "a2\n");
+    dir.write("build/out.o", "o\n");
 }
 
 // ---- 利用者の git の設定 ----
@@ -543,28 +726,6 @@ fn start_with_global(dir: &Path, state: &TempDir, global: &Path, args: &[&str]) 
     )
 }
 
-/// レビューの最初のグループで、パスが `path` のファイル。
-fn file_entry<'a>(review: &'a serde_json::Value, path: &str) -> &'a serde_json::Value {
-    review["groups"][0]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|file| file["path"] == path)
-        .unwrap_or_else(|| panic!("no {path} in the review: {review}"))
-}
-
-/// レビューの最初のグループで、パスが `path` のファイルの id。
-fn file_id(review: &serde_json::Value, path: &str) -> String {
-    file_entry(review, path)["id"].as_str().unwrap().to_string()
-}
-
-/// JSON のオブジェクトのキーを名前の順に。
-fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
-    let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
-    keys.sort();
-    keys
-}
-
 /// 最終形の `path` のファイルの由来を取りに行く。
 async fn fetch_origin(kemi: &Kemi, path: &str) -> reqwest::Response {
     let id = file_id(&kemi.review_json().await, path);
@@ -613,28 +774,84 @@ fn japanese_message_repo(dir: &TempDir, global: &Path) -> (String, String) {
     (base, changed)
 }
 
-// ---- R-SESSION（--resume の受理、保留、一覧） ----
+// ---- 結果ファイル（R-RESULT） ----
 
-use std::collections::BTreeMap;
-
-use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status, Suggestion};
-use kemi_core::session::{
-    FrozenUnit, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
-};
-use kemi_core::source::FileContent;
-
-impl Kemi {
-    /// 終了を待ち、stdout と stderr の全部を返す。
-    #[cfg(unix)]
-    fn wait_with_stderr(mut self) -> (std::process::ExitStatus, String, String) {
-        let status = process::wait(&mut self.child, std::time::Duration::from_secs(20)).unwrap();
-        let mut stdout = String::new();
-        self.stdout.read_to_string(&mut stdout).unwrap();
-        let mut stderr = String::new();
-        self.stderr.read_to_string(&mut stderr).unwrap();
-        (status, stdout, stderr)
-    }
+/// `dir` の直下で拡張子が `extensions` のどれかのファイルを、名前の順に。`dir` が無ければ空。
+fn files_with_extensions(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.extension().is_some_and(|extension| {
+                        extensions.iter().any(|wanted| extension == *wanted)
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
 }
+
+fn results_dir(state: &Path) -> PathBuf {
+    state.join("kemi").join("results")
+}
+
+fn result_files(state: &Path) -> Vec<PathBuf> {
+    files_with_extensions(&results_dir(state), &["json"])
+}
+
+/// manifest を送って submit し、(submit の応答, stdout, 終了コード) を返す。
+async fn submit_manifest(
+    dir: &Path,
+    state: &Path,
+    verdict: &str,
+    body: &str,
+) -> (serde_json::Value, String, Option<i32>) {
+    let manifest = MANIFEST.replace("e2e のレビュー", body);
+    std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+    let kemi = Kemi::spawn_with_state(dir, &["manifest.json", "--no-open", "--port", "0"], state);
+    let response = kemi
+        .post("api/submit", serde_json::json!({ "verdict": verdict }))
+        .await;
+    assert_eq!(response.status(), 200);
+    let answer: serde_json::Value = response.json().await.unwrap();
+    let (status, stdout) = kemi.wait();
+    (answer, stdout, status.code())
+}
+
+/// manifest のレビューを承認で終える。submit の応答、終了コード、stdout と、
+/// URL の行より後に stderr へ出た行を返す。
+async fn approve_manifest_review(
+    state: &Path,
+) -> (
+    serde_json::Value,
+    std::process::ExitStatus,
+    String,
+    Vec<String>,
+) {
+    let dir = TempDir::new();
+    dir.write("manifest.json", MANIFEST);
+    let mut kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &["manifest.json", "--no-open", "--port", "0"],
+        state,
+    );
+    let response = kemi
+        .post("api/submit", serde_json::json!({"verdict": "approved"}))
+        .await;
+    assert_eq!(response.status(), 200);
+    let answer: serde_json::Value = response.json().await.unwrap();
+    let mut stderr = String::new();
+    kemi.stderr.read_to_string(&mut stderr).unwrap();
+    let (status, stdout) = kemi.wait();
+    let lines = stderr.lines().map(str::to_string).collect();
+    (answer, status, stdout, lines)
+}
+
+// ---- セッション（R-SESSION） ----
 
 fn sessions_dir(state: &Path) -> PathBuf {
     state.join("kemi").join("sessions")
@@ -679,26 +896,6 @@ async fn wait_for_frozen_session(state: &Path) -> PathBuf {
 
 fn session_id(path: &Path) -> String {
     path.file_stem().unwrap().to_string_lossy().into_owned()
-}
-
-#[cfg(unix)]
-fn signal(child: &Child, signal: &str) {
-    let status = Command::new("kill")
-        .arg(signal)
-        .arg(child.id().to_string())
-        .status()
-        .unwrap();
-    assert!(status.success(), "kill {signal} failed");
-}
-
-/// 変更のある worktree のフィクスチャ。
-fn worktree_fixture(dir: &TempDir) {
-    std::fs::write(dir.path.join("a.txt"), "one\ntwo\n").unwrap();
-    git_repo(dir);
-    git(&dir.path, &["config", "core.hooksPath", "/dev/null"]);
-    git(&dir.path, &["add", "-A"]);
-    git(&dir.path, &["commit", "-q", "-m", "base"]);
-    std::fs::write(dir.path.join("a.txt"), "one\nTWO\n").unwrap();
 }
 
 /// 変更のある worktree のレビューを起動し、写しの凍結を待つ。(kemi, セッションの id,
@@ -826,73 +1023,7 @@ fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> Sess
     store
 }
 
-// ---- R-SESSION（復元の実行） ----
-
-impl Kemi {
-    #[cfg(unix)]
-    async fn get_json(&self, path: &str) -> serde_json::Value {
-        let response = self.get(path).await;
-        assert_eq!(response.status(), 200, "GET {path}");
-        response.json().await.unwrap()
-    }
-}
-
-// ---- R-AGENT-CLI / R-AGENT-LINK（kemi wait と kemi reply） ----
-
-impl Kemi {
-    /// URL の後の stderr を `kemi: review <id>` の行まで読み、id を返す（R-AGENT-CLI）。
-    fn review_id(&mut self) -> String {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let read = self.stderr.read_line(&mut line).unwrap();
-            assert!(read > 0, "kemi printed no review line");
-            if let Some(id) = line.trim().strip_prefix("kemi: review ") {
-                return id.to_string();
-            }
-        }
-    }
-
-    async fn review_json(&self) -> serde_json::Value {
-        self.get("api/review").await.json().await.unwrap()
-    }
-
-    async fn wait_agent_status(&self, expected: &str) {
-        for _ in 0..500 {
-            if self.review_json().await["agent"]["status"] == expected {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        panic!("the agent status never became {expected}");
-    }
-
-    async fn add_comment(&self, line: u32, body: &str) {
-        let response = self
-            .post(
-                "api/comment",
-                serde_json::json!({
-                    "op": "add", "file_id": "f1", "side": "new",
-                    "start_line": line, "end_line": line, "body": body
-                }),
-            )
-            .await;
-        assert_eq!(response.status(), 200);
-    }
-
-    async fn hand(&self) {
-        let response = self.post("api/hand", serde_json::json!({})).await;
-        assert_eq!(response.status(), 200);
-    }
-
-    async fn submit(&self, verdict: &str) -> serde_json::Value {
-        let response = self
-            .post("api/submit", serde_json::json!({ "verdict": verdict }))
-            .await;
-        assert_eq!(response.status(), 200);
-        response.json().await.unwrap()
-    }
-}
+// ---- エージェントとの往復（R-AGENT-CLI / R-AGENT-LINK） ----
 
 fn endpoint_dir(state: &Path) -> PathBuf {
     if cfg!(windows) {
@@ -900,43 +1031,6 @@ fn endpoint_dir(state: &Path) -> PathBuf {
     } else {
         sessions_dir(state)
     }
-}
-
-/// `kemi wait` / `kemi reply` / `kemi explain` を、`stdin` を渡して終わるまで走らせる。
-fn run_agent(dir: &Path, state: &Path, args: &[&str], stdin: &str) -> std::process::Output {
-    run_command(kemi_command(dir, state).args(args), Some(stdin))
-}
-
-/// `kemi wait` を裏で待たせる。
-fn spawn_wait(dir: &Path, state: &Path, args: &[&str]) -> StopOnDrop {
-    StopOnDrop(
-        kemi_command(dir, state)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    )
-}
-
-/// 終わるのを待ち、(終了コード, stdout, stderr)。
-async fn finish_agent(child: StopOnDrop) -> (Option<i32>, String, String) {
-    tokio::task::spawn_blocking(move || finish_child(child))
-        .await
-        .unwrap()
-}
-
-/// 裏で走らせた子が終わるのを待ち、(終了コード, stdout, stderr)。
-fn finish_child(mut child: StopOnDrop) -> (Option<i32>, String, String) {
-    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
-    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
-    let status = process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap();
-    let mut out = String::new();
-    let mut err = String::new();
-    stdout.read_to_string(&mut out).unwrap();
-    stderr.read_to_string(&mut err).unwrap();
-    (status.code(), out, err)
 }
 
 /// worktree のレビューを起動し、review の id を読む。
@@ -949,34 +1043,24 @@ fn start_worktree_review(dir: &TempDir, state: &TempDir, extra: &[&str]) -> (Kem
     (kemi, id)
 }
 
-// ---- --live（live.md の R-PAGE-MODE と R-PAGE-SESSION） ----
+/// `kemi wait` が返した最初の渡したコメント。
+fn handed_comment(output: &std::process::Output) -> serde_json::Value {
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    answer["events"][0]["comments"][0]["comment"].clone()
+}
+
+// ---- --live とページへのコメント（live.md） ----
 
 /// 開発サーバの居ないループバックの URL。つながらなくても起動して待つ。
 const LIVE_URL: &str = "http://127.0.0.1:9/app";
 
-impl Kemi {
-    /// コードの見方の最初のファイルの id。`--live` の id はパスから決まる。
-    async fn first_file_id(&self) -> String {
-        self.review_json().await["groups"][0]["files"][0]["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-
-    /// コードの見方の最初のファイルの 1 行目に、コメントを付ける。
-    async fn add_live_comment(&self, body: &str) {
-        let file_id = self.first_file_id().await;
-        let response = self
-            .post(
-                "api/comment",
-                serde_json::json!({
-                    "op": "add", "file_id": file_id, "side": "new",
-                    "start_line": 1, "end_line": 1, "body": body
-                }),
-            )
-            .await;
-        assert_eq!(response.status(), 200);
-    }
+fn start_live_review(dir: &TempDir, state: &TempDir) -> (Kemi, String) {
+    worktree_fixture(dir);
+    let mut kemi =
+        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
+    let id = kemi.review_id();
+    (kemi, id)
 }
 
 /// 開発サーバの代わり。どの要求にも同じ HTML を返し、1 回ごとに接続を閉じる。
@@ -1011,21 +1095,6 @@ async fn start_static_dev_server(body: &'static str) -> (u16, tokio::task::JoinH
     (port, task)
 }
 
-impl Kemi {
-    /// `kemi: live <url>` の行を待つ。
-    fn live_url(&mut self) -> String {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let read = self.stderr.read_line(&mut line).unwrap();
-            assert!(read > 0, "kemi printed no live line");
-            if let Some(url) = line.trim().strip_prefix("kemi: live ") {
-                return url.to_string();
-            }
-        }
-    }
-}
-
 /// レビューの URL を開いて中継用の cookie を受け取り、中継の URL を読む。
 async fn read_live_page(kemi: &Kemi, live: &str) -> (u16, String) {
     let client = &kemi.client;
@@ -1047,8 +1116,6 @@ async fn read_live_page(kemi: &Kemi, live: &str) -> (u16, String) {
     (status, response.text().await.unwrap())
 }
 
-// ---- ページへのコメント（live.md の R-PAGE-COMMENT、R-PAGE-SESSION、output.md の R-SUBMIT） ----
-
 /// 画像の中身。base64 にしやすいよう 0 のバイトを並べ、本文の既定の上限（2 MB）を超える大きさにする。
 const PAGE_IMAGE_BYTES: usize = 3 * 1024 * 1024;
 
@@ -1069,56 +1136,7 @@ fn page_places() -> serde_json::Value {
     ])
 }
 
-impl Kemi {
-    /// 3 つの場所と画像を持つページへのコメントを足し、その JSON を返す。
-    async fn add_page_comment(&self, body: &str) -> serde_json::Value {
-        let response = self
-            .post(
-                "api/comment",
-                serde_json::json!({
-                    "op": "add_page",
-                    "page": { "url": "/products?x=1", "width": 390, "places": page_places() },
-                    "body": body,
-                    "image": page_image().1,
-                }),
-            )
-            .await;
-        assert_eq!(response.status(), 200);
-        response.json().await.unwrap()
-    }
-}
-
-/// `kemi wait` が返した最初の渡したコメント。
-fn handed_comment(output: &std::process::Output) -> serde_json::Value {
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    answer["events"][0]["comments"][0]["comment"].clone()
-}
-
-fn start_live_review(dir: &TempDir, state: &TempDir) -> (Kemi, String) {
-    worktree_fixture(dir);
-    let mut kemi =
-        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
-    let id = kemi.review_id();
-    (kemi, id)
-}
-
-impl Kemi {
-    /// 開始時のスナップショットを API で取る（ページ用のスクリプトの代わり）。
-    async fn take_start_snapshot(&self) -> serde_json::Value {
-        let response = self
-            .post(
-                "api/snapshot",
-                serde_json::json!({
-                    "page": "/", "width": 390, "kind": "start",
-                    "html": "<p>at the start</p>", "description": "H4sIdescribed",
-                }),
-            )
-            .await;
-        assert_eq!(response.status(), 200);
-        response.json().await.unwrap()
-    }
-}
+// ---- 見張りの通知（R-LIVE） ----
 
 /// `api/events` の SSE を読み、`update` を数える。
 struct Updates {
@@ -1175,34 +1193,6 @@ impl Updates {
         }
         false
     }
-}
-
-/// `a.txt` だけに差分があり、`b.txt` は追跡しているが変わっていない作業ツリー。
-fn worktree_with_an_unchanged_file(dir: &TempDir) {
-    git_repo(dir);
-    dir.write(".gitignore", "build/\n*.log\n");
-    dir.write("a.txt", "a1\n");
-    dir.write("b.txt", "b1\n");
-    git(&dir.path, &["add", ".gitignore", "a.txt", "b.txt"]);
-    git(&dir.path, &["commit", "-q", "-m", "base"]);
-    dir.write("a.txt", "a2\n");
-    dir.write("build/out.o", "o\n");
-}
-
-async fn review_paths(kemi: &Kemi) -> Vec<String> {
-    let review = kemi
-        .get("api/review?refresh=1")
-        .await
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    review["groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|group| group["files"].as_array().unwrap().clone())
-        .map(|file| file["path"].as_str().unwrap().to_string())
-        .collect()
 }
 
 /// 差分のファイルを変えて `update` が届くのを確かめてから submit し、レビューの間に stderr に
