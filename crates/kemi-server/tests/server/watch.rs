@@ -77,13 +77,17 @@ impl SseStream {
     /// 見張りが効くまで、`touch` で見張られているものを書き換えては update を待つ。見張りの
     /// 登録は別スレッドで行われ、終わった合図が無いので、update が届いたことで登録を観測する。
     /// 書き換えては debounce（500 ms）より十分長く待ち、届かなかったときだけ書き換え直す
-    /// （間を詰めると debounce が延び続けて update が出ない）。前の書き換えの update が、
-    /// 受けた後になって届くのは、見張りか SSE がこの待ちに近いほど遅れたときに限る。
+    /// （間を詰めると debounce が延び続けて update が出ない）。書き換え直したときは、前の
+    /// 書き換えの update が遅れて後から届きうる。後に続く「通知しない」の検査に紛れ込まない
+    /// よう、debounce と余裕の分だけ読み捨ててから戻る。1 回目で届いたときは待たない。
     async fn until_watched(&mut self, mut touch: impl FnMut(u32)) {
         let deadline = Instant::now() + WAIT_LIMIT;
         for round in 1.. {
             touch(round);
             if self.next_update(Duration::from_secs(2)).await {
+                if round > 1 {
+                    self.count_updates(Duration::from_secs(2)).await;
+                }
                 return;
             }
             assert!(
