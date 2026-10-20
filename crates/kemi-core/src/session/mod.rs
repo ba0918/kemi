@@ -12,6 +12,7 @@
 //! - 写しは丸ごと gzip で圧縮し、`<id>.payload` が 20 MB を超えたら捨てて復元不可にする。
 //! - 起動中のレビューはロックを取り、`--resume` の二重起動を防ぐ。
 
+mod cleanup;
 mod encoding;
 mod endpoint;
 pub(crate) mod files;

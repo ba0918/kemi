@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use super::*;
 use crate::domain::agent::{
@@ -7,6 +8,7 @@ use crate::domain::agent::{
 };
 use crate::domain::content::FileContent;
 use crate::domain::review::{Author, GroupBy, Message, Reply, ReviewMeta, Side, Suggestion};
+use crate::session::cleanup::{ORPHAN_LOCK_MIN_AGE, cleanup_at};
 use crate::session::files::{PageSnapshot, SnapshotKind};
 use crate::session::{FrozenUnit, SessionMode};
 
@@ -2035,31 +2037,6 @@ fn session_cleanup_removes_an_orphan_lock_even_within_the_limits() {
 
     assert!(!orphan.exists());
     assert!(store.read(id).is_ok());
-}
-
-#[test]
-fn cleanup_reads_no_session_when_the_unlocked_ones_are_within_the_limits() {
-    // 保留したセッションが上限ちょうどと、起動中のレビューが 1 件。ロック中は数えないので
-    // 上限の内側で、消すものは無い。最終更新を読むと、状態を書くたびに全セッションの
-    // 中身を読み直すことになる（R-SESSION の反例）。
-    let mut entries: Vec<CleanupEntry> = (0..3)
-        .map(|index| CleanupEntry {
-            id: format!("held-{index}"),
-            size: 10,
-            locked: false,
-        })
-        .collect();
-    entries.push(CleanupEntry {
-        id: "running".to_string(),
-        size: 1_000,
-        locked: true,
-    });
-
-    let removed = sessions_to_remove(entries, 3, 30, |id| {
-        panic!("the updated time of {id} must not be read")
-    });
-
-    assert!(removed.is_empty());
 }
 
 fn modified(path: &Path) -> SystemTime {
