@@ -256,17 +256,15 @@ impl SessionState {
         if let Some(history) = self.explanation.as_mut() {
             history.versions.sort_by_key(|version| version.revision);
         }
-        let document = self
+        let sections = self
             .explanation
             .as_ref()
             .and_then(ExplanationHistory::current)
-            .map(|v| crate::domain::explanation::ExplanationDocument {
-                sections: v.sections.clone(),
-            });
+            .map(|v| v.sections.as_slice());
         for comment in &mut self.comments {
             if let CommentTarget::Explanation(target) = &comment.target {
-                comment.outdated = document.as_ref().is_none_or(|document| {
-                    crate::domain::explanation::block_outdated(&target.quote.block, document)
+                comment.outdated = sections.is_none_or(|sections| {
+                    crate::domain::explanation::block_outdated(&target.quote.block, sections)
                 });
             }
         }

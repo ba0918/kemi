@@ -375,8 +375,8 @@ pub fn validate_selection(
     }
     Ok(())
 }
-pub fn block_outdated(original: &ExplanationBlock, document: &ExplanationDocument) -> bool {
-    !document.sections.iter().flat_map(|s| &s.blocks).any(|b| {
+pub fn block_outdated(original: &ExplanationBlock, sections: &[ExplanationSection]) -> bool {
+    !sections.iter().flat_map(|s| &s.blocks).any(|b| {
         b.id == original.id && b.part == original.part && b.references == original.references
     })
 }
@@ -640,16 +640,16 @@ mod tests {
         if let super::Part::Flow { role, .. } = &mut input.sections[0].blocks[0].part {
             *role = super::super::parts::Role::Confirmed;
         }
-        assert!(super::block_outdated(&original, &input));
+        assert!(super::block_outdated(&original, &input.sections));
         input.sections[0].blocks[0] = original.clone();
         if let super::Part::Flow { nodes, .. } = &mut input.sections[0].blocks[0].part {
             nodes[0].position.as_mut().unwrap().x += 1;
         }
-        assert!(super::block_outdated(&original, &input));
+        assert!(super::block_outdated(&original, &input.sections));
         input.sections[0].blocks[0] = original.clone();
         input.sections[0].blocks[0].references =
             serde_json::from_value(serde_json::json!([{"type":"page","url":"/page"}])).unwrap();
-        assert!(super::block_outdated(&original, &input));
+        assert!(super::block_outdated(&original, &input.sections));
     }
 
     #[test]
@@ -910,18 +910,21 @@ mod tests {
         let quote = super::quote_block(&original, "intent").unwrap();
         let mut renamed = original.clone();
         renamed.sections[0].title = "Renamed".into();
-        assert!(!super::block_outdated(&quote.block, &renamed));
+        assert!(!super::block_outdated(&quote.block, &renamed.sections));
         let blocks = std::mem::take(&mut renamed.sections[0].blocks);
         renamed.sections.push(super::ExplanationSection {
             id: "moved".into(),
             title: "Moved".into(),
             blocks,
         });
-        assert!(!super::block_outdated(&quote.block, &renamed));
-        assert!(super::block_outdated(&quote.block, &document("changed")));
+        assert!(!super::block_outdated(&quote.block, &renamed.sections));
+        assert!(super::block_outdated(
+            &quote.block,
+            &document("changed").sections
+        ));
         let empty = super::ExplanationDocument { sections: vec![] };
-        assert!(super::block_outdated(&quote.block, &empty));
-        assert!(!super::block_outdated(&quote.block, &original));
+        assert!(super::block_outdated(&quote.block, &empty.sections));
+        assert!(!super::block_outdated(&quote.block, &original.sections));
         assert_eq!(quote.section_title, "Title");
         assert_eq!(quote.block, original.sections[0].blocks[0]);
     }
