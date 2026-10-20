@@ -784,10 +784,8 @@
         const from = place.points.at(-2);
         const to = place.points.at(-1);
         if (place.kind === 'arrow' && from && to) {
-          const angle = Math.atan2(to.y - from.y, to.x - from.x);
           const head = document.createElementNS(SVG, 'polygon');
-          const corner = (/** @type {number} */ turn) => `${to.x - 12 * Math.cos(angle + turn)},${to.y - 12 * Math.sin(angle + turn)}`;
-          head.setAttribute('points', `${to.x},${to.y} ${corner(-0.45)} ${corner(0.45)}`);
+          head.setAttribute('points', arrowHead(from, to).map((point) => `${point.x},${point.y}`).join(' '));
           head.setAttribute('fill', PLACE_COLOR);
           svg.append(head);
         }
@@ -1007,13 +1005,21 @@
    * @returns {Promise<string>}
    */
   async function blobBase64(blob) {
-    const url = await new Promise((resolve, reject) => {
+    const url = await readAsDataUrl(blob);
+    return url.slice(url.indexOf(',') + 1);
+  }
+
+  /**
+   * @param {Blob} blob
+   * @returns {Promise<string>} data: の URL
+   */
+  function readAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
-    return url.slice(url.indexOf(',') + 1);
   }
 
   // ---- スナップショット（R-PAGE-SNAPSHOT、形は DL3） ----
@@ -1036,13 +1042,7 @@
     if (!pending) {
       pending = fetch(url, { credentials: 'same-origin' })
         .then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
-        .then((blob) => new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(blob);
-        }))
-        .then((value) => String(value))
+        .then(readAsDataUrl)
         .catch(() => {
           resources.failure ??= 'a page resource could not be embedded';
           return url;
@@ -1375,6 +1375,19 @@
    * @typedef {{ n: number, kind: string, points: Point[], elements: { rect: Rect }[] }} ImagePlace
    */
 
+  /**
+   * 矢印の先の三角の 3 点（先端と、線の向きと逆へ戻った両側）。ページの上の描き込み（SVG）とコメントの画像（canvas）で
+   * 同じ形にする。
+   * @param {Point} from 線の最後の 1 つ前の点
+   * @param {Point} to 線の最後の点
+   * @returns {[Point, Point, Point]}
+   */
+  function arrowHead(from, to) {
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const corner = (/** @type {number} */ turn) => ({ x: to.x - 12 * Math.cos(angle + turn), y: to.y - 12 * Math.sin(angle + turn) });
+    return [to, corner(-0.45), corner(0.45)];
+  }
+
   /** @param {unknown} value */
   const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 
@@ -1551,11 +1564,11 @@
    */
   function drawArrowHead(context, from, to) {
     if (!from || !to) return;
-    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const [tip, left, right] = arrowHead(from, to);
     context.beginPath();
-    context.moveTo(to.x, to.y);
-    context.lineTo(to.x - 12 * Math.cos(angle - 0.45), to.y - 12 * Math.sin(angle - 0.45));
-    context.lineTo(to.x - 12 * Math.cos(angle + 0.45), to.y - 12 * Math.sin(angle + 0.45));
+    context.moveTo(tip.x, tip.y);
+    context.lineTo(left.x, left.y);
+    context.lineTo(right.x, right.y);
     context.closePath();
     context.fill();
   }

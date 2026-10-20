@@ -981,7 +981,7 @@ function startComposing(shell) {
     "wheel",
     (event) => {
       event.preventDefault();
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? layer.clientHeight : 1;
+      const unit = wheelUnit(event, layer);
       // 等倍で枠より広いページは、枠のほうを横にスクロールする。枠が動ききった残りだけをページに送る。
       const viewport = shell.liveViewport;
       const before = viewport.scrollLeft;
@@ -1030,6 +1030,26 @@ function startComposing(shell) {
     const edit = editedSpan(selection, compose.body.selectionEnd, value.length - live.draft.body.length);
     setDraft(editBody(live.draft, value, edit));
   });
+}
+
+/** 行単位のホイールの 1 行の量（画面のピクセル）。 */
+const WHEEL_LINE = 16;
+
+/**
+ * ホイールの量を画面のピクセルに直す倍率。ページ単位は、そのとき動かす要素の高さ（ページ単位のときだけ読む。ふつうの
+ * ピクセル単位のホイールのたびに配置を読ませない）。
+ * @param {WheelEvent} event
+ * @param {HTMLElement} page ページ単位の高さを読む要素
+ * @returns {number}
+ */
+function wheelUnit(event, page) {
+  if (event.deltaMode === 1) {
+    return WHEEL_LINE;
+  }
+  if (event.deltaMode === 2) {
+    return page.clientHeight;
+  }
+  return 1;
 }
 
 /**
@@ -1260,12 +1280,7 @@ async function glowPlaces(comment, n, mode) {
     frame.postMessage({ kemi: "live", type: "glow-places", comment, n, mode, scroll: false }, live.origin);
     return;
   }
-  endOverscroll();
-  const answer = await ask(frame, "glow-places", GLOW_TIMEOUT, { comment, n, mode, scroll: true });
-  const rect = answer?.rect;
-  if (rect && typeof rect.x === "number" && typeof rect.w === "number") {
-    revealSideways(shell.liveViewport, rect.x, rect.w);
-  }
+  await glowAndReveal(frame, "glow-places", { comment, n, mode, scroll: true });
 }
 
 /**
@@ -2056,7 +2071,7 @@ function startShiftedReferenceMoves(layer) {
         return;
       }
       event.preventDefault();
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? shell.refViewport.clientHeight : 1;
+      const unit = wheelUnit(event, shell.refViewport);
       moveShiftedReference(event.deltaX * unit, event.deltaY * unit);
     },
     { passive: false },
@@ -2131,13 +2146,23 @@ async function showChangedElement(index) {
   if (!frame) {
     return;
   }
+  await glowAndReveal(frame, "glow-element", { index, mode: "flash" });
+}
+
+/**
+ * ページに要素か場所までスクロールして光らせてもらい、返った箱（文書の横の位置と幅）が見えるよう、等倍で枠より広い
+ * ページでは枠の横のスクロールも合わせる。末尾より下へずらしていれば、頼む前にやめる。
+ * @param {Window} frame
+ * @param {"glow-element" | "glow-places"} type
+ * @param {Record<string, unknown>} details 頼みごとの中身
+ */
+async function glowAndReveal(frame, type, details) {
   endOverscroll();
-  const answer = await ask(frame, "glow-element", GLOW_TIMEOUT, { index, mode: "flash" });
+  const answer = await ask(frame, type, GLOW_TIMEOUT, details);
   const rect = answer?.rect;
-  if (!rect || typeof rect.x !== "number" || typeof rect.w !== "number") {
-    return;
+  if (shell && rect && typeof rect.x === "number" && typeof rect.w === "number") {
+    revealSideways(shell.liveViewport, rect.x, rect.w);
   }
-  revealSideways(shell.liveViewport, rect.x, rect.w);
 }
 
 /**
