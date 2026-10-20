@@ -87,12 +87,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
         &["--resume", id, "--no-open", "--port", "0"],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     assert_eq!(review["diff_display_version"], format!("{id}:1"));
     assert_eq!(review["explanation"]["current_revision"], 2);
     assert_eq!(
@@ -101,12 +96,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
     );
     assert_eq!(std::fs::read(&payload).unwrap(), before);
     assert_eq!(store.read(id).unwrap().state.display.unwrap().issued, 2);
-    let file: serde_json::Value = reqwest::get(format!("{}api/file/f1", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let file: serde_json::Value = kemi.get("api/file/f1").await.json().await.unwrap();
     assert_eq!(file["rows"][0]["new"]["text"], "ONE");
     let wait = run_with_state(
         &workspace.path,
@@ -230,12 +220,7 @@ async fn initial_explanation_and_cli_context_update_roundtrip() {
         ],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     assert_eq!(review["explanation"]["current_revision"], 1);
     let id = review["agent"]["review"].as_str().unwrap();
     let context = run_with_state(&workspace.path, &["explain", id, "--context"], &state.path);
@@ -290,12 +275,7 @@ async fn live_explanation_references_accept_only_registered_pages_and_registrati
         &["--live", "page.html", "--no-open", "--port", "0"],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap();
     let before = run_with_state(&workspace.path, &["explain", id, "--context"], &state.path);
     let context: serde_json::Value = serde_json::from_slice(&before.stdout).unwrap();
@@ -401,12 +381,7 @@ async fn initial_explanations_work_with_all_input_modes_including_manifest_stdin
             kemi_command(&workspace.path, &state.path).args(&args),
             stdin.then_some(MANIFEST),
         );
-        let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let review = kemi.review_json().await;
         assert_eq!(review["explanation"]["current_revision"], 1, "{args:?}");
         assert_eq!(
             kemi.post("api/submit", serde_json::json!({"verdict":"approved"}))
@@ -713,12 +688,7 @@ async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_
         ],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap();
     // 凍結前に差し替えると、保存失敗ではなく凍結との競合を確かめてしまうため。
     let session = wait_for_frozen_session(&state.path).await;
@@ -789,12 +759,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
         ],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap();
     let mut context = StopOnDrop(
         kemi_command(&workspace.path, &state.path)
@@ -837,12 +802,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
         "{}",
         String::from_utf8_lossy(&reply.stderr)
     );
-    let after: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let after = kemi.review_json().await;
     for comment in after["comments"].as_array().unwrap() {
         assert_eq!(comment["replies"][0]["parts"], parts);
         assert!(comment["replies"][0]["body"].is_null());
@@ -905,12 +865,7 @@ async fn resumed_context_keeps_skipped_files_present_but_does_not_offer_line_ref
         &["--worktree", "--no-open", "--port", "0"],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap().to_string();
     let store = SessionStore::new(sessions_dir(&state.path));
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -967,12 +922,7 @@ async fn explanation_updates_read_one_document_from_stdin_and_named_manifests_re
         &state.path,
     );
     kemi.wait_serving().await;
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap();
     let update = serde_json::json!({"expected_revision":0,"base_display_version":review["diff_display_version"],"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"From stdin"},"references":[]}]}]});
     let answer = run_agent(

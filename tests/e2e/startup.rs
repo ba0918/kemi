@@ -39,9 +39,7 @@ async fn bind_accepts_an_ipv4_literal() {
         ],
     );
 
-    let response = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap();
+    let response = kemi.get("api/review").await;
     assert_eq!(response.status(), 200);
     kemi.kill();
 }
@@ -62,9 +60,7 @@ async fn bind_wildcard_warns_after_the_url_and_serves() {
         ],
     );
 
-    let response = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap();
+    let response = kemi.get("api/review").await;
     assert_eq!(response.status(), 200);
 
     let mut warning = String::new();
@@ -209,12 +205,7 @@ async fn cli_base_resolves_manifest_paths() {
         ],
     );
 
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     assert_eq!(review["groups"][0]["files"][0]["path"], "a.txt");
     assert_eq!(review["groups"][0]["files"][0]["add"], 1);
     assert_eq!(review["groups"][0]["files"][0]["del"], 1);
@@ -228,12 +219,7 @@ async fn exit_code_approved_is_0_and_stdout_json() {
     dir.write("manifest.json", MANIFEST);
     let mut kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
 
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     assert_eq!(review["title"], "e2e のレビュー");
 
     // 起動時の stderr は、URL の行（start が読む）の後に結果ファイルの保存先の行
@@ -300,12 +286,7 @@ async fn runtime_io_error_stops_with_exit_2_without_json() {
     dir.write("a.txt", "one\nTWO\n");
 
     let mut kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let file_id = review["groups"][0]["files"][0]["id"]
         .as_str()
         .unwrap()
@@ -313,9 +294,7 @@ async fn runtime_io_error_stops_with_exit_2_without_json() {
 
     std::fs::remove_file(dir.path.join("a.txt")).unwrap();
 
-    let response = reqwest::get(format!("{}api/file/{file_id}", kemi.url))
-        .await
-        .unwrap();
+    let response = kemi.get(&format!("api/file/{file_id}")).await;
     assert_eq!(response.status(), 500);
 
     let status = wait_for_exit(&mut kemi, std::time::Duration::from_secs(10)).await;
@@ -447,7 +426,7 @@ async fn submit_with_a_closed_stdout_exits_2_and_keeps_the_result_file() {
         }
     };
 
-    let response = reqwest::Client::new()
+    let response = http_client()
         .post(format!("{url}api/submit"))
         .header("Origin", url.split("/s/").next().unwrap())
         .json(&serde_json::json!({ "verdict": "approved" }))

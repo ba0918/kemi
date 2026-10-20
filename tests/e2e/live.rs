@@ -120,7 +120,7 @@ async fn live_page_is_read_through_the_live_url_after_opening_the_review_url() {
     assert!(live.starts_with("http://127.0.0.1:"), "{live}");
     assert!(live.ends_with("/start"), "{live}");
 
-    let client = reqwest::Client::new();
+    let client = &kemi.client;
     let refused = client.get(&live).send().await.unwrap();
     let opened = client.get(&kemi.url).send().await.unwrap();
     let cookie = opened

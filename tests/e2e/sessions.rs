@@ -51,18 +51,17 @@ async fn result_not_written_on_interrupt_or_runtime_error() {
         &["--worktree", "--no-open", "--port", "0"],
         &state.path,
     );
-    let review: serde_json::Value = reqwest::get(format!("{}api/review", failing.url))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let review = failing.review_json().await;
     let id = review["groups"][0]["files"][0]["id"]
         .as_str()
         .unwrap()
         .to_string();
     std::fs::remove_file(repo.path.join("a.txt")).unwrap();
-    let _ = reqwest::get(format!("{}api/file/{id}", failing.url)).await;
+    let _ = failing
+        .client
+        .get(format!("{}api/file/{id}", failing.url))
+        .send()
+        .await;
     let status = wait_for_exit(&mut failing, std::time::Duration::from_secs(10)).await;
     assert_eq!(status.code(), Some(2));
 

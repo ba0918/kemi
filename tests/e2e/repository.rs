@@ -14,12 +14,7 @@ async fn refresh_keeps_comment_on_the_same_file() {
     dir.write("b.txt", "b2\n");
 
     let kemi = Kemi::spawn(&dir.path, &["--worktree", "--no-open", "--port", "0"]);
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let file_id = |review: &serde_json::Value, path: &str| {
         review["groups"][0]["files"]
             .as_array()
@@ -49,17 +44,17 @@ async fn refresh_keeps_comment_on_the_same_file() {
 
     // a を戻して再取得しても、残る b の id とコメントの対応は変わらない。
     dir.write("a.txt", "a1\n");
-    let refreshed = reqwest::get(format!("{}api/review?refresh=1", kemi.url))
+    let refreshed = kemi
+        .get("api/review?refresh=1")
         .await
-        .unwrap()
         .json::<serde_json::Value>()
         .await
         .unwrap();
     assert_eq!(file_id(&refreshed, "b.txt"), b_id);
 
-    let file = reqwest::get(format!("{}api/file/{b_id}", kemi.url))
+    let file = kemi
+        .get(&format!("api/file/{b_id}"))
         .await
-        .unwrap()
         .json::<serde_json::Value>()
         .await
         .unwrap();
@@ -92,12 +87,7 @@ async fn cli_default_group_by_file_starts_in_final_form() {
     let base = two_commit_repo(&dir);
     let kemi = Kemi::spawn(&dir.path, &["--from", &base, "--no-open", "--port", "0"]);
 
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
 
     assert_eq!(review["unit"], "file");
     assert_eq!(review["groups"].as_array().unwrap().len(), 1);
@@ -187,20 +177,13 @@ async fn origin_is_found_in_a_partial_clone_whose_remote_needs_the_global_config
         &global,
         &["--from", &base, "--no-open", "--port", "0"],
     );
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["groups"][0]["files"][0]["id"]
         .as_str()
         .unwrap()
         .to_string();
 
-    let response = reqwest::get(format!("{}api/origin/{id}", kemi.url))
-        .await
-        .unwrap();
+    let response = kemi.get(&format!("api/origin/{id}")).await;
 
     assert_eq!(response.status(), 200);
     let origin: serde_json::Value = response.json().await.unwrap();
@@ -275,12 +258,7 @@ async fn commit_unit_reads_utf8_messages_even_if_log_output_encoding_is_legacy()
         ],
     );
 
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
 
     assert_eq!(review["groups"][0]["id"], changed);
     assert_eq!(review["groups"][0]["title"], "feat: 二行目に変える");

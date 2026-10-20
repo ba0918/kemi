@@ -93,6 +93,32 @@ impl Drop for StopOnDrop {
     }
 }
 
+/// e2e の HTTP の要求の期限。kemi が生きたまま応答しなくなっても、テストが止まり続けない
+/// ように（子は Drop で止まるが、Drop は panic の後にしか走らない）。
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 応答の本文まで読み終えるのに期限のあるクライアント。
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .unwrap()
+}
+
+/// `api/events` の SSE を開く。受信は続くので、期限は応答の始まりまでにだけ付け、受信の
+/// 待ちは読む側が決める。
+async fn open_events(url: &str) -> reqwest::Response {
+    tokio::time::timeout(
+        HTTP_TIMEOUT,
+        reqwest::Client::new()
+            .get(format!("{url}api/events"))
+            .send(),
+    )
+    .await
+    .expect("the event stream did not open in time")
+    .unwrap()
+}
+
 struct Kemi {
     child: Child,
     stdout: process::CapturedPipe,
@@ -100,6 +126,7 @@ struct Kemi {
     url: String,
     /// URL の行より前に stderr へ出た行。
     preamble: Vec<String>,
+    client: reqwest::Client,
     _state: Option<TempDir>,
 }
 
@@ -135,6 +162,7 @@ impl Kemi {
             stderr,
             url: String::new(),
             preamble: Vec::new(),
+            client: http_client(),
             _state: None,
         };
         if let Some(input) = input {
@@ -173,8 +201,16 @@ impl Kemi {
         self.url.split("/s/").next().unwrap().to_string()
     }
 
+    async fn get(&self, path: &str) -> reqwest::Response {
+        self.client
+            .get(format!("{}{path}", self.url))
+            .send()
+            .await
+            .unwrap()
+    }
+
     async fn post(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
-        reqwest::Client::new()
+        self.client
             .post(format!("{}{path}", self.url))
             .header("Origin", self.origin())
             .json(&body)
@@ -197,9 +233,7 @@ impl Kemi {
     /// サーバが応答するまで待つ。応答した時点で、サーブ前の stderr の行は出終わり、
     /// Ctrl+C の受け取りも始まっている。
     async fn wait_serving(&self) {
-        let response = reqwest::get(format!("{}api/review", self.url))
-            .await
-            .unwrap();
+        let response = self.get("api/review").await;
         assert_eq!(response.status(), 200);
         let _ = response.bytes().await;
     }
@@ -502,12 +536,7 @@ fn start_with_global(dir: &Path, state: &TempDir, global: &Path, args: &[&str]) 
 
 /// 最終形の `path` のファイルの由来を取りに行く。
 async fn fetch_origin(kemi: &Kemi, path: &str) -> reqwest::Response {
-    let review = reqwest::get(format!("{}api/review", kemi.url))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     let id = review["groups"][0]["files"]
         .as_array()
         .unwrap()
@@ -517,9 +546,7 @@ async fn fetch_origin(kemi: &Kemi, path: &str) -> reqwest::Response {
         .as_str()
         .unwrap()
         .to_string();
-    reqwest::get(format!("{}api/origin/{id}", kemi.url))
-        .await
-        .unwrap()
+    kemi.get(&format!("api/origin/{id}")).await
 }
 
 /// `.gitattributes` で `*.txt` に表示用の変換 `cut` を割り当てたリポジトリに、
@@ -795,7 +822,7 @@ fn craft_session(state: &Path, id: &str, mode: SessionMode, title: &str) -> Sess
 impl Kemi {
     #[cfg(unix)]
     async fn get_json(&self, path: &str) -> serde_json::Value {
-        let response = reqwest::get(format!("{}{path}", self.url)).await.unwrap();
+        let response = self.get(path).await;
         assert_eq!(response.status(), 200, "GET {path}");
         response.json().await.unwrap()
     }
@@ -818,12 +845,7 @@ impl Kemi {
     }
 
     async fn review_json(&self) -> serde_json::Value {
-        reqwest::get(format!("{}api/review", self.url))
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap()
+        self.get("api/review").await.json().await.unwrap()
     }
 
     async fn wait_agent_status(&self, expected: &str) {
@@ -994,7 +1016,7 @@ impl Kemi {
 
 /// レビューの URL を開いて中継用の cookie を受け取り、中継の URL を読む。
 async fn read_live_page(kemi: &Kemi, live: &str) -> (u16, String) {
-    let client = reqwest::Client::new();
+    let client = &kemi.client;
     let opened = client.get(&kemi.url).send().await.unwrap();
     let cookie = opened.headers()["set-cookie"]
         .to_str()
@@ -1094,9 +1116,7 @@ struct Updates {
 
 impl Updates {
     async fn open(kemi: &Kemi) -> Self {
-        let response = reqwest::get(format!("{}api/events", kemi.url))
-            .await
-            .unwrap();
+        let response = open_events(&kemi.url).await;
         assert_eq!(response.status(), 200);
         Updates {
             response,
@@ -1158,9 +1178,9 @@ fn worktree_with_an_unchanged_file(dir: &TempDir) {
 }
 
 async fn review_paths(kemi: &Kemi) -> Vec<String> {
-    let review = reqwest::get(format!("{}api/review?refresh=1", kemi.url))
+    let review = kemi
+        .get("api/review?refresh=1")
         .await
-        .unwrap()
         .json::<serde_json::Value>()
         .await
         .unwrap();

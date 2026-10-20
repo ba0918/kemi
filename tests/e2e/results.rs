@@ -7,11 +7,7 @@ async fn submit_with_events_open_exits_with_json() {
     let mut kemi = Kemi::spawn(&dir.path, &["manifest.json", "--no-open", "--port", "0"]);
 
     // ブラウザと同じく SSE を開いたまま submit しても、サーバは接続を閉じて終了する。
-    let events = reqwest::Client::new()
-        .get(format!("{}api/events", kemi.url))
-        .send()
-        .await
-        .unwrap();
+    let events = open_events(&kemi.url).await;
     assert_eq!(events.status(), 200);
 
     let response = kemi
