@@ -153,7 +153,7 @@ async fn start_agent_channel(
     control: &ServeControl,
     defer: bool,
 ) -> Option<(AgentParams, EndpointFile)> {
-    let id = stored_session?.info().id;
+    let id = stored_session?.review_id()?;
     let listener = match bind_agent_listener().await {
         Ok(listener) => listener,
         Err(error) => {
@@ -791,8 +791,9 @@ async fn run_resume(cli: &Cli) -> ! {
     };
     // `--live` は写しを持たず、今の作業ツリーを読み直し、同じページにつなぎ直す
     // （R-PAGE-SESSION）。
+    let info = stored.info();
     let mut live = None;
-    let source = match stored.info().mode {
+    let source = match info.mode {
         SessionMode::Live { page, root } => {
             let source = Arc::new(LiveSource::new(&page, &root)) as Arc<dyn ReviewSource>;
             live = Some(LiveRun {
@@ -812,8 +813,15 @@ async fn run_resume(cli: &Cli) -> ! {
             None => fail(&format!("session {id} cannot be resumed")),
         },
     };
-    let results_key = stored.info().workspace_key;
-    run_review(cli, source, Some(Arc::new(stored)), results_key, live, None).await
+    run_review(
+        cli,
+        source,
+        Some(Arc::new(stored)),
+        info.workspace_key,
+        live,
+        None,
+    )
+    .await
 }
 
 /// `<id>.files/` のスナップショットを読み戻す。読めないものは飛ばして警告し、復元は続ける。
@@ -863,14 +871,8 @@ fn no_resumable_reason(store: &SessionStore) -> String {
 fn pick_session(sessions: &[SessionSummary]) -> String {
     use inquire::{InquireError, Select};
     let labels = session::select_labels(sessions);
-    match Select::new("Select a session to resume (Esc cancels)", labels.clone()).prompt() {
-        Ok(label) => {
-            let index = labels
-                .iter()
-                .position(|candidate| candidate == &label)
-                .expect("the chosen label came from the list");
-            sessions[index].id.clone()
-        }
+    match Select::new("Select a session to resume (Esc cancels)", labels).raw_prompt() {
+        Ok(chosen) => sessions[chosen.index].id.clone(),
         Err(InquireError::OperationCanceled) | Err(InquireError::OperationInterrupted) => {
             std::process::exit(report::INTERRUPTED)
         }
