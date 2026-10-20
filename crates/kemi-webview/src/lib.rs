@@ -19,7 +19,7 @@ pub fn get(path: &str) -> Option<(Cow<'static, [u8]>, &'static str)> {
     Some((file.data, mime_for(path)))
 }
 
-pub fn mime_for(path: &str) -> &'static str {
+fn mime_for(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",

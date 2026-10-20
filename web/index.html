@@ -55,9 +55,9 @@
     <header class="topbar">
       <div class="brand">kemi</div>
       <div id="review-views" role="group" aria-label="Review view">
-        <button id="explanation-return" class="review-view-button" type="button" data-review-view="explanation" disabled title="No explanation yet">Explanation</button>
-        <button class="review-view-button" type="button" data-review-view="code" aria-pressed="true">Code</button>
-        <button class="review-view-button" type="button" data-review-view="page" hidden>Page</button>
+        <button id="explanation-return" type="button" data-review-view="explanation" disabled title="No explanation yet">Explanation</button>
+        <button type="button" data-review-view="code" aria-pressed="true">Code</button>
+        <button type="button" data-review-view="page" hidden>Page</button>
       </div>
       <button
         class="iconbtn narrow-only"
@@ -73,7 +73,7 @@
         <div class="title-row">
           <div class="title" id="review-title"></div>
           <button
-            class="title-button narrow-only"
+            class="narrow-only"
             id="btn-title"
             type="button"
             popovertarget="title-sheet"
@@ -247,7 +247,7 @@
           </button>
           <div class="hand-note rail-hand-note" id="rail-hand-note" hidden></div>
         </div>
-        <div class="cv-panel" id="cv-panel">
+        <div class="cv-panel">
           <div class="cv-head">
             <b>Conversation</b>
             <span class="cv-head-unread" id="cv-head-unread" hidden></span>
