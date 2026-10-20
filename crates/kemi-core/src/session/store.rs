@@ -121,6 +121,8 @@ pub struct SavedSession {
 #[derive(Clone, Debug)]
 pub struct SessionStore {
     dir: PathBuf,
+    /// 1 セッションの `<id>.payload` の上限（R-SESSION）。
+    copy_limit: u64,
     /// 1 セッションの `<id>.files/` の上限（R-PAGE-SESSION）。
     files_limit: u64,
 }
@@ -129,8 +131,14 @@ impl SessionStore {
     pub fn new(dir: PathBuf) -> Self {
         SessionStore {
             dir,
+            copy_limit: COPY_LIMIT,
             files_limit: FILES_LIMIT,
         }
+    }
+
+    /// `<id>.payload` の上限を差し替える。既定は 20 MB。
+    pub fn with_copy_limit(self, copy_limit: u64) -> Self {
+        SessionStore { copy_limit, ..self }
     }
 
     /// `<id>.files/` の上限を差し替える。既定は [`FILES_LIMIT`]。
@@ -155,6 +163,7 @@ impl SessionStore {
             state: SessionState::default(),
             copy: CopyState::Pending,
             lifecycle: Lifecycle::Active,
+            copy_limit: self.copy_limit,
             files_limit: self.files_limit,
             _lock: lock,
         })
@@ -183,6 +192,7 @@ impl SessionStore {
             state,
             copy,
             lifecycle: Lifecycle::Active,
+            copy_limit: self.copy_limit,
             files_limit: self.files_limit,
             _lock: lock,
         })
@@ -354,6 +364,7 @@ pub struct OpenSession {
     copy: CopyState,
     /// 停止後に届く保存で、submit や保留が片付けたファイルを作り直さない。
     lifecycle: Lifecycle,
+    copy_limit: u64,
     files_limit: u64,
     /// このセッションのロック。フィールドとして持ち、Drop で解放する。
     _lock: SessionLock,
@@ -442,7 +453,7 @@ impl OpenSession {
         mut state: SessionState,
     ) -> Result<bool, SessionError> {
         self.ensure_active()?;
-        let ready = prepared.compressed.len() as u64 <= COPY_LIMIT;
+        let ready = prepared.compressed.len() as u64 <= self.copy_limit;
         let copy = if ready {
             write_atomic(
                 &self.dir,

@@ -1235,6 +1235,152 @@ fn incompressible(size: usize) -> Vec<u8> {
         .collect()
 }
 
+fn prepared(copy: SessionCopy) -> crate::session::PreparedCopy {
+    crate::session::prepare_copy(copy).unwrap()
+}
+
+/// サーバが写しと一緒に渡す状態。表示版の現在の世代に凍結の印が付いている。
+fn frozen_state(id: &str) -> SessionState {
+    let mut display = crate::domain::display_version::DisplayVersions::initial(id).unwrap();
+    display.frozen = Some(display.current.clone());
+    SessionState {
+        display: Some(display),
+        ..state_with_comment()
+    }
+}
+
+#[test]
+fn frozen_copy_is_saved_with_its_state_without_advancing_the_updated_time() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut open = store.create(info(id, 100)).unwrap();
+
+    assert!(
+        open.save_frozen_copy(prepared(copy()), frozen_state(id))
+            .unwrap()
+    );
+
+    assert!(open.is_resumable());
+    assert_eq!(open.info().updated, 100);
+    drop(open);
+    let saved = store.read(id).unwrap();
+    assert_eq!(saved.copy, CopyState::Ready(copy()));
+    assert_eq!(saved.state, frozen_state(id));
+    assert_eq!(saved.info.updated, 100);
+    assert_eq!(
+        store
+            .list()
+            .unwrap()
+            .iter()
+            .map(|summary| summary.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![id]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn frozen_copy_that_cannot_be_written_does_not_become_resumable() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut open = store.create(info(id, 100)).unwrap();
+    // 写しのファイルを置けなくする（同じ名前のディレクトリがあると rename が
+    // 失敗する）。ディスクが一杯のときと同じ経路になる。
+    std::fs::create_dir_all(payload_path(&scratch.dir(), id)).unwrap();
+
+    assert!(
+        open.save_frozen_copy(prepared(copy()), frozen_state(id))
+            .is_err()
+    );
+
+    // 写しを置けていないので「使える」にしない。この後に状態を書いても、
+    // 「使える」と書いた `<id>.session` は残らない（R-SESSION の不変条件）。
+    assert!(!open.is_resumable());
+    assert_eq!(open.copy(), &CopyState::Pending);
+    open.save_issued_state(frozen_state(id)).unwrap();
+    assert_eq!(store.read(id).unwrap().copy, CopyState::Pending);
+    assert!(store.list().unwrap().is_empty());
+}
+
+#[test]
+fn frozen_copy_arriving_after_the_review_stopped_writes_nothing() {
+    let scratch = Scratch::new();
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    // submit と競争した凍結が、セッションを消した後に届く。
+    let mut deleted = store.create(info(id, 100)).unwrap();
+    deleted.save_state_at(state_with_comment(), 200).unwrap();
+    deleted.delete().unwrap();
+
+    assert!(matches!(
+        deleted.save_frozen_copy(prepared(copy()), frozen_state(id)),
+        Err(SessionError::Unusable { .. })
+    ));
+    assert!(!session_path(&scratch.dir(), id).exists());
+    assert!(!payload_path(&scratch.dir(), id).exists());
+    drop(deleted);
+
+    // 保留と競争した凍結が、片付けた後に届く。
+    let mut suspended = store.create(info(id, 100)).unwrap();
+    suspended.close_suspended().unwrap();
+
+    assert!(matches!(
+        suspended.save_frozen_copy(prepared(copy()), frozen_state(id)),
+        Err(SessionError::Unusable { .. })
+    ));
+    assert!(!session_path(&scratch.dir(), id).exists());
+    assert!(!payload_path(&scratch.dir(), id).exists());
+}
+
+#[test]
+fn frozen_copy_over_the_limit_is_unusable_and_never_written() {
+    // 上限は `<id>.payload` 全体のバイト数で判定する（R-SESSION）。ちょうどは収まり、
+    // 1 バイト超えると捨てる。
+    let limit = prepared(copy()).compressed.len() as u64;
+    let scratch = Scratch::new();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let fits = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    let mut open = SessionStore::new(scratch.dir())
+        .with_copy_limit(limit)
+        .create(info(fits, 100))
+        .unwrap();
+    assert!(
+        open.save_frozen_copy(prepared(copy()), frozen_state(fits))
+            .unwrap()
+    );
+    drop(open);
+    let store = SessionStore::new(scratch.dir()).with_copy_limit(limit - 1);
+    let mut open = store.create(info(id, 100)).unwrap();
+
+    assert!(
+        !open
+            .save_frozen_copy(prepared(copy()), frozen_state(id))
+            .unwrap()
+    );
+
+    assert!(matches!(open.copy(), CopyState::Unusable(_)));
+    assert!(!payload_path(&scratch.dir(), id).exists());
+    drop(open);
+    let saved = store.read(id).unwrap();
+    assert!(matches!(saved.copy, CopyState::Unusable(_)));
+    // 写しを捨てたので、凍結の印も残さない。
+    let display = saved.state.display.unwrap();
+    assert_eq!(display.frozen, None);
+    assert_eq!(display.current, frozen_state(id).display.unwrap().current);
+    assert!(matches!(store.open(id), Err(SessionError::Unusable { .. })));
+    assert_eq!(
+        store
+            .list()
+            .unwrap()
+            .iter()
+            .map(|summary| summary.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![fits]
+    );
+}
+
 #[test]
 fn session_rejects_an_unknown_format_version() {
     let scratch = Scratch::new();
