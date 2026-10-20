@@ -18,6 +18,12 @@
  */
 
 /**
+ * 説明の入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の今の画面上の矩形を測る。
+ * 札が差し込まれたり本文が折り返し直したりするたびに測り直すので、開いた時点の矩形ではなく測り方を渡す。
+ * @typedef {{blockId:string, selection:{text:string,occurrence:number}|null, anchor:()=>DOMRect|null, quote:string, returnFocus?:HTMLElement|null}} EditorRequest
+ */
+
+/**
  * @typedef {{
  *   addComment: (payload: any) => void,
  *   selectView: (view: 'explanation'|'code'|'page') => void,
@@ -26,7 +32,8 @@
  *   explanationCodeChanged: () => void,
  *   showExplanationComment: (comment: any) => void,
  *   followExplanationReference: (reference: any) => void,
- *   openExplanationEditor: (request: import('./features/explanation.js').EditorRequest) => void,
+ *   openExplanationEditor: (request: EditorRequest) => void,
+ *   liveView: (view: 'code'|'page', page?: string) => void,
  *   renderPartMarkdown: (body: string, host: HTMLElement) => Promise<void>,
  *   closeThread: () => void,
  *   loadCommitGroups: () => void,

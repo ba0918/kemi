@@ -231,7 +231,7 @@ export function closeEditor() {
 export function updateComments(change) {
   const before = state.allComments;
   state.allComments = change(state.allComments);
-  actions.explanationChanged?.();
+  actions.explanationChanged();
   for (const [id, comments] of state.commentStore) {
     state.commentStore.set(id, change(comments));
   }

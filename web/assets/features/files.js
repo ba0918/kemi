@@ -71,7 +71,7 @@ export function applyReview(review, fresh) {
   resetTreeItems();
   state.treeVersion += 1;
   rebuildVisible();
-  actions.explanationCodeChanged?.();
+  actions.explanationCodeChanged();
 }
 
 /**

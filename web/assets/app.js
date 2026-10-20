@@ -94,7 +94,7 @@ import { closeModal, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
-import { bindLiveView, startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, openExplanationEditor } from './features/explanation.js';
+import { startExplanation, selectView, syncReviewView, openLatestExplanation, receiveExplanation, explanationChanged, explanationCodeChanged, showExplanationComment, followExplanationReference, openExplanationEditor } from './features/explanation.js';
 
 /**
  * @param {KeyboardEvent} event
@@ -161,17 +161,27 @@ function handleKey(event) {
   }
 }
 
-/** 渡す前にすること。`--live` のレビューでだけ、ページの見方を読み込んだ後に入れる。 */
-/** @type {() => Promise<void>} */
-let beforeHand = async () => {};
-
-/** 更新バッジを押したとき。`--live` のレビューでは、ページの見方の間ならコードの見方に切り替えてから読み直す。 */
-/** @type {() => Promise<void>} */
-let onUpdateBadge = () => refresh();
-
-/** ページへのコメントをページの見方で見せる・変わったコメントを描き直す。`--live` のレビューでだけ入れる。 */
-/** @type {{ show: (comment: any) => void, changed: () => void }} */
-let pageComments = { show: () => {}, changed: () => {} };
+/**
+ * `--live` のページの見方の処理。`--live` のレビューでだけ、ページの見方を読み込んだ後に入れ替える。
+ * それまでは何もしない（更新バッジは読み直すだけ）。
+ * @type {{
+ *   setView: (view: 'code'|'page', page?: string) => void,
+ *   beforeHand: () => Promise<void>,
+ *   refreshFromBadge: () => Promise<void>,
+ *   showPageComment: (comment: any) => void,
+ *   pageCommentsChanged: () => void,
+ * }}
+ */
+const live = {
+  setView: () => {},
+  // 渡す前にすること。
+  beforeHand: async () => {},
+  // 更新バッジを押したとき。`--live` のレビューでは、ページの見方の間ならコードの見方に切り替えてから読み直す。
+  refreshFromBadge: () => refresh(),
+  // ページへのコメントをページの見方で見せる・変わったコメントを描き直す。
+  showPageComment: () => {},
+  pageCommentsChanged: () => {},
+};
 
 async function boot() {
   // サーバはつながる前の通知を送り直さないので、先に通知につながってから中身を読む（読んだ後、
@@ -228,10 +238,13 @@ async function boot() {
         "./features/live.js"
       );
       startLive(state.review.live);
-      bindLiveView(setLiveView);
-      beforeHand = captureBeforeHand;
-      onUpdateBadge = refreshFromBadge;
-      pageComments = { show: showPageComment, changed: refreshPageComments };
+      Object.assign(live, {
+        setView: setLiveView,
+        beforeHand: captureBeforeHand,
+        refreshFromBadge,
+        showPageComment,
+        pageCommentsChanged: refreshPageComments,
+      });
     }
     await startExplanation(state.review);
   } catch (error) {
@@ -275,7 +288,7 @@ dom.chipFocus.addEventListener("click", toggleFocusOnly);
 dom.chipSort.addEventListener("click", toggleSortBySize);
 dom.btnTheme.addEventListener("click", stepTheme);
 dom.notes.addEventListener("beforetoggle", placeNotes);
-dom.updateBadge.addEventListener("click", () => void onUpdateBadge());
+dom.updateBadge.addEventListener("click", () => void live.refreshFromBadge());
 dom.btnHand.addEventListener("click", () => void handToAgent());
 dom.railHand.addEventListener("click", () => void handToAgent());
 dom.handFloat.addEventListener("click", () => void handToAgent());
@@ -316,6 +329,7 @@ bindActions({
   showExplanationComment: comment=>void showExplanationComment(comment),
   followExplanationReference: reference=>void followExplanationReference(reference),
   openExplanationEditor,
+  liveView: (view, page) => live.setView(view, page),
   renderPartMarkdown,
   addComment,
   closeThread,
@@ -326,7 +340,7 @@ bindActions({
   setThreadFolded,
   setResolved: (comment, resolved) => void setResolved(comment, resolved),
   applyRenderedView,
-  beforeHand: () => beforeHand(),
+  beforeHand: () => live.beforeHand(),
   closeDrawer,
   closeEditor,
   collapseAll,
@@ -350,8 +364,8 @@ bindActions({
   toggleOrigin,
   toggleOriginReason,
   toggleSeen,
-  showPageComment: (comment) => pageComments.show(comment),
-  pageCommentsChanged: () => pageComments.changed(),
+  showPageComment: (comment) => live.showPageComment(comment),
+  pageCommentsChanged: () => live.pageCommentsChanged(),
   editPageComment,
   keepPageCommentDraft,
   savePageCommentBody: (comment, body) => void savePageCommentBody(comment, body),

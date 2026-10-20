@@ -12,8 +12,6 @@ import { renderExplanationDocument, renderExplanationComments, renderExplanation
 import { showOverlay } from '../views/overlay.js';
 import { setupExplanationSelection } from './explanation/selection.js';
 
-/** @type {(view:'code'|'page', page?:string)=>void} */
-let liveView = ()=>{};
 let contentsWidth = 280;
 let closeSelection = ()=>{};
 
@@ -23,18 +21,12 @@ function explanationDraftKey(revision,blockId) {return `${revision}:${blockId}`;
 /** @param {number} revision @param {string} blockId @param {string} body */
 function keepExplanationDraft(revision,blockId,body) {state.explanation.drafts.set(explanationDraftKey(revision,blockId),body);}
 
-/**
- * 入力欄を開く要求。anchor は選んだ範囲の最後の行（図ではコメントのボタン）の今の画面上の矩形を測る。
- * 札が差し込まれたり本文が折り返し直したりするたびに測り直すので、開いた時点の矩形ではなく測り方を渡す。
- * @typedef {{blockId:string, selection:{text:string,occurrence:number}|null, anchor:()=>DOMRect|null, quote:string, returnFocus?:HTMLElement|null}} EditorRequest
- */
-
 /** @type {{form:HTMLFormElement, close:()=>void}|null} */
 let editor = null;
 
 function closeExplanationEditor() { editor?.close(); }
 
-/** @param {EditorRequest} request */
+/** @param {import('../actions.js').EditorRequest} request */
 export function openExplanationEditor(request) {
   closeSelection();
   closeExplanationEditor();
@@ -137,8 +129,6 @@ function setupContentsResize() {
   new ResizeObserver(() => { if (!state.narrow) setWidth(contentsWidth); }).observe(layout);
   setWidth(contentsWidth);
 }
-/** @param {(view:'code'|'page', page?:string)=>void} handler */
-export function bindLiveView(handler) {liveView=handler;}
 
 /** @param {'explanation'|'code'|'page'} view */
 export async function selectView(view) {
@@ -147,7 +137,7 @@ export async function selectView(view) {
     await openLatestExplanation();return;
   }
   if (view === 'page' && !state.review?.live) return;
-  if (view !== 'explanation' && state.review?.live) liveView(view);
+  if (view !== 'explanation' && state.review?.live) actions.liveView(view);
   state.view=view;
   showView();
   if (view==='code' && !state.current && state.visible.length) await selectIndex(0,{scrollTop:true});
@@ -238,7 +228,7 @@ export async function followExplanationReference(reference) {
     if (reference.type==='page') {
       if (!state.review?.live) {unavailable('Page is available only in a live review.');return;}
       state.explanation.returnTo=true;
-      liveView('page',reference.url);state.view='page';showView();return;
+      actions.liveView('page',reference.url);state.view='page';showView();return;
     }
     const review=reference.unit===currentUnit() ? state.review : state.reviews.get(reference.unit);
     // 最新一覧の取得は、参照移動だけで読者が選んだCodeの世代を変えてしまう。
