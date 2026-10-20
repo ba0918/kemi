@@ -259,20 +259,32 @@ async fn session_copy_failure_marks_the_session_unresumable() {
 
 #[tokio::test]
 async fn session_review_response_does_not_wait_for_the_freeze() {
-    let source = FakeSource::new();
-    source.set_content_delay(Duration::from_millis(600));
+    let (release, wait) = std::sync::mpsc::channel();
+    let gate = Arc::new(GenerationGate {
+        entered: tokio::sync::Notify::new(),
+        release: Mutex::new(wait),
+    });
+    // 凍結が内容を読むところを、初めから止めておく。
+    let source = Arc::new(GatedContentSource {
+        inner: Arc::new(FakeSource::new()),
+        gate: gate.clone(),
+        blocked: AtomicBool::new(true),
+    });
     let sink = Arc::new(RecordingSink::default());
-    let server = TestServer::start_with_session(Arc::new(source), sink.clone()).await;
+    let server = TestServer::start_with_session(source.clone(), sink.clone()).await;
 
-    let started = std::time::Instant::now();
-    let response = server.get("api/review").await;
-    let elapsed = started.elapsed();
+    // 凍結を待つ応答なら、ゲートが閉じている限り返らない。
+    let response = tokio::time::timeout(WAIT_LIMIT, server.get("api/review"))
+        .await
+        .expect("api/review must not wait for the freeze");
 
     assert_eq!(response.status(), 200);
-    assert!(
-        elapsed < Duration::from_millis(400),
-        "review waited {elapsed:?}"
-    );
+    tokio::time::timeout(WAIT_LIMIT, gate.entered.notified())
+        .await
+        .expect("the freeze never reached the content");
+    source.blocked.store(false, Ordering::SeqCst);
+    release.send(()).unwrap();
+    saved_copy(&sink).await;
 }
 
 #[tokio::test]

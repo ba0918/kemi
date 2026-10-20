@@ -37,7 +37,6 @@ struct FakeSource {
     meta: ReviewMeta,
     contents: HashMap<String, FileContent>,
     reads: AtomicUsize,
-    content_delay_ms: AtomicUsize,
     /// リポジトリを読める入力（git のモード）を装う。相対パス画像はこの表から返す。
     repository: Option<HashMap<String, Vec<u8>>>,
 }
@@ -208,7 +207,6 @@ impl FakeSource {
             },
             contents,
             reads: AtomicUsize::new(0),
-            content_delay_ms: AtomicUsize::new(0),
             repository: None,
         }
     }
@@ -231,11 +229,6 @@ impl FakeSource {
 
     fn reads(&self) -> usize {
         self.reads.load(Ordering::SeqCst)
-    }
-
-    fn set_content_delay(&self, delay: Duration) {
-        self.content_delay_ms
-            .store(delay.as_millis() as usize, Ordering::SeqCst);
     }
 }
 
@@ -281,10 +274,6 @@ impl ReviewSource for FakeSource {
 
     fn content(&self, file_id: &str) -> Result<FileContent, SourceError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
-        let delay = self.content_delay_ms.load(Ordering::SeqCst);
-        if delay > 0 {
-            std::thread::sleep(Duration::from_millis(delay as u64));
-        }
         self.contents
             .get(file_id)
             .cloned()
