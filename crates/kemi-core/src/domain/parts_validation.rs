@@ -488,3 +488,91 @@ fn grid(source: &str, path: &str) -> Checked {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::string_bytes;
+    use crate::domain::parts::Part;
+
+    /// 値の木を辿り、オブジェクトのキーを除く文字列値の UTF-8 バイト数を足す数え方。
+    /// 直列化の書式で数える `string_bytes` が、これと同じ値になることを確かめる。
+    fn walked(value: &Value) -> usize {
+        match value {
+            Value::String(text) => text.len(),
+            Value::Array(values) => values.iter().map(walked).sum(),
+            Value::Object(values) => values.values().map(walked).sum(),
+            Value::Null | Value::Bool(_) | Value::Number(_) => 0,
+        }
+    }
+
+    fn part(value: Value) -> Part {
+        serde_json::from_value(value).expect("the test part is valid")
+    }
+
+    #[test]
+    fn string_bytes_counts_string_values_by_their_original_bytes_and_not_keys() {
+        let cases = [
+            // `"`・`\`・改行・制御文字は、JSON では 2 バイト以上に書くが元の 1 バイトで数える。
+            ("escapes", json!("a\"b\\c\nd\u{1}e"), 9),
+            ("non-ascii", json!("あé😀"), 9),
+            ("keys", json!({"key": "value", "あ": "い"}), 8),
+            (
+                "numbers, booleans and null",
+                json!({"n": 12345, "f": 1.5, "b": true, "z": null, "s": "x"}),
+                1,
+            ),
+            ("nested", json!([["ab"], {"k": ["cd", {"deep": "ef"}]}]), 6),
+        ];
+        for (name, value, expected) in cases {
+            assert_eq!(string_bytes(&value), expected, "{name}");
+            assert_eq!(walked(&value), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn string_bytes_of_parts_counts_tag_values_and_skips_absent_options() {
+        let cases = [
+            (
+                "code without a title",
+                part(json!({"type":"code","body":"let a = 1;","language":"rust","role":"example"})),
+                // "code" 4 + body 10 + "rust" 4 + "example" 7
+                25,
+            ),
+            (
+                "code with a title",
+                part(
+                    json!({"type":"code","body":"let a = 1;","language":"rust","role":"example","title":"T"}),
+                ),
+                26,
+            ),
+            (
+                "sequence with nested events and messages",
+                part(json!({
+                    "type": "sequence", "title": "T", "role": "proposal",
+                    "participants": [{"id": "a", "label": "A"}, {"id": "b", "label": "B", "x": 300}],
+                    "events": [
+                        {"type": "message", "from": "a", "to": "b", "label": "call", "kind": "call"},
+                        {"type": "loop", "condition": "c", "messages": [
+                            {"type": "message", "from": "b", "to": "a", "label": "ret", "kind": "return", "gap_after": 20}
+                        ]},
+                        {"type": "alt", "branches": [
+                            {"condition": "x", "messages": [{"type": "message", "from": "a", "to": "b", "label": "y", "kind": "call"}]},
+                            {"condition": "z", "messages": [{"type": "message", "from": "b", "to": "a", "label": "w", "kind": "return"}]}
+                        ]}
+                    ],
+                    "layout": {"participant_gap": 200}
+                })),
+                // "sequence" 8 + "T" 1 + "proposal" 8 + 参加者 4
+                // + message 17 + loop (4 + 1 + 18) + alt (3 + 15 + 17)
+                96,
+            ),
+        ];
+        for (name, part, expected) in cases {
+            assert_eq!(string_bytes(&part), expected, "{name}");
+            let value = serde_json::to_value(&part).expect("a part serializes");
+            assert_eq!(walked(&value), expected, "{name}");
+        }
+    }
+}
