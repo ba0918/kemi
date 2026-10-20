@@ -842,5 +842,4 @@ pub(super) fn read_meta(path: &Path) -> Result<MetaDto<'static>, SessionError> {
 }
 
 #[cfg(test)]
-#[path = "store/tests.rs"]
-mod tests;
+pub(super) mod tests;

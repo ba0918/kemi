@@ -1126,6 +1126,7 @@ impl MetaDto<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::store::tests::fixtures::{comment, state_with_comment};
 
     #[test]
     fn saved_history_and_view_state_outlive_the_json_input_after_restoration() {
@@ -1172,5 +1173,20 @@ mod tests {
         let (restored_info, restored_state, _) = saved.into_parts().expect("restore saved session");
         assert_eq!(restored_info, info);
         assert_eq!(restored_state, state);
+    }
+
+    #[test]
+    fn old_plain_file_conversations_are_not_retroactively_counted_as_new_saved_content() {
+        let mut state = state_with_comment();
+        state.comments = (0..257)
+            .map(|i| {
+                let mut c = comment();
+                c.id = format!("c{i}");
+                c.body = "x".repeat(65_536);
+                c
+            })
+            .collect();
+        assert_eq!(super::super::additional_saved_size(&state), 0);
+        assert!(super::super::validate_additional(&state).is_ok());
     }
 }

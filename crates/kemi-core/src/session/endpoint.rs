@@ -66,3 +66,37 @@ pub fn remove_endpoint(dir: &Path, id: &str) -> Result<(), SessionError> {
     super::checked_id(id)?;
     super::storage_io::remove_if_present(&endpoint_path(dir, id))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::session::store::tests::fixtures::Scratch;
+
+    #[test]
+    fn endpoint_roundtrips_and_is_owner_only() {
+        use crate::session::{Endpoint, read_endpoint, write_endpoint};
+        let scratch = Scratch::new();
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let endpoint = Endpoint {
+            port: 41234,
+            token: "secret".to_string(),
+        };
+
+        write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
+
+        assert_eq!(read_endpoint(&scratch.dir(), id).unwrap(), Some(endpoint));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(crate::session::endpoint_path(&scratch.dir(), id))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        assert_eq!(
+            read_endpoint(&scratch.dir(), "01HF7YAT00BBBBBBBBBBBBBBBB").unwrap(),
+            None
+        );
+    }
+}
