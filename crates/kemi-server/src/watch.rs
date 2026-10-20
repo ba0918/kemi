@@ -873,6 +873,7 @@ fn canonical(path: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// 知らせを捨てる。
     struct SilentNotices;
     impl NoticeSink for SilentNotices {
         fn notify(&self, _: Notice) {}
@@ -1290,13 +1291,6 @@ mod tests {
         assert!(watcher.live.contains(&src), "{:?}", watcher.live);
     }
 
-    /// 知らせを捨てる。
-    struct Silent;
-
-    impl NoticeSink for Silent {
-        fn notify(&self, _: Notice) {}
-    }
-
     #[test]
     fn a_recreated_diff_directory_stays_watched_after_falling_back() {
         use notify::event::{CreateKind, RemoveKind};
@@ -1333,7 +1327,7 @@ mod tests {
             &mut Some(tree),
             &mut diff,
             &mut watcher,
-            &Silent,
+            &SilentNotices,
             WatchFallback::TooManyDirectories {
                 limit: WATCH_DIRECTORY_LIMIT,
             },
