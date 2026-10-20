@@ -71,7 +71,6 @@ body[data-review-view="explanation"] .layout { grid-template-columns:var(--expla
 .explanation-toc-item .explanation-section-number { flex-shrink:0; width:1.6em; font:11px var(--mono); color:var(--ink-3); }
 .explanation-toc-sub .explanation-toc-item { padding-left:38px; font-size:12px; color:var(--ink-3); }
 .explanation-toc-count { margin-left:auto; flex-shrink:0; font-size:11px; color:var(--note-ink); background:var(--note-bg); border-radius:9px; padding:0 6px; }
-.explanation-toc-count[hidden] { display:none; }
 .explanation-toc-item:hover { background:var(--panel-2); color:var(--ink); }
 .explanation-toc-item[aria-current] { border-left-color:var(--accent); background:var(--accent-soft); color:var(--accent); font-weight:600; }
 .explanation-toc-sub .explanation-toc-item[aria-current] { font-weight:500; }

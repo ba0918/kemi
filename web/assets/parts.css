@@ -29,7 +29,6 @@
 .part-diagram-head .part-metadata { flex:1; min-width:0; margin:0; font-size:13px; color:var(--ink-2); overflow-wrap:anywhere; }
 .part-diagram-controls { display:flex; align-items:center; flex-wrap:wrap; gap:2px; margin-left:auto; }
 .part-diagram-view-tools { display:flex; align-items:center; flex-wrap:wrap; gap:2px; }
-.part-diagram-view-tools[hidden] { display:none; }
 .part-diagram:not(.part-diagram-modal) .part-diagram-controls, .part-grid .part-diagram-controls { opacity:0; transition:opacity .12s; }
 .part-diagram:hover .part-diagram-controls, .part-diagram:focus-within .part-diagram-controls, .part-grid:hover .part-diagram-controls, .part-grid:focus-within .part-diagram-controls { opacity:1; }
 @media (hover:none) { .part-diagram:not(.part-diagram-modal) .part-diagram-controls, .part-grid .part-diagram-controls { opacity:1; } }
