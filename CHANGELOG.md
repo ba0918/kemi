@@ -5,6 +5,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-20
+
 ### 修正
 
 - **flow・sequence の図をドラッグで動かすと、図の文字が選ばれてしまうことがあった。**
@@ -463,7 +465,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/ba0918/kemi/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/ba0918/kemi/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/ba0918/kemi/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/ba0918/kemi/compare/v0.3.2...v0.3.3
