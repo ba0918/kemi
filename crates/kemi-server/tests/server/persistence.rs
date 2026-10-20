@@ -29,6 +29,9 @@ impl ReviewSource for TwoUnitSource {
 
     fn review_unit(&self, unit: GroupBy) -> Result<ReviewMeta, SourceError> {
         if unit == GroupBy::Commit {
+            // 200 ms は凍結が先に始まるための時間の代わり。負荷で凍結が遅れると、両方を待たない
+            // 退行でも両方がそろってから凍結して通る（見逃し）ことはあるが、偽に落ちることは無い。
+            // 凍結が単位を待っていることは外から観測できず、決定的にするには製品に観測点が要る。
             std::thread::sleep(Duration::from_millis(200));
             Ok(self.second.clone())
         } else {
@@ -152,6 +155,10 @@ async fn session_saves_keep_changes_made_while_a_save_is_slow() {
 
     // 保存がワーカーを同期的にふさいでも、tokio のタイマーに頼らず解放するため。
     // 直列化されていれば、最初の保存を解放するまで次の保存は始まらない。
+    // 300 ms は 2 件目が保存に届くための時間の代わり。負荷で 2 件目が間に合わないと、競合が
+    // 起きないまま通る（見逃し）ことはあるが、直列化されていれば何秒待っても 1 回のままなので、
+    // 偽に落ちることは無い。2 件目が保存の門（persist）を待っていることは外から観測できず、
+    // 決定的にするには製品に観測点が要る。
     let release = std::thread::spawn({
         let sink = sink.clone();
         move || {

@@ -1378,6 +1378,10 @@ impl SessionSink for InterruptedImageSink {
                 .join()
                 .unwrap();
             // 保存が画像の書き込みを待つなら、割り込んだ要求はこの間には終わらない。
+            // 300 ms は割り込んだ要求が画像の書き込みの間に走るための時間の代わり。負荷で間に
+            // 合わないと、書き込みの後に走って競合が起きないまま通る（見逃し）ことはあるが、偽に
+            // 落ちることは無い。要求が門を待っていることは外から観測できず、決定的にするには
+            // 製品に観測点が要る。
             let answer = match answer.recv_timeout(std::time::Duration::from_millis(300)) {
                 Ok(status) => {
                     let (send, again) = std::sync::mpsc::channel();
