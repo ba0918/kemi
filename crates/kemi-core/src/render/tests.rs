@@ -35,6 +35,16 @@ fn ranges(rendered: &Rendered) -> Vec<(u32, u32)> {
         .collect()
 }
 
+/// `html` の中で `open`（例 `<a `）から始まる最初の開始タグ。属性はこの中で確かめ、
+/// 並びと前後の改行には依らない（仕様が決めておらず、画面も読まない）。
+fn start_tag<'a>(html: &'a str, open: &str) -> &'a str {
+    let at = html
+        .find(open)
+        .unwrap_or_else(|| panic!("{open} is not in {html}"));
+    let rest = &html[at..];
+    &rest[..=rest.find('>').unwrap()]
+}
+
 fn attributes(rendered: &Rendered) -> Vec<String> {
     rendered
         .html
@@ -174,13 +184,17 @@ fn anchor_links_are_kept() {
 fn external_links_open_in_a_new_tab_with_noopener() {
     let rendered = render_new("[x]( HTTPS://example.com/a )\n");
 
-    assert!(
-        rendered.html.contains(
-            "<a href=\"HTTPS://example.com/a\" target=\"_blank\" rel=\"noopener noreferrer\">x</a>"
-        ),
-        "{}",
-        rendered.html
-    );
+    let html = &rendered.html;
+    let link = start_tag(html, "<a ");
+    for attribute in [
+        "href=\"HTTPS://example.com/a\"",
+        "target=\"_blank\"",
+        "rel=\"noopener noreferrer\"",
+    ] {
+        assert!(link.contains(attribute), "{attribute}: {html}");
+    }
+    assert_eq!(link.matches("=\"").count(), 3, "{html}");
+    assert!(html.contains(&format!("{link}x</a>")), "{html}");
 }
 
 #[test]
@@ -244,13 +258,16 @@ fn relative_image_matching_a_review_file_refers_to_that_file_and_side() {
     input.review_paths = review_paths();
     let rendered = render_markdown(&input, no_highlight(), &plain_url).unwrap();
 
-    assert!(
-        rendered
-            .html
-            .contains("<img src=\"review:f9:new\" alt=\"n\" data-kemi-path=\"img/new.png\">"),
-        "{}",
-        rendered.html
-    );
+    let html = &rendered.html;
+    let image = start_tag(html, "<img ");
+    for attribute in [
+        "src=\"review:f9:new\"",
+        "alt=\"n\"",
+        "data-kemi-path=\"img/new.png\"",
+    ] {
+        assert!(image.contains(attribute), "{attribute}: {html}");
+    }
+    assert_eq!(image.matches("=\"").count(), 3, "{html}");
 }
 
 #[test]
@@ -590,7 +607,16 @@ fn the_first_row_is_the_header_and_uneven_rows_are_kept() {
     let rendered = render_table_pair(None, Some("h1,h2\n1\n2,3,4\n"), b',').unwrap();
 
     let html = &rendered.html;
-    assert!(html.contains("<thead>\n<tr class=\"kb kb-add\" data-kemi-block=\"new:1-1\">\n<th>h1</th>\n<th>h2</th>"), "{html}");
+    let head = &html[html.find("<thead>").unwrap()..html.find("</thead>").unwrap()];
+    let row = start_tag(head, "<tr");
+    assert!(row.contains("class=\"kb kb-add\""), "{html}");
+    assert!(row.contains("data-kemi-block=\"new:1-1\""), "{html}");
+    assert_eq!(row.matches("=\"").count(), 2, "{html}");
+    assert!(
+        head.replace('\n', "")
+            .starts_with(&format!("<thead>{row}<th>h1</th><th>h2</th>")),
+        "{html}"
+    );
     assert_eq!(html.matches("<td>").count(), 4, "{html}");
     assert_eq!(rendered.blocks.len(), 3);
 }
