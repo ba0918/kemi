@@ -1200,7 +1200,10 @@ function swatch(color) {
   return item;
 }
 
-/** 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。 */
+/**
+ * 消えた要素の印。スナップショットの枠の中は触れないので、写しの HTML に属性と <style> を足して描く。色と太さは
+ * web/live/page.js の MARK_BORDERS の main と同じ値（変えるときは両方）。
+ */
 const REMOVED_MARK_STYLE = "[data-kemi-removed] { outline: 2px solid rgb(214, 69, 69) !important; outline-offset: -2px !important; }";
 
 /** 記述の番号と HTML を読み直した文書での要素の位置の対応を入れる <meta> の name（web/live/page.js の ELEMENT_MAP）。 */

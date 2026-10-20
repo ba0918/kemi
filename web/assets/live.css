@@ -1107,7 +1107,8 @@ body[data-live-view="page"] #menu-comments {
   background: #b9a6d9;
 }
 
-/* 点の色は、ページの上の印の色（主な変化と消えた要素は赤、増えた要素は緑、ずれただけは薄い紫）。 */
+/* 点の色は、ページの上の印の色（主な変化と消えた要素は赤、増えた要素は緑、ずれただけは .lv-change-dot の薄い紫）。
+   値は web/live/page.js の MARK_BORDERS と同じ（変えるときは両方）。 */
 .lv-change[data-kind="main"] .lv-change-dot,
 .lv-change[data-kind="removed"] .lv-change-dot,
 .lv-legend-item[data-kind="main"] .lv-change-dot,

@@ -272,7 +272,10 @@
   // 見た目は <style> や style 属性の文字列ではなく、スクリプトから要素のスタイルの値を 1 つずつ入れる。
   // ページの CSP の style-src がインラインのスタイルを止めていても効くようにするため。
 
-  /** 印の枠の色と線。主な変化は赤、増えたは緑、ずれただけは控えめに薄い紫の破線。 */
+  /**
+   * 印の枠の色と線。主な変化は赤、増えたは緑、ずれただけは控えめに薄い紫の破線。レビュー画面の消えた要素の印
+   * （views/live.js の REMOVED_MARK_STYLE）と一覧の点の色（live.css）も同じ値（変えるときは両方）。
+   */
   /** @type {Record<string, string>} */
   const MARK_BORDERS = {
     main: '2px solid rgb(214, 69, 69)',
@@ -1464,6 +1467,8 @@
     /** @type {Rect} */
     let area;
     if (asked && typeof asked === 'object') {
+      // 頼まれた矩形は、ブラウザ自動化（scripts/test-live.mjs）が範囲を固定し、動いているページの同じ範囲の画素と
+      // 比べるための入口。レビュー画面は送らない。
       const rect = /** @type {Record<string, unknown>} */ (asked);
       area = { x: finite(rect.x), y: finite(rect.y), w: finite(rect.w), h: finite(rect.h) };
     } else {
