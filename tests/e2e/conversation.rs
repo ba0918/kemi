@@ -1,18 +1,24 @@
 use super::*;
 
+/// 期限に u64 の上限を渡しても、ミリ秒への換算で桁あふれせずに、渡されるまで待つ。
 #[tokio::test]
-async fn wait_returns_the_comment_handed_while_it_waited() {
+async fn wait_with_the_largest_timeout_returns_the_comment_handed_while_it_waited() {
     let dir = TempDir::new();
     let state = TempDir::new();
     let (kemi, id) = start_worktree_review(&dir, &state, &[]);
-    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
+    let largest = u64::MAX.to_string();
+    let waiting = spawn_wait(
+        &dir.path,
+        &state.path,
+        &["wait", &id, "--timeout", &largest],
+    );
     kemi.wait_agent_status("waiting").await;
 
     kemi.add_comment(1, "rename this").await;
     kemi.hand().await;
 
-    let (code, stdout, _) = finish_agent(waiting).await;
-    assert_eq!(code, Some(0));
+    let (code, stdout, stderr) = finish_agent(waiting).await;
+    assert_eq!(code, Some(0), "{stderr}");
     let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(answer["kemi"], 3);
     assert_eq!(answer["review"], id.as_str());
@@ -121,29 +127,6 @@ async fn wait_with_a_timeout_and_nothing_happening_exits_3_with_empty_stdout() {
     assert_eq!(output.status.code(), Some(3));
     assert!(output.stdout.is_empty());
     assert!(started.elapsed() >= std::time::Duration::from_millis(900));
-    kemi.kill();
-}
-
-#[tokio::test]
-async fn wait_with_the_largest_timeout_keeps_waiting_until_something_is_handed() {
-    let dir = TempDir::new();
-    let state = TempDir::new();
-    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
-    let largest = u64::MAX.to_string();
-    let waiting = spawn_wait(
-        &dir.path,
-        &state.path,
-        &["wait", &id, "--timeout", &largest],
-    );
-    kemi.wait_agent_status("waiting").await;
-
-    kemi.add_comment(1, "rename this").await;
-    kemi.hand().await;
-
-    let (code, stdout, stderr) = finish_agent(waiting).await;
-    assert_eq!(code, Some(0), "{stderr}");
-    let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(answer["events"][0]["type"], "handed");
     kemi.kill();
 }
 
@@ -347,31 +330,6 @@ fn a_manifest_named_wait_opens_with_a_path() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let digest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(digest["title"], "e2e のレビュー");
-}
-
-#[tokio::test]
-async fn wait_returns_the_comment_handed_in_a_live_review() {
-    let dir = TempDir::new();
-    let state = TempDir::new();
-    worktree_fixture(&dir);
-    let mut kemi =
-        Kemi::spawn_with_state(&dir.path, &["--live", LIVE_URL, "--no-open"], &state.path);
-    let id = kemi.review_id();
-    let waiting = spawn_wait(&dir.path, &state.path, &["wait", &id]);
-    kemi.wait_agent_status("waiting").await;
-
-    kemi.add_live_comment("rename this").await;
-    kemi.hand().await;
-
-    let (code, stdout, _) = finish_agent(waiting).await;
-    assert_eq!(code, Some(0));
-    let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(answer["events"][0]["type"], "handed");
-    assert_eq!(
-        answer["events"][0]["comments"][0]["comment"]["body"],
-        "rename this"
-    );
-    kemi.kill();
 }
 
 #[tokio::test]

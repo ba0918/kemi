@@ -334,6 +334,7 @@ impl Kemi {
     }
 
     /// コードの見方の最初のファイルの id。`--live` の id はパスから決まる。
+    #[cfg(unix)]
     async fn first_file_id(&self) -> String {
         self.review_json().await["groups"][0]["files"][0]["id"]
             .as_str()
@@ -342,6 +343,7 @@ impl Kemi {
     }
 
     /// コードの見方の最初のファイルの 1 行目に、コメントを付ける。
+    #[cfg(unix)]
     async fn add_live_comment(&self, body: &str) {
         let file_id = self.first_file_id().await;
         let response = self
