@@ -192,6 +192,8 @@ export function currentReference() {
  *   renderBand: () => void,
  *   renderReference: () => void,
  *   setSide: (side: "live" | "ref") => void,
+ *   setWidth: (width: number) => void,
+ *   openPage: (page: string) => void,
  * }} LiveActions
  */
 
