@@ -174,17 +174,7 @@ pub(super) fn render(
             )
         });
 
-    let mut writer = Writer {
-        out: String::new(),
-        blocks: Vec::new(),
-        highlight,
-        image_url,
-        plain: 0,
-        in_table: false,
-        deferred: Vec::new(),
-        before_written: false,
-        part: false,
-    };
+    let mut writer = Writer::new(highlight, image_url, false);
     match (&old_side, &new_side) {
         (Some(old), None) => {
             let plan = Plan::uniform(old.blocks.len(), Mark::Deleted);
@@ -365,6 +355,20 @@ struct Walk<'s, 'a, 'b> {
 }
 
 impl<'w> Writer<'w> {
+    fn new(highlight: Option<Highlight<'w>>, image_url: ImageUrl<'w>, part: bool) -> Self {
+        Writer {
+            part,
+            out: String::new(),
+            blocks: Vec::new(),
+            highlight,
+            image_url,
+            plain: 0,
+            in_table: false,
+            deferred: Vec::new(),
+            before_written: false,
+        }
+    }
+
     fn write_document(&mut self, doc: &SideDoc<'_>, plan: &Plan, old: Option<&SideDoc<'_>>) {
         let mut walk = Walk {
             doc,
@@ -537,14 +541,7 @@ impl<'w> Writer<'w> {
         mark: Mark,
         class: &str,
     ) -> String {
-        if self.part {
-            return if class.is_empty() {
-                String::new()
-            } else {
-                format!(" class=\"{class}\"")
-            };
-        }
-        if self.plain > 0 {
+        if self.part || self.plain > 0 {
             return if class.is_empty() {
                 String::new()
             } else {
@@ -821,17 +818,7 @@ pub(super) fn render_part(
             repo_readable: false,
         },
     );
-    let mut writer = Writer {
-        part: true,
-        out: String::new(),
-        blocks: Vec::new(),
-        highlight,
-        image_url: &|_| String::new(),
-        plain: 0,
-        in_table: false,
-        deferred: Vec::new(),
-        before_written: false,
-    };
+    let mut writer = Writer::new(highlight, &|_| String::new(), true);
     writer.write_document(
         &doc,
         &Plan::uniform(doc.blocks.len(), Mark::Unchanged),

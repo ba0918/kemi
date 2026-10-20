@@ -542,25 +542,21 @@ pub(super) fn write_image_frame(out: &mut String, alt: &str, path: &str) {
 }
 
 pub(super) fn push_escaped(out: &mut String, text: &str) {
-    for character in text.chars() {
-        match character {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(character),
-        }
-    }
+    push_encoded(out, text, false);
 }
 
 pub(super) fn push_attribute(out: &mut String, text: &str) {
+    push_encoded(out, text, true);
+}
+
+fn push_encoded(out: &mut String, text: &str, apostrophe: bool) {
     for character in text.chars() {
         match character {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
+            '\'' if apostrophe => out.push_str("&#39;"),
             _ => out.push(character),
         }
     }

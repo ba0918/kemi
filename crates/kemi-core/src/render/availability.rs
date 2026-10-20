@@ -3,7 +3,9 @@
 use crate::domain::content;
 use crate::domain::review::FileEntry;
 
-use super::{IMAGE_MAX_BYTES, ImageKind, Target, image_kind, target_of_file, unbalanced_line};
+use super::{
+    IMAGE_MAX_BYTES, ImageKind, Target, Unrenderable, image_kind, target_of_file, unbalanced_line,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitialView {
@@ -47,7 +49,7 @@ pub fn render_info(file: &FileEntry, old: Option<&str>, new: Option<&str>) -> Re
                         .into_iter()
                         .flatten()
                         .find_map(|text| unbalanced_line(text, delimiter))
-                        .map(|line| format!("unbalanced quote on line {line}"))
+                        .map(|line| Unrenderable::UnbalancedQuote { line }.to_string())
                 }
             });
             RenderInfo {
