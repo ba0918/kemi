@@ -257,7 +257,7 @@ export function getSnapshot(id) {
 
 /**
  * @param {() => void} onUpdate 新側の供給元が変わった（更新バッジ）
- * @param {() => void} onUnit もう片方のグループ単位の作成の状態が変わった
+ * @param {(units?: any[]) => void} onUnit もう片方のグループ単位の作成の状態が変わった。通知は今の単位の一覧を運ぶ。つながったときは一覧を持たずに呼ぶ
  * @param {AgentHandlers} agent 返信・発言・エージェントの状態の通知と、届かなかった通知の取り直し
  * @returns {Promise<void>} 最初につながった（サーバが通知を送り始めた）とき、またはつながらなかったときに解決する
  */
@@ -265,7 +265,9 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
   const events = new EventSource("api/events");
   serverEvents = events;
   events.addEventListener("update", onUpdate);
-  events.addEventListener("unit", onUnit);
+  events.addEventListener("unit", (event) => {
+    onUnit(JSON.parse(/** @type {MessageEvent} */ (event).data).units);
+  });
   /**
    * @param {string} name
    * @param {(payload: any) => void} handler

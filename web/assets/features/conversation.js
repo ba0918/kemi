@@ -289,8 +289,8 @@ export function setThreadFolded(id, folded) {
 /**
  * 会話パネルで消えたコミットを見分けられるよう、会話パネルが見えていれば、作ってある
  * コミットごとの単位をまだ読んでいなければ読む（起動の直後と再取得の後は、表示中の単位しか
- * 控えていない）。パネルを開いたとき、開いたまま起動したとき、単位ができたという通知
- * （再取得で作り直した後にも届く）を受けたときに呼ぶ。
+ * 控えていない）。パネルを開いたとき、開いたまま起動したとき、再取得の後、単位ができたという
+ * 通知（再取得で作り直した後にも届く）を受けたときに呼ぶ。
  */
 export async function loadCommitGroups() {
   const status = state.units.find((candidate) => candidate.unit === "commit");

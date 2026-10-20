@@ -715,7 +715,7 @@ async fn events(
         .filter_map(|event| async move {
             let (name, data) = match event {
                 Ok(Event::Update) => ("update", "{}".to_string()),
-                Ok(Event::Unit) => ("unit", "{}".to_string()),
+                Ok(Event::Unit(units)) => ("unit", units.to_string()),
                 Ok(Event::Thread(comment)) => ("thread", comment.to_string()),
                 Ok(Event::Message(message)) => ("message", message.to_string()),
                 Ok(Event::Agent(agent)) => ("agent", agent.to_string()),

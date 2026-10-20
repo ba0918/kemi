@@ -111,6 +111,9 @@ export async function refresh() {
   // 取得中の古い単位の応答が、新しいレビューの控えに入らないよう入れ物ごと替える。
   state.reviews = new Map();
   applyReview(await api.getReview(true, state.unit), true);
+  // 単位ができたという通知は、この応答より先に届くことがある（届いた時点では古い版なので、
+  // 読んだコミットごとの単位を控えない）。消えたコミットを見分けるため、ここでも読む。
+  actions.loadCommitGroups();
   // 取得待ちのスクロールで、古い内容の幅計測に消費されないよう到着後に破棄する。
   invalidateHorizontalWidth();
   const current = currentEntry();

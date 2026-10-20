@@ -99,6 +99,34 @@ async fn unit_background_first_review_does_not_wait_for_the_other_unit() {
 }
 
 #[tokio::test]
+async fn the_unit_event_carries_the_units_of_the_review() {
+    let (repo, base) = range_repo();
+    let (release, gate) = std::sync::mpsc::channel();
+    let source = Arc::new(GatedSource {
+        inner: Box::new(range_source(&repo, &base, "HEAD", GroupBy::File)),
+        gated: GroupBy::Commit,
+        gate: std::sync::Mutex::new(gate),
+    });
+    let server = LiveServer::start(source).await;
+    let mut events = reqwest::get(format!("{}api/events", server.url()))
+        .await
+        .unwrap();
+    let first = server.get_json("api/review").await;
+    assert_eq!(first["units"][1]["state"], "building");
+
+    release.send(()).unwrap();
+    let notified = next_sse_event(&mut events, "unit").await;
+
+    assert_eq!(notified["units"][1]["unit"], "commit");
+    assert_eq!(notified["units"][1]["state"], "ready");
+    assert_eq!(
+        notified["units"],
+        server.get_json("api/review").await["units"]
+    );
+    server.stop();
+}
+
+#[tokio::test]
 async fn unit_failure_keeps_review_and_retries() {
     let (repo, base) = range_repo();
     let fail = Arc::new(AtomicBool::new(true));

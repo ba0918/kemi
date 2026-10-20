@@ -141,7 +141,7 @@ pub(crate) fn retry(state: &Arc<AppState>, unit: GroupBy) -> bool {
         other.state = BuildState::Building;
         other.generation
     };
-    let _ = state.events.send(Event::Unit);
+    notify_units(&state);
     spawn_build(state.clone(), state.sources.current(), generation);
     true
 }
@@ -183,7 +183,7 @@ fn spawn_build(state: Arc<AppState>, source: Arc<dyn ReviewSource>, generation: 
                 record(other, &built);
             }
         }
-        let _ = state.events.send(Event::Unit);
+        notify_units(&state);
     });
 }
 
@@ -284,8 +284,18 @@ pub(crate) async fn refresh(state: &Arc<AppState>) -> Result<(), crate::ServerEr
     if let Some(generation) = start_build {
         spawn_build(state.clone(), source, generation);
     }
-    let _ = state.events.send(Event::Unit);
+    notify_units(&state);
     Ok(())
+}
+
+/// 単位の作成の状態が変わったことを、今の単位の一覧を添えてページへ知らせる（R-UNIT）。
+/// ページはこれで切り替えの操作を描き直し、`api/review` 全体を取り直さない。一覧を読む
+/// ロックの中で送るので、後から届く知らせほど新しい状態を持つ。
+fn notify_units(state: &AppState) {
+    let review = state.review.read().expect("review lock poisoned");
+    let _ = state
+        .events
+        .send(Event::Unit(json!({ "units": review.units_json() })));
 }
 
 /// 凍結の入力がまだ同じ世代の単位を待っていれば、その単位の状態を変える。

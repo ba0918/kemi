@@ -111,13 +111,15 @@ function openUnitFailure(status) {
   });
 }
 
-/** もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。 */
-export async function onUnitEvent() {
+/**
+ * もう片方の単位の作成の状態が変わった。待っている切り替えがあれば続ける。
+ * @param {any[]} [units] 通知が運んだ今の単位の一覧。無ければ（つながったときや、手元の状態が古いかもしれないとき）api/review から読み直す
+ */
+export async function onUnitEvent(units) {
   if (state.submitted) {
     return;
   }
-  const review = await api.getReview(false);
-  state.units = review.units || [];
+  state.units = units ?? (await api.getReview(false)).units ?? [];
   renderUnitSwitch();
   // 会話パネルを開いたままコミットごとの単位ができたら（再取得で作り直したときも）、消えた
   // コミットを見分けられるようにする。

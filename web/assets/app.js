@@ -209,7 +209,7 @@ async function boot() {
       state.updateAvailable = true;
       renderUpdateBadge();
     }),
-    afterBoot(() => void onUnitEvent()),
+    afterBoot((/** @type {any[] | undefined} */ units) => void onUnitEvent(units)),
     {
       onThread: afterBoot(receiveThread),
       onMessage: afterBoot(receiveMessage),
