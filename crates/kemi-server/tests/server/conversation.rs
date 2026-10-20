@@ -856,6 +856,37 @@ async fn working_for_ten_minutes_without_the_agent_turns_into_no_response_and_re
 }
 
 #[tokio::test]
+async fn an_empty_reply_writes_nothing_returns_no_ids_and_keeps_the_state_and_its_ten_minutes() {
+    use kemi_core::domain::agent::UNRESPONSIVE_AFTER_MILLIS;
+    use std::sync::atomic::AtomicU64;
+    let now = Arc::new(AtomicU64::new(1_000_000));
+    let clock: kemi_server::Clock = {
+        let now = now.clone();
+        Arc::new(move || u128::from(now.load(Ordering::SeqCst)))
+    };
+    let server = AgentServer::start_with_clock(clock).await;
+    let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
+    server.page.hand().await;
+    let (status, _) = server.wait(Some(0)).await;
+    assert_eq!(status, 200);
+    let ten_minutes = u64::try_from(UNRESPONSIVE_AFTER_MILLIS).unwrap();
+    now.fetch_add(ten_minutes - 1, Ordering::SeqCst);
+    let lines = vec![(c1, "working".to_string())];
+    assert_eq!(server.hand_lines().await, lines);
+
+    let (status, answer) = server.reply(json!([])).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(answer, json!({ "ids": [] }));
+    assert_nothing_written(&server).await;
+    assert_eq!(server.agent_status().await, "working");
+    assert_eq!(server.hand_lines().await, lines);
+    // 届いた書き込みとして 10 分を数え直していれば、ここではまだ作業中。
+    now.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(server.agent_status().await, "no-response");
+}
+
+#[tokio::test]
 async fn replying_to_one_of_two_handed_threads_keeps_it_working_and_to_both_makes_it_replied() {
     let server = AgentServer::start().await;
     let c1 = server.page.add_comment_with_body(11, "first").await["id"].clone();
