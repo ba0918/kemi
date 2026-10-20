@@ -118,7 +118,7 @@ async fn build_submit_document(state: &Arc<AppState>, verdict: Verdict) -> Resul
             continue;
         }
         // ファイル全体の行に分けてハッシュを求めるので、行データと同じ枠で async ワーカーの外で行う。
-        super::prepare_known_content(state.clone(), file_id, |state, file_id, content| {
+        super::prepare_content_if_known(state.clone(), file_id, |state, file_id, content| {
             let lines = content.map(|content| (side_lines(&content.old), side_lines(&content.new)));
             refresh_outdated(
                 state,

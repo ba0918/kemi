@@ -291,7 +291,7 @@ async fn prepare_content<T: Send + 'static>(
     + Send
     + 'static,
 ) -> Result<T, ApiError> {
-    prepare_known_content(state, file_id, move |state, file_id, content| {
+    prepare_content_if_known(state, file_id, move |state, file_id, content| {
         prepare(state, file_id, content.ok_or_else(file_not_found)?)
     })
     .await
@@ -299,7 +299,7 @@ async fn prepare_content<T: Send + 'static>(
 
 /// [`prepare_content`] と同じく内容を読んで計算するが、内容の側がその id をもう知らない
 /// ときも誤りにせず None を渡す（[`source_content`] と同じ扱い）。
-async fn prepare_known_content<T: Send + 'static>(
+async fn prepare_content_if_known<T: Send + 'static>(
     state: Arc<AppState>,
     file_id: String,
     prepare: impl FnOnce(
