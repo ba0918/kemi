@@ -18,7 +18,7 @@ use crate::domain::agent::{
 };
 use crate::domain::conversation_content::ConversationContent;
 use crate::domain::display_version::{DisplayVersions, known_generation};
-use crate::domain::explanation::{ExplanationHistory, canonical_size, validate_version};
+use crate::domain::explanation::{ExplanationHistory, canonical_size, nullable, validate_version};
 use crate::domain::live::LivePage;
 use crate::domain::parts::Part;
 use crate::domain::parts_validation::validate_parts;
@@ -47,7 +47,7 @@ pub fn additional_saved_size(state: &SessionState) -> usize {
                 .replies
                 .iter()
                 .filter(|reply| reply.body.parts().is_some())
-                .map(|reply| saved_bytes(ReplyDto::from(reply)))
+                .map(|reply| saved_bytes(PostDto::from(reply)))
                 .sum()
         }
     }
@@ -61,7 +61,7 @@ pub fn additional_saved_size(state: &SessionState) -> usize {
         .iter()
         .filter(|message| message.body.parts().is_some())
     {
-        bytes = bytes.saturating_add(saved_bytes(MessageDto::from(message)));
+        bytes = bytes.saturating_add(saved_bytes(PostDto::from(message)));
     }
     for event in &state.channel.events {
         let AgentEvent::Handed(handed) = event;
@@ -94,7 +94,7 @@ pub(super) struct MetaDto<'a> {
     copy: CopyMetaDto,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct InfoDto {
     id: String,
     created: u128,
@@ -148,7 +148,7 @@ struct StateDto<'a> {
     #[serde(default)]
     last_comment: u32,
     #[serde(default)]
-    messages: Vec<MessageDto>,
+    messages: Vec<PostDto>,
     #[serde(default)]
     last_reply: u32,
     #[serde(default)]
@@ -165,28 +165,17 @@ struct StateDto<'a> {
     page_comment_saved: bool,
 }
 
+/// 返信と発言の保存形式。ドメインでは別の型（スレッドの中か全体か）だが、保存の規則は同じ。
 #[derive(Serialize, Deserialize)]
-struct ReplyDto {
+struct PostDto {
     id: String,
     /// 版 2 と、通し番号を足す前の版 3 には無い。
     #[serde(default)]
     seq: Option<u32>,
     author: String,
-    #[serde(deserialize_with = "saved_nullable")]
+    #[serde(deserialize_with = "nullable")]
     body: Option<String>,
-    #[serde(deserialize_with = "saved_nullable")]
-    parts: Option<Vec<Part>>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct MessageDto {
-    id: String,
-    #[serde(default)]
-    seq: Option<u32>,
-    author: String,
-    #[serde(deserialize_with = "saved_nullable")]
-    body: Option<String>,
-    #[serde(deserialize_with = "saved_nullable")]
+    #[serde(deserialize_with = "nullable")]
     parts: Option<Vec<Part>>,
 }
 
@@ -217,7 +206,7 @@ enum EventDto {
     Handed {
         comments: Vec<HandedCommentDto>,
         replies: Vec<HandedReplyDto>,
-        messages: Vec<MessageDto>,
+        messages: Vec<PostDto>,
     },
 }
 
@@ -232,7 +221,7 @@ enum HandedCommentDto {
 #[derive(Serialize, Deserialize)]
 struct HandedReplyDto {
     comment_id: String,
-    reply: ReplyDto,
+    reply: PostDto,
 }
 
 /// 写しの状態だけ。「使える」写しの中身は `<id>.payload` にある。
@@ -323,7 +312,7 @@ struct CommentDto {
     #[serde(default)]
     quote: Vec<String>,
     body: String,
-    replies: Vec<ReplyDto>,
+    replies: Vec<PostDto>,
     resolved: bool,
     outdated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -409,16 +398,7 @@ impl<'a> MetaDto<'a> {
 
     /// 情報・状態・写しのメタデータに分ける。
     pub(super) fn into_parts(self) -> Result<(SessionInfo, SessionState, CopyMeta), String> {
-        let info = SessionInfo {
-            id: self.info.id,
-            created: self.info.created,
-            updated: self.info.updated,
-            workspace: PathBuf::from(self.info.workspace),
-            workspace_key: self.info.workspace_key,
-            mode: self.info.mode.into(),
-            title: self.info.title,
-            total_files: self.info.total_files as usize,
-        };
+        let info = SessionInfo::from(self.info);
         let mut state = self.state.into_parts()?;
         if let Some(display) = &state.display {
             display.validate(&info.id).map_err(|e| e.to_string())?;
@@ -447,6 +427,21 @@ impl<'a> MetaDto<'a> {
             CopyMetaDto::Ready => CopyMeta::Ready,
         };
         Ok((info, state, copy))
+    }
+}
+
+impl From<InfoDto> for SessionInfo {
+    fn from(info: InfoDto) -> Self {
+        SessionInfo {
+            id: info.id,
+            created: info.created,
+            updated: info.updated,
+            workspace: PathBuf::from(info.workspace),
+            workspace_key: info.workspace_key,
+            mode: info.mode.into(),
+            title: info.title,
+            total_files: info.total_files as usize,
+        }
     }
 }
 
@@ -517,7 +512,7 @@ impl<'a> From<&'a SessionState> for StateDto<'a> {
             seen: Cow::Borrowed(&state.seen),
             collapsed: Cow::Borrowed(&state.collapsed),
             last_comment: state.last_comment,
-            messages: state.messages.iter().map(MessageDto::from).collect(),
+            messages: state.messages.iter().map(PostDto::from).collect(),
             last_reply: state.last_reply,
             last_message: state.last_message,
             last_seq: state.last_seq,
@@ -562,7 +557,7 @@ impl StateDto<'_> {
             messages: self
                 .messages
                 .into_iter()
-                .map(MessageDto::into_message)
+                .map(PostDto::into_message)
                 .collect::<Result<Vec<_>, String>>()?,
             last_reply: self.last_reply,
             last_message: self.last_message,
@@ -621,25 +616,29 @@ fn stored_content(
     }
 }
 
-fn saved_nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
-    d: D,
-) -> Result<Option<T>, D::Error> {
-    Option::<T>::deserialize(d)
-}
-
-impl From<&Reply> for ReplyDto {
+impl From<&Reply> for PostDto {
     fn from(reply: &Reply) -> Self {
-        ReplyDto {
-            id: reply.id.clone(),
-            seq: Some(reply.seq),
-            author: author_dto(reply.author),
-            body: reply.body.plain().map(str::to_owned),
-            parts: reply.body.parts().map(<[Part]>::to_vec),
-        }
+        PostDto::new(&reply.id, reply.seq, reply.author, &reply.body)
     }
 }
 
-impl ReplyDto {
+impl From<&Message> for PostDto {
+    fn from(message: &Message) -> Self {
+        PostDto::new(&message.id, message.seq, message.author, &message.body)
+    }
+}
+
+impl PostDto {
+    fn new(id: &str, seq: u32, author: Author, body: &ConversationContent) -> Self {
+        PostDto {
+            id: id.to_owned(),
+            seq: Some(seq),
+            author: author_dto(author),
+            body: body.plain().map(str::to_owned),
+            parts: body.parts().map(<[Part]>::to_vec),
+        }
+    }
+
     fn into_reply(self) -> Result<Reply, String> {
         Ok(Reply {
             id: self.id,
@@ -648,21 +647,7 @@ impl ReplyDto {
             body: stored_content(self.body, self.parts)?,
         })
     }
-}
 
-impl From<&Message> for MessageDto {
-    fn from(message: &Message) -> Self {
-        MessageDto {
-            id: message.id.clone(),
-            seq: Some(message.seq),
-            author: author_dto(message.author),
-            body: message.body.plain().map(str::to_owned),
-            parts: message.body.parts().map(<[Part]>::to_vec),
-        }
-    }
-}
-
-impl MessageDto {
     fn into_message(self) -> Result<Message, String> {
         Ok(Message {
             id: self.id,
@@ -745,10 +730,10 @@ impl From<&AgentEvent> for EventDto {
                     .iter()
                     .map(|handed| HandedReplyDto {
                         comment_id: handed.comment_id.clone(),
-                        reply: ReplyDto::from(&handed.reply),
+                        reply: PostDto::from(&handed.reply),
                     })
                     .collect(),
-                messages: handed.messages.iter().map(MessageDto::from).collect(),
+                messages: handed.messages.iter().map(PostDto::from).collect(),
             },
         }
     }
@@ -787,7 +772,7 @@ impl EventDto {
                     .collect::<Result<Vec<_>, String>>()?,
                 messages: messages
                     .into_iter()
-                    .map(MessageDto::into_message)
+                    .map(PostDto::into_message)
                     .collect::<Result<Vec<_>, String>>()?,
             })),
         }
@@ -809,7 +794,7 @@ impl From<&Comment> for CommentDto {
             end_line: None,
             quote: Vec::new(),
             body: comment.body.clone(),
-            replies: comment.replies.iter().map(ReplyDto::from).collect(),
+            replies: comment.replies.iter().map(PostDto::from).collect(),
             resolved: comment.resolved,
             outdated: comment.outdated,
             content_hash: None,
@@ -897,7 +882,7 @@ impl CommentDto {
             replies: self
                 .replies
                 .into_iter()
-                .map(ReplyDto::into_reply)
+                .map(PostDto::into_reply)
                 .collect::<Result<Vec<_>, String>>()?,
             resolved: self.resolved,
             outdated: self.outdated,
@@ -1158,17 +1143,7 @@ impl MetaDto<'_> {
 
     /// info と状態だけを取り出す（一覧のための軽い読み）。
     pub(super) fn summary(&self) -> (SessionInfo, usize) {
-        let info = SessionInfo {
-            id: self.info.id.clone(),
-            created: self.info.created,
-            updated: self.info.updated,
-            workspace: PathBuf::from(&self.info.workspace),
-            workspace_key: self.info.workspace_key.clone(),
-            mode: self.info.mode.clone().into(),
-            title: self.info.title.clone(),
-            total_files: self.info.total_files as usize,
-        };
-        (info, self.state.seen.len())
+        (SessionInfo::from(self.info.clone()), self.state.seen.len())
     }
 
     pub(super) fn is_resumable(&self) -> bool {

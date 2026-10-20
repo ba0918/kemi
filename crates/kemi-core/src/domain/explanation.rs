@@ -217,7 +217,9 @@ pub enum ExplanationReference {
         url: String,
     },
 }
-fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+/// キーの省略は拒み、null は None として受ける（deserialize_with を付けた項目は、
+/// serde が省略を None で埋めない）。
+pub(crate) fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
 ) -> Result<Option<T>, D::Error> {
     Option::<T>::deserialize(d)
