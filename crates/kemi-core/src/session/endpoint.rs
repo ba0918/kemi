@@ -18,7 +18,7 @@ pub struct Endpoint {
     pub token: String,
 }
 
-pub fn endpoint_path(dir: &Path, id: &str) -> PathBuf {
+pub(crate) fn endpoint_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.endpoint"))
 }
 

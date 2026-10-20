@@ -25,11 +25,11 @@ use super::storage_io::{
 use super::{CopyState, SessionCopy, SessionInfo, SessionState, SessionSummary, checked_id};
 
 /// 写しの上限（`<id>.payload` 全体のバイト数）。超えた写しは捨てて復元不可にする。
-pub const COPY_LIMIT: u64 = 20 * 1024 * 1024;
+pub(crate) const COPY_LIMIT: u64 = 20 * 1024 * 1024;
 /// 全ワークスペース合計で残すセッション数。
-pub const KEEP_SESSIONS: usize = 100;
+pub(crate) const KEEP_SESSIONS: usize = 100;
 /// 全ワークスペース合計で残すバイト数。
-pub const KEEP_BYTES: u64 = 500 * 1024 * 1024;
+pub(crate) const KEEP_BYTES: u64 = 500 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum SessionError {

@@ -14,7 +14,7 @@ pub fn is_valid_id(id: &str) -> bool {
 }
 
 /// 26 文字の ULID。128 bit を 5 bit ずつ、上位から並べる。
-pub fn generate_ulid(time_millis: u128, random: [u8; 10]) -> String {
+pub(crate) fn generate_ulid(time_millis: u128, random: [u8; 10]) -> String {
     let mut value = time_millis & 0xffff_ffff_ffff;
     for byte in random {
         value = (value << 8) | u128::from(byte);

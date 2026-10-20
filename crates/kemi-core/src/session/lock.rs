@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::SessionError;
 use super::storage_io::{create_private_dir, open_lock_file};
 
-pub struct SessionLock {
+pub(crate) struct SessionLock {
     file: Option<std::fs::File>,
     path: PathBuf,
 }
