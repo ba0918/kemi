@@ -96,11 +96,6 @@ pub fn classify(input: &NoiseInput) -> Option<NoiseReason> {
     None
 }
 
-/// `.gitattributes` の内容を先頭から評価し、`linguist-generated` の最後の一致を返す。
-pub fn linguist_generated(attributes: &str, path: &str) -> bool {
-    GeneratedAttributes::parse(attributes).matches(path)
-}
-
 pub(crate) struct GeneratedAttributes<'a> {
     rules: Vec<(&'a str, bool)>,
 }
@@ -234,6 +229,8 @@ mod tests {
             ("/a.rs", "src/a.rs", false),
             ("a.rs", "src/a.rs", true),
             ("generated/", "generated/a/b.rs", true),
+            ("generated/**", "generated/a/b.rs", true),
+            ("generated/*", "generated/a/b.rs", false),
             ("**/a/**/b", "a/b", true),
             ("**/a/**/b", "x/a/y/z/b", true),
             ("**/**/missing", "a/b/c", false),
@@ -376,33 +373,5 @@ mod tests {
         ] {
             assert_eq!(classify(&input(path)), None, "{path}");
         }
-    }
-
-    #[test]
-    fn noise_gitattributes_marks_generated_paths() {
-        assert!(linguist_generated("*.rs linguist-generated", "src/a.rs"));
-        assert!(linguist_generated(
-            "src/*.ts linguist-generated=true",
-            "src/schema.ts"
-        ));
-    }
-
-    #[test]
-    fn noise_gitattributes_last_match_wins() {
-        let attributes = "*.rs linguist-generated\nsrc/*.rs -linguist-generated\n";
-        assert!(!linguist_generated(attributes, "src/a.rs"));
-        assert!(linguist_generated(attributes, "lib/a.rs"));
-    }
-
-    #[test]
-    fn noise_gitattributes_double_star_crosses_directories() {
-        assert!(linguist_generated(
-            "generated/** linguist-generated",
-            "generated/a/b.rs"
-        ));
-        assert!(!linguist_generated(
-            "generated/* linguist-generated",
-            "generated/a/b.rs"
-        ));
     }
 }
