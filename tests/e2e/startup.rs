@@ -350,39 +350,12 @@ async fn exit_code_changes_requested_is_1() {
 async fn stdin_dash_reads_manifest() {
     let dir = TempDir::new();
     let state = TempDir::new();
-    let mut child = StopOnDrop(
-        kemi_command(&dir.path, &state.path)
-            .args(["-", "--no-open", "--port", "0"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
+    let kemi = Kemi::start_with_input(
+        kemi_command(&dir.path, &state.path).args(["-", "--no-open", "--port", "0"]),
+        Some(MANIFEST),
     );
-    child
-        .0
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(MANIFEST.as_bytes())
-        .unwrap();
 
-    let mut stderr = BufReader::new(child.0.stderr.take().unwrap());
-    let mut line = String::new();
-    let url = loop {
-        line.clear();
-        let read = stderr.read_line(&mut line).unwrap();
-        assert!(read > 0, "kemi が URL を出さずに終了しました");
-        if let Some(found) = line.strip_prefix("kemi: http") {
-            break format!("http{found}").trim().to_string();
-        }
-    };
-    let review = reqwest::get(format!("{url}api/review"))
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let review = kemi.review_json().await;
     assert_eq!(review["title"], "e2e のレビュー");
 }
 

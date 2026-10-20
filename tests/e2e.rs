@@ -5,7 +5,7 @@
     reason = "#[test] の外の補助関数も、失敗をそのままテストの失敗として見せる"
 )]
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -217,36 +217,17 @@ async fn result_relative_xdg_state_home_falls_back_to_home() {
     let dir = TempDir::new();
     let home = TempDir::new();
     dir.write("manifest.json", MANIFEST);
-    let mut child = StopOnDrop(
+    // 状態の置き場所を相対パスにするので kemi_command は使わない。HOME を一時ディレクトリに
+    // 向けるので、結果は利用者の本物の置き場所には書かれない。
+    let kemi = Kemi::start(
         Command::new(env!("CARGO_BIN_EXE_kemi"))
             .args(["manifest.json", "--no-open", "--port", "0"])
             .current_dir(&dir.path)
             .env("XDG_STATE_HOME", "relative/state")
-            .env("HOME", &home.path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
+            .env("HOME", &home.path),
     );
-    let mut stderr = BufReader::new(child.0.stderr.take().unwrap());
-    let mut line = String::new();
-    let url = loop {
-        line.clear();
-        assert!(stderr.read_line(&mut line).unwrap() > 0);
-        if let Some(found) = line.strip_prefix("kemi: http") {
-            break format!("http{found}").trim().to_string();
-        }
-    };
-    let origin = url.split("/s/").next().unwrap().to_string();
-    let response = reqwest::Client::new()
-        .post(format!("{url}api/submit"))
-        .header("Origin", origin)
-        .json(&serde_json::json!({"verdict": "approved"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    child.0.wait().unwrap();
+    kemi.submit("approved").await;
+    kemi.wait();
 
     assert_eq!(
         result_files(&home.path.join(".local/state")).len(),
