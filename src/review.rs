@@ -174,7 +174,7 @@ pub(crate) struct LiveRun {
 
 /// 中継のリスナーを立て、`kemi: live <url>` に出す中継の URL と一緒に返す（R-PAGE-MODE）。
 /// `--bind` に従い、`--live-port` で固定できる（R-PAGE-PROXY）。
-async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<(LiveParams, String)> {
+async fn start_live(cli: &Cli, live: LiveRun, host: Ipv4Addr) -> Option<(LiveParams, String)> {
     let target = LiveTarget::from_page(&live.page).ok()?;
     let start = target.start();
     let port = cli.live_port.unwrap_or(0);
@@ -190,11 +190,11 @@ async fn start_live(cli: &Cli, live: &LiveRun, host: Ipv4Addr) -> Option<(LivePa
     let params = LiveParams {
         listener,
         target,
-        root: live.root.clone(),
+        root: live.root,
         cookie: random_token(),
         mock_secret: random_token(),
         code_view: live.code_view,
-        snapshots: live.snapshots.clone(),
+        snapshots: live.snapshots,
         last_snapshot_number: live.last_snapshot_number,
     };
     Some((params, url))
@@ -262,7 +262,7 @@ async fn prepare_review(
     source: Arc<dyn ReviewSource>,
     stored_session: Option<&Arc<StoredSession>>,
     results_key: String,
-    live: Option<&LiveRun>,
+    live: Option<LiveRun>,
     initial_explanation: Option<kemi_core::domain::explanation::ExplanationDocument>,
 ) -> ReviewStartup {
     let listener = match TcpListener::bind((cli.bind, cli.port)).await {
@@ -374,7 +374,7 @@ pub(crate) async fn run_review(
         source,
         stored_session.as_ref(),
         results_key,
-        live.as_ref(),
+        live,
         initial_explanation,
     )
     .await;
