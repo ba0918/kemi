@@ -424,8 +424,22 @@ fn initial_explanation_exclusions_and_bad_inputs_never_start_a_review_or_print_s
     workspace.write("manifest.json", MANIFEST);
     workspace.write("bad.json", "{\"sections\":[],\"sections\":[]}");
     for args in [
-        vec!["manifest.json", "--explanation", "bad.json"],
-        vec!["manifest.json", "--explanation", "missing.json"],
+        vec![
+            "manifest.json",
+            "--explanation",
+            "bad.json",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+        vec![
+            "manifest.json",
+            "--explanation",
+            "missing.json",
+            "--no-open",
+            "--port",
+            "0",
+        ],
         vec!["manifest.json", "--digest", "--explanation", "bad.json"],
         vec!["--resume", "--explanation", "bad.json"],
         vec!["--result", "--explanation", "bad.json"],
@@ -811,20 +825,12 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
     let e:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_explanation","explanation_revision":1,"block_id":"b","body":"Explanation question","selection":{"text":"plan","occurrence":0}})).await.json().await.unwrap();
     let parts = serde_json::json!([{"type":"text","body":"**Answer**"},{"type":"code","body":"literal()","language":"pseudocode","role":"example"}]);
     let writes = serde_json::json!({"writes":[{"type":"reply","comment_id":f["id"],"parts":parts},{"type":"reply","comment_id":p["id"],"parts":parts},{"type":"reply","comment_id":e["id"],"parts":parts},{"type":"message","parts":parts}]});
-    let mut reply = kemi_command(&workspace.path, &state.path)
-        .args(["reply", id])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    reply
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(writes.to_string().as_bytes())
-        .unwrap();
-    let reply = reply.wait_with_output().unwrap();
+    let reply = run_agent(
+        &workspace.path,
+        &state.path,
+        &["reply", id],
+        &writes.to_string(),
+    );
     assert_eq!(
         reply.status.code(),
         Some(0),
@@ -969,20 +975,12 @@ async fn explanation_updates_read_one_document_from_stdin_and_named_manifests_re
         .unwrap();
     let id = review["agent"]["review"].as_str().unwrap();
     let update = serde_json::json!({"expected_revision":0,"base_display_version":review["diff_display_version"],"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"From stdin"},"references":[]}]}]});
-    let mut command = kemi_command(&workspace.path, &state.path)
-        .args(["explain", id])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    command
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(update.to_string().as_bytes())
-        .unwrap();
-    let answer = command.wait_with_output().unwrap();
+    let answer = run_agent(
+        &workspace.path,
+        &state.path,
+        &["explain", id],
+        &update.to_string(),
+    );
     assert_eq!(
         answer.status.code(),
         Some(0),

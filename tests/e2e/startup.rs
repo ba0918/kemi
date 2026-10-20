@@ -143,7 +143,17 @@ fn serve_flag_is_accepted_for_compatibility_and_the_review_starts() {
 fn cli_out_rejected_with_reason() {
     let dir = TempDir::new();
     dir.write("manifest.json", MANIFEST);
-    let output = run(&dir.path, &["manifest.json", "--out", "x.html"]);
+    let output = run(
+        &dir.path,
+        &[
+            "manifest.json",
+            "--out",
+            "x.html",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());

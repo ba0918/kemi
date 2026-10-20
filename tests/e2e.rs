@@ -246,7 +246,46 @@ fn contains_japanese(text: &str) -> bool {
 }
 
 fn run_with_state(dir: &Path, args: &[&str], state: &Path) -> std::process::Output {
-    kemi_command(dir, state).args(args).output().unwrap()
+    run_command(kemi_command(dir, state).args(args), None)
+}
+
+/// すぐ終わるはずのコマンドを、終わるまで走らせる。`input` は stdin に渡す（無ければ stdin は
+/// 空）。退行で kemi がサーブを始めたり待ち続けたりしてもテストが止まり続けないよう、終了の
+/// 待ちに期限を設け、過ぎたら止めて失敗させる。
+fn run_command(command: &mut Command, input: Option<&str>) -> std::process::Output {
+    let mut child = StopOnDrop(
+        command
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let feeding =
+        input.map(|input| process::feed(child.0.stdin.take().unwrap(), input.as_bytes().to_vec()));
+    let mut stdout = process::CapturedPipe::new(child.0.stdout.take().unwrap());
+    let mut stderr = process::CapturedPipe::new(child.0.stderr.take().unwrap());
+    let status =
+        process::wait(&mut child.0, std::time::Duration::from_secs(20)).unwrap_or_else(|error| {
+            let args: Vec<_> = command.get_args().collect();
+            panic!("kemi {args:?}: {error}")
+        });
+    if let Some(feeding) = feeding {
+        feeding.finish().unwrap();
+    }
+    let mut out = Vec::new();
+    stdout.read_to_end(&mut out).unwrap();
+    let mut err = Vec::new();
+    stderr.read_to_end(&mut err).unwrap();
+    std::process::Output {
+        status,
+        stdout: out,
+        stderr: err,
+    }
 }
 
 /// フィクスチャを作る git。開発者の全体・システムの設定（署名の program、
@@ -832,22 +871,9 @@ fn endpoint_dir(state: &Path) -> PathBuf {
     }
 }
 
-/// `kemi wait` / `kemi reply` を終わるまで走らせる。
+/// `kemi wait` / `kemi reply` / `kemi explain` を、`stdin` を渡して終わるまで走らせる。
 fn run_agent(dir: &Path, state: &Path, args: &[&str], stdin: &str) -> std::process::Output {
-    let mut child = kemi_command(dir, state)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
-    child.wait_with_output().unwrap()
+    run_command(kemi_command(dir, state).args(args), Some(stdin))
 }
 
 /// `kemi wait` を裏で待たせる。

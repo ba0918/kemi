@@ -6,7 +6,15 @@ fn digest_accepts_a_valid_bind_without_serving() {
     dir.write("manifest.json", &digest_manifest());
     let output = run(
         &dir.path,
-        &["manifest.json", "--digest", "--bind", "127.0.0.1"],
+        &[
+            "manifest.json",
+            "--digest",
+            "--bind",
+            "127.0.0.1",
+            "--no-open",
+            "--port",
+            "0",
+        ],
     );
 
     assert_eq!(output.status.code(), Some(0));

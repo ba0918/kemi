@@ -1,6 +1,6 @@
-//! 子プロセスの出力を待機と並行して回収し、待ちに期限を設ける。
+//! 子プロセスの入出力を待機と並行して受け渡し、待ちに期限を設ける。
 
-use std::io::{self, BufRead, BufReader, Cursor, Read};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::process::{Child, ExitStatus};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -80,6 +80,36 @@ impl Read for Chunks {
             };
         }
         self.current.read(buffer)
+    }
+}
+
+/// 子の stdin への書き込み。別のスレッドで書き、書き終えたら閉じる。
+pub struct Feeding {
+    written: Receiver<io::Result<()>>,
+}
+
+/// `input` を別のスレッドで `stdin` に書く。パイプの容量を超える入力でも、子の出力の回収や
+/// 終了の待ちと並行して進む。
+pub fn feed(mut stdin: impl Write + Send + 'static, input: Vec<u8>) -> Feeding {
+    let (sender, written) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(stdin.write_all(&input));
+    });
+    Feeding { written }
+}
+
+impl Feeding {
+    /// 書き終わるのを待つ。子が読まずに先に終わったときの BrokenPipe は、子の振る舞いとして
+    /// 受け入れる（stdin を読まずに断るコマンドもある）。
+    pub fn finish(self) -> io::Result<()> {
+        match self.written.recv_timeout(TIMEOUT) {
+            Ok(Err(error)) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+            Ok(written) => written,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "process input was not written",
+            )),
+        }
     }
 }
 

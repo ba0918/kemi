@@ -51,3 +51,19 @@ fn a_process_that_does_not_exit_is_bounded_and_reaped_by_its_owner() {
     stop(&mut child.0);
     assert!(child.0.try_wait().unwrap().is_some());
 }
+
+#[cfg(unix)]
+#[test]
+fn input_for_a_process_that_exits_without_reading_it_is_not_an_error() {
+    let mut child = StopOnDrop(Command::new("true").stdin(Stdio::piped()).spawn().unwrap());
+    let stdin = child.0.stdin.take().unwrap();
+    assert!(
+        process::wait(&mut child.0, std::time::Duration::from_secs(20))
+            .unwrap()
+            .success()
+    );
+
+    process::feed(stdin, vec![b'x'; 1024 * 1024])
+        .finish()
+        .unwrap();
+}

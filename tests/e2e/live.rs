@@ -26,7 +26,11 @@ fn live_usage_errors_exit_2_in_english() {
         vec!["--worktree", "--live-port", "0"],
     ];
     for args in &cases {
-        let output = run(&dir.path, args);
+        // 退行で受け入れてサーブを始めても、ブラウザを開かず空いたポートで待つように。
+        let output = run(
+            &dir.path,
+            &[&["--no-open", "--port", "0"], &args[..]].concat(),
+        );
         assert_eq!(output.status.code(), Some(2), "kemi {args:?}");
         assert!(output.stdout.is_empty(), "kemi {args:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -44,7 +48,10 @@ fn live_refuses_a_symlink_whose_target_is_outside_the_served_range() {
     outside.write("page.html", "<p>outside</p>\n");
     std::os::unix::fs::symlink(outside.path.join("page.html"), dir.path.join("link.html")).unwrap();
 
-    let output = run(&dir.path, &["--live", "link.html"]);
+    let output = run(
+        &dir.path,
+        &["--live", "link.html", "--no-open", "--port", "0"],
+    );
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
