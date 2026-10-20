@@ -284,7 +284,7 @@ shoryoの公開upstreamは [ba0918/shoryo](https://github.com/ba0918/shoryo)。�
 | sequence/flowの描画と幾何検証 | shoryoの `web/explanation-{sequence,flow,svg,bounds,layout-validation,collision}.js`。意味・版・コメントとは独立 |
 | 図の操作 | shoryoの `web/components/explanation-{diagram,viewport,viewer}.js` と操作部品。kemiのviewsは通信せず、操作をactions経由でfeaturesへ渡す |
 | grid図・コード | shoryoの `web/diagram.js`、`measure.js`、`web/components/code-part.js`。gridの省略とsequence/flowの無損失折り返しを混同しない |
-| CLI・保存・会話 | kemiの `src/agent.rs`、`main.rs`、`crates/kemi-server/src/session.rs`、`api/agent.rs`、`api/submit.rs`、`web/assets/views/conversation.js` を拡張する境界 |
+| CLI・保存・会話 | kemiの `src/agent.rs`、`main.rs`、`crates/kemi-server/src/session.rs`、`api/json.rs`、`api/agent.rs`、`api/submit.rs`、`web/assets/views/conversation.js` を拡張する境界 |
 
 図の出典は公開upstream内の `skills/shoryo/references/explanations.md` と上記実コード。
 shoryoの `LICENSE` はMITであることを確認した。実質的なコード取り込み時は著作権表示とMITの許諾文を保持する。
