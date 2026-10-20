@@ -1115,6 +1115,15 @@ export function countLabel(count, noun) {
 }
 
 /**
+ * 返信の数。reply は s を足すだけでは複数形にならないので、countLabel とは別に持つ。
+ * @param {number} count
+ * @returns {string}
+ */
+export function replyCountLabel(count) {
+  return `${count} ${count === 1 ? "reply" : "replies"}`;
+}
+
+/**
  * @param {number} bytes
  * @returns {string}
  */

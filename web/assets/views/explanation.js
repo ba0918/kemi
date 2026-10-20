@@ -2,7 +2,7 @@
 import { actions } from '../actions.js';
 import { button, dom, el, textEl, svgIcon, COMMENT_ICON } from '../dom.js';
 import { state } from '../state.js';
-import { unitLabel } from '../model.js';
+import { replyCountLabel, unitLabel } from '../model.js';
 import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint, explanationElementId, commentCountDescription } from '../explanation-model.js';
 import { partView } from './parts.js';
 
@@ -131,8 +131,7 @@ export function commentCardHosts(blockId) {
 function commentCard(comment) {
   const card = button('explanation-card');
   card.append(commentIcon(),textEl('span','explanation-card-body',`${comment.resolved ? 'Resolved · ' : ''}${String(comment.body).split('\n')[0]}`));
-  const replies = (comment.replies ?? []).length;
-  card.append(textEl('span','explanation-card-meta',`${replies} ${replies === 1 ? 'reply' : 'replies'}`));
+  card.append(textEl('span','explanation-card-meta',replyCountLabel((comment.replies ?? []).length)));
   card.addEventListener('click',()=>actions.openThread(comment.id));
   return card;
 }

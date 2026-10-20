@@ -17,7 +17,7 @@ import {
   isShowingFile,
   state,
 } from "../state.js";
-import { commentLabel, pageCommentElsewhere, unitLabel } from "../model.js";
+import { commentLabel, pageCommentElsewhere, replyCountLabel, unitLabel } from "../model.js";
 import {
   agentStatusLabel,
   authorLabel,
@@ -335,7 +335,7 @@ function threadCard(comment, context) {
     head.append(textEl("span", "unread-mark", "New"));
   }
   if (!chip.folded && chip.replies > 0) {
-    head.append(textEl("span", "reply-count", chip.replies === 1 ? "1 reply" : `${chip.replies} replies`));
+    head.append(textEl("span", "reply-count", replyCountLabel(chip.replies)));
   }
   card.append(head);
   if (!chip.folded) {

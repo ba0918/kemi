@@ -7,6 +7,7 @@ import {
   collapseDefault,
   commentLabel,
   countLabel,
+  replyCountLabel,
   draftKey,
   filterAndSortFiles,
   formatBytes,
@@ -349,6 +350,10 @@ test("formatBytes_uses_binary_units", () => {
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(2048), "2.0 KiB");
   assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MiB");
+});
+
+test("返信の数は 1 のときだけ単数形にし、複数形は replies にする", () => {
+  assert.deepEqual([0, 1, 2].map(replyCountLabel), ["0 replies", "1 reply", "2 replies"]);
 });
 
 test("countLabel_uses_singular_only_for_one", () => {

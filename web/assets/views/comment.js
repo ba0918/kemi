@@ -5,7 +5,7 @@ import { actions } from "../actions.js";
 import { button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { saveDraft } from "../storage.js";
-import { commentLabel, draftKey, suggestionAllowed } from "../model.js";
+import { commentLabel, draftKey, replyCountLabel, suggestionAllowed } from "../model.js";
 import { threadChip } from "../conversation-model.js";
 
 /** @typedef {import("../state.js").Editor} Editor */
@@ -54,9 +54,7 @@ function renderChip(comment) {
       element.append(textEl("span", "badge-suggest", "Suggestion"));
     }
     if (chip.replies > 0) {
-      element.append(
-        textEl("span", "reply-count", chip.replies === 1 ? "1 reply" : `${chip.replies} replies`),
-      );
+      element.append(textEl("span", "reply-count", replyCountLabel(chip.replies)));
     }
   }
   if (chip.resolved) {
