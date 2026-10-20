@@ -2612,6 +2612,88 @@ ul.files ul {
   font-weight: 600;
 }
 
+/* 渡した 1 回分の行（R-AGENT-HAND）: 受け取り待ちと作業中。 */
+.cv-hand-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ai);
+}
+
+.cv-hand-line::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cv-hand-line[data-kemi-hand-line="pending"] {
+  color: var(--ink-2);
+}
+
+.cv-hand-line[data-kemi-hand-line="pending"]::before {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cv-hand-line[data-kemi-hand-line="working"]::before {
+    animation: cv-hand-working 1.2s infinite ease-in-out;
+  }
+}
+
+@keyframes cv-hand-working {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* 開いているスレッドの上の、別のスレッドに返信が届いた知らせ（R-AGENT-HAND）。 */
+.cv-other-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--ai);
+  border-radius: 6px;
+  background: var(--ai-soft);
+  color: var(--ai);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cv-other-new-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-other-new-go {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+/* 会話パネルの見出しの新着の数（R-AGENT-HAND）。 */
+.cv-head-unread {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ai);
+  color: var(--ai-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
 /* ---------- 狭い画面（R-NARROW） ---------- */
 
 /* 狭い画面でだけ使う要素。常に DOM にあり、広い画面では出さない。 */
@@ -2619,7 +2701,8 @@ ul.files ul {
   display: none;
 }
 
-/* 幅で変わる規則はこのメディアクエリに集める。JS は同じ文字列を matchMedia で見る（app.js）。
+/* 幅で変わる規則は、CSS のファイルごとに同じ条件の 1 つのメディアクエリに集める（style.css はここ。
+   explanation.css と live.css にもそれぞれ 1 つある）。JS は同じ文字列を matchMedia で見る（app.js）。
    広い画面の規則はこの外にあり、ここでは上書きするだけで変えない。 */
 @media (max-width: 719.98px) {
   /* 上部バーは 2 段。既存の要素を order で並べ替え、.spacer を段の区切りにする。
@@ -3014,86 +3097,4 @@ ul.files ul {
   #hand-float {
     box-shadow: 0 6px 18px rgb(0 0 0 / 20%);
   }
-}
-
-/* 渡した 1 回分の行（R-AGENT-HAND）: 受け取り待ちと作業中。 */
-.cv-hand-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--ai);
-}
-
-.cv-hand-line::before {
-  content: "";
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.cv-hand-line[data-kemi-hand-line="pending"] {
-  color: var(--ink-2);
-}
-
-.cv-hand-line[data-kemi-hand-line="pending"]::before {
-  background: none;
-  box-shadow: inset 0 0 0 1.5px currentColor;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .cv-hand-line[data-kemi-hand-line="working"]::before {
-    animation: cv-hand-working 1.2s infinite ease-in-out;
-  }
-}
-
-@keyframes cv-hand-working {
-  50% {
-    opacity: 0.3;
-  }
-}
-
-/* 開いているスレッドの上の、別のスレッドに返信が届いた知らせ（R-AGENT-HAND）。 */
-.cv-other-new {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin: 0 0 8px;
-  padding: 6px 10px;
-  border: 1px solid var(--ai);
-  border-radius: 6px;
-  background: var(--ai-soft);
-  color: var(--ai);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.cv-other-new-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cv-other-new-go {
-  flex: 0 0 auto;
-  font-weight: 600;
-}
-
-/* 会話パネルの見出しの新着の数（R-AGENT-HAND）。 */
-.cv-head-unread {
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--ai);
-  color: var(--ai-ink);
-  font-size: 11.5px;
-  font-weight: 600;
-  line-height: 18px;
 }
