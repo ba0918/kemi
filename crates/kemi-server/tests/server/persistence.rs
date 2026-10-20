@@ -404,9 +404,10 @@ async fn suspend_after_submit_returns_the_committed_document() {
             entered: tokio::sync::Notify::new(),
             release: Mutex::new(receiver),
         });
-        let source = Arc::new(SuspendGatedSource {
-            inner: FakeSource::new(),
+        let source = Arc::new(GatedContentSource {
+            inner: Arc::new(FakeSource::new()),
             gate: gate.clone(),
+            blocked: AtomicBool::new(true),
         });
         let sink = Arc::new(RecordingSink::default());
         sink.copy_already_saved.store(true, Ordering::SeqCst);

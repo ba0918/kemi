@@ -1642,23 +1642,6 @@ fn handed_events(answer: &Value) -> Vec<&Value> {
         .collect()
 }
 
-struct SuspendGatedSource {
-    inner: FakeSource,
-    gate: Arc<GenerationGate>,
-}
-
-impl ReviewSource for SuspendGatedSource {
-    fn review(&self) -> Result<ReviewMeta, SourceError> {
-        self.inner.review()
-    }
-
-    fn content(&self, id: &str) -> Result<FileContent, SourceError> {
-        self.gate.entered.notify_one();
-        let _ = self.gate.release.lock().unwrap().recv();
-        self.inner.content(id)
-    }
-}
-
 /// 起動時は読めるが、取り直しの読み取りで失敗する入力。
 struct FailingRefreshSource {
     inner: FakeSource,
@@ -1945,6 +1928,7 @@ fn explanation_comment_request(block_id: &str, selection: Option<Value>) -> Valu
     request
 }
 
+/// 内容の取得（`content`）を、`blocked` の間は合図があるまで止める。
 struct GatedContentSource {
     inner: Arc<FakeSource>,
     gate: Arc<GenerationGate>,
