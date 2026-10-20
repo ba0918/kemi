@@ -1,7 +1,7 @@
 //! 一覧と選択画面に出すローカル時刻（R-SESSION）。`YYYY-MM-DD HH:MM`。
 //!
 //! 時刻の整形に新しい依存は足さない。64 bit の unix は `localtime_r`、Windows は
-//! `FileTimeToLocalFileTime` を使い、それ以外の対象と、失敗したときは UTC で出す。
+//! `SystemTimeToTzSpecificLocalTime` を使い、それ以外の対象と、失敗したときは UTC で出す。
 
 #![cfg_attr(
     any(all(unix, target_pointer_width = "64"), windows),
@@ -121,8 +121,12 @@ fn local_parts(millis_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         milliseconds: u16,
     }
     unsafe extern "system" {
-        fn FileTimeToLocalFileTime(input: *const FileTime, output: *mut FileTime) -> i32;
         fn FileTimeToSystemTime(input: *const FileTime, output: *mut SystemTime) -> i32;
+        fn SystemTimeToTzSpecificLocalTime(
+            zone: *const std::ffi::c_void,
+            universal: *const SystemTime,
+            local: *mut SystemTime,
+        ) -> i32;
     }
     // 1601-01-01 から 1970-01-01 までの秒数。
     const EPOCH_DIFFERENCE: u64 = 11_644_473_600;
@@ -132,8 +136,7 @@ fn local_parts(millis_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         low: (ticks & 0xffff_ffff) as u32,
         high: (ticks >> 32) as u32,
     };
-    let mut local = FileTime { low: 0, high: 0 };
-    let mut parts = SystemTime {
+    let zeroed = || SystemTime {
         year: 0,
         month: 0,
         day_of_week: 0,
@@ -143,11 +146,17 @@ fn local_parts(millis_seconds: i64) -> Option<(i32, u32, u32, u32, u32)> {
         second: 0,
         milliseconds: 0,
     };
+    let mut universal = zeroed();
+    let mut parts = zeroed();
     // SAFETY: 入力と出力はどちらも初期化済みの `#[repr(C)]` の値への参照で、呼び出しの間生きている。
-    let local_ok = unsafe { FileTimeToLocalFileTime(&utc, &mut local) };
-    // SAFETY: 同上。`local` は失敗時もゼロで初期化済みなので、読んでも未定義にならない。
-    let parts_ok = unsafe { FileTimeToSystemTime(&local, &mut parts) };
-    if local_ok == 0 || parts_ok == 0 {
+    if unsafe { FileTimeToSystemTime(&utc, &mut universal) } == 0 {
+        return None;
+    }
+    // FileTimeToLocalFileTime は変換する時刻のではなく今の夏時間の補正を使い、別の季節の時刻が
+    // 1 時間ずれる。こちらは変換する時刻に夏時間が効いているかで補正を決める。
+    // SAFETY: 時間帯の null は「今の時間帯」の意味で、関数は読まない。ほかは上と同じく、
+    // 初期化済みの `#[repr(C)]` の値への参照で、呼び出しの間生きている。
+    if unsafe { SystemTimeToTzSpecificLocalTime(std::ptr::null(), &universal, &mut parts) } == 0 {
         return None;
     }
     Some((
@@ -207,18 +216,20 @@ mod tests {
         assert_eq!(format_local(1_700_000_000_000), expected);
     }
 
-    /// Windows の FFI を .NET のローカル時刻と比べる。
-    /// Why not 夏時間のある地域では比べない: FileTimeToLocalFileTime は変換する時刻のではなく
-    /// 今の夏時間の補正を使うので、夏時間の間に走らせると 11 月の時刻と 1 時間ずれ、結果が
-    /// 季節で変わる。CI の Windows（UTC）や夏時間の無い地域では比べる。
+    /// Windows の FFI を .NET のローカル時刻と比べる。11 月と 7 月の時刻を比べるのは、
+    /// 夏時間のある地域で、いつ走らせても片方は今と違う季節の時刻になるようにするため。
     #[cfg(windows)]
     #[test]
     fn local_time_matches_powershell() {
-        let script = "if ([TimeZoneInfo]::Local.SupportsDaylightSavingTime) { 'dst' } else { \
-            [DateTimeOffset]::FromUnixTimeSeconds(1700000000).LocalDateTime\
-            .ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }";
+        // 2023-11-14T22:13:20Z と 2023-07-10T14:40:00Z。
+        let seconds = [1_700_000_000_u64, 1_689_000_000];
+        let script = format!(
+            "{} | ForEach-Object {{ [DateTimeOffset]::FromUnixTimeSeconds($_).LocalDateTime\
+             .ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }}",
+            seconds.map(|second| second.to_string()).join(", ")
+        );
         let expected = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output();
         let Ok(expected) = expected else {
             return;
@@ -226,11 +237,13 @@ mod tests {
         if !expected.status.success() {
             return;
         }
-        let expected = String::from_utf8_lossy(&expected.stdout).trim().to_string();
-        if expected == "dst" {
-            return;
-        }
+        let expected = String::from_utf8_lossy(&expected.stdout);
+        let expected: Vec<&str> = expected.lines().map(str::trim).collect();
 
-        assert_eq!(format_local(1_700_000_000_000), expected);
+        let actual: Vec<String> = seconds
+            .iter()
+            .map(|second| format_local(u128::from(*second) * 1000))
+            .collect();
+        assert_eq!(actual, expected);
     }
 }
