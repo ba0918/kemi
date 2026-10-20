@@ -240,7 +240,8 @@ fn infer_status(
 
 /// manifest を供給元にしたレビュー。
 pub struct ManifestSource {
-    manifest: Manifest,
+    /// 更新のたびの fork で、インラインの内容ごと写さないよう共有する。
+    manifest: Arc<Manifest>,
     base: PathBuf,
     store: PlanStore,
 }
@@ -261,7 +262,7 @@ impl ManifestSource {
         let manifest: Manifest = serde_json::from_str(json)
             .map_err(|error| SourceError::Manifest(format!("cannot read manifest: {error}")))?;
         Ok(ManifestSource {
-            manifest,
+            manifest: Arc::new(manifest),
             base: base.to_path_buf(),
             store: PlanStore::new(),
         })
@@ -282,7 +283,7 @@ impl ManifestSource {
 impl ReviewSource for ManifestSource {
     fn fork(&self) -> Result<Option<Arc<dyn ReviewSource>>, SourceError> {
         Ok(Some(Arc::new(Self {
-            manifest: self.manifest.clone(),
+            manifest: Arc::clone(&self.manifest),
             base: self.base.clone(),
             store: PlanStore::new(),
         })))
