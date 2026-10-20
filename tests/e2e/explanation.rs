@@ -14,7 +14,23 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
     let state = TempDir::new();
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     workspace.write("explanation.json", "temporary input");
-    let original:ExplanationDocument=serde_json::from_value(serde_json::json!({"sections":[{"id":"s","title":"Original","blocks":[{"id":"b","part":{"type":"code","body":"literal\r\n","language":"pseudocode","role":"example"},"references":[]}]}]})).unwrap();
+    let original: ExplanationDocument = serde_json::from_value(serde_json::json!({
+        "sections": [{
+            "id": "s",
+            "title": "Original",
+            "blocks": [{
+                "id": "b",
+                "part": {
+                    "type": "code",
+                    "body": "literal\r\n",
+                    "language": "pseudocode",
+                    "role": "example",
+                },
+                "references": [],
+            }],
+        }],
+    }))
+    .unwrap();
     let quote = quote_block(&original, "b").unwrap();
     let mut current = original.clone();
     current.sections[0].blocks[0].part =
@@ -157,7 +173,19 @@ async fn live_explanation_only_session_survives_process_resume_and_suspend_witho
             &workspace.path,
         ))
         .unwrap();
-    let saved=SessionState{display:Some(kemi_core::domain::display_version::DisplayVersions::initial(id).unwrap()),explanation:Some(serde_json::from_value(serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:1"),"sections":[{"id":"s","title":"Section","blocks":[{"id":"b","part":{"type":"text","body":"explanation only"},"references":[]}]}]}]})).unwrap()),..SessionState::default()};
+    let explanation = serde_json::json!({
+        "current_revision": 1,
+        "versions": [{
+            "revision": 1,
+            "base_display_version": format!("{id}:1"),
+            "sections": one_section("Section", "explanation only", serde_json::json!([])),
+        }],
+    });
+    let saved = SessionState {
+        display: Some(kemi_core::domain::display_version::DisplayVersions::initial(id).unwrap()),
+        explanation: Some(serde_json::from_value(explanation).unwrap()),
+        ..SessionState::default()
+    };
     open.save_issued_state(saved).unwrap();
     open.close_suspended().unwrap();
     drop(open);
@@ -203,11 +231,16 @@ async fn initial_explanation_and_cli_context_update_roundtrip() {
     let workspace = TempDir::new();
     let state = TempDir::new();
     workspace.write("manifest.json", MANIFEST);
-    let sections = serde_json::json!([{"id":"overview","title":"Overview","blocks":[{"id":"intent","part":{"type":"text","body":"**Intent**"},"references":[]}]}]);
-    workspace.write(
-        "explanation.json",
-        &serde_json::json!({"sections":sections}).to_string(),
-    );
+    let sections = serde_json::json!([{
+        "id": "overview",
+        "title": "Overview",
+        "blocks": [{
+            "id": "intent",
+            "part": { "type": "text", "body": "**Intent**" },
+            "references": [],
+        }],
+    }]);
+    workspace.write("explanation.json", &document(&sections));
     let kemi = Kemi::spawn_with_state(
         &workspace.path,
         &[
@@ -232,7 +265,10 @@ async fn initial_explanation_and_cli_context_update_roundtrip() {
     );
     let context: serde_json::Value = serde_json::from_slice(&context.stdout).unwrap();
     assert_eq!(context["kemi"], 3);
-    workspace.write("update.json",&serde_json::json!({"expected_revision":1,"base_display_version":context["diff_display_version"],"sections":sections}).to_string());
+    workspace.write(
+        "update.json",
+        &update(1, &context["diff_display_version"], &sections),
+    );
     let update = run_with_state(
         &workspace.path,
         &["explain", id, "--file", "update.json"],
@@ -279,8 +315,15 @@ async fn live_explanation_references_accept_only_registered_pages_and_registrati
     let id = review["agent"]["review"].as_str().unwrap();
     let before = run_with_state(&workspace.path, &["explain", id, "--context"], &state.path);
     let context: serde_json::Value = serde_json::from_slice(&before.stdout).unwrap();
-    let sections = serde_json::json!([{"id":"s","title":"Page","blocks":[{"id":"b","part":{"type":"text","body":"Page explanation"},"references":[{"type":"page","url":"/next?state=1"}]}]}]);
-    workspace.write("update.json",&serde_json::json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":sections}).to_string());
+    let sections = one_section(
+        "Page",
+        "Page explanation",
+        serde_json::json!([{ "type": "page", "url": "/next?state=1" }]),
+    );
+    workspace.write(
+        "update.json",
+        &update(0, &context["diff_display_version"], &sections),
+    );
     assert_eq!(
         run_with_state(
             &workspace.path,
@@ -330,11 +373,7 @@ async fn live_explanation_references_accept_only_registered_pages_and_registrati
 async fn initial_explanations_work_with_all_input_modes_including_manifest_stdin() {
     let workspace = TempDir::new();
     workspace.write("manifest.json", MANIFEST);
-    let sections = serde_json::json!([{"id":"s","title":"Explanation","blocks":[{"id":"b","part":{"type":"text","body":"Explanation"},"references":[]}]}]);
-    workspace.write(
-        "explanation.json",
-        &serde_json::json!({"sections":sections}).to_string(),
-    );
+    workspace.write("explanation.json", &one_block_explanation());
     git_repo(&workspace);
     workspace.write("a.txt", "old\n");
     git(&workspace.path, &["add", "a.txt"]);
@@ -418,9 +457,45 @@ fn initial_explanation_exclusions_and_bad_inputs_never_start_a_review_or_print_s
     }
 }
 
+/// 節 1 つに本文のブロック 1 つの、説明の節の並び。節の id は s、ブロックの id は b。
+fn one_section(title: &str, body: &str, references: serde_json::Value) -> serde_json::Value {
+    serde_json::json!([{
+        "id": "s",
+        "title": title,
+        "blocks": [{
+            "id": "b",
+            "part": { "type": "text", "body": body },
+            "references": references,
+        }],
+    }])
+}
+
+/// `--explanation` で渡す説明の文書。
+fn document(sections: &serde_json::Value) -> String {
+    serde_json::json!({ "sections": sections }).to_string()
+}
+
+/// `kemi explain` に渡す、説明の置き換えの要求。
+fn update(
+    expected_revision: u64,
+    base_display_version: &serde_json::Value,
+    sections: &serde_json::Value,
+) -> String {
+    serde_json::json!({
+        "expected_revision": expected_revision,
+        "base_display_version": base_display_version,
+        "sections": sections,
+    })
+    .to_string()
+}
+
 /// 本文 1 つだけの起動時の説明。
 fn one_block_explanation() -> String {
-    serde_json::json!({"sections":[{"id":"s","title":"Explanation","blocks":[{"id":"b","part":{"type":"text","body":"Explanation"},"references":[]}]}]}).to_string()
+    document(&one_section(
+        "Explanation",
+        "Explanation",
+        serde_json::json!([]),
+    ))
 }
 
 /// URL の行の後の stderr を `count` 行読む。
@@ -638,11 +713,8 @@ async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_
     let workspace = TempDir::new();
     let state = TempDir::new();
     workspace.write("manifest.json", MANIFEST);
-    let sections = serde_json::json!([{"id":"s","title":"Explanation","blocks":[{"id":"b","part":{"type":"text","body":"old"},"references":[]}]}]);
-    workspace.write(
-        "explanation.json",
-        &serde_json::json!({"sections":sections}).to_string(),
-    );
+    let sections = one_section("Explanation", "old", serde_json::json!([]));
+    workspace.write("explanation.json", &document(&sections));
     let kemi = Kemi::spawn_with_state(
         &workspace.path,
         &[
@@ -664,7 +736,10 @@ async fn explanation_cli_storage_failure_keeps_the_previous_state_and_prints_no_
     let backup = session.with_extension("backup");
     std::fs::rename(&session, &backup).unwrap();
     std::fs::create_dir(&session).unwrap();
-    workspace.write("update.json",&serde_json::json!({"expected_revision":1,"base_display_version":review["diff_display_version"],"sections":sections}).to_string());
+    workspace.write(
+        "update.json",
+        &update(1, &review["diff_display_version"], &sections),
+    );
     let failed = run_with_state(
         &workspace.path,
         &["explain", id, "--file", "update.json"],
@@ -703,11 +778,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
     git(&workspace.path, &["commit", "-qm", "base"]);
     workspace.write("a.txt", "new\n");
     workspace.write("page.html", "<h1>Page</h1>");
-    let sections = serde_json::json!([{"id":"s","title":"Explanation","blocks":[{"id":"b","part":{"type":"text","body":"Explanation"},"references":[]}]}]);
-    workspace.write(
-        "explanation.json",
-        &serde_json::json!({"sections":sections}).to_string(),
-    );
+    workspace.write("explanation.json", &one_block_explanation());
     let kemi = Kemi::spawn_with_state(
         &workspace.path,
         &[
@@ -742,11 +813,60 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
     }
     assert_eq!(context.0.wait().unwrap().code(), Some(0));
     let file = file_entry(&review, "a.txt");
-    let f:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add","file_id":file["id"],"side":"new","body":"File question"})).await.json().await.unwrap();
-    let p:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_page","body":"Page question","page":{"url":"/page.html","width":640,"places":[{"n":1,"kind":"pen","points":[{"x":1,"y":1},{"x":3,"y":3}]}]}})).await.json().await.unwrap();
-    let e:serde_json::Value=kemi.post("api/comment",serde_json::json!({"op":"add_explanation","explanation_revision":1,"block_id":"b","body":"Explanation question","selection":{"text":"plan","occurrence":0}})).await.json().await.unwrap();
-    let parts = serde_json::json!([{"type":"text","body":"**Answer**"},{"type":"code","body":"literal()","language":"pseudocode","role":"example"}]);
-    let writes = serde_json::json!({"writes":[{"type":"reply","comment_id":f["id"],"parts":parts},{"type":"reply","comment_id":p["id"],"parts":parts},{"type":"reply","comment_id":e["id"],"parts":parts},{"type":"message","parts":parts}]});
+    let on_file = serde_json::json!({
+        "op": "add",
+        "file_id": file["id"],
+        "side": "new",
+        "body": "File question",
+    });
+    let on_page = serde_json::json!({
+        "op": "add_page",
+        "body": "Page question",
+        "page": {
+            "url": "/page.html",
+            "width": 640,
+            "places": [{
+                "n": 1,
+                "kind": "pen",
+                "points": [{ "x": 1, "y": 1 }, { "x": 3, "y": 3 }],
+            }],
+        },
+    });
+    let on_explanation = serde_json::json!({
+        "op": "add_explanation",
+        "explanation_revision": 1,
+        "block_id": "b",
+        "body": "Explanation question",
+        "selection": { "text": "plan", "occurrence": 0 },
+    });
+    let f: serde_json::Value = kemi
+        .post("api/comment", on_file)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let p: serde_json::Value = kemi
+        .post("api/comment", on_page)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let e: serde_json::Value = kemi
+        .post("api/comment", on_explanation)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let parts = serde_json::json!([
+        { "type": "text", "body": "**Answer**" },
+        { "type": "code", "body": "literal()", "language": "pseudocode", "role": "example" },
+    ]);
+    let writes = serde_json::json!({ "writes": [
+        { "type": "reply", "comment_id": f["id"], "parts": parts },
+        { "type": "reply", "comment_id": p["id"], "parts": parts },
+        { "type": "reply", "comment_id": e["id"], "parts": parts },
+        { "type": "message", "parts": parts },
+    ]});
     let reply = run_agent(
         &workspace.path,
         &state.path,
@@ -865,13 +985,12 @@ async fn explanation_updates_read_one_document_from_stdin_and_named_manifests_re
     kemi.wait_serving().await;
     let review = kemi.review_json().await;
     let id = review["agent"]["review"].as_str().unwrap();
-    let update = serde_json::json!({"expected_revision":0,"base_display_version":review["diff_display_version"],"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"From stdin"},"references":[]}]}]});
-    let answer = run_agent(
-        &workspace.path,
-        &state.path,
-        &["explain", id],
-        &update.to_string(),
+    let request = update(
+        0,
+        &review["diff_display_version"],
+        &one_section("Title", "From stdin", serde_json::json!([])),
     );
+    let answer = run_agent(&workspace.path, &state.path, &["explain", id], &request);
     assert_eq!(
         answer.status.code(),
         Some(0),
@@ -915,7 +1034,15 @@ fn initial_opposite_unit_references_refuse_wrong_group_path_side_and_unknown_lin
         } else {
             ("file", "all")
         };
-        let baseline = serde_json::json!({"type":"code","unit":unit,"group_id":group,"path":"first.txt","side":"new","start_line":null,"end_line":null});
+        let baseline = serde_json::json!({
+            "type": "code",
+            "unit": unit,
+            "group_id": group,
+            "path": "first.txt",
+            "side": "new",
+            "start_line": null,
+            "end_line": null,
+        });
         let mut references = Vec::new();
         for (key, value) in [
             ("group_id", serde_json::json!(&base)),
@@ -937,7 +1064,8 @@ fn initial_opposite_unit_references_refuse_wrong_group_path_side_and_unknown_lin
         line["end_line"] = serde_json::json!(1);
         references.push(line);
         for reference in references {
-            workspace.write("explanation.json",&serde_json::json!({"sections":[{"id":"s","title":"Title","blocks":[{"id":"b","part":{"type":"text","body":"Reference"},"references":[reference]}]}]}).to_string());
+            let sections = one_section("Title", "Reference", serde_json::json!([reference]));
+            workspace.write("explanation.json", &document(&sections));
             let result = run(
                 &workspace.path,
                 &[
