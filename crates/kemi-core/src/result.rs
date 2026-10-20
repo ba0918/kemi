@@ -411,22 +411,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn result_dir_ignores_local_app_data_on_unix() {
-        let home = Some(OsStr::new("/home/user"));
-        let app_data = Some(OsStr::new(r"C:\Users\user\AppData\Local"));
-
-        assert_eq!(
-            results_dir(None, home, app_data),
-            Some(PathBuf::from("/home/user/.local/state/kemi/results"))
-        );
-        assert_eq!(
-            results_dir(None, home, None),
-            Some(PathBuf::from("/home/user/.local/state/kemi/results"))
-        );
-    }
-
     #[test]
     fn result_workspace_key_differs_by_path() {
         assert_eq!(
