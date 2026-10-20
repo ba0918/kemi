@@ -4,7 +4,7 @@
  * @typedef {Point & {width:number,height:number}} Box
  * @typedef {Box & {id:string,kind:string}} Shape
  * @typedef {{lines:string[],width:number,height:number,original:string}} TextBlock
- * @typedef {{scale:number,width:(text:string)=>number,wrap:(text:string,limit:number)=>TextBlock,dispose:()=>void}} Metrics
+ * @typedef {{scale:number,box:(block:TextBlock)=>Box,width:(text:string)=>number,wrap:(text:string,limit:number)=>TextBlock,dispose:()=>void}} Metrics
  * @typedef {{element:SVGTextElement,block:TextBlock,x:number,y:number,owner:string|null}} Label
  * @typedef {{points:Point[],head:Point[],endpoints:string[]}} Arrow
  * @typedef {{svg:SVGSVGElement,shapes:Shape[],labels:Label[],arrows:Arrow[],frames:Box[],width:number,height:number}} DrawingResult

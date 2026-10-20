@@ -54,6 +54,8 @@ const collision = { ...flow, title:'Label collision', edges:[{from:'a',to:'b',la
 const intrusion = { ...flow, title:'Route intrusion', nodes:[...flow.nodes,{id:'c',kind:'process',label:'Middle',position:{x:160,y:180}}], edges:[{from:'a',to:'b',via:[]}] };
 const framed = {...sequence,title:'Alt and loop',events:[{type:'alt',branches:[{condition:'yes',messages:[sequence.events[0]]},{condition:'no',messages:[sequence.events[1]]}]},{type:'loop',condition:'repeat',messages:[sequence.events[0]]}]};
 const decision = {type:'flow',title:'Decision and return',role:'confirmed',nodes:[{id:'a',kind:'start',label:'Begin',position:{x:160,y:100}},{id:'b',kind:'decision',label:'Ready?',position:{x:160,y:300}},{id:'c',kind:'end',label:'End',position:{x:160,y:520}}],edges:[{from:'a',to:'b'},{from:'b',to:'c',label:{text:'yes'}},{from:'b',to:'a',from_port:'east',to_port:'east',via:[{x:400,y:300},{x:400,y:100}],label:{text:'retry',position:{x:440,y:200}}}]};
+const longEnd = {type:'flow',title:'Long end label',role:'example',nodes:[{id:'a',kind:'start',label:'Begin',position:{x:160,y:100}},{id:'b',kind:'end',label:'終わりのラベル'.repeat(6),position:{x:160,y:400}}],edges:[{from:'a',to:'b'}]};
+const tallStart = {type:'flow',title:'Tall font start',role:'example',nodes:[{id:'a',kind:'start',label:'n'.repeat(40)}],edges:[]};
 const touching = {type:'flow',title:'Allowed contact and crossing',role:'example',nodes:[{id:'a',kind:'process',label:'A',position:{x:160,y:100},width:180,height:64},{id:'b',kind:'process',label:'B',position:{x:340,y:100},width:180,height:64},{id:'c',kind:'process',label:'C',position:{x:160,y:400}},{id:'d',kind:'process',label:'D',position:{x:500,y:400}}],edges:[{from:'a',to:'d',from_port:'south',to_port:'north',via:[]},{from:'b',to:'c',from_port:'south',to_port:'north',via:[]}]};
 let running;
 if (!process.argv.includes('--navigation') && !process.argv.includes('--live-navigation') && !process.argv.includes('--range-navigation')) try {
@@ -81,7 +83,7 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.equal(raw[13], 4);
   const saved = JSON.parse(raw.subarray(18).toString());
   saved.state.messages[1].body = null;
-  saved.state.messages[1].parts = [...parts, sequence, grid, flow, outside, collision, intrusion, framed, decision, touching];
+  saved.state.messages[1].parts = [...parts, sequence, grid, flow, outside, collision, intrusion, framed, decision, touching, longEnd, tallStart];
   saved.state.comments[0].replies[0].body = null; saved.state.comments[0].replies[0].parts = parts;
   const json = Buffer.from(JSON.stringify(saved));
   const header = Buffer.from(raw.subarray(0, 18)); header.writeUInt32LE(json.length, 14);
@@ -118,12 +120,13 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
    await evaluate(`document.body.style.zoom='1.5';true`);
   console.log('PASS: sequence measured with the actual browser font');
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Grid example')`);
+  assert.equal(await evaluate(`(()=>{const svg=Array.from(document.querySelectorAll('svg[role="img"]')).find(e=>e.getAttribute('aria-label')==='Grid example');const label=Array.from(svg.querySelectorAll('text')).find(e=>e.textContent==='next').getBBox();const y=Number(svg.querySelector('line').getAttribute('y1'));return label.y>y||label.y+label.height<y})()`), true, 'a left-to-right grid edge label stays off its line');
   await browser('find', 'role', 'button', 'click', '--name', '長いラベル'.repeat(30));
   assert.equal(await evaluate(`document.body.textContent.includes(${JSON.stringify('長いラベル'.repeat(30))})`), true);
   assert.equal(await evaluate(`document.body.textContent.includes('Comment stays')`), true);
   const failures = await evaluate(`Array.from(document.querySelectorAll('pre')).map(e=>{try{return JSON.parse(e.textContent).title}catch{return null}}).filter(Boolean)`);
   assert.deepEqual(failures.sort(), ['Label collision','Outside canvas','Route intrusion'].sort());
-  for(const title of ['Alt and loop','Decision and return','Allowed contact and crossing']) assert.equal(await evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')===${JSON.stringify(title)})`),true);
+  for(const title of ['Alt and loop','Decision and return','Allowed contact and crossing','Long end label','Tall font start']) assert.equal(await evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')===${JSON.stringify(title)})`),true);
   await evaluate(`Array.from(document.querySelectorAll('[role="group"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations diagram controls').focus();true`);
   const transform = () => evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations').style.transform`);
   const before = await transform(); await browser('press', 'ArrowRight'); assert.notEqual(await transform(), before);
@@ -140,6 +143,16 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.equal(await evaluate(`document.body.textContent.includes('C survives') && document.body.textContent.includes('Comment stays')`), true);
   await evaluate(`document.querySelector('#font-change').remove();document.body.style.zoom='1.25';true`);
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations')`);
+  // 1 行の箱が行の送り 18 より高いフォントでも、長いラベルの Start/End が収まる。ascent/descent を上書きした
+  // フォントで行を高くする。元のフォントが見つからないと素通りするので、先に行の箱が 19 より高いことを確かめる。
+  const tallTitles = ['Long end label', 'Tall font start'];
+  const failedTitles = `Array.from(document.querySelectorAll('pre')).map(e=>{try{return JSON.parse(e.textContent).title}catch{return null}})`;
+  await evaluate(`(()=>{for(const title of ${JSON.stringify(tallTitles)}) Array.from(document.querySelectorAll('svg[role="img"]')).find(e=>e.getAttribute('aria-label')===title).firstElementChild.setAttribute('data-before','1');const tall=document.createElement('style');tall.id='tall-font';tall.textContent='@font-face{font-family:"Tall";src:local("IPAGothic"),local("Liberation Sans"),local("DejaVu Sans"),local("FreeSans");ascent-override:115%;descent-override:35%} .explanation-diagram {font-family:"Tall"!important}';document.head.append(tall);return true})()`);
+  const tallLineBox = await evaluate(`(async()=>{await document.fonts.load('14px "Tall"');const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('class','explanation-diagram');const text=document.createElementNS(ns,'text');text.setAttribute('dominant-baseline','text-before-edge');text.textContent='n';svg.append(text);document.body.append(svg);const height=text.getBBox().height;svg.remove();return height})()`);
+  assert.ok(tallLineBox > 19, `the tall font is available (line box ${tallLineBox})`);
+  await wait(`${JSON.stringify(tallTitles)}.every(title=>${failedTitles}.includes(title) || Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')===title && e.isConnected && e.firstElementChild && !e.querySelector('[data-before]')))`);
+  assert.deepEqual(await evaluate(`${failedTitles}.filter(title=>${JSON.stringify(tallTitles)}.includes(title))`), [], 'long Start/End labels fit with a font whose line box is taller than the line step');
+  await evaluate(`document.querySelector('#tall-font').remove();true`);
   console.log('PASS: grid full labels, real layout rejection, keyboard zoom/pan/fit, separate view return, font/zoom revalidation');
   await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Comment stays')).click();true`);
   await wait(`document.body.textContent.includes('Network connection lost')`);

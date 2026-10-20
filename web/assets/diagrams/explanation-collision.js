@@ -66,6 +66,26 @@ export function containsBox(shape, box) {
     return insidePolygon(p, polygon(shape), -EPS);
   });
 }
+/**
+ * 箱が形の中に収まるまで高さを 1 ずつ足す。始点・終点の丸い端は、幅いっぱいに折り返した文字の角を削るため。
+ * 640 を超えても収まらなければ、超えた高さを返す（呼び出し側が上限の超過として扱う）。
+ * @param {Shape} shape @param {Box[]} boxes
+ */
+export function fitHeight(shape, boxes) {
+  let height = shape.height;
+  while (height <= 640 && !boxes.every(box => containsBox({ ...shape, height }, box))) height += 1;
+  return height;
+}
+/**
+ * 辺の中点から法線の向きへ、ラベルの箱が線から gap 離れる所に中心を置く。
+ * @param {Point} a @param {Point} b @param {{width:number,height:number}} size @param {number} gap
+ */
+export function labelBesideSegment(a, b, size, gap) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const nx = -(b.y - a.y) / length, ny = (b.x - a.x) / length;
+  const offset = size.width / 2 * Math.abs(nx) + size.height / 2 * Math.abs(ny) + gap;
+  return { x: (a.x + b.x) / 2 + nx * offset, y: (a.y + b.y) / 2 + ny * offset };
+}
 /** @param {Point} a @param {Point} b @param {Point[]} poly */
 function segmentPolygon(a, b, poly) {
   let low = 0, high = 1;

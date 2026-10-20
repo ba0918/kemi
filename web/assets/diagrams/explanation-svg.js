@@ -1,4 +1,4 @@
-// shoryo 46c6f764c1d373365a8902ffcc682245079363e6。MIT: ./LICENSE
+// shoryo 46c6f764c1d373365a8902ffcc682245079363e6。文字の外形で高さを合わせる直しは shoryo f3f163a077cc5172f8428d10240d5c1b3813adeb（v0.1.3）に合わせた。MIT: ./LICENSE
 // @ts-check
 const NS = "http://www.w3.org/2000/svg";
 /** @template {keyof SVGElementTagNameMap} T @param {T} tag @param {Record<string,string|number|boolean>} [attrs] @param {...(SVGElement|string|(SVGElement|string)[])} children @returns {SVGElementTagNameMap[T]} */
@@ -51,7 +51,13 @@ export function textMetrics(svg) {
     }
     return { lines, width: Math.max(0, ...lines.map(width)), height: lines.length * 18 * scale, original: value };
   }
-  return { scale, width, wrap, dispose: () => probe.remove() };
+  /** 描くときと同じ形で並べた文字の、実際の外形。 @param {import('./types.js').TextBlock} block */
+  function box(block) {
+    probe.replaceChildren(...block.lines.map((line, index) => svgElement("tspan", { x: 0, y: index * 18 * scale }, line)));
+    const { x, y, width, height } = probe.getBBox();
+    return { x, y, width, height };
+  }
+  return { scale, width, wrap, box, dispose: () => probe.remove() };
 }
 /** @param {SVGSVGElement} svg @param {import('./types.js').Metrics} metrics @returns {import('./types.js').Drawing} */
 export function drawing(svg, metrics) {

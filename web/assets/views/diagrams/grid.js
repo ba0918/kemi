@@ -2,6 +2,7 @@
 // @ts-check
 import { el, textEl } from '../../dom.js';
 import { svgElement, textMetrics } from '../../diagrams/explanation-svg.js';
+import { labelBesideSegment } from '../../diagrams/explanation-collision.js';
 import { diagramCommentButton } from './viewport.js';
 
 /**
@@ -50,6 +51,7 @@ export function gridView(part, options = {}) {
         }
         return { id, point, node, cut, whole };
       });
+      const edgeLabelWidths = edges.map(edge => metrics.width(edge.label));
       metrics.dispose();
       /** @type {Map<number,number>} */ const heights = new Map();
       for (const node of prepared) heights.set(node.point.y, Math.max(heights.get(node.point.y) ?? 0, node.cut.length * 15 + 20, 44));
@@ -57,7 +59,7 @@ export function gridView(part, options = {}) {
       /** @param {string[]} lines @param {number} x @param {number} y */
       const label = (lines, x, y) => svgElement('text', { x, y: y - (lines.length - 1) * 7.5, 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, lines.map((line, i) => svgElement('tspan', { x, dy: i === 0 ? 0 : 15 }, line)));
       /** @param {{x:number,y:number}} point */ const center = point => ({ x: point.x * 250 + 125, y: point.y * 130 + 65 });
-      for (const edge of edges) {
+      for (const [i, edge] of edges.entries()) {
         const from = at.get(edge.from), to = at.get(edge.to); if (!from || !to || edge.from === edge.to) continue;
         const a = center(from), b = center(to), length = Math.hypot(b.x - a.x, b.y - a.y), dx = (b.x - a.x) / length, dy = (b.y - a.y) / length;
         const offset = edges.some(e => e.from === edge.to && e.to === edge.from) ? 8 : 0;
@@ -66,7 +68,7 @@ export function gridView(part, options = {}) {
         const start = border(a, heights.get(from.y) ?? 44, dx, dy), end = border(b, heights.get(to.y) ?? 44, -dx, -dy);
         content.append(svgElement('line', { x1: start.x, y1: start.y, x2: end.x, y2: end.y }));
         content.append(svgElement('polygon', { points: `${end.x},${end.y} ${end.x - dx * 8 + dy * 3},${end.y - dy * 8 - dx * 3} ${end.x - dx * 8 - dy * 3},${end.y - dy * 8 + dx * 3}` }));
-        if (edge.label) content.append(label([edge.label], (start.x + end.x) / 2 - dy * 10, (start.y + end.y) / 2 + dx * 10 - 8));
+        if (edge.label) { const centre = labelBesideSegment(start, end, { width: edgeLabelWidths[i], height: 15 }, 4); content.append(label([edge.label], centre.x, centre.y)); }
       }
       const frame = () => {
         const box = content.getBBox(); const width = box.width + 32, height = box.height + 32;
