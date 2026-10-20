@@ -883,23 +883,6 @@ ul.files ul {
   color: var(--del-ink);
 }
 
-.file .badge {
-  flex: 0 0 auto;
-  font-family: var(--sans);
-  font-size: 10.5px;
-  line-height: 16px;
-  color: var(--ink-3);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 6px;
-  white-space: nowrap;
-}
-
-.file.active .badge {
-  color: inherit;
-  border-color: currentColor;
-}
-
 .caret {
   color: var(--ink-3);
   flex: 0 0 auto;
@@ -1140,10 +1123,6 @@ ul.files ul {
   min-width: 100%;
 }
 
-.row.kind-equal {
-  background: transparent;
-}
-
 /* 1 列: 行の側で色を決め、行番号の欄にも同じ色を付ける。 */
 .row.tone-add {
   background: var(--add-bg);
@@ -1190,7 +1169,6 @@ ul.files ul {
   background: var(--hatch), var(--panel);
 }
 
-.row.kind-equal .src,
 .row.kind-equal .code {
   color: var(--ink-2);
 }
@@ -2095,10 +2073,6 @@ ul.files ul {
   color: var(--add-ink);
 }
 
-.kb-image-broken {
-  display: inline-flex;
-}
-
 /* ---------- エージェントとの往復（agent-channel.md） ---------- */
 
 /* 状態は点と言葉で、会話パネルの見出しと畳んだ帯に添える。待機中は藍、作業中は付箋の色、応答なしは
@@ -2424,12 +2398,6 @@ ul.files ul {
 .cv-post[data-author="agent"] .cv-who,
 .cv-last[data-author="agent"] .cv-who {
   color: var(--accent);
-}
-
-.cv-text {
-  margin: 1px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 /* スレッドの項目。場所と最後の書き込みの小さなカードで、畳むと場所の 1 行だけ。 */
