@@ -271,8 +271,8 @@ impl GitSource {
     /// コミットごとの単位。マージ以外の各コミットが 1 グループ。コミットの差分は
     /// 並列に求める（R-UNIT）。
     fn review_per_commit(&self, from: &str, to: &str) -> Result<(ReviewMeta, Plan), SourceError> {
-        verify_ref(&self.repo, from)?;
-        verify_ref(&self.repo, to)?;
+        commit_sha(&self.repo, from)?;
+        commit_sha(&self.repo, to)?;
         let attributes = read_attributes(&self.repo);
         let generated = GeneratedAttributes::parse(&attributes);
         let commits = range_messages(&self.repo, &format!("{from}..{to}"))?;
@@ -320,13 +320,11 @@ impl GitSource {
 
     /// 最終形の単位。`from...to` の全体を 1 グループにする。
     fn review_final(&self, from: &str, to: &str) -> Result<(ReviewMeta, Plan), SourceError> {
-        verify_ref(&self.repo, from)?;
-        verify_ref(&self.repo, to)?;
+        // 由来と内容が同じ版を指すよう、範囲の端を sha に解決して使う。
+        let from_sha = commit_sha(&self.repo, from)?;
+        let to_sha = commit_sha(&self.repo, to)?;
         let attributes = read_attributes(&self.repo);
         let generated = GeneratedAttributes::parse(&attributes);
-        // 由来と内容が同じ版を指すよう、範囲の端を sha に解決して使う。
-        let from_sha = resolve_ref(&self.repo, from)?;
-        let to_sha = resolve_ref(&self.repo, to)?;
         let merge_base = git_text(&self.repo, &["merge-base", &from_sha, &to_sha])?
             .trim()
             .to_string();
@@ -1347,15 +1345,14 @@ fn read_attributes(repo: &Path) -> String {
     std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default()
 }
 
+/// fork で範囲の端を sha に固定する。誤りは git を起動できないときも含めて ref not found。
 fn resolve_ref(repo: &Path, revision: &str) -> Result<String, SourceError> {
-    let spec = format!("{revision}^{{commit}}");
-    Ok(git_text(repo, &["rev-parse", "--verify", "--quiet", &spec])
-        .map_err(|_| SourceError::Git(format!("ref not found: {revision}")))?
-        .trim()
-        .to_string())
+    commit_sha(repo, revision).map_err(|_| ref_not_found(revision))
 }
 
-fn verify_ref(repo: &Path, revision: &str) -> Result<(), SourceError> {
+/// `<revision>^{commit}` を完全な sha に解決する。git を起動できなければ Io、
+/// 解決できなければ ref not found。
+fn commit_sha(repo: &Path, revision: &str) -> Result<String, SourceError> {
     let spec = format!("{revision}^{{commit}}");
     let output = Command::new("git")
         .arg("-C")
@@ -1367,9 +1364,14 @@ fn verify_ref(repo: &Path, revision: &str) -> Result<(), SourceError> {
             source,
         })?;
     if !output.status.success() {
-        return Err(SourceError::Git(format!("ref not found: {revision}")));
+        return Err(ref_not_found(revision));
     }
-    Ok(())
+    let sha = String::from_utf8(output.stdout).map_err(|_| ref_not_found(revision))?;
+    Ok(sha.trim().to_string())
+}
+
+fn ref_not_found(revision: &str) -> SourceError {
+    SourceError::Git(format!("ref not found: {revision}"))
 }
 
 /// `--to` の ref 更新を検知するための監視パス。返すのは ref のファイルそのもので、
