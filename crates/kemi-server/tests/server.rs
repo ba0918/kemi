@@ -38,7 +38,6 @@ struct FakeSource {
     contents: HashMap<String, FileContent>,
     reads: AtomicUsize,
     content_delay_ms: AtomicUsize,
-    content_started: tokio::sync::Notify,
     /// リポジトリを読める入力（git のモード）を装う。相対パス画像はこの表から返す。
     repository: Option<HashMap<String, Vec<u8>>>,
 }
@@ -210,7 +209,6 @@ impl FakeSource {
             contents,
             reads: AtomicUsize::new(0),
             content_delay_ms: AtomicUsize::new(0),
-            content_started: tokio::sync::Notify::new(),
             repository: None,
         }
     }
@@ -285,7 +283,6 @@ impl ReviewSource for FakeSource {
         self.reads.fetch_add(1, Ordering::SeqCst);
         let delay = self.content_delay_ms.load(Ordering::SeqCst);
         if delay > 0 {
-            self.content_started.notify_one();
             std::thread::sleep(Duration::from_millis(delay as u64));
         }
         self.contents

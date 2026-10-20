@@ -1,10 +1,5 @@
 use super::*;
 
-fn raw_post(address: (&str, u16), path: &str, origin: &str, body: &str) -> u16 {
-    let host = format!("{}:{}", address.0, address.1);
-    raw_post_with_host(address, &host, path, origin, body)
-}
-
 impl TestServer {
     async fn submit_document(self) -> Value {
         let response = self
@@ -152,7 +147,16 @@ async fn approval_passthrough_on_submit() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn submit_concurrent_409() {
-    let source = Arc::new(FakeSource::new());
+    let (release, wait) = std::sync::mpsc::channel();
+    let gate = Arc::new(GenerationGate {
+        entered: tokio::sync::Notify::new(),
+        release: Mutex::new(wait),
+    });
+    let source = Arc::new(GatedContentSource {
+        inner: Arc::new(FakeSource::new()),
+        gate: gate.clone(),
+        blocked: AtomicBool::new(false),
+    });
     let server = TestServer::start_source(source.clone()).await;
     let _ = server
         .post(
@@ -164,41 +168,34 @@ async fn submit_concurrent_409() {
         )
         .await;
 
-    // 受理側が本文を読んでいる間に 2 つ目を届かせ、409 を確実に観測する。
-    // 2 つ目はサーバと同じランタイムを使わない素の接続で送る。
-    source.set_content_delay(Duration::from_millis(300));
-    let (signal, wait) = std::sync::mpsc::channel::<()>();
-    let address = ("127.0.0.1", server.port);
-    let origin = server.origin.clone();
-    let raw = std::thread::spawn(move || {
-        wait.recv().unwrap();
-        raw_post(
-            address,
-            "/s/test-token/api/submit",
-            &origin,
-            r#"{"verdict":"changes_requested"}"#,
-        )
-    });
-
+    // 1 件目は請求した後、結果のためにコメントのファイルを読むところで止まる。その間に
+    // 2 件目を送る。
+    source.blocked.store(true, Ordering::SeqCst);
     let url = server.url.clone();
     let origin = server.origin.clone();
-    let mut first_task = tokio::spawn(async move {
+    let mut first = tokio::spawn(async move {
         post_json(&url, &origin, "api/submit", json!({"verdict": "approved"})).await
     });
-
     until_reached(
-        "the first submit reading content",
-        source.content_started.notified(),
-        &mut first_task,
+        "the first submit reading the gated content",
+        gate.entered.notified(),
+        &mut first,
     )
     .await;
-    signal.send(()).unwrap();
-    let second_status = raw.join().unwrap();
 
-    let mut statuses = vec![first_task.await.unwrap().status().as_u16(), second_status];
-    statuses.sort();
-    assert_eq!(statuses, vec![200, 409]);
-    let _ = server.finish().await;
+    // 2 件目が請求を待たずに進むと、同じゲートで止まって返らない。
+    let second = tokio::time::timeout(
+        WAIT_LIMIT,
+        server.post("api/submit", json!({"verdict": "changes_requested"})),
+    )
+    .await
+    .expect("the second submit is refused without waiting for the first");
+
+    assert_eq!(second.status(), 409);
+    source.blocked.store(false, Ordering::SeqCst);
+    release.send(()).unwrap();
+    assert_eq!(first.await.unwrap().status(), 200);
+    assert_eq!(server.finish().await["verdict"], "approved");
 }
 
 #[tokio::test]
