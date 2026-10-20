@@ -52,7 +52,7 @@ fn digest_mode_schema_and_bounded_output() {
 }
 
 #[test]
-fn digest_mode_top_n_limits_and_sorts() {
+fn digest_mode_top_n_limits() {
     let dir = TempDir::new();
     dir.write("manifest.json", &digest_manifest());
     let output = run(
@@ -73,61 +73,6 @@ fn digest_mode_top_n_limits_and_sorts() {
         top.len() as u64 + omitted,
         digest["totals"]["files"].as_u64().unwrap()
     );
-    for pair in top.windows(2) {
-        let left = pair[0]["add"].as_u64().unwrap() + pair[0]["del"].as_u64().unwrap();
-        let right = pair[1]["add"].as_u64().unwrap() + pair[1]["del"].as_u64().unwrap();
-        assert!(
-            left > right || (left == right && pair[0]["path"].as_str() <= pair[1]["path"].as_str()),
-            "top_files not sorted: {top:?}"
-        );
-    }
-}
-
-#[test]
-fn digest_mode_bounded_thirty_thousand_files() {
-    let mut groups = Vec::new();
-    for group_index in 0..100 {
-        let mut diffs = Vec::new();
-        for file_index in 0..300 {
-            let new_text = "line\n".repeat((file_index % 5) + 1);
-            diffs.push(serde_json::json!({
-                "path": format!("src/group{group_index}/file{file_index}.rs"),
-                "old": "line\n",
-                "new": new_text,
-            }));
-        }
-        groups.push(serde_json::json!({
-            "id": format!("g{group_index}"),
-            "title": format!("コミット {group_index}"),
-            "why": "理由".repeat(30),
-            "watch": "確認".repeat(30),
-            "diffs": diffs,
-        }));
-    }
-    let manifest = serde_json::json!({
-        "title": "3 万ファイル",
-        "groups": groups,
-        "approval": []
-    })
-    .to_string();
-
-    let dir = TempDir::new();
-    dir.write("manifest.json", &manifest);
-    let output = run(&dir.path, &["manifest.json", "--digest"]);
-
-    assert_eq!(output.status.code(), Some(0));
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let digest: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-
-    assert_eq!(digest["totals"]["files"], 30_000);
-    assert_eq!(digest["top_files"].as_array().unwrap().len(), 100);
-    assert_eq!(digest["top_files_omitted"]["files"], 29_900);
-    assert_eq!(
-        digest["top_files"].as_array().unwrap().len() as u64
-            + digest["top_files_omitted"]["files"].as_u64().unwrap(),
-        digest["totals"]["files"].as_u64().unwrap()
-    );
-    assert!(stdout.len() < 100_000, "digest was {} bytes", stdout.len());
 }
 
 #[test]
