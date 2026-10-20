@@ -21,7 +21,7 @@
 // と変わり、状態が未接続 → 待機中 → 作業中 → 返事済みと変わる、渡した直後は渡すが押せず返信を書くと
 // 押せる、kemi wait を一度も呼ばないレビューやエージェントがつながれないレビューでも渡すが押せないまま出て、
 // submit は今どおり終わる、スレッドを開いている間に別のスレッドへ返信が届くと知らせと見出しの新着の数が出て、
-// 知らせを押すとそのスレッドが開く。
+// 知らせを押すとそのスレッドが開く、n で読んで飛ばしたファイルを後で開いても差分の札がその間の解決を映す。
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -808,3 +808,48 @@ try {
   await floatKemi.exited;
   await run('agent-browser', ['--session', session, 'close']).catch(() => {});
 }
+
+// (16) n で中身を読んで飛ばしたファイル（改行コードだけの変更で、止まる場所が無い）を、その後で開いても、
+// 差分の札は、その間に会話パネルで解決した後の形で出る（札と会話パネルは同じコメントを示す。R-VIEW）。
+const skipFixture = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-'));
+{
+  const git = gitIn(skipFixture);
+  await git('init', '-q');
+  for (const name of ['a.txt', 'b.txt', 'c.txt']) {
+    await writeFile(join(skipFixture, name), LINES(10).join(''));
+  }
+  await git('add', 'a.txt', 'b.txt', 'c.txt');
+  await git('commit', '-q', '-m', 'base');
+  await writeFile(join(skipFixture, 'a.txt'), ['changed a\n', ...LINES(10).slice(1)].join(''));
+  await writeFile(join(skipFixture, 'b.txt'), LINES(10).map((line) => line.replace('\n', '\r\n')).join(''));
+  await writeFile(join(skipFixture, 'c.txt'), ['changed c\n', ...LINES(10).slice(1)].join(''));
+}
+const skipState = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-state-'));
+const skipKemi = await startKemi(skipFixture, skipState);
+try {
+  const skipFiles = (await (await fetch(new URL('api/review', skipKemi.url))).json()).groups[0].files;
+  const lineEndings = skipFiles.find((file) => file.path === 'b.txt');
+  assert.ok(lineEndings.add + lineEndings.del > 0, 'b.txt counts as changed, so n reads it');
+  await post(skipKemi.url, 'api/comment', { op: 'add', file_id: lineEndings.id, side: 'new', start_line: null, end_line: null, body: 'whole b' });
+  await browser('set', 'viewport', '1280', '800');
+  await browser('open', skipKemi.url);
+  await waitFor(`document.querySelector('#file-header .path')?.textContent === 'a.txt' && document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await browser('press', 'n');
+  await waitFor(`document.querySelector('#file-header .path')?.textContent === 'c.txt' && document.querySelectorAll('[data-kemi-row]').length > 0`);
+  await browser('click', '#cv-rail');
+  await waitFor(`${panelOpen} && document.querySelector('#cv-items .cv-card[data-id="c1"]') !== null`);
+  await browser('click', '#cv-items .cv-card[data-id="c1"]');
+  await waitFor(threadOpen('whole b'));
+  await browser('click', '#cv-thread-head .cv-resolve');
+  await waitFor(`document.querySelector('#cv-thread-head .cv-resolve')?.textContent === 'Reopen'`);
+  await selectFile('b.txt');
+  const wholeChip = `document.querySelector('#floating-threads .cchip[data-id="c1"]')`;
+  await waitFor(`${wholeChip} !== null`);
+  assert.equal(await evaluate(`${wholeChip}.querySelector('.t-resolved-mark') !== null`), true, `the chip shows the resolution: ${await evaluate(`${wholeChip}.textContent`)}`);
+  console.log('PASS n で読んで飛ばしたファイルを後で開いても、差分の札はその間に解決した後の形で出る');
+} finally {
+  skipKemi.child.kill('SIGTERM');
+  await skipKemi.exited;
+  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+}
+
