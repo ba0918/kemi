@@ -27,24 +27,31 @@ pub(crate) fn generate_ulid(time_millis: u128, random: [u8; 10]) -> String {
     String::from_utf8(out.to_vec()).expect("the alphabet is ASCII")
 }
 
-/// 時刻と乱数から新しい ULID を作る。時刻が進まない間は乱数側を進め、同じミリ秒でも
-/// 衝突せず、作った順に並ぶようにする。
+/// 時刻と乱数から新しい ULID を作る。
 pub fn new_ulid() -> String {
     static LAST: Mutex<Option<(u128, [u8; 10])>> = Mutex::new(None);
     let now = now_millis();
     let mut last = LAST.lock().expect("ulid lock poisoned");
-    let (time, random) = match last.as_mut() {
-        Some((time, random)) if now <= *time => {
-            increment(random);
-            (*time, *random)
-        }
-        _ => {
-            let random = random_bytes(now);
-            *last = Some((now, random));
-            (now, random)
-        }
-    };
+    let (time, random) = next_parts(*last, now, || random_bytes(now));
+    *last = Some((time, random));
     generate_ulid(time, random)
+}
+
+/// 直前に作った ULID の（時刻, 乱数）から次の組を決める。時刻が進まない間（同じミリ秒、
+/// 時計の後退）は直前の時刻のまま乱数側を 1 進め、同じミリ秒でも衝突せず、作った順に
+/// 並ぶようにする。時刻が進んだら `fresh` の乱数で始め直す。
+fn next_parts(
+    last: Option<(u128, [u8; 10])>,
+    now: u128,
+    fresh: impl FnOnce() -> [u8; 10],
+) -> (u128, [u8; 10]) {
+    match last {
+        Some((time, mut random)) if now <= time => {
+            increment(&mut random);
+            (time, random)
+        }
+        Some(_) | None => (now, fresh()),
+    }
 }
 
 /// 現在時刻のミリ秒。時計が戻っても 0 で止める。
@@ -101,8 +108,54 @@ mod tests {
         assert_eq!(&id[..10], "01HF7YAT00");
     }
 
+    fn no_fresh_random() -> [u8; 10] {
+        panic!("the time did not advance, so the random part must continue")
+    }
+
     #[test]
-    fn ulid_is_unique_within_the_same_millisecond() {
+    fn ulid_in_the_same_millisecond_keeps_the_time_and_increments_the_random_part() {
+        let last = (1_000, [7, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+
+        let next = next_parts(Some(last), 1_000, no_fresh_random);
+
+        assert_eq!(next, (1_000, [7, 0, 0, 0, 0, 0, 0, 0, 0, 2]));
+        assert!(generate_ulid(next.0, next.1) > generate_ulid(last.0, last.1));
+    }
+
+    #[test]
+    fn ulid_after_the_clock_goes_back_keeps_the_previous_time_and_order() {
+        let last = (1_000, [7, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+
+        let next = next_parts(Some(last), 999, no_fresh_random);
+
+        assert_eq!(next, (1_000, [7, 0, 0, 0, 0, 0, 0, 0, 0, 2]));
+        assert!(generate_ulid(next.0, next.1) > generate_ulid(last.0, last.1));
+    }
+
+    #[test]
+    fn ulid_starts_a_fresh_random_part_when_the_time_advances_or_on_the_first_call() {
+        let fresh = [9; 10];
+
+        assert_eq!(
+            next_parts(Some((1_000, [7; 10])), 1_001, || fresh),
+            (1_001, fresh)
+        );
+        assert_eq!(next_parts(None, 1_000, || fresh), (1_000, fresh));
+    }
+
+    #[test]
+    fn ulid_random_part_carries_into_the_higher_bytes() {
+        let next = next_parts(
+            Some((1_000, [0, 0, 0, 0, 0, 0, 0, 1, 0xff, 0xff])),
+            1_000,
+            no_fresh_random,
+        );
+
+        assert_eq!(next, (1_000, [0, 0, 0, 0, 0, 0, 0, 2, 0, 0]));
+    }
+
+    #[test]
+    fn ulid_is_unique_across_many_calls() {
         let mut ids = HashSet::new();
         for _ in 0..1000 {
             ids.insert(new_ulid());
@@ -112,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn ulid_keeps_the_order_within_the_same_millisecond() {
+    fn ulid_keeps_the_order_of_consecutive_calls() {
         let mut previous = new_ulid();
         for _ in 0..10 {
             let next = new_ulid();
