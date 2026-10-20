@@ -22,6 +22,12 @@ import { openModal, showOverlay } from "../views/overlay.js";
 import { refreshCommentBadges } from "../views/tree.js";
 
 /**
+ * 行番号の上で押し下げて選んでいる間の、そのファイルと側。押していなければ null。
+ * @type {{ fileId: string, side: string } | null}
+ */
+let dragging = null;
+
+/**
  * @param {"old" | "new"} side
  * @param {number} number
  */
@@ -34,7 +40,7 @@ export function startSelection(side, number) {
   if (!entry) {
     return;
   }
-  state.dragging = { fileId: entry.file.id, side };
+  dragging = { fileId: entry.file.id, side };
   state.selection = {
     fileId: entry.file.id,
     side,
@@ -50,7 +56,7 @@ export function startSelection(side, number) {
  * @param {number} number
  */
 export function extendSelection(side, number) {
-  const drag = state.dragging;
+  const drag = dragging;
   const entry = currentEntry();
   if (!drag || !entry || drag.fileId !== entry.file.id || drag.side !== side || state.narrow) {
     return;
@@ -69,7 +75,7 @@ export function extendSelection(side, number) {
 
 /** ドラッグの終了。行番号の上でボタンを離したかに関わらず、選択の伸ばしを止める。 */
 export function endSelection() {
-  state.dragging = null;
+  dragging = null;
 }
 
 /**

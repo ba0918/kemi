@@ -45,13 +45,22 @@ import { renderNav, renderRuler } from "../views/nav.js";
 let rendering = false;
 
 /**
+ * 次に描いたときに測り直す行（表示行の位置）。
+ * @type {Set<number>}
+ */
+let staleRows = new Set();
+
+/** 次に描いたときに、見えている行の高さを測り直すか。 */
+let measureNext = false;
+
+/**
  * 基準値と違う高さの行は、中身が変わったかもしれない。窓の外の行も含めて、次に
  * 描いたときに測り直すよう覚えておく。
  */
 function markRowsOffDefaultHeight() {
   state.heights.forEach((height, index) => {
     if (height !== ROW_HEIGHT) {
-      state.staleRows.add(index);
+      staleRows.add(index);
     }
   });
 }
@@ -67,7 +76,7 @@ export function remeasure() {
   // 置き直すと、その先より上で開いたエディタや札の高さだけスクロール位置が送られ、
   // いま触った行が画面の外へ動く。
   state.landing = null;
-  state.measureNext = true;
+  measureNext = true;
   markRowsOffDefaultHeight();
 }
 
@@ -76,18 +85,18 @@ export function remeasure() {
  * 測り直すよう覚えておく。測り直した分は measureHeights がスクロール位置で打ち消す。
  */
 function markStaleRows() {
-  state.measureNext = true;
+  measureNext = true;
   markRowsOffDefaultHeight();
   // 札の分だけ高い行は、高さを引き継げなかったときも測り直させる。
   state.threads.byLine.forEach((_threads, index) => {
-    state.staleRows.add(index);
+    staleRows.add(index);
   });
   if (state.originOpen.size > 0) {
     const entry = currentEntry();
     const fileId = entry ? entry.file.id : "";
     state.display.forEach((line, index) => {
       if (line.kind === "origin" && state.originOpen.has(`${fileId}:${line.block}`)) {
-        state.staleRows.add(index);
+        staleRows.add(index);
       }
     });
   }
@@ -96,7 +105,7 @@ function markStaleRows() {
 /** 表示する行が変わったときや折返しを切り替えたとき、行の高さを基準値へ戻す。 */
 export function resetHeights() {
   state.heights = new Array(state.display.length).fill(ROW_HEIGHT);
-  state.staleRows = new Set();
+  staleRows = new Set();
   // 位置の帯の印は行の高さから描く。測る行が無くても、古い高さの印を残さない。
   state.rulerDirty = true;
   // 送った先の記録は古い行と高さでの位置なので、もう同じ行を指さない。
@@ -250,13 +259,13 @@ export function renderDiff() {
   renderNav(offsets);
   renderRuler(offsets);
   const needsMeasure =
-    state.measureNext ||
-    state.staleRows.size > 0 ||
+    measureNext ||
+    staleRows.size > 0 ||
     displayWrap() ||
     state.threads.byLine.size > 0 ||
     state.originOpen.size > 0 ||
     Boolean(state.editor && !state.editor.wide);
-  state.measureNext = false;
+  measureNext = false;
   if (needsMeasure) {
     measureHeights(window.start, offsets);
   }
@@ -308,7 +317,7 @@ function measureHeights(start, offsets) {
   let growth = 0;
   children.forEach((child, offset) => {
     const index = start + offset;
-    const stale = state.staleRows.delete(index);
+    const stale = staleRows.delete(index);
     const height = /** @type {HTMLElement} */ (child).offsetHeight;
     if (height > 0 && state.heights[index] !== height) {
       const delta = height - state.heights[index];

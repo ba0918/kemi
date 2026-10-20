@@ -16,6 +16,41 @@ import {
 /** @typedef {import("../state.js").Entry} Entry */
 
 /**
+ * ファイル id ごとのツリーの項目。作り直しでは同じファイルのボタンを使い回す。
+ * @type {Map<string, HTMLButtonElement>}
+ */
+let treeItems = new Map();
+
+/**
+ * 選択の印を付けている項目のファイル id。
+ * @type {string | null}
+ */
+let treeActiveId = null;
+
+/** 描いてあるツリーの版（state.treeVersion）。違えば作り直す。 */
+let treeRenderedVersion = -1;
+
+/**
+ * グループ id ごとの見出しの要素。進捗の描き直しで引く。
+ * @type {Map<string, { root: HTMLElement, count: HTMLElement, bar: HTMLElement }>}
+ */
+let groupHeads = new Map();
+
+/** 次の作り直しで、ツリーの項目を使い回さずに作る（レビューの応答を取り込み直したとき）。 */
+export function resetTreeItems() {
+  treeItems = new Map();
+}
+
+/**
+ * 見たの印を、ツリーを作り直さずに項目へ付け外しする。
+ * @param {string} fileId
+ * @param {boolean} seen
+ */
+export function markTreeItemSeen(fileId, seen) {
+  treeItems.get(fileId)?.classList.toggle("seen", seen);
+}
+
+/**
  * @param {FileEntry} file
  * @returns {HTMLElement}
  */
@@ -58,7 +93,7 @@ export function appendGroupTitle(parent, group, className) {
  * @param {string} groupId
  */
 export function updateGroupHead(groupId) {
-  const head = state.groupHeads.get(groupId);
+  const head = groupHeads.get(groupId);
   if (!head) {
     return;
   }
@@ -86,18 +121,18 @@ export function refreshCommentBadges(before) {
       if (
         entry.group.id === changed.group_id &&
         entry.file.path === changed.path &&
-        state.treeItems.has(entry.file.id)
+        treeItems.has(entry.file.id)
       ) {
-        treeItem(entry, entry.file.path.split("/").pop() ?? entry.file.path, state.treeItems);
+        treeItem(entry, entry.file.path.split("/").pop() ?? entry.file.path, treeItems);
       }
     }
   }
 }
 
 export function renderTree() {
-  if (state.treeVersion !== state.treeRenderedVersion) {
+  if (state.treeVersion !== treeRenderedVersion) {
     rebuildTree();
-    state.treeRenderedVersion = state.treeVersion;
+    treeRenderedVersion = state.treeVersion;
   }
   updateTreeActive();
 }
@@ -142,9 +177,9 @@ function foldToggle(container, head, remembered, key) {
 function rebuildTree() {
   const groups = buildTree(state.visible);
   /** 前回のボタンを使い回す。同じファイルの項目は作り直さない。 */
-  const items = new Map(state.treeItems);
+  const items = new Map(treeItems);
   dom.tree.textContent = "";
-  state.groupHeads = new Map();
+  groupHeads = new Map();
   const fragment = document.createDocumentFragment();
   for (const { group, nodes } of groups) {
     const groupEl = el("div", "group");
@@ -167,17 +202,17 @@ function rebuildTree() {
     body.append(list);
     groupEl.append(body);
     fragment.append(groupEl);
-    state.groupHeads.set(group.id, { root: groupEl, count, bar });
+    groupHeads.set(group.id, { root: groupEl, count, bar });
     updateGroupHead(group.id);
   }
   dom.tree.append(fragment);
   // 使い回したボタンに前の選択の印が残ると、2 つのファイルが選ばれて見える。印を外してから
   // 選び直させる。
-  if (state.treeActiveId) {
-    items.get(state.treeActiveId)?.classList.remove("active");
+  if (treeActiveId) {
+    items.get(treeActiveId)?.classList.remove("active");
   }
-  state.treeItems = items;
-  state.treeActiveId = null;
+  treeItems = items;
+  treeActiveId = null;
 }
 
 /**
@@ -252,14 +287,14 @@ function treeItem(entry, label, items) {
 function updateTreeActive() {
   const entry = currentEntry();
   const nextId = entry ? entry.file.id : null;
-  if (nextId === state.treeActiveId) {
+  if (nextId === treeActiveId) {
     return;
   }
-  if (state.treeActiveId) {
-    state.treeItems.get(state.treeActiveId)?.classList.remove("active");
+  if (treeActiveId) {
+    treeItems.get(treeActiveId)?.classList.remove("active");
   }
   if (nextId) {
-    state.treeItems.get(nextId)?.classList.add("active");
+    treeItems.get(nextId)?.classList.add("active");
   }
-  state.treeActiveId = nextId;
+  treeActiveId = nextId;
 }

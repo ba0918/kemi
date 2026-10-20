@@ -37,7 +37,7 @@ import {
   renderUpdateBadge,
 } from "../views/header.js";
 import { showOverlay } from "../views/overlay.js";
-import { renderTree, updateGroupHead } from "../views/tree.js";
+import { markTreeItemSeen, renderTree, resetTreeItems, updateGroupHead } from "../views/tree.js";
 
 /** @typedef {import("../model.js").FileEntry} FileEntry */
 /** @typedef {import("../state.js").Entry} Entry */
@@ -68,7 +68,7 @@ export function applyReview(review, fresh) {
     state.reviews.set(unit, review);
   }
   state.entries = flatten(review);
-  state.treeItems = new Map();
+  resetTreeItems();
   state.treeVersion += 1;
   rebuildVisible();
   actions.explanationCodeChanged?.();
@@ -285,7 +285,7 @@ export async function toggleSeen(file) {
   }
   const next = !file.seen;
   file.seen = next;
-  state.treeItems.get(file.id)?.classList.toggle("seen", next);
+  markTreeItemSeen(file.id, next);
   const entry = currentEntry();
   if (entry) {
     updateGroupHead(entry.group.id);

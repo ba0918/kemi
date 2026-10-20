@@ -5,6 +5,15 @@ import { dom, button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { countLabel } from "../model.js";
 
+/** 短い通知を消すタイマー。 */
+let toastTimer = 0;
+
+/**
+ * 確認ダイアログの OK で行う処理。開いていなければ null。
+ * @type {(() => void) | null}
+ */
+let modalAction = null;
+
 /**
  * 確認ダイアログの本文を、改行を保つ段落 1 つにする。
  * @param {string} text
@@ -37,13 +46,13 @@ export function openModal(options) {
   dom.modalOk.textContent = options.okLabel;
   dom.modalOk.className = options.okClass;
   dom.modalCancel.textContent = options.cancelLabel;
-  state.modalAction = options.action;
+  modalAction = options.action;
   dom.modal.hidden = false;
 }
 
 export function closeModal() {
   dom.modal.hidden = true;
-  state.modalAction = null;
+  modalAction = null;
 }
 
 /**
@@ -134,14 +143,14 @@ export function showCompletion(verdict, answer) {
 export function showToast(message) {
   dom.toast.textContent = message;
   dom.toast.hidden = false;
-  window.clearTimeout(state.toastTimer);
-  state.toastTimer = window.setTimeout(() => {
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
     dom.toast.hidden = true;
   }, 2_000);
 }
 
 export function runModalAction() {
-  const action = state.modalAction;
+  const action = modalAction;
   closeModal();
   if (action) {
     action();

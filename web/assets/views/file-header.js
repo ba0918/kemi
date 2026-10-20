@@ -29,6 +29,12 @@ import {
 import { collapseDefault, countLabel, formatBytes, statusLetter } from "../model.js";
 import { appendGroupTitle, fileStatsEl } from "./tree.js";
 
+/**
+ * グループ帯の why を開いたか（グループ id ごと）。ページを開いている間だけ覚える。
+ * @type {Map<string, boolean>}
+ */
+const groupHeaderOpen = new Map();
+
 /** 本文側のグループ帯。why は既定で畳み（開閉はページを開いている間だけ覚える）、watch は常に出す。 */
 export function renderGroupHeader() {
   const entry = currentEntry();
@@ -36,7 +42,7 @@ export function renderGroupHeader() {
   if (!entry) {
     return;
   }
-  const open = state.groupHeaderOpen.get(entry.group.id) === true;
+  const open = groupHeaderOpen.get(entry.group.id) === true;
   dom.groupHeader.dataset.open = open ? "true" : "false";
   const line = el("div", "gh-line");
   appendGroupTitle(line, entry.group, "gh-title");
@@ -50,7 +56,7 @@ export function renderGroupHeader() {
     toggle.addEventListener("click", () => {
       const nextOpen = dom.groupHeader.dataset.open !== "true";
       dom.groupHeader.dataset.open = nextOpen ? "true" : "false";
-      state.groupHeaderOpen.set(entry.group.id, nextOpen);
+      groupHeaderOpen.set(entry.group.id, nextOpen);
       toggle.setAttribute("aria-expanded", String(nextOpen));
       toggle.textContent = label();
     });

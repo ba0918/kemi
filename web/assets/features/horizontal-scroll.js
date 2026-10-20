@@ -3,8 +3,11 @@ import { dom } from "../dom.js";
 import { currentEntry, displayMode, displayWrap, state } from "../state.js";
 import { horizontalEntry, measureHorizontal } from "../model.js";
 
+/** 次に描いたときに、横の幅を測り直すか。 */
+let measurePending = false;
+
 export function invalidateHorizontalWidth() {
-  state.horizontalMeasurePending = true;
+  measurePending = true;
 }
 
 export function syncHorizontal() {
@@ -23,8 +26,8 @@ export function syncHorizontal() {
     if (text) measured = Math.max(measured, text.getBoundingClientRect().width);
     viewport = Math.min(viewport, code.clientWidth - parseFloat(getComputedStyle(code).paddingRight));
   }
-  state.horizontal = measureHorizontal(state.horizontal, measured, viewport, state.horizontalMeasurePending);
-  state.horizontalMeasurePending = false;
+  state.horizontal = measureHorizontal(state.horizontal, measured, viewport, measurePending);
+  measurePending = false;
   const range = Math.max(0, state.horizontal.width - viewport);
   dom.horizontal.hidden = range === 0;
   dom.horizontalWidth.style.width = `${dom.horizontal.clientWidth + range}px`;
