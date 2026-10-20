@@ -527,6 +527,7 @@ async fn conversation_markdown_renders_without_image_requests_and_does_not_read_
             .contains("<strong>hello</strong>")
     );
     assert!(!value["html"].as_str().unwrap().contains("<img"));
+    assert_eq!(server.source.reads(), 0);
 }
 
 #[tokio::test]
