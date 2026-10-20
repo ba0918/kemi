@@ -381,9 +381,8 @@ pub(crate) enum Event {
     Explanation(serde_json::Value),
     /// 新側の供給元が変わった（R-LIVE の更新バッジ）。
     Update,
-    /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。中身は今の単位の一覧
-    /// （`{"units": [...]}`。`api/review` の `units` と同じ形）。
-    Unit(serde_json::Value),
+    /// もう片方のグループ単位の作成の状態が変わった（R-UNIT）。
+    Unit,
     /// スレッドに返信が増えた。中身はそのコメントの JSON。
     Thread(serde_json::Value),
     /// 発言が増えた。中身はその発言の JSON。
