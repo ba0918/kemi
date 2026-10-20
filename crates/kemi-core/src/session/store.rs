@@ -16,13 +16,15 @@ use std::time::{Duration, SystemTime};
 
 use super::encoding;
 use super::files::{self, FILES_LIMIT, PageSnapshot};
-use super::format::{CopyMeta, MetaDto};
+use super::format::MetaDto;
 use super::lock::{SessionLock, is_locked};
 use super::storage_io::{
     create_private_dir, list_files, remove_dir_if_present, remove_if_present, write_atomic,
     write_private_file,
 };
-use super::{CopyState, SessionCopy, SessionInfo, SessionState, SessionSummary, checked_id};
+use super::{
+    CopyState, CopyStatus, SessionCopy, SessionInfo, SessionState, SessionSummary, checked_id,
+};
 
 /// 写しの上限（`<id>.payload` 全体のバイト数）。超えた写しは捨てて復元不可にする。
 pub(crate) const COPY_LIMIT: u64 = 20 * 1024 * 1024;
@@ -161,7 +163,8 @@ impl SessionStore {
             dir: self.dir.clone(),
             info,
             state: SessionState::default(),
-            copy: CopyState::Pending,
+            copy: CopyStatus::Pending,
+            restored: None,
             lifecycle: Lifecycle::Active,
             copy_limit: self.copy_limit,
             files_limit: self.files_limit,
@@ -174,23 +177,24 @@ impl SessionStore {
         checked_id(id)?;
         let lock = SessionLock::acquire(&self.dir, id)?;
         let (info, state, copy) = self.read_parts(id)?;
-        let copy = match copy {
+        let restored = match &copy {
             // `--live` のセッションは写しを持たない（R-PAGE-SESSION）。
-            CopyMeta::Pending if info.mode.is_live() => CopyState::Pending,
-            CopyMeta::Pending => return Err(SessionError::NotReady { id: id.to_string() }),
-            CopyMeta::Unusable(reason) => {
+            CopyStatus::Pending if info.mode.is_live() => None,
+            CopyStatus::Pending => return Err(SessionError::NotReady { id: id.to_string() }),
+            CopyStatus::Unusable(reason) => {
                 return Err(SessionError::Unusable {
                     id: id.to_string(),
-                    reason,
+                    reason: reason.clone(),
                 });
             }
-            CopyMeta::Ready => CopyState::Ready(self.read_copy(id)?),
+            CopyStatus::Ready => Some(self.read_copy(id)?),
         };
         Ok(OpenSession {
             dir: self.dir.clone(),
             info,
             state,
             copy,
+            restored,
             lifecycle: Lifecycle::Active,
             copy_limit: self.copy_limit,
             files_limit: self.files_limit,
@@ -203,9 +207,9 @@ impl SessionStore {
         checked_id(id)?;
         let (info, state, copy) = self.read_parts(id)?;
         let copy = match copy {
-            CopyMeta::Pending => CopyState::Pending,
-            CopyMeta::Unusable(reason) => CopyState::Unusable(reason),
-            CopyMeta::Ready => match self.read_copy(id) {
+            CopyStatus::Pending => CopyState::Pending,
+            CopyStatus::Unusable(reason) => CopyState::Unusable(reason),
+            CopyStatus::Ready => match self.read_copy(id) {
                 Ok(copy) => CopyState::Ready(copy),
                 // 写しのファイルが無いセッションは「使えない」として読む（R-SESSION）。
                 Err(SessionError::Unusable { reason, .. }) => CopyState::Unusable(reason),
@@ -302,7 +306,10 @@ impl SessionStore {
     }
 
     /// `<id>.session` を読み、情報・状態・写しの状態に分ける。
-    fn read_parts(&self, id: &str) -> Result<(SessionInfo, SessionState, CopyMeta), SessionError> {
+    fn read_parts(
+        &self,
+        id: &str,
+    ) -> Result<(SessionInfo, SessionState, CopyStatus), SessionError> {
         let path = self.path(id);
         let meta = match read_meta(&path) {
             Err(SessionError::NotFound { .. }) => {
@@ -361,7 +368,10 @@ pub struct OpenSession {
     dir: PathBuf,
     info: SessionInfo,
     state: SessionState,
-    copy: CopyState,
+    copy: CopyStatus,
+    /// 復元で `<id>.payload` から読んだ写し。配るソースへ一度だけ渡し、開いているセッション
+    /// には残さない（写しは変更ファイルの全内容で、レビューの間ずっと持つと重い）。
+    restored: Option<SessionCopy>,
     /// 停止後に届く保存で、submit や保留が片付けたファイルを作り直さない。
     lifecycle: Lifecycle,
     copy_limit: u64,
@@ -383,8 +393,13 @@ impl OpenSession {
         &self.state
     }
 
-    pub fn copy(&self) -> &CopyState {
+    pub fn copy(&self) -> &CopyStatus {
         &self.copy
+    }
+
+    /// 復元で読んだ写しを取り出す。取り出せるのは一度だけで、新しいセッションでは `None`。
+    pub fn take_copy(&mut self) -> Option<SessionCopy> {
+        self.restored.take()
     }
 
     /// 起動時に計算した題と全ファイル数を情報に写す。ファイルは書かない。
@@ -399,7 +414,7 @@ impl OpenSession {
         if self.info.mode.is_live() {
             return self.lifecycle != Lifecycle::Deleted && self.state.has_conversation();
         }
-        matches!(self.copy, CopyState::Ready(_))
+        self.copy == CopyStatus::Ready
     }
 
     /// 状態を差し替えて保存する。空の状態で写しも無ければ、セッションは残さない。
@@ -470,12 +485,12 @@ impl OpenSession {
                 &payload_path(&self.dir, &self.info.id),
                 &prepared.compressed,
             )?;
-            CopyState::Ready(prepared.copy)
+            CopyStatus::Ready
         } else {
             if let Some(display) = state.display.as_mut() {
                 display.frozen = None;
             }
-            CopyState::Unusable("the review copy is larger than 20 MB".into())
+            CopyStatus::Unusable("the review copy is larger than 20 MB".into())
         };
         self.write_session(&self.info, &state, &copy)?;
         self.state = state;
@@ -675,7 +690,7 @@ impl OpenSession {
         reason: &str,
         now: u128,
     ) -> Result<(), SessionError> {
-        self.copy = CopyState::Unusable(reason.to_string());
+        self.copy = CopyStatus::Unusable(reason.to_string());
         self.info.updated = now;
         self.persist_without_copy()
     }
@@ -710,7 +725,7 @@ impl OpenSession {
     }
 
     fn has_copy(&self) -> bool {
-        matches!(self.copy, CopyState::Ready(_))
+        self.copy == CopyStatus::Ready
     }
 
     /// `<id>.session` だけを書く。写しのファイルは読みも書きもしないので、状態を
@@ -754,7 +769,7 @@ impl OpenSession {
         &self,
         info: &SessionInfo,
         state: &SessionState,
-        copy: &CopyState,
+        copy: &CopyStatus,
     ) -> Result<(), SessionError> {
         let meta = MetaDto::from_parts(info, state, copy);
         let meta = serde_json::to_vec(&meta).map_err(|error| SessionError::Encode {

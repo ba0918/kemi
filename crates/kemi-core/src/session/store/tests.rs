@@ -97,7 +97,7 @@ fn malformed_legacy_containers_are_reported_as_corrupt_instead_of_panicking() {
     std::fs::create_dir_all(scratch.dir()).unwrap();
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
     let state = SessionState::default();
-    let meta = MetaDto::from_parts(&info(id, 100), &state, &CopyState::Pending);
+    let meta = MetaDto::from_parts(&info(id, 100), &state, &CopyStatus::Pending);
     let base = serde_json::to_value(meta).unwrap();
     let mut invalid = vec![serde_json::json!(false), serde_json::json!([])];
     for state in [
@@ -133,7 +133,7 @@ fn old_format_ignores_new_field_names_and_opaque_extensions_under_its_original_c
     let mut meta = serde_json::to_value(MetaDto::from_parts(
         &info(id, 100),
         &state_with_comment(),
-        &CopyState::Pending,
+        &CopyStatus::Pending,
     ))
     .unwrap();
     meta["state"]["opaque_extension"] =
@@ -246,7 +246,7 @@ fn saved_parts_capacity_counts_the_whole_hand_event_and_keeps_rejected_state_unc
         let dto = serde_json::to_value(MetaDto::from_parts(
             &info(id, 100),
             state,
-            &CopyState::Pending,
+            &CopyStatus::Pending,
         ))
         .unwrap();
         dto["state"]["messages"]
@@ -353,7 +353,7 @@ fn malformed_parts_are_rejected_from_version_four_instead_of_becoming_plain() {
     let mut value = serde_json::to_value(MetaDto::from_parts(
         &info(id, 100),
         &state_with_comment(),
-        &CopyState::Pending,
+        &CopyStatus::Pending,
     ))
     .unwrap();
     value["state"]["comments"][0]["replies"][0]["body"] = serde_json::Value::Null;
@@ -393,7 +393,7 @@ fn version_four_with_explanation_comment(
     let mut value = serde_json::to_value(MetaDto::from_parts(
         &info(id, 100),
         &state_with_comment(),
-        &CopyState::Pending,
+        &CopyStatus::Pending,
     ))
     .unwrap();
     value["state"]["explanation"] = serde_json::json!({"current_revision":1,"versions":[{"revision":1,"base_display_version":format!("{id}:2"),"sections":[{"id":"s","title":"Section","blocks":[block.clone()]}]}]});
@@ -408,6 +408,15 @@ fn version_four_with_explanation_comment(
     comment["replies"][0]["body"] = serde_json::Value::Null;
     comment["replies"][0]["parts"] = serde_json::json!([{"type":"text","body":"**parts**"}]);
     value
+}
+
+/// 読み戻した写しの状態（中身を除く）。読んだものをそのまま書き直すときに使う。
+fn status_of(copy: &CopyState) -> CopyStatus {
+    match copy {
+        CopyState::Pending => CopyStatus::Pending,
+        CopyState::Ready(_) => CopyStatus::Ready,
+        CopyState::Unusable(reason) => CopyStatus::Unusable(reason.clone()),
+    }
 }
 
 fn code_block() -> serde_json::Value {
@@ -433,7 +442,7 @@ fn version_four_restores_parts_full_explanation_quotes_and_generation_without_re
     let encoded = serde_json::to_value(MetaDto::from_parts(
         &restored.info,
         &restored.state,
-        &restored.copy,
+        &status_of(&restored.copy),
     ))
     .unwrap();
     assert_eq!(
@@ -473,7 +482,7 @@ fn version_four_keeps_the_saved_selection_of_an_explanation_comment() {
     let encoded = serde_json::to_value(MetaDto::from_parts(
         &restored.info,
         &restored.state,
-        &restored.copy,
+        &status_of(&restored.copy),
     ))
     .unwrap();
     assert_eq!(encoded["state"]["comments"][0]["explanation"], target);
@@ -582,12 +591,13 @@ fn session_roundtrips_info_state_and_copy() {
     let id = open.id().to_string();
     drop(open);
 
-    let opened = store.open(&id).unwrap();
+    let mut opened = store.open(&id).unwrap();
 
     assert_eq!(opened.info().id, id);
     assert_eq!(opened.info().updated, 200);
     assert_eq!(opened.state(), &state_with_comment());
-    assert_eq!(opened.copy(), &CopyState::Ready(copy()));
+    assert_eq!(opened.copy(), &CopyStatus::Ready);
+    assert_eq!(opened.take_copy(), Some(copy()));
     assert!(opened.is_resumable());
     assert!(scratch.dir().join(format!("{id}.session")).exists());
     assert!(scratch.dir().join(format!("{id}.payload")).exists());
@@ -1252,7 +1262,7 @@ fn frozen_copy_that_cannot_be_written_does_not_become_resumable() {
     // 写しを置けていないので「使える」にしない。この後に状態を書いても、
     // 「使える」と書いた `<id>.session` は残らない（R-SESSION の不変条件）。
     assert!(!open.is_resumable());
-    assert_eq!(open.copy(), &CopyState::Pending);
+    assert_eq!(open.copy(), &CopyStatus::Pending);
     open.save_issued_state(frozen_state(id)).unwrap();
     assert_eq!(store.read(id).unwrap().copy, CopyState::Pending);
     assert!(store.list().unwrap().is_empty());
@@ -1314,7 +1324,7 @@ fn frozen_copy_over_the_limit_is_unusable_and_never_written() {
             .unwrap()
     );
 
-    assert!(matches!(open.copy(), CopyState::Unusable(_)));
+    assert!(matches!(open.copy(), CopyStatus::Unusable(_)));
     assert!(!payload_path(&scratch.dir(), id).exists());
     drop(open);
     let saved = store.read(id).unwrap();
@@ -2105,8 +2115,9 @@ fn version_2_session_is_listed_and_resumable() {
 
     assert_eq!(listed, vec![VERSION_2_ID.to_string()]);
     assert!(!store.has_unreadable_version());
-    let opened = store.open(VERSION_2_ID).unwrap();
-    assert_eq!(opened.copy(), &CopyState::Ready(copy()));
+    let mut opened = store.open(VERSION_2_ID).unwrap();
+    assert_eq!(opened.copy(), &CopyStatus::Ready);
+    assert_eq!(opened.take_copy(), Some(copy()));
     assert_eq!(opened.state().comments.len(), 2);
 }
 

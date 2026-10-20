@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    CopyState, FrozenUnit, SessionCopy, SessionInfo, SessionMode, SessionState, encoding,
+    CopyStatus, FrozenUnit, SessionCopy, SessionInfo, SessionMode, SessionState, encoding,
     validate_additional,
 };
 use crate::domain::agent::{
@@ -360,25 +360,18 @@ struct RectDto {
     h: f64,
 }
 
-/// `<id>.session` が書いている写しの状態。中身は store が `<id>.payload` から読む。
-pub(super) enum CopyMeta {
-    Pending,
-    Unusable(String),
-    Ready,
-}
-
 impl<'a> MetaDto<'a> {
     pub(super) fn from_parts(
         info: &SessionInfo,
         state: &'a SessionState,
-        copy: &CopyState,
+        copy: &CopyStatus,
     ) -> Self {
         let copy = match copy {
-            CopyState::Pending => CopyMetaDto::Pending,
-            CopyState::Unusable(reason) => CopyMetaDto::Unusable {
+            CopyStatus::Pending => CopyMetaDto::Pending,
+            CopyStatus::Unusable(reason) => CopyMetaDto::Unusable {
                 reason: reason.clone(),
             },
-            CopyState::Ready(_) => CopyMetaDto::Ready,
+            CopyStatus::Ready => CopyMetaDto::Ready,
         };
         MetaDto {
             info: InfoDto {
@@ -397,7 +390,7 @@ impl<'a> MetaDto<'a> {
     }
 
     /// 情報・状態・写しのメタデータに分ける。
-    pub(super) fn into_parts(self) -> Result<(SessionInfo, SessionState, CopyMeta), String> {
+    pub(super) fn into_parts(self) -> Result<(SessionInfo, SessionState, CopyStatus), String> {
         let info = SessionInfo::from(self.info);
         let mut state = self.state.into_parts()?;
         if let Some(display) = &state.display {
@@ -422,9 +415,9 @@ impl<'a> MetaDto<'a> {
         validate_additional(&state).map_err(|e| e.to_string())?;
         state.refresh_explanation_comments();
         let copy = match self.copy {
-            CopyMetaDto::Pending => CopyMeta::Pending,
-            CopyMetaDto::Unusable { reason } => CopyMeta::Unusable(reason),
-            CopyMetaDto::Ready => CopyMeta::Ready,
+            CopyMetaDto::Pending => CopyStatus::Pending,
+            CopyMetaDto::Unusable { reason } => CopyStatus::Unusable(reason),
+            CopyMetaDto::Ready => CopyStatus::Ready,
         };
         Ok((info, state, copy))
     }
@@ -1171,7 +1164,7 @@ mod tests {
             mocks: BTreeMap::from([("/preview".into(), "mock.html".into())]),
             ..SessionState::default()
         };
-        let bytes = serde_json::to_vec(&MetaDto::from_parts(&info, &state, &CopyState::Pending))
+        let bytes = serde_json::to_vec(&MetaDto::from_parts(&info, &state, &CopyStatus::Pending))
             .expect("serializable session");
         let saved: MetaDto<'static> =
             MetaDto::decode(encoding::VERSION, &bytes).expect("read saved session");

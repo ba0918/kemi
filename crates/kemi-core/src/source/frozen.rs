@@ -22,7 +22,7 @@ pub struct FrozenSource {
 }
 
 impl FrozenSource {
-    pub fn new(info: &SessionInfo, copy: &SessionCopy) -> Self {
+    pub fn new(info: &SessionInfo, copy: SessionCopy) -> Self {
         let range = match &info.mode {
             SessionMode::Range {
                 from_sha, to_sha, ..
@@ -53,10 +53,10 @@ impl FrozenSource {
             startup_unit: copy.startup_unit,
             units: copy
                 .units
-                .iter()
-                .map(|frozen| (frozen.unit, frozen.review.clone()))
+                .into_iter()
+                .map(|frozen| (frozen.unit, frozen.review))
                 .collect(),
-            contents: copy.contents.clone(),
+            contents: copy.contents,
         }
     }
 
@@ -237,7 +237,7 @@ mod tests {
         let (repo, from, to) = fixture();
         let original = range_source(&repo, &from, &to);
         let (info, copy) = freeze(&repo, &from, &to, &original);
-        let frozen = FrozenSource::new(&info, &copy);
+        let frozen = FrozenSource::new(&info, copy.clone());
 
         assert_eq!(frozen.review().unwrap(), original.review().unwrap());
         assert_eq!(
@@ -256,7 +256,7 @@ mod tests {
         let (repo, from, to) = fixture();
         let original = range_source(&repo, &from, &to);
         let (info, copy) = freeze(&repo, &from, &to, &original);
-        let frozen = FrozenSource::new(&info, &copy);
+        let frozen = FrozenSource::new(&info, copy.clone());
         let file = copy.units[0].review.groups[0]
             .files
             .iter()
@@ -274,7 +274,7 @@ mod tests {
         let (repo, from, to) = fixture();
         let original = range_source(&repo, &from, &to);
         let (info, copy) = freeze(&repo, &from, &to, &original);
-        let frozen = FrozenSource::new(&info, &copy);
+        let frozen = FrozenSource::new(&info, copy);
         let files = original.review().unwrap().groups[0].files.clone();
 
         for file in &files {
@@ -292,7 +292,7 @@ mod tests {
         let (repo, from, to) = fixture();
         let original = range_source(&repo, &from, &to);
         let (info, copy) = freeze(&repo, &from, &to, &original);
-        let frozen = FrozenSource::new(&info, &copy);
+        let frozen = FrozenSource::new(&info, copy);
         let file_id = original.review().unwrap().groups[0].files[0].id.clone();
 
         std::fs::remove_dir_all(&repo.path).unwrap();
@@ -305,7 +305,7 @@ mod tests {
         let (repo, from, to) = fixture();
         let original = range_source(&repo, &from, &to);
         let (info, copy) = freeze(&repo, &from, &to, &original);
-        let frozen = FrozenSource::new(&info, &copy);
+        let frozen = FrozenSource::new(&info, copy);
 
         assert!(matches!(
             frozen.content("missing"),

@@ -397,13 +397,23 @@ pub fn prepare_copy(copy: SessionCopy) -> Result<PreparedCopy, SessionError> {
     })
 }
 
-/// 写しの状態。未完成・失敗・上限超過のセッションは一覧と復元の対象にしない。
+/// 写しの状態と、「使える」写しの中身。未完成・失敗・上限超過のセッションは一覧と
+/// 復元の対象にしない。
 #[derive(Clone, Debug, PartialEq)]
 pub enum CopyState {
     /// まだ凍結が終わっていない。
     Pending,
     Ready(SessionCopy),
     /// 凍結できなかった理由（内容の読み取り失敗、20 MB 超過など）。
+    Unusable(String),
+}
+
+/// 写しの状態だけ。`<id>.session` に書くのはこれで、「使える」写しの中身は `<id>.payload`
+/// にある。開いているセッションも中身を持たず、これだけを持つ。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CopyStatus {
+    Pending,
+    Ready,
     Unusable(String),
 }
 

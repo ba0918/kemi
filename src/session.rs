@@ -79,17 +79,12 @@ impl StoredSession {
             .close_suspended()
     }
 
-    /// 凍結したレビューを配るソースを作る。写しが無ければ None。
+    /// 凍結したレビューを配るソースを作る。復元で読んだ写しをソースへ移すので、作れるのは
+    /// 一度だけ。写しが無ければ None。
     pub fn frozen_source(&self) -> Option<FrozenSource> {
-        let open = self.open.lock().expect("session poisoned");
-        match open.copy() {
-            kemi_core::session::CopyState::Ready(copy) => {
-                Some(FrozenSource::new(open.info(), copy))
-            }
-            kemi_core::session::CopyState::Pending | kemi_core::session::CopyState::Unusable(_) => {
-                None
-            }
-        }
+        let mut open = self.open.lock().expect("session poisoned");
+        let copy = open.take_copy()?;
+        Some(FrozenSource::new(open.info(), copy))
     }
 }
 
@@ -142,8 +137,7 @@ impl SessionSink for StoredSession {
     /// `--live` のセッションは写しを持たない（R-PAGE-SESSION）。
     fn needs_copy(&self) -> bool {
         let open = self.open.lock().expect("session poisoned");
-        !open.info().mode.is_live()
-            && !matches!(open.copy(), kemi_core::session::CopyState::Ready(_))
+        !open.info().mode.is_live() && *open.copy() != kemi_core::session::CopyStatus::Ready
     }
 
     fn describe_review(&self, title: &str, total_files: usize) {
