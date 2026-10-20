@@ -355,8 +355,13 @@ mod tests {
             ("explain", &["ID", "--timeout", "1"]),
             ("explain", &["ID", "--explanation", "e.json"]),
         ];
+        // 拒否の文言は英語（R-DIST）。文言そのものは固定しない。
         for (name, args) in refused {
-            assert!(parse_args(name, args).is_err(), "kemi {name} {args:?}");
+            let message = parse_args(name, args).err();
+            assert!(
+                message.as_deref().is_some_and(str::is_ascii),
+                "kemi {name} {args:?}: {message:?}"
+            );
         }
     }
 

@@ -377,6 +377,16 @@ mod tests {
         }
     }
 
+    /// 拒否され、その文言が英語であること（R-DIST）。文言そのものは固定しない。
+    #[track_caller]
+    fn assert_refused_in_english(result: Result<(), String>, args: &[&str]) {
+        let message = result.err();
+        assert!(
+            message.as_deref().is_some_and(str::is_ascii),
+            "{args:?}: {message:?}"
+        );
+    }
+
     /// `prefix` の後ろに `flag` を足した引数。
     fn with(prefix: &[&'static str], flag: &[&'static str]) -> Vec<&'static str> {
         [prefix, flag].concat()
@@ -398,7 +408,7 @@ mod tests {
             &["--result", "--any", "--workspace", "."],
             &["manifest.json", "--result"],
         ] {
-            assert!(validate_result_flags(&parse(args)).is_err(), "{args:?}");
+            assert_refused_in_english(validate_result_flags(&parse(args)), args);
         }
         for flag in [
             &["--from", "HEAD~1"][..],
@@ -420,7 +430,7 @@ mod tests {
             &["--resume"],
         ] {
             let args = with(&["--result"], flag);
-            assert!(validate_result_flags(&parse(&args)).is_err(), "{args:?}");
+            assert_refused_in_english(validate_result_flags(&parse(&args)), &args);
         }
     }
 
@@ -444,7 +454,8 @@ mod tests {
         ] {
             assert_eq!(validate_resume_flags(&parse(args)), Ok(()), "{args:?}");
         }
-        assert!(validate_resume_flags(&parse(&["manifest.json", "--resume"])).is_err());
+        let args = ["manifest.json", "--resume"];
+        assert_refused_in_english(validate_resume_flags(&parse(&args)), &args);
         for flag in [
             &["--from", "HEAD"][..],
             &["--to", "HEAD"],
@@ -462,7 +473,7 @@ mod tests {
             &["--explanation", "e.json"],
         ] {
             let args = with(&["--resume"], flag);
-            assert!(validate_resume_flags(&parse(&args)).is_err(), "{args:?}");
+            assert_refused_in_english(validate_resume_flags(&parse(&args)), &args);
         }
     }
 
@@ -496,7 +507,7 @@ mod tests {
             &["--worktree", "--live-port", "0"],
             &["manifest.json", "--live", "page.html"],
         ] {
-            assert!(validate_live_flags(&parse(args)).is_err(), "{args:?}");
+            assert_refused_in_english(validate_live_flags(&parse(args)), args);
         }
         for flag in [
             &["--from", "HEAD"][..],
@@ -513,7 +524,7 @@ mod tests {
             &["--resume"],
         ] {
             let args = with(&["--live", "page.html"], flag);
-            assert!(validate_live_flags(&parse(&args)).is_err(), "{args:?}");
+            assert_refused_in_english(validate_live_flags(&parse(&args)), &args);
         }
     }
 
@@ -525,15 +536,8 @@ mod tests {
         ] {
             assert_eq!(validate_explanation_flags(&parse(args)), Ok(()), "{args:?}");
         }
-        assert!(
-            validate_explanation_flags(&parse(&[
-                "manifest.json",
-                "--digest",
-                "--explanation",
-                "e.json"
-            ]))
-            .is_err()
-        );
+        let args = ["manifest.json", "--digest", "--explanation", "e.json"];
+        assert_refused_in_english(validate_explanation_flags(&parse(&args)), &args);
     }
 
     #[test]
