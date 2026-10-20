@@ -597,11 +597,14 @@ impl PreparationGate {
     }
 
     /// フィルタを、kemi が起動する git にだけ設定する（フィクスチャの git には効かない）。
+    /// 門のディレクトリが無くなっても抜ける。テストが release の前に落ちると kemi は止まるが、
+    /// その子の git と sh は残り、released を待つだけでは永遠に回り続ける。
     fn apply<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         let filter = format!(
-            "sh -c 'touch \"{}\"; while [ ! -e \"{}\" ]; do sleep 0.01; done; cat'",
+            "sh -c 'touch \"{}\"; while [ ! -e \"{}\" ] && [ -d \"{}\" ]; do sleep 0.01; done; cat'",
             self.dir.path.join("started").display(),
-            self.dir.path.join("released").display()
+            self.dir.path.join("released").display(),
+            self.dir.path.display()
         );
         command
             .env("GIT_CONFIG_COUNT", "1")
