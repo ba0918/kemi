@@ -340,11 +340,11 @@ fn serve_asset(state: &AppState, path: &str) -> Result<Response, ApiError> {
         .assets
         .get(path)
         .ok_or_else(|| ApiError::not_found(format!("{path} not found")))?;
-    let mut response = axum::body::Bytes::from(asset.bytes.into_owned()).into_response();
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static(asset.mime),
-    );
+    let mime = asset.mime;
+    let mut response = asset.into_body().into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, header::HeaderValue::from_static(mime));
     Ok(response)
 }
 

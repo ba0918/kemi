@@ -272,11 +272,9 @@ async fn handle(State(state): State<Arc<LiveState>>, mut request: Request) -> Re
 async fn own_file(state: &LiveState, path: &str, query: Option<&str>) -> Response {
     match path {
         "page.js" => match state.assets.get("live/page.js") {
-            Some(asset) => (
-                [(header::CONTENT_TYPE, asset.mime)],
-                asset.bytes.into_owned(),
-            )
-                .into_response(),
+            Some(asset) => {
+                ([(header::CONTENT_TYPE, asset.mime)], asset.into_body()).into_response()
+            }
             None => StatusCode::NOT_FOUND.into_response(),
         },
         "alive" => {

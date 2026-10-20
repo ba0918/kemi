@@ -37,6 +37,16 @@ pub struct Asset {
     pub mime: &'static str,
 }
 
+impl Asset {
+    /// 応答の本文。バイナリに埋め込んだ資産は借用のまま渡し、配るたびに複製しない。
+    pub(crate) fn into_body(self) -> axum::body::Bytes {
+        match self.bytes {
+            Cow::Borrowed(bytes) => axum::body::Bytes::from_static(bytes),
+            Cow::Owned(bytes) => axum::body::Bytes::from(bytes),
+        }
+    }
+}
+
 pub trait Assets: Send + Sync {
     fn get(&self, path: &str) -> Option<Asset>;
 }
