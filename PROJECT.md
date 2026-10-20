@@ -38,7 +38,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `app.js` | 結線と起動だけ。すべてを import してよい唯一のモジュール |
 | `features/` | 状態を変え、`api.js` を呼び、描き直す。`features/explanation/` は `explanation` の一部（親の `explanation.js` が import し、親を呼ぶときは `actions` を通す） |
 | `views/` | 要素を作る。`api.js` を除く leaf と、ほかの `views/` を import してよい（循環させない）。`api.js`・`features/`・`app.js` は import しない。`views/diagrams/` は図の view で、`diagrams/` を使う |
-| leaf | `model.js`（純粋）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読みと、書いているページへのコメントの場所の扱い）、`live-diff.js`（`--live` の差分の純粋な処理。要素の記述を比べて変化の一覧を作る）、`explanation-model.js`（説明ビューの純粋な読み）、`diagrams/`（shoryo から取り込んだ図の描画の束。DOM を使う。上流とそろえるため、中身を kemi の層に合わせて書き換えない） |
+| leaf | `model.js`（純粋）、`conversation-model.js`（会話パネルとエージェントとの往復の純粋な読み）、`api.js`（通信）、`dom.js`（要素と道具）、`state.js`（状態と派生の読み）、`storage.js`（localStorage）、`actions.js`（下から上を呼ぶ入れ物）、`live-model.js`（`--live` のページの見方の純粋な読みと、書いているページへのコメントの場所の扱い）、`live-diff.js`（`--live` の差分の純粋な処理。要素の記述を比べて変化の一覧を作る）、`explanation-model.js`（説明ビューの純粋な読み）、`diagrams/`（shoryo から取り込んだ図の描画の束。DOM を使う。上流とそろえるため、中身を kemi の層に合わせて書き換えない） |
 
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。

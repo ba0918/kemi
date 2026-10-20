@@ -7,14 +7,14 @@ import { actions } from "../actions.js";
 import * as api from "../api.js";
 import { dom } from "../dom.js";
 import { conversationShown, state } from "../state.js";
-import { addMessage, replaceComment, threadLastSeq } from "../model.js";
+import { addMessage, replaceComment, threadLastSeq } from "../conversation-model.js";
 import { updateComments } from "./comments.js";
 import { renderConversation } from "../views/conversation.js";
 import { showOverlay, showToast } from "../views/overlay.js";
 
 /**
  * 通知で届いたエージェントの状態と未渡しの件数を取り込む。
- * @param {import("../model.js").AgentState} agent
+ * @param {import("../conversation-model.js").AgentState} agent
  */
 function applyAgent(agent) {
   state.agent = agent;
@@ -83,7 +83,7 @@ export function receiveThread(comment) {
 /**
  * 通知で届いたエージェントの状態。状態は渡す・返る・返信のたびに届き、そのたびに会話パネルを
  * 描き直すので、返信と同じく変換が終わるまで待つ。
- * @param {import("../model.js").AgentState} agent
+ * @param {import("../conversation-model.js").AgentState} agent
  */
 export function receiveAgent(agent) {
   whenNotComposing(() => applyAgent(agent));

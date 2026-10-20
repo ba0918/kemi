@@ -16,7 +16,7 @@ import {
   state,
 } from "../state.js";
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
-import { followsNewest, threadLastSeq } from "../model.js";
+import { followsNewest, threadLastSeq } from "../conversation-model.js";
 import { onResize, remeasureAndRender } from "./display.js";
 import { jumpToEntry } from "./files.js";
 import { refreshRendered } from "./rendered.js";

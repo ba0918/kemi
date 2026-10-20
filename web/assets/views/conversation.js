@@ -18,10 +18,10 @@ import {
   state,
   unitLabel,
 } from "../state.js";
+import { commentLabel, pageCommentElsewhere } from "../model.js";
 import {
   agentStatusLabel,
   authorLabel,
-  commentLabel,
   conversationItems,
   describeComment,
   filterConversation,
@@ -30,10 +30,9 @@ import {
   handLineState,
   handControl,
   otherThreadNews,
-  pageCommentElsewhere,
   threadChip,
   unreadCount,
-} from "../model.js";
+} from "../conversation-model.js";
 
 /** 開いたスレッドに見せる、対象の行の前後の行数。 */
 const CONTEXT_LINES = 2;

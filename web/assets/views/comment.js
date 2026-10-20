@@ -5,7 +5,8 @@ import { actions } from "../actions.js";
 import { button, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { saveDraft } from "../storage.js";
-import { commentLabel, draftKey, suggestionAllowed, threadChip } from "../model.js";
+import { commentLabel, draftKey, suggestionAllowed } from "../model.js";
+import { threadChip } from "../conversation-model.js";
 
 /** @typedef {import("../state.js").Editor} Editor */
 

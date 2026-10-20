@@ -5,7 +5,8 @@ import * as api from "../api.js";
 import { actions } from '../actions.js';
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
-import { commentLabel, draftKey, firstLine, shownLineNumbers, tapSelection } from "../model.js";
+import { commentLabel, draftKey, shownLineNumbers, tapSelection } from "../model.js";
+import { firstLine } from "../conversation-model.js";
 import {
   recomputeThreads,
   remeasure,
