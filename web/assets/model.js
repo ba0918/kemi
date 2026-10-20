@@ -1060,6 +1060,43 @@ export function commentedLines(display, comments) {
 }
 
 /**
+ * 開いたスレッドの上に見せる、行コメントの対象の行とその前後 `context` 行。並びの行は
+ * コメントの側のものだけを見て、変更の行はその側の色（新側は追加、旧側は削除）にし、範囲の
+ * 中の行を当たりにする。並びにその範囲の行が無ければ、コメントが覚えている対象の行（quote）。
+ * ファイル全体へのコメントには対象の行が無い。
+ * @param {LogicalRow[]} rows
+ * @param {any} comment
+ * @param {number} context
+ * @returns {{ text: string, tone: string, hit: boolean }[]}
+ */
+export function threadContextLines(rows, comment, context) {
+  if (!hasLines(comment)) {
+    return [];
+  }
+  const start = Number(comment.start_line);
+  const end = Number(comment.end_line ?? comment.start_line);
+  /** @type {{ text: string, tone: string, hit: boolean }[]} */
+  const lines = [];
+  for (const row of rows) {
+    const line = comment.side === "new" ? row.new : row.old;
+    if (!line) {
+      continue;
+    }
+    const number = Number(line.number);
+    if (number < start - context || number > end + context) {
+      continue;
+    }
+    const changed = row.kind !== "equal";
+    const tone = !changed ? "" : comment.side === "new" ? "add" : "del";
+    lines.push({ text: line.text, tone, hit: number >= start && number <= end });
+  }
+  if (lines.length > 0) {
+    return lines;
+  }
+  return (comment.quote || []).map((/** @type {string} */ text) => ({ text, tone: "", hit: true }));
+}
+
+/**
  * コメントの追加・編集・削除の前後で、コメントの件数が変わったファイル（グループとパス）。
  * ツリーのコメント件数の札は、このファイルの項目だけを描き直せば足りる。
  * @param {any[]} before

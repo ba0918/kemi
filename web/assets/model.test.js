@@ -44,6 +44,7 @@ import {
   seenProgress,
   rulerMarks,
   commentedLines,
+  threadContextLines,
   submitSummary,
   commentCountChanges,
   treeOrder,
@@ -963,6 +964,52 @@ test("keyAction_moves_between_changes_and_toggles_seen", () => {
   assert.deepEqual(keyAction("n", 3, 0), { type: "nav", direction: 1 });
   assert.deepEqual(keyAction("p", 3, 0), { type: "nav", direction: -1 });
   assert.deepEqual(keyAction("v", 3, 0), { type: "seen" });
+});
+
+test("開いたスレッドの対象の行は、範囲の前後の決めた行数までを見せ、範囲の中を当たりにする", () => {
+  const rows = [
+    equal(1, "a"),
+    equal(2, "b"),
+    equal(3, "c"),
+    replaceAt(4, "old 4", "new 4"),
+    inserted(5, "new 5"),
+    equal(6, "f"),
+    equal(7, "g"),
+    equal(8, "h"),
+  ];
+  const comment = { side: "new", start_line: 4, end_line: 5, quote: ["new 4", "new 5"] };
+
+  assert.deepEqual(threadContextLines(rows, comment, 2), [
+    { text: "b", tone: "", hit: false },
+    { text: "c", tone: "", hit: false },
+    { text: "new 4", tone: "add", hit: true },
+    { text: "new 5", tone: "add", hit: true },
+    { text: "f", tone: "", hit: false },
+    { text: "g", tone: "", hit: false },
+  ]);
+});
+
+test("旧側のコメントの対象の行は旧側の行だけを見て、変更の行を削除の色にする", () => {
+  const rows = [equal(1, "a"), deleted(2, "gone"), inserted(2, "added"), equal(3, "c")];
+  const comment = { side: "old", start_line: 2, end_line: null, quote: ["gone"] };
+
+  assert.deepEqual(threadContextLines(rows, comment, 1), [
+    { text: "a", tone: "", hit: false },
+    { text: "gone", tone: "del", hit: true },
+    { text: "c", tone: "", hit: false },
+  ]);
+});
+
+test("行を読んでいないか範囲の行が無ければ、コメントが覚えている対象の行に戻る", () => {
+  const comment = { side: "new", start_line: 3, end_line: 4, quote: ["x", "y"] };
+  const quoted = [
+    { text: "x", tone: "", hit: true },
+    { text: "y", tone: "", hit: true },
+  ];
+
+  assert.deepEqual(threadContextLines([], comment, 2), quoted);
+  assert.deepEqual(threadContextLines([equal(20, "far")], comment, 2), quoted);
+  assert.deepEqual(threadContextLines([], { side: "new", start_line: null, end_line: null, quote: ["x"] }, 2), []);
 });
 
 test("commented_lines_cover_the_whole_range_on_its_side", () => {

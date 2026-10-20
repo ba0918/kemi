@@ -17,7 +17,14 @@ import {
   isShowingFile,
   state,
 } from "../state.js";
-import { commentLabel, pageCommentElsewhere, replyCountLabel, unitLabel } from "../model.js";
+import {
+  commentLabel,
+  hasLines,
+  pageCommentElsewhere,
+  replyCountLabel,
+  threadContextLines,
+  unitLabel,
+} from "../model.js";
 import {
   agentStatusLabel,
   authorLabel,
@@ -584,34 +591,15 @@ function pageCommentEditor(comment) {
  * @returns {{ text: string, tone: string, hit: boolean }[]}
  */
 function targetLines(comment) {
-  if (comment.start_line === null || comment.start_line === undefined) {
+  // ファイル全体へのコメントには対象の行が無いので、ファイルを探さない。
+  if (!hasLines(comment)) {
     return [];
   }
-  const start = Number(comment.start_line);
-  const end = Number(comment.end_line ?? comment.start_line);
   const entry = comment.outdated ? null : entryOfComment(comment);
   const rows = !entry
     ? []
     : isShowingFile(entry.file.id)
       ? state.rows
       : (state.cache.get(fileCacheKey(entry))?.rows ?? []);
-  /** @type {{ text: string, tone: string, hit: boolean }[]} */
-  const lines = [];
-  for (const row of rows) {
-    const line = comment.side === "new" ? row.new : row.old;
-    if (!line) {
-      continue;
-    }
-    const number = Number(line.number);
-    if (number < start - CONTEXT_LINES || number > end + CONTEXT_LINES) {
-      continue;
-    }
-    const changed = row.kind !== "equal";
-    const tone = !changed ? "" : comment.side === "new" ? "add" : "del";
-    lines.push({ text: line.text, tone, hit: number >= start && number <= end });
-  }
-  if (lines.length > 0) {
-    return lines;
-  }
-  return (comment.quote || []).map((/** @type {string} */ text) => ({ text, tone: "", hit: true }));
+  return threadContextLines(rows, comment, CONTEXT_LINES);
 }
