@@ -4,6 +4,7 @@ import { actions } from '../actions.js';
 import { dom } from '../dom.js';
 import { state, currentUnit, fileCacheKey, explanationInteractable } from '../state.js';
 import { resolveCodeReference, explanationElementId } from '../explanation-model.js';
+import { onResize } from './display.js';
 import { applyReview, jumpToEntry, selectIndex } from './files.js';
 import { updateComments } from './comments.js';
 import { renderHeader } from '../views/header.js';
@@ -93,9 +94,9 @@ export function openExplanationEditor(request) {
 }
 
 function setupContentsResize() {
-  const splitter = document.getElementById('explanation-splitter');
+  const splitter = dom.explanationSplitter;
   const layout = dom.explanationToc.parentElement;
-  if (!splitter || !layout) return;
+  if (!layout) return;
   const maximum = () => Math.max(200, Math.min(480, layout.clientWidth * .4));
   /** @param {number} width */
   const setWidth = (width) => {
@@ -151,13 +152,12 @@ function showView() {
   document.body.dataset.reviewView=state.view;
   dom.explanationDocument.hidden=state.view!=='explanation';
   dom.explanationToc.hidden=state.view!=='explanation';
-  const splitter = document.getElementById('explanation-splitter');
-  if (splitter) splitter.hidden = state.view !== 'explanation';
+  dom.explanationSplitter.hidden = state.view !== 'explanation';
   if (state.drawerOpen) dom.explanationToc.dataset.drawer='open';
   else delete dom.explanationToc.dataset.drawer;
   renderHeader();renderExplanationStatus();
   if (state.view==='explanation') dom.explanationDocument.scrollTop=state.explanation.scrollTop;
-  if (state.view==='code') {renderTree();window.dispatchEvent(new Event('resize'));}
+  if (state.view==='code') {renderTree();onResize();}
 }
 
 /** @param {any} review */
@@ -198,7 +198,7 @@ export async function receiveExplanation(notice) {
     }
     renderExplanationStatus();
     // 会話の比較値だけを取り直す。Codeの一覧を取り込む操作ではない。
-    actions.explanationChanged();
+    explanationChanged();
   } catch { /* 次の通知か再接続時に再取得する。 */ }
 }
 
