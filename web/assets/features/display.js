@@ -84,12 +84,13 @@ export function fetchFileData(entry) {
 }
 
 /**
- * 取った行データをキャッシュに入れる。最初に読んだ行を、畳み直しの判定の元（collapsedRows）として覚える。
+ * 取った行データを受け取る。キャッシュに入れ、サーバが決め直したコメントの outdated をページの
+ * コメント（state.allComments）にも映す。最初に読んだ行を、畳み直しの判定の元（collapsedRows）として覚える。
  * @param {string} key fileCacheKey の鍵
  * @param {any} data api/file の応答
  * @returns {any} キャッシュに入れたもの
  */
-export function storeFileData(key, data) {
+export function acceptFileData(key, data) {
   const rows = data.rows || [];
   const stored = { ...data, rows, collapsedRows: rows };
   state.cache.set(key, stored);

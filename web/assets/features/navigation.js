@@ -19,7 +19,7 @@ import {
   navPrevTarget,
   nextFileIndex,
 } from "../model.js";
-import { fetchFileData, rowOffsets, scheduleRender, storeFileData } from "./display.js";
+import { acceptFileData, fetchFileData, rowOffsets, scheduleRender } from "./display.js";
 import { navView, stopTops } from "../views/nav.js";
 import { blockElements, blockTop } from "../views/rendered.js";
 import { showToast } from "../views/overlay.js";
@@ -161,7 +161,7 @@ async function loadForNavigation(entry, generation) {
     // 読み直し（テーマや更新）で消えたキャッシュへ、古い行を戻さない。
     return null;
   }
-  return storeFileData(key, data);
+  return acceptFileData(key, data);
 }
 
 /** ファイルを表示し終えた後の移り先（次のファイルの最初の変更や、由来の該当行）へ移る。 */

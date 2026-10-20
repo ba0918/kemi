@@ -21,6 +21,7 @@ import {
   treeOrder,
 } from "../model.js";
 import {
+  acceptFileData,
   captureAnchor,
   fetchFileData,
   recomputeDisplay,
@@ -28,7 +29,6 @@ import {
   renderFloating,
   resetHeights,
   scheduleRender,
-  storeFileData,
 } from "./display.js";
 import { applyPendingJump, revealInTree } from "./navigation.js";
 import { renderConversation } from "../views/conversation.js";
@@ -213,7 +213,7 @@ export async function selectEntry(entry, options = { scrollTop: true }) {
       // 取得中に別のファイルが選ばれた。古い応答で表示を上書きしない。
       return;
     }
-    storeFileData(key, data);
+    acceptFileData(key, data);
   }
   state.loading = false;
   const data = state.cache.get(key);

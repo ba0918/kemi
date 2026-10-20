@@ -19,7 +19,7 @@ import {
 import { saveConversationOpen, saveConversationWidth } from "../storage.js";
 import { followsNewest, replaceComment, threadLastSeq } from "../conversation-model.js";
 import { hasLines } from "../model.js";
-import { fetchFileData, onResize, remeasureAndRender, storeFileData } from "./display.js";
+import { acceptFileData, fetchFileData, onResize, remeasureAndRender } from "./display.js";
 import { jumpToEntry } from "./files.js";
 import { refreshRendered } from "./rendered.js";
 import { openCommentEditor, updateComments } from "./comments.js";
@@ -174,7 +174,7 @@ async function loadThreadLines(comment) {
   if (reviews !== state.reviews || fileCacheKey(entry) !== key || state.cache.has(key)) {
     return;
   }
-  storeFileData(key, data);
+  acceptFileData(key, data);
   if (state.conversation.thread === comment.id) {
     renderConversation();
   }
