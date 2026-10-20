@@ -62,14 +62,12 @@ async fn session_saves_keep_changes_made_while_a_save_is_slow() {
             .await
         }
     });
-    // HTTP タスクが保存に届く前に失敗しても、通知を永久に待たないため。
-    tokio::select! {
-        () = sink.entered.notified() => {}
-        result = &mut first => panic!("最初の要求が保存に入る前に終了した: {result:?}"),
-        () = tokio::time::sleep(WAIT_LIMIT) => {
-            panic!("最初の要求が保存に入らなかった");
-        }
-    }
+    until_reached(
+        "the first request entering the save",
+        sink.entered.notified(),
+        &mut first,
+    )
+    .await;
     let second = tokio::spawn(async move {
         post_json(
             &url,
@@ -427,8 +425,13 @@ async fn suspend_after_submit_returns_the_committed_document() {
         });
         let sink = Arc::new(RecordingSink::default());
         sink.copy_already_saved.store(true, Ordering::SeqCst);
-        let server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
-        server.control.ready().await;
+        let mut server = AgentServer::start_with_sink(source, Ipv4Addr::LOCALHOST, sink).await;
+        until_reached(
+            "the server becoming ready",
+            server.control.ready(),
+            &mut server.page.task,
+        )
+        .await;
         // 別のファイル取得が処理中なら、submit の応答後も serve は接続の終了を待つ。
         let url = format!("{}api/file/f1", server.page.url);
         let reading = tokio::spawn(async move { http().get(url).send().await.unwrap() });
@@ -468,8 +471,13 @@ async fn suspend_after_submit_returns_the_committed_document() {
 
 #[tokio::test]
 async fn suspend_before_submit_returns_suspended_without_a_waiter() {
-    let server = AgentServer::start().await;
-    server.control.ready().await;
+    let mut server = AgentServer::start().await;
+    until_reached(
+        "the server becoming ready",
+        server.control.ready(),
+        &mut server.page.task,
+    )
+    .await;
 
     assert!(matches!(
         server.control.suspend(),

@@ -166,11 +166,16 @@ async fn submit_concurrent_409() {
 
     let url = server.url.clone();
     let origin = server.origin.clone();
-    let first_task = tokio::spawn(async move {
+    let mut first_task = tokio::spawn(async move {
         post_json(&url, &origin, "api/submit", json!({"verdict": "approved"})).await
     });
 
-    server.source.content_started.notified().await;
+    until_reached(
+        "the first submit reading content",
+        server.source.content_started.notified(),
+        &mut first_task,
+    )
+    .await;
     signal.send(()).unwrap();
     let second_status = raw.join().unwrap();
 

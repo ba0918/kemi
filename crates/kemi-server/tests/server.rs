@@ -450,6 +450,9 @@ fn raw_post_with_host(
     use std::io::{Read, Write};
 
     let mut stream = std::net::TcpStream::connect(address).unwrap();
+    // サーバが応答しない退行でも止まり続けない。
+    stream.set_read_timeout(Some(WAIT_LIMIT)).unwrap();
+    stream.set_write_timeout(Some(WAIT_LIMIT)).unwrap();
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -497,6 +500,22 @@ async fn eventually<T: std::fmt::Debug>(
             "{what} did not happen within {WAIT_LIMIT:?}; last seen: {seen:?}"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// 相手の要求（`peer`）が `reached` の合図を出すまで待つ。合図の前に相手が終わったら
+/// （届く前に誤りで返る退行など）、その結果を出して失敗させ、合図を永久に待たない。
+async fn until_reached<T: std::fmt::Debug>(
+    what: &str,
+    reached: impl Future<Output = ()>,
+    peer: &mut JoinHandle<T>,
+) {
+    tokio::select! {
+        () = reached => {}
+        result = peer => panic!("the request ended before {what}: {result:?}"),
+        () = tokio::time::sleep(WAIT_LIMIT) => {
+            panic!("{what} did not happen within {WAIT_LIMIT:?}");
+        }
     }
 }
 

@@ -1442,7 +1442,11 @@ async fn a_snapshot_taken_while_a_comment_image_is_written_does_not_take_it_for_
     let added = add_page_comment_with_image(&running, incompressible_image(1200)).await;
 
     let answer = sink.answer.lock().unwrap().take().unwrap();
-    assert_eq!(answer.recv().unwrap(), StatusCode::OK);
+    // スナップショットの要求と画像の書き込みが互いを待って止まる退行でも、テストを止めない。
+    let status = answer
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the snapshot request answered");
+    assert_eq!(status, StatusCode::OK);
     assert!(added.get("image_unsaved").is_none(), "{added}");
     let saved = &store
         .read("01HF7YAT00PAGE000000000000")

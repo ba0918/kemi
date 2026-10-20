@@ -905,10 +905,15 @@ async fn submit_claiming_first_refuses_the_explanation_while_result_content_is_g
     source.blocked.store(true, Ordering::SeqCst);
     let url = server.page.url.clone();
     let origin = server.page.origin.clone();
-    let submit = tokio::spawn(async move {
+    let mut submit = tokio::spawn(async move {
         post_json(&url, &origin, "api/submit", json!({"verdict":"approved"})).await
     });
-    gate.entered.notified().await;
+    until_reached(
+        "the submit reading the gated content",
+        gate.entered.notified(),
+        &mut submit,
+    )
+    .await;
     assert_eq!(server.agent_post("explain",json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()})).await.status(),409);
     release.send(()).unwrap();
     let response = submit.await.unwrap();
@@ -940,8 +945,14 @@ async fn submit_started_after_the_explanation_save_began_includes_the_explanatio
     *sink.explanation_gate.lock().unwrap() = Some(gate.clone());
     let url = server.agent_url(&server.agent_token, "explain");
     let update = json!({"expected_revision":0,"base_display_version":context["diff_display_version"],"sections":explanation_sections()});
-    let explain = tokio::spawn(async move { http().post(url).json(&update).send().await.unwrap() });
-    gate.entered.notified().await;
+    let mut explain =
+        tokio::spawn(async move { http().post(url).json(&update).send().await.unwrap() });
+    until_reached(
+        "the explanation save starting",
+        gate.entered.notified(),
+        &mut explain,
+    )
+    .await;
     // 説明の保存が始まってから submit を出す。submit が保存の門に着いて待っていることは外から
     // 観測できず、門はすぐ開けるので、ほとんどの実行で submit は保存が終わった後に届く。保存と
     // submit の競合の検査ではない。逆の順（submit が先に請求する）は
