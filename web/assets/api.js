@@ -288,14 +288,14 @@ export function subscribeEvents(onUpdate, onUnit, agent) {
     onUpdate();
     agent.onMissed();
   });
-  // つながる前（や切れていた間）に届かなかった単位の状態を、つながった時点で読み直す。
-  // 返信・発言・エージェントの状態は、最初の接続では読み直さない（起動はつながってから
-  // 中身を読むので、取りこぼしは無い。読み直すとコメントをすべて差し替える）。つなぎ直した
-  // ときだけ読み直す。
+  // 切れていた間に届かなかった単位の状態と、返信・発言・エージェントの状態は、つなぎ直した
+  // ときだけ読み直す。最初の接続では読み直さない（起動はつながってから中身を読むので、取りこぼしは
+  // 無い。単位を読み直すとレビュー全体をもう一度取り、往復の中身を読み直すとコメントをすべて
+  // 差し替える）。
   let connected = false;
   events.addEventListener("open", () => {
-    onUnit();
     if (connected) {
+      onUnit();
       agent.onMissed();
     }
     connected = true;
