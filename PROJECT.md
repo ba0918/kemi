@@ -45,6 +45,9 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - `features/` の中の順番は
    `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
+- `features/live/` は `live` の部品で、親の `features/live.js` が import する。部品の順は state で、
+  部品は自分より前の部品だけを import し、親は import しない。`features/live/state.js` は画面を開いている
+  間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と親が読み書きする。
 - `state.js` は `storage.js` と `model.js` を import してよい。`diagrams/` の中のファイルは互いに import してよい。
   ほかの leaf 同士は import しない。
 - `app.js` と、`dom.js`（`document` を引く）・`state.js`（`localStorage` を読む）を除き、
@@ -60,7 +63,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   あることも確かめる。`index.html` の stylesheet の順（部品の `parts.css`・`explanation.css` の後に
   `style.css`）も確かめる。詳細度の同じ規則は後に読んだ方が勝つので、この順が見た目を決める。
   読み込んだだけで走る文の規則は確かめない。
-- 例外は `--live` のページの見方（`features/live.js`・`views/live.js`（骨組み・上部バー・書く欄）・
+- 例外は `--live` のページの見方（`features/live.js` と `features/live/`・`views/live.js`（骨組み・上部バー・書く欄）・
   `views/live-changes.js`（ページのツリーと変化の一覧）・`live-model.js`・`live-diff.js`・
   `live.css`）。`--live` でないレビューはページ用のファイルを読み込まない約束（`R-VERIFY`）
   なので、`modulepreload` に載せず、`app.js` が `--live` のレビューでだけ動的に `import` する。
