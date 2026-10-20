@@ -695,10 +695,10 @@ fn agent_replies(count: usize) -> Vec<Reply> {
         .collect()
 }
 
-fn reply_write(comment_id: &str, body: &str) -> AgentWrite {
-    AgentWrite::Reply {
+fn reply_write(comment_id: &str, body: &str) -> ContentWrite {
+    ContentWrite::Reply {
         comment_id: comment_id.to_string(),
-        body: body.to_string(),
+        content: body.into(),
     }
 }
 
@@ -710,8 +710,8 @@ fn writes_within_the_limits_are_accepted() {
         validate_writes(
             &[
                 reply_write("c1", "ok"),
-                AgentWrite::Message {
-                    body: "done".to_string()
+                ContentWrite::Message {
+                    content: "done".into()
                 },
             ],
             &comments,
@@ -726,29 +726,6 @@ fn a_reply_to_a_missing_comment_is_refused() {
     assert_eq!(
         validate_writes(&[reply_write("c9", "lost")], &[comment("c1", "one")], &[]),
         Err(WriteError::NoSuchComment("c9".to_string()))
-    );
-}
-
-#[test]
-fn a_body_over_64_kb_of_utf8_is_refused() {
-    let comments = vec![comment("c1", "one")];
-    // 3 バイトの文字で、文字数ではなくバイト数で数えることを確かめる。
-    let at_limit = "あ".repeat(MAX_BODY_BYTES / 3) + "x";
-    assert_eq!(at_limit.len(), MAX_BODY_BYTES);
-
-    assert_eq!(
-        validate_writes(&[reply_write("c1", &at_limit)], &comments, &[]),
-        Ok(())
-    );
-    assert_eq!(
-        validate_writes(
-            &[AgentWrite::Message {
-                body: at_limit + "x"
-            }],
-            &comments,
-            &[]
-        ),
-        Err(WriteError::BodyTooLarge)
     );
 }
 
@@ -792,8 +769,8 @@ fn agent_messages_stop_at_two_hundred_counting_this_write() {
         })
         .collect();
     messages.push(message("m200", "a reviewer message is not counted"));
-    let one = || AgentWrite::Message {
-        body: "x".to_string(),
+    let one = || ContentWrite::Message {
+        content: "x".into(),
     };
 
     assert_eq!(validate_writes(&[one()], &[], &messages), Ok(()));

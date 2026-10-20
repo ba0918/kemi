@@ -3,6 +3,7 @@ use serde::{
     de::{MapAccess, Visitor},
 };
 
+use crate::domain::agent::MAX_BODY_BYTES;
 use crate::domain::conversation_content::ConversationContent;
 use crate::domain::parts_validation::{PartError, bound, validate_parts};
 
@@ -79,7 +80,7 @@ pub fn validate_content(content: ConversationContent) -> Result<ConversationCont
 }
 
 pub fn validate_plain_body(body: &str) -> Result<(), ContentError> {
-    bound("body UTF-8 bytes", body.len(), 0, 65_536).map_err(ContentError::Structure)
+    bound("body UTF-8 bytes", body.len(), 0, MAX_BODY_BYTES).map_err(ContentError::Structure)
 }
 
 #[cfg(test)]

@@ -25,8 +25,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use futures_util::StreamExt;
-use kemi_core::domain::agent::{AgentEvent, AgentWrite, ContentWrite, validate_writes};
-use kemi_core::domain::conversation_content::ConversationContent;
+use kemi_core::domain::agent::{AgentEvent, ContentWrite, validate_writes};
 use kemi_core::parts::{WriteContent, validate_content};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -383,7 +382,6 @@ async fn reply_api(
 
     let (ids, threads, messages) = {
         let mut session = state.session.lock().expect("session poisoned");
-        let previous = session.clone();
         // submit は結果を組み立てるときにセッションのロックを取るので、ロックの中で確かめれば、
         // 書けた書き込みは必ず結果に入る。submit が先に始まっていれば、結果に入らないので書かない。
         if matches!(
@@ -394,27 +392,10 @@ async fn reply_api(
                 "the review is being submitted; print its result with kemi --result",
             ));
         }
-        let plain = |content: &ConversationContent| match content {
-            ConversationContent::Plain(body) => body.clone(),
-            ConversationContent::Parts(_) => String::new(),
-        };
-        let counted: Vec<_> = writes
-            .iter()
-            .map(|write| match write {
-                ContentWrite::Reply {
-                    comment_id,
-                    content,
-                } => AgentWrite::Reply {
-                    comment_id: comment_id.clone(),
-                    body: plain(content),
-                },
-                ContentWrite::Message { content } => AgentWrite::Message {
-                    body: plain(content),
-                },
-            })
-            .collect();
-        validate_writes(&counted, &session.state.comments, &session.state.messages)
+        validate_writes(&writes, &session.state.comments, &session.state.messages)
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        // 保存の上限で断ったときに戻すための写し。上の拒否では要らないので、書き換える直前に取る。
+        let previous = session.clone();
         let applied = session.state.apply_agent_writes(writes);
         let ids = applied.ids;
         let touched = applied.touched;

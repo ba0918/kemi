@@ -477,15 +477,7 @@ fn thread_exists(at: &HandLineAt, comments: &[Comment]) -> bool {
     }
 }
 
-/// `kemi reply` の書き込み 1 件（R-AGENT-WRITE）。案は動いているページのレビューでだけ
-/// 受け付けるので、ここには無い。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AgentWrite {
-    Reply { comment_id: String, body: String },
-    Message { body: String },
-}
-
-/// 検証を通った、エージェントの書き込み 1 件。
+/// 検証を通った、エージェントの書き込み 1 件（`kemi reply`、R-AGENT-WRITE）。
 pub enum ContentWrite {
     Reply {
         comment_id: String,
@@ -507,7 +499,6 @@ pub const MAX_BODY_BYTES: usize = 64 * 1024;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteError {
     NoSuchComment(String),
-    BodyTooLarge,
     TooManyReplies(String),
     TooManyMessages,
 }
@@ -516,11 +507,6 @@ impl std::fmt::Display for WriteError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WriteError::NoSuchComment(id) => write!(formatter, "no comment {id} in this review"),
-            WriteError::BodyTooLarge => write!(
-                formatter,
-                "a body is larger than {} KB",
-                MAX_BODY_BYTES / 1024
-            ),
             WriteError::TooManyReplies(id) => write!(
                 formatter,
                 "comment {id} would have more than {MAX_AGENT_REPLIES_PER_COMMENT} agent replies"
@@ -536,16 +522,17 @@ impl std::fmt::Display for WriteError {
 /// 書き込みをまとめて確かめる。1 件でも上限を超えるか宛先が無ければ、全体を断る
 /// （途中まで書いて半分だけ画面に出ることを防ぐ。R-AGENT-CLI）。上限には今ある
 /// エージェントの書き込みと、この書き込みの両方を数える。人間の書き込みは数えない。
+/// 本文の大きさと形は、書き込みを作る前に `validate_content` が全件を確かめている。
 pub fn validate_writes(
-    writes: &[AgentWrite],
+    writes: &[ContentWrite],
     comments: &[Comment],
     messages: &[Message],
 ) -> Result<(), WriteError> {
     let mut new_replies: Vec<(&str, usize)> = Vec::new();
     let mut new_messages = 0usize;
     for write in writes {
-        let body = match write {
-            AgentWrite::Reply { comment_id, body } => {
+        match write {
+            ContentWrite::Reply { comment_id, .. } => {
                 if !comments.iter().any(|comment| &comment.id == comment_id) {
                     return Err(WriteError::NoSuchComment(comment_id.clone()));
                 }
@@ -553,15 +540,8 @@ pub fn validate_writes(
                     Some((_, count)) => *count += 1,
                     None => new_replies.push((comment_id, 1)),
                 }
-                body
             }
-            AgentWrite::Message { body } => {
-                new_messages += 1;
-                body
-            }
-        };
-        if body.len() > MAX_BODY_BYTES {
-            return Err(WriteError::BodyTooLarge);
+            ContentWrite::Message { .. } => new_messages += 1,
         }
     }
     for (comment_id, added) in new_replies {
