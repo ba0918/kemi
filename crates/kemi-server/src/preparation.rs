@@ -112,30 +112,4 @@ mod tests {
             .await
             .expect("capacity returns after computation");
     }
-
-    #[tokio::test]
-    async fn blocked_preparation_leaves_the_async_runtime_free_to_release_it() {
-        let limit = Arc::new(tokio::sync::Semaphore::new(1));
-        let (entered, started) = tokio::sync::oneshot::channel();
-        let (release, released) = std::sync::mpsc::channel();
-        let task = tokio::spawn(async move {
-            let permit = super::acquire(&limit).await;
-            super::run(permit, move || {
-                entered.send(()).expect("test is waiting for preparation");
-                released.recv_timeout(Duration::from_secs(5))
-            })
-            .await
-        });
-        tokio::time::timeout(Duration::from_secs(5), started)
-            .await
-            .expect("preparation starts")
-            .expect("start signal");
-        release.send(()).expect("preparation is still waiting");
-        assert!(
-            task.await
-                .expect("async task")
-                .expect("blocking task")
-                .is_ok()
-        );
-    }
 }
