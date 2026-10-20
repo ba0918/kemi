@@ -290,16 +290,6 @@ impl SessionStore {
         checked_id(id).is_ok() && is_locked(&self.dir, id)
     }
 
-    /// セッションのファイルを消す。
-    pub fn delete(&self, id: &str) -> Result<(), SessionError> {
-        checked_id(id)?;
-        // `<id>.session` を消してから `<id>.payload` を消す（R-SESSION の書く順序）。
-        remove_if_present(&self.path(id))?;
-        remove_if_present(&self.payload_path(id))?;
-        remove_dir_if_present(&files_path(&self.dir, id))?;
-        remove_if_present(&super::endpoint_path(&self.dir, id))
-    }
-
     fn path(&self, id: &str) -> PathBuf {
         session_path(&self.dir, id)
     }

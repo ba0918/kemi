@@ -1000,23 +1000,6 @@ fn a_session_removed_by_the_cleanup_loses_its_files_directory() {
 }
 
 #[test]
-fn deleting_a_stored_session_by_id_removes_its_files_directory() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    let mut open = store
-        .create(live_info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
-        .unwrap();
-    open.save_state_at(state_with_comment(), 200).unwrap();
-    saved_path(&open.save_image("c1", b"png", &no_comments()));
-    let id = open.id().to_string();
-    drop(open);
-
-    store.delete(&id).unwrap();
-
-    assert!(!files_dir(&scratch, &id).exists());
-}
-
-#[test]
 fn session_file_holds_no_frozen_review_paths() {
     let scratch = Scratch::new();
     let store = SessionStore::new(scratch.dir());
@@ -1724,20 +1707,6 @@ fn session_read_rejects_an_id_that_is_not_a_ulid() {
 }
 
 #[test]
-fn session_delete_rejects_an_id_that_is_not_a_ulid() {
-    let scratch = Scratch::new();
-    let store = SessionStore::new(scratch.dir());
-    std::fs::create_dir_all(scratch.dir()).unwrap();
-    let outside = scratch.0.join("sentinel.session");
-    std::fs::write(&outside, b"keep").unwrap();
-
-    let result = store.delete("../sentinel");
-
-    assert!(matches!(result, Err(SessionError::NotFound { .. })));
-    assert!(outside.exists());
-}
-
-#[test]
 fn suspending_after_submit_does_not_allow_late_writes_to_recreate_the_session() {
     let scratch = Scratch::new();
     let store = SessionStore::new(scratch.dir());
@@ -2058,10 +2027,6 @@ fn endpoint_is_removed_with_the_session() {
 
     open.delete().unwrap();
 
-    assert!(!endpoint_path(&scratch.dir(), &id).exists());
-    drop(open);
-    write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
-    store.delete(&id).unwrap();
     assert!(!endpoint_path(&scratch.dir(), &id).exists());
 }
 
