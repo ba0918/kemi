@@ -7,6 +7,7 @@
 //   node scripts/test-live.mjs <kemi-bin> --compose-layout
 //   node scripts/test-live.mjs <kemi-bin> --page-surrounding
 //   node scripts/test-live.mjs <kemi-bin> --baseline-guide
+//   node scripts/test-live.mjs <kemi-bin> --outside-git
 //   node scripts/test-live.mjs <kemi-bin> --comment-images
 //
 // 確かめること:
@@ -56,7 +57,7 @@
 //   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
 //   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
 //   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。枠が隠れている間（比べる相手の
-//   側を見ている、コードの見方から渡す）に取ったスナップショットも、変えていないページとは変化 0。
+//   側を見ている、コードの見方から渡す。git の外のコードの見方からも）に取ったスナップショットも、変えていないページとは変化 0。
 // - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
 //   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
 //   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
@@ -442,6 +443,37 @@ async function outsideGitFilePages() {
     console.log('PASS ファイルのページの中で範囲の別の HTML へのリンクを押すと、見る対象が移り、ページのツリーにそのページが出る');
   } finally {
     await stop(kemi);
+  }
+}
+
+/**
+ * git の外のコードの見方から渡す（R-PAGE-MODE、R-PAGE-SNAPSHOT）: git の外のコードの見方は、舞台の代わりに理由だけを出す。
+ * そこから渡したときに取るスナップショットも、選んだ幅で並べた文書から記述する。ページを変えずにページの見方に戻せば、
+ * それと比べた変化は 0。
+ */
+async function handingFromTheCodeViewOutsideGit() {
+  const dir = await mkdtemp(join(tmpdir(), 'kemi-live-nogit-'));
+  const dev = await startDevServer();
+  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const kemi = await startKemi(dir, state, ['--live', `${dev.url}changing.html`]);
+  try {
+    await browser('set', 'viewport', '1280', '800');
+    await browser('open', kemi.url);
+    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
+    await post(kemi.url, 'api/message', { body: 'please look' });
+    await browser('click', '.lv-view button[data-view="code"]');
+    await waitFor(`${visible('#live-no-code')} && !${visible('#live-stage')}`);
+    await handInThePage(kemi, dir, state);
+    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 1'))`);
+    await browser('click', '.lv-view button[data-view="page"]');
+    await chooseReference('Handed 1');
+    await waitFor(`${changeList} !== null`);
+    const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
+    assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view outside git shows no change against the unchanged page');
+    console.log('PASS git の外のコードの見方から渡したときのスナップショットと、変えていないページを比べると変化が 0');
+  } finally {
+    await stop(kemi);
+    await dev.close();
   }
 }
 
@@ -4060,6 +4092,7 @@ async function verifyLiveReview(repository) {
   await pageViewShowsFramedPagesWidthsAndNarrowScreens(repository);
   await modeTabsSwitchTheTopbar(repository);
   await outsideGitFilePages();
+  await handingFromTheCodeViewOutsideGit();
   await otherReviewsLoadNoPageFiles(repository);
   await snapshotsAreTakenShownAndChosen(repository);
   await snapshotsCarryTheirResources(repository);
@@ -4130,6 +4163,9 @@ try {
     await closingTheComposeBoxRestoresTheFrame(repository);
   } else if (process.argv[3] === '--page-surrounding') {
     await pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository);
+  } else if (process.argv[3] === '--outside-git') {
+    await outsideGitFilePages();
+    await handingFromTheCodeViewOutsideGit();
   } else if (process.argv[3] === '--baseline-guide') {
     await changesFromStartExplainHowToCompareFromNow(repository);
     await recordingNowSwitchesTheReference(repository);
