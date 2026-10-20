@@ -703,4 +703,26 @@ mod tests {
             ])
         );
     }
+
+    /// 追跡しているファイルの一覧は、索引のファイルの印が変わるまで覚えておく。レビューの
+    /// 途中で無視されるファイルを `git add -f` で追跡に加えたら、同じ作業ツリーでも無視される
+    /// ものから外れる（外れないと、その変更で更新バッジが出ない）。
+    #[test]
+    fn a_file_force_added_after_the_first_question_is_no_longer_ignored() {
+        let repo = repo_with_ignored_build();
+        repo.write("build/keep.txt", "keep\n");
+        let keep = repo.path.join("build/keep.txt");
+        let tree = WorkTree::new(repo.path.clone());
+        assert_eq!(
+            tree.ignored(std::slice::from_ref(&keep)).unwrap(),
+            HashSet::from([keep.clone()])
+        );
+
+        repo.git(&["add", "-f", "build/keep.txt"]);
+
+        assert_eq!(
+            tree.ignored(std::slice::from_ref(&keep)).unwrap(),
+            HashSet::new()
+        );
+    }
 }
