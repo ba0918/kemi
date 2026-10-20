@@ -1060,20 +1060,68 @@ export function seenProgress(files) {
 export function commentedLines(display, comments) {
   /** @type {Set<number>} */
   const covered = new Set();
-  // 表示行ごとに行コメントを全部調べると O(表示行 × 行コメント) になるので、覆う行番号を 1 回集めて引く。
-  const commented = commentedNumbers(comments);
-  if (commented.old.size === 0 && commented.new.size === 0) {
+  const old = lineRanges(comments, "old");
+  const added = lineRanges(comments, "new");
+  if (old.length === 0 && added.length === 0) {
     return covered;
   }
+  // 表示行ごとに行コメントを全部調べると O(表示行 × 行コメント) になり、覆う行番号の集合を作って
+  // 引くと、行コメントが少ないときに集合を作って引く分だけ遅い。側ごとの行番号は表示行の順に
+  // 増えるので、範囲を始まりの順に並べて、走査の位置を進めながら判定する。
+  const inOld = rangeSweep(old);
+  const inNew = rangeSweep(added);
   display.forEach((line, index) => {
     if (
-      (line.oldLine && commented.old.has(Number(line.oldLine.number))) ||
-      (line.newLine && commented.new.has(Number(line.newLine.number)))
+      (line.oldLine && inOld(Number(line.oldLine.number))) ||
+      (line.newLine && inNew(Number(line.newLine.number)))
     ) {
       covered.add(index);
     }
   });
   return covered;
+}
+
+/**
+ * 片側の行コメントの範囲を、始まりの順に並べたもの。
+ * @param {any[]} comments
+ * @param {"old" | "new"} side
+ * @returns {{ start: number, end: number }[]}
+ */
+function lineRanges(comments, side) {
+  /** @type {{ start: number, end: number }[]} */
+  const ranges = [];
+  for (const comment of comments) {
+    if (hasLines(comment) && comment.side === side) {
+      const start = Number(comment.start_line);
+      ranges.push({ start, end: Number(comment.end_line ?? start) });
+    }
+  }
+  return ranges.sort((left, right) => left.start - right.start);
+}
+
+/**
+ * 増えていく行番号を順に渡すと、その番号がどれかの範囲に入るかを返す判定。始まりが渡した番号
+ * 以下の範囲の終わりの最大を覚えておく（範囲は重なっても、ほかを含んでもよい）。番号が戻ったら
+ * 最初から数え直す。
+ * @param {{ start: number, end: number }[]} ranges 始まりの順に並べた範囲
+ * @returns {(number: number) => boolean}
+ */
+function rangeSweep(ranges) {
+  let next = 0;
+  let reach = -Infinity;
+  let last = -Infinity;
+  return (number) => {
+    if (number < last) {
+      next = 0;
+      reach = -Infinity;
+    }
+    last = number;
+    while (next < ranges.length && ranges[next].start <= number) {
+      reach = Math.max(reach, ranges[next].end);
+      next += 1;
+    }
+    return number <= reach;
+  };
 }
 
 /**

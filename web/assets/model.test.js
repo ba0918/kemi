@@ -1058,6 +1058,24 @@ test("commented_lines_cover_the_whole_range_on_its_side", () => {
   assert.deepEqual([...commentedLines(display, comments)].sort(), [2, 3, 4]);
 });
 
+test("commented_lines_cover_nested_ranges_given_in_any_order", () => {
+  const display = toDisplayLines(
+    Array.from({ length: 12 }, (_, index) => equal(index + 1, `line ${index + 1}`)),
+    "unified",
+  );
+  // コメントは付けた順に並ぶので、行の順とは限らない。長い範囲の中に短い範囲を付けることもある。
+  const comments = [
+    { side: "new", start_line: 9, end_line: 9 },
+    { side: "new", start_line: 2, end_line: 8 },
+    { side: "new", start_line: 3, end_line: 4 },
+  ];
+
+  assert.deepEqual(
+    [...commentedLines(display, comments)].sort((left, right) => left - right),
+    [1, 2, 3, 4, 5, 6, 7, 8],
+  );
+});
+
 test("submit_summary_counts_comments_suggestions_and_unseen_files", () => {
   const comments = [
     { id: "c1", suggestion: { replacement: "x" } },
