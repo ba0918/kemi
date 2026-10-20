@@ -1,7 +1,8 @@
 // 層の規則（PROJECT.md「web/assets/ の層」）と index.html の modulepreload の一覧を、import 文から確かめる。
 // あわせて index.html の stylesheet の順を確かめる。
-// 読むのは行頭の import / export … from だけ。JSDoc の import("…") は型だけの参照で読み込みを生まず、
-// 字下げした動的 import（--live のモジュール）は modulepreload に載せない約束なので、どちらも数えない。
+// 辺にするのは行頭（字下げを含む）の静的な import / export … from だけ。JSDoc の import("…") は型だけの
+// 参照で読み込みを生まないので数えない。動的な import(…) は app.js が --live のモジュールを読む所だけに
+// 限ることを、別に確かめる。
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
@@ -34,8 +35,24 @@ function modules(dir = "") {
  */
 function importsOf(path) {
   const source = readFileSync(join(assets, path), "utf8");
-  const statement = /^(?:import|export)\s+(?:[\w*{}\s,$]+?\s+from\s+)?["']([^"']+)["']/gm;
-  return [...source.matchAll(statement)].map((match) => posix.normalize(posix.join(posix.dirname(path), match[1])));
+  const statement = /^\s*(?:import|export)\s*(?:[^;"']*?\bfrom\s*)?["']([^"']+)["']/gm;
+  const found = [...source.matchAll(statement)];
+  // 読めない書き方（波括弧の中の文字列やクォートを含むコメントなど）の import は、黙って辺から外れると
+  // 違反が通る。行頭の import と export … from の数と合わなければ落とす。
+  const starts =
+    [...source.matchAll(/^\s*import\s*[\w*{"']/gm)].length +
+    [...source.matchAll(/^\s*export\s*(?:\*|\{)[^;]*?\bfrom\b/gm)].length;
+  assert.equal(found.length, starts, `${path}: 読めない import / export … from がある`);
+  return found.map((match) => posix.normalize(posix.join(posix.dirname(path), match[1])));
+}
+
+/**
+ * コメントを除いたソース（JSDoc の import("…") を動的な import と取り違えないため）。
+ * @param {string} source
+ * @returns {string}
+ */
+function withoutComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
 const graph = new Map(modules().map((path) => [path, importsOf(path)]));
@@ -80,6 +97,16 @@ function violations(applies, allowed) {
     .filter(([from]) => applies(from))
     .flatMap(([from, imports]) => imports.filter((to) => !allowed(from, to)).map((to) => `${from} → ${to}`));
 }
+
+test("動的な import は app.js が --live のモジュールを読む所だけ", () => {
+  const found = modules().flatMap((path) => {
+    const code = withoutComments(readFileSync(join(assets, path), "utf8"));
+    return [...code.matchAll(/\bimport\s*\(\s*(?:["']([^"']+)["'])?/g)].map((match) =>
+      match[1] === undefined ? `${path} → ?` : `${path} → ${posix.normalize(posix.join(posix.dirname(path), match[1]))}`,
+    );
+  });
+  assert.deepEqual(found, ["app.js → features/live.js"]);
+});
 
 test("import する先はどれも web/assets の中にある", () => {
   const missing = [...graph].flatMap(([from, imports]) =>
