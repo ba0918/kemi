@@ -36,9 +36,9 @@
 .part-diagram-modal .part-diagram-tool-group + .part-diagram-tool-group { padding-left:6px; margin-left:4px; border-left:1px solid var(--line); }
 .part-diagram-comment { margin-left:4px; }
 .part-diagram-comment svg { width:15px; height:15px; }
-.part-diagram-comment:hover { background:var(--note-bg)!important; color:var(--note-ink)!important; }
 .part-diagram-tool { display:inline-flex; justify-content:center; align-items:center; position:relative; width:28px; height:28px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--ink-2); cursor:pointer; }
 .part-diagram-tool:hover { background:var(--panel-2); color:var(--ink); border-color:var(--line); }
+.part-diagram-tool.part-diagram-comment:hover { background:var(--note-bg); color:var(--note-ink); }
 .part-diagram-tool:focus-visible, .part-diagram-surface:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .part-diagram-glyph { font:17px/1 var(--sans); }
 .part-diagram-tool-text .part-diagram-glyph { font-size:12px; font-weight:600; }

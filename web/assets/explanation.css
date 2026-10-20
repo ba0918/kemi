@@ -2,7 +2,8 @@
 .topbar { flex-wrap:wrap; }
 #review-views button { border:0; border-radius:5px; background:transparent; color:var(--ink-2); padding:5px 8px; cursor:pointer; font:600 12px var(--sans); }
 #review-views button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent); }
-#explanation-return { position:relative; padding-left:22px!important; }
+/* #review-views button の padding（詳細度 1,0,1）に勝つよう、親の id から書く。 */
+#review-views #explanation-return { position:relative; padding-left:22px; }
 #explanation-return.has-return { color:var(--accent); }
 #explanation-return.has-return::before { content:'↶'; position:absolute; left:6px; font-size:16px; line-height:1; }
 #review-views button:disabled { opacity:.5; cursor:default; }
@@ -91,8 +92,6 @@ body[data-review-view="explanation"] #live-stage,
 body[data-review-view="explanation"] #page-tree,
 body[data-review-view="explanation"] #live-no-code { display:none!important; }
 body:not([data-review-view="code"]) #unit-switch { display:none!important; }
-body[data-review-view="explanation"] #main { display:flex!important; }
-body[data-review-view="explanation"] #explanation-toc:not([hidden]) { display:block; }
 /* 幅の境界は既存の狭い画面と同じ。 */
 @media (max-width:719.98px) {
   #review-views { order:3; width:100%; box-sizing:border-box; }
