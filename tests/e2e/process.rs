@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn captured_process_output_can_exceed_pipe_capacity_without_blocking_exit() {
+fn captured_pipe_returns_every_byte() {
     let bytes = vec![b'x'; 2 * 1024 * 1024];
     let mut pipe = process::CapturedPipe::new(std::io::Cursor::new(bytes.clone()));
     let mut captured = Vec::new();
