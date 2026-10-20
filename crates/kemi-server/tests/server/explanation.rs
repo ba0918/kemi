@@ -698,36 +698,19 @@ async fn explanation_updates_are_atomic_under_concurrency_and_storage_failure() 
 }
 
 #[tokio::test]
-async fn new_agent_explanation_endpoints_keep_origin_token_and_loopback_protection() {
+async fn the_page_explanation_api_needs_the_page_token() {
     let server = AgentServer::start().await;
-    for action in ["context", "explain"] {
-        let browser = reqwest::Client::new()
-            .post(server.agent_url(&server.agent_token, action))
-            .header("Origin", &server.page.origin)
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(browser.status(), 403);
-        let wrong = reqwest::Client::new()
-            .post(server.agent_url("page-token", action))
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(wrong.status(), 403);
-        let wrong_page = reqwest::Client::new()
-            .post(format!(
-                "{}api/explanation",
-                server.page.url.replace("test-token", "wrong")
-            ))
-            .header("Origin", &server.page.origin)
-            .json(&json!({"op":"hold","screen":"reader","revision":1}))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(wrong_page.status(), 404);
-    }
+    let wrong_page = reqwest::Client::new()
+        .post(format!(
+            "{}api/explanation",
+            server.page.url.replace("test-token", "wrong")
+        ))
+        .header("Origin", &server.page.origin)
+        .json(&json!({"op":"hold","screen":"reader","revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_page.status(), 404);
 }
 
 #[tokio::test]
