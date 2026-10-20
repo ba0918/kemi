@@ -1,7 +1,8 @@
 // @ts-check
 import { actions } from '../actions.js';
 import { button, dom, el, textEl, svgIcon, COMMENT_ICON } from '../dom.js';
-import { state, unitLabel } from '../state.js';
+import { state } from '../state.js';
+import { unitLabel } from '../model.js';
 import { commentsForBlock, freshness, sectionCommentCounts, locateSelection, readingText, readingPoint, explanationElementId, commentCountDescription } from '../explanation-model.js';
 import { partView } from './parts.js';
 

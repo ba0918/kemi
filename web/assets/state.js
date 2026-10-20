@@ -23,27 +23,6 @@ const CONVERSATION_WIDTH = 440;
 export const CONVERSATION_MIN_WIDTH = 320;
 export const CONVERSATION_MAX_WIDTH = 960;
 
-/** @type {Record<string, string>} */
-const UNIT_LABELS = { file: "Final state", commit: "Per commit" };
-
-/**
- * グループ単位の画面での呼び名。知らない単位は、サーバが返した名前のまま出す。
- * @param {string} unit
- * @returns {string}
- */
-export function unitLabel(unit) {
-  return UNIT_LABELS[unit] || unit;
-}
-
-/** @type {Record<string, string>} */
-export const THEME_LABELS = {
-  auto: "Auto",
-  light: "light",
-  dark: "dark",
-  "solarized-light": "solarized light",
-  "solarized-dark": "solarized dark",
-};
-
 /**
  * @typedef {{ file: FileEntry, group: any }} Entry
  * @typedef {{ fileId: string, side: string, start: number, end: number, anchor: number }} Selection

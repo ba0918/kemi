@@ -3,8 +3,8 @@
 
 import * as api from "../api.js";
 import { el, textEl } from "../dom.js";
-import { state, unitLabel } from "../state.js";
-import { countLabel, submitSummary, unhandedNotice } from "../model.js";
+import { state } from "../state.js";
+import { countLabel, submitSummary, unhandedNotice, unitLabel } from "../model.js";
 import { renderDiff, renderFloating } from "./display.js";
 import { renderFileHeader } from "../views/file-header.js";
 import { renderConversation } from "../views/conversation.js";

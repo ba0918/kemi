@@ -3,8 +3,8 @@
 
 import * as api from "../api.js";
 import { actions } from "../actions.js";
-import { currentEntry, flatten, state, unitLabel } from "../state.js";
-import { unitSwitchTarget } from "../model.js";
+import { currentEntry, flatten, state } from "../state.js";
+import { unitLabel, unitSwitchTarget } from "../model.js";
 import { renderDiff } from "./display.js";
 import { applyReview, jumpToEntry } from "./files.js";
 import { renderConversation } from "../views/conversation.js";

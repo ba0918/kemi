@@ -16,9 +16,8 @@ import {
   fileCacheKey,
   isShowingFile,
   state,
-  unitLabel,
 } from "../state.js";
-import { commentLabel, pageCommentElsewhere } from "../model.js";
+import { commentLabel, pageCommentElsewhere, unitLabel } from "../model.js";
 import {
   agentStatusLabel,
   authorLabel,

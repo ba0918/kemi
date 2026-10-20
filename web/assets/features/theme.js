@@ -4,9 +4,9 @@
 import { actions } from "../actions.js";
 import { invalidateHorizontalWidth } from "./horizontal-scroll.js";
 import { dom } from "../dom.js";
-import { THEME_LABELS, currentEntry, state } from "../state.js";
+import { currentEntry, state } from "../state.js";
 import { saveTheme } from "../storage.js";
-import { isDarkTheme, nextTheme, resolveTheme } from "../model.js";
+import { THEME_LABELS, isDarkTheme, nextTheme, resolveTheme } from "../model.js";
 import { scheduleRender } from "./display.js";
 import { selectEntry } from "./files.js";
 import { refreshPartHighlights } from './parts.js';

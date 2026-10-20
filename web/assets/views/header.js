@@ -4,8 +4,8 @@
 
 import { actions } from "../actions.js";
 import { button, dom, el, focusKeyWithin, restoreFocusKey, textEl } from "../dom.js";
-import { displayMode, displayWrap, state, unitLabel } from "../state.js";
-import { countLabel, metaItems, seenProgress, unitSwitchOrder } from "../model.js";
+import { displayMode, displayWrap, state } from "../state.js";
+import { countLabel, metaItems, seenProgress, unitLabel, unitSwitchOrder } from "../model.js";
 
 export function renderHeader() {
   const review = state.review;

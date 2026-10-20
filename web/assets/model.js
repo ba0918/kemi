@@ -928,6 +928,18 @@ export function rulerMarks(kinds, offsets, height) {
   );
 }
 
+/** @type {Record<string, string>} */
+const UNIT_LABELS = { file: "Final state", commit: "Per commit" };
+
+/**
+ * グループ単位の画面での呼び名。知らない単位は、サーバが返した名前のまま出す。
+ * @param {string} unit
+ * @returns {string}
+ */
+export function unitLabel(unit) {
+  return UNIT_LABELS[unit] || unit;
+}
+
 const UNIT_SWITCH_ORDER = ["file", "commit"];
 
 /**
@@ -1365,14 +1377,20 @@ export function metaItems(review) {
   return items;
 }
 
+/**
+ * テーマの画面での呼び名。並びがアイコン操作で巡回する順。
+ * @type {Record<string, string>}
+ */
+export const THEME_LABELS = {
+  auto: "Auto",
+  light: "light",
+  dark: "dark",
+  "solarized-light": "solarized light",
+  "solarized-dark": "solarized dark",
+};
+
 /** テーマの巡回順。 */
-const THEMES = [
-  "auto",
-  "light",
-  "dark",
-  "solarized-light",
-  "solarized-dark",
-];
+const THEMES = Object.keys(THEME_LABELS);
 
 /**
  * アイコン操作のたびに次のテーマへ進む。
