@@ -43,9 +43,13 @@ async function startDevServer(options = {}) {
   return startDevServerIn({ ...options, dir: options.dir ?? await temporaryDirectory('kemi-dev-') });
 }
 
-/** 変更のある作業ツリー。 */
+/**
+ * 変更のある作業ツリー。場面ごとに作り、場面が置いたファイルをほかの場面の作業ツリーに残さない。一時ディレクトリの中の
+ * repo に作るので、作業ツリーの外（隣）に置くファイルも一緒に片付く。
+ */
 async function makeRepository() {
-  const dir = await temporaryDirectory('kemi-live-repo-');
+  const dir = join(await temporaryDirectory('kemi-live-repo-'), 'repo');
+  await mkdir(dir);
   const git = gitIn(dir);
   await git('init', '-q');
   await writeFile(join(dir, 'a.txt'), 'one\ntwo\n');
@@ -301,44 +305,40 @@ const codeTopbarShown = (shown) => CODE_TOPBAR.map((selector) => `${shown ? '' :
  */
 async function modeTabsSwitchTheTopbar(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
-    try {
-      await browser('set', 'viewport', '1280', '900');
-      await browser('open', kemi.url);
-      await waitFor(`${visible('#live-stage')} && document.body.dataset.liveView === 'page'`);
-      await waitFor(codeTopbarShown(false));
-      const top = '.topbar .lv-topmeta';
-      await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
-      await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
-      const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
-      assert.ok(files > 0);
-      await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
-      await browser('click', '.lv-widths button[data-width="768"]');
-      await waitFor(`document.querySelector('${top}').textContent.includes('768')`);
-      console.log('PASS ページの見方の上部バーに、コード用の操作と数が見えず、ページの URL・表示幅・エージェントの状態が見え、コードのタブに変更ファイルの数が出る');
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitFor(`${visible('#live-stage')} && document.body.dataset.liveView === 'page'`);
+    await waitFor(codeTopbarShown(false));
+    const top = '.topbar .lv-topmeta';
+    await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
+    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
+    const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
+    assert.ok(files > 0);
+    await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
+    await browser('click', '.lv-widths button[data-width="768"]');
+    await waitFor(`document.querySelector('${top}').textContent.includes('768')`);
+    console.log('PASS ページの見方の上部バーに、コード用の操作と数が見えず、ページの URL・表示幅・エージェントの状態が見え、コードのタブに変更ファイルの数が出る');
 
-      await browser('click', '.topbar .lv-view button[data-view="code"]');
-      await waitFor(`document.body.dataset.liveView === 'code' && ${codeTopbarShown(true)} && !${visible(top)}`);
-      assert.equal(await evaluate(visible('#live-band')), false, 'the code view shows no page-view controls');
-      await browser('click', '.topbar .lv-view button[data-view="page"]');
-      await waitFor(`document.body.dataset.liveView === 'page' && ${codeTopbarShown(false)}`);
-      console.log('PASS コードのタブを押すとコード用の操作と数が見えてページの見方の操作の帯は見えず、ページのタブで戻る');
+    await browser('click', '.topbar .lv-view button[data-view="code"]');
+    await waitFor(`document.body.dataset.liveView === 'code' && ${codeTopbarShown(true)} && !${visible(top)}`);
+    assert.equal(await evaluate(visible('#live-band')), false, 'the code view shows no page-view controls');
+    await browser('click', '.topbar .lv-view button[data-view="page"]');
+    await waitFor(`document.body.dataset.liveView === 'page' && ${codeTopbarShown(false)}`);
+    console.log('PASS コードのタブを押すとコード用の操作と数が見えてページの見方の操作の帯は見えず、ページのタブで戻る');
 
-      await chooseTool('element');
-      await clickInPane(livePane, 150, 250);
-      await waitFor(`${draftNumbers} === '[1]'`);
-      await savePageCommentInThePage('the button');
-      await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
-      assert.equal(await evaluate(visible('#progress')), false, 'the seen progress stays hidden after saving a page comment');
-      console.log('PASS ページへのコメントを保存した後も、ページの見方では見たの進捗が見えない');
+    await chooseTool('element');
+    await clickInPane(livePane, 150, 250);
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await savePageCommentInThePage('the button');
+    await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+    assert.equal(await evaluate(visible('#progress')), false, 'the seen progress stays hidden after saving a page comment');
+    console.log('PASS ページへのコメントを保存した後も、ページの見方では見たの進捗が見えない');
 
-      await writeFile(join(repository, 'a.txt'), 'one\nTWO\nthree from the agent\n');
-      await waitFor(visible('#update-badge'));
-      await browser('click', '#update-badge');
-      await waitFor(`document.body.dataset.liveView === 'code' && Array.from(document.querySelectorAll('[data-kemi-row]')).some((row) => row.textContent.includes('three from the agent'))`);
-      console.log('PASS ページの見方の間に作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わり差分が新しくなる');
-    } finally {
-      await writeFile(join(repository, 'a.txt'), 'one\nTWO\n');
-    }
+    await writeFile(join(repository, 'a.txt'), 'one\nTWO\nthree from the agent\n');
+    await waitFor(visible('#update-badge'));
+    await browser('click', '#update-badge');
+    await waitFor(`document.body.dataset.liveView === 'code' && Array.from(document.querySelectorAll('[data-kemi-row]')).some((row) => row.textContent.includes('three from the agent'))`);
+    console.log('PASS ページの見方の間に作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わり差分が新しくなる');
   });
 }
 
@@ -394,7 +394,7 @@ async function handingFromTheCodeViewOutsideGit() {
  * 並べた文書から記述する。ページを変えずにページの見方に戻せば、どちらと比べても変化は 0。
  */
 async function handingFromTheExplanationView(repository) {
-  // 説明のファイルは作業ツリーの外に置く（ほかの場面の差分を変えない）。
+  // 説明のファイルは作業ツリーの外に置く（レビューの差分に入れない）。
   const explanation = join(await temporaryDirectory('kemi-live-explanation-'), 'explanation.json');
   await writeFile(explanation, JSON.stringify({ sections: [{ id: 'overview', title: 'Overview', blocks: [{ id: 'note', part: { type: 'text', body: 'Read the page before handing.' }, references: [] }] }] }));
   // 一覧の見出しの名前は、選んだ比べる相手の選択の文字に含まれる。選び直した直後の前の相手の一覧を読まない。
@@ -1351,27 +1351,21 @@ async function mockMenuRemovesAndUndoes(repository) {
  * 上端の差が 1px 以内。
  */
 async function sideBySidePagesShareTheirTop(repository) {
-  // git が無視する場所に置き、ほかの検査の作業ツリーの差分を変えない。
-  await writeFile(join(repository, '.git', 'info', 'exclude'), 'ignored-mocks/\n');
-  await mkdir(join(repository, 'ignored-mocks'), { recursive: true });
-  const path = `ignored-mocks/${'m'.repeat(200 - 'ignored-mocks/'.length - '.html'.length)}.html`;
+  await mkdir(join(repository, 'mocks'), { recursive: true });
+  const path = `mocks/${'m'.repeat(200 - 'mocks/'.length - '.html'.length)}.html`;
   assert.equal(path.length, 200);
   await writeFile(join(repository, path), '<!doctype html><html><body style="margin:0"><p>mock</p></body></html>\n');
-  try {
-    await withLiveReview({ repository, page: 'other.html' }, async ({ kemi }) => {
-      await browser('set', 'viewport', '900', '800');
-      await browser('open', kemi.url);
-      await chooseCompare('side');
-      await assignMockByPath(path);
-      await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
-      await waitFor(`${visible(`${refPane} .lv-viewport`)} && ${visible(`${livePane} .lv-viewport`)}`);
-      const gap = await evaluate(`Math.abs(document.querySelector('${refPane} .lv-viewport').getBoundingClientRect().top - document.querySelector('${livePane} .lv-viewport').getBoundingClientRect().top)`);
-      assert.ok(gap <= 1, `the tops differ by ${gap}px`);
-      console.log(`PASS パスが 200 文字のモックを並べても、両方のページの上端の差が 1px 以内（${gap}px）`);
-    });
-  } finally {
-    await rm(join(repository, 'ignored-mocks'), { recursive: true, force: true });
-  }
+  await withLiveReview({ repository, page: 'other.html' }, async ({ kemi }) => {
+    await browser('set', 'viewport', '900', '800');
+    await browser('open', kemi.url);
+    await chooseCompare('side');
+    await assignMockByPath(path);
+    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
+    await waitFor(`${visible(`${refPane} .lv-viewport`)} && ${visible(`${livePane} .lv-viewport`)}`);
+    const gap = await evaluate(`Math.abs(document.querySelector('${refPane} .lv-viewport').getBoundingClientRect().top - document.querySelector('${livePane} .lv-viewport').getBoundingClientRect().top)`);
+    assert.ok(gap <= 1, `the tops differ by ${gap}px`);
+    console.log(`PASS パスが 200 文字のモックを並べても、両方のページの上端の差が 1px 以内（${gap}px）`);
+  });
 }
 
 /** 見る対象だけの見比べ方でも、変化の一覧と見る対象の側の印が出る（R-PAGE-VIEW、R-PAGE-REF）。 */
@@ -3859,10 +3853,9 @@ function chosenScenes(args) {
 }
 
 const chosen = chosenScenes(process.argv.slice(3));
-const repository = await makeRepository();
 try {
   for (const { scene, argument } of chosen) {
-    await scene(repository, argument);
+    await scene(await makeRepository(), argument);
   }
 } finally {
   await close();
