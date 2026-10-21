@@ -264,6 +264,7 @@ async fn initial_explanation_and_cli_context_update_roundtrip() {
         String::from_utf8_lossy(&context.stderr)
     );
     let context: serde_json::Value = serde_json::from_slice(&context.stdout).unwrap();
+    // context の契約の版は、結果の契約の版が進んでも一緒には進まない（R-EXPLANATION-CLI）。
     assert_eq!(context["kemi"], 3);
     workspace.write(
         "update.json",
@@ -295,7 +296,6 @@ async fn initial_explanation_and_cli_context_update_roundtrip() {
         .await;
     let (_, result) = kemi.wait();
     let result: serde_json::Value = serde_json::from_str(&result).unwrap();
-    // context の契約の版は、結果の契約の版が進んでも一緒には進まない（R-EXPLANATION-CLI）。
     assert_eq!(result["kemi"], 4);
     assert_eq!(result["explanation"]["current_revision"], 2);
 }
