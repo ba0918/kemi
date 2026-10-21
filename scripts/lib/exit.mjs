@@ -9,6 +9,11 @@ const PHASES = /** @type {const} */ (['processes', 'browser', 'files']);
 const hooks = { processes: [], browser: [], files: [] };
 /** @type {(() => Promise<void>)[]} */
 const signalHooks = [];
+/**
+ * 合図で止められたとき、待つ処理の終わりを待つ上限（ms）。過ぎたら待つのをやめて終わる。待つ処理のどれかが終わらないと、
+ * 重ねて来た合図も受けないまま止まらなくなるため。kemi に止める合図を送って待つ処理の期限（kemi.mjs の 3 秒）より長くする。
+ */
+const SIGNAL_HOOKS_TIMEOUT = 5000;
 let installed = false;
 let stopping = false;
 
@@ -24,7 +29,8 @@ export function onExit(phase, hook) {
 
 /**
  * 合図で止められたとき、終わる前に待つ処理を足す。'exit' の中ではできない、待つ後始末（kemi に止める合図を
- * 送って終わるのを待つなど）を書く。期限のある処理だけを書く（終わるまで、重ねて来た合図では止まらない）。
+ * 送って終わるのを待つなど）を書く。待つのは全部で SIGNAL_HOOKS_TIMEOUT までで、それまでに終わらない処理は
+ * 待たずに終わる（その後の 'exit' の段の後始末は走る）。
  * @param {() => Promise<void>} hook
  */
 export function onSignal(hook) {
@@ -53,7 +59,7 @@ function install() {
   for (const [signal, number] of /** @type {const} */ ([['SIGINT', 2], ['SIGTERM', 15], ['SIGHUP', 1]])) {
     process.on(signal, () => {
       // Ctrl+C の連打で、始めた後始末を二重に走らせない。2 回目ですぐに終わらせないのは、止まる途中の kemi を
-      // 殺すことになるため（待つ処理には期限があるので、無視しても止まらなくなることはない）。
+      // 殺すことになるため（待つのは SIGNAL_HOOKS_TIMEOUT までなので、無視しても止まらなくなることはない）。
       if (stopping) {
         return;
       }
@@ -61,7 +67,14 @@ function install() {
       // 端末の合図は同じプロセスグループの agent-browser にも届き、検査の本筋がその失敗で落ちる。そこで終わると、
       // 止まる途中の kemi を 'exit' の段で殺すので、待つ間の例外は出すだけにする。
       process.on('uncaughtException', (error) => console.error(error));
-      Promise.allSettled(signalHooks.map(async (hook) => hook())).then(() => process.exit(128 + number));
+      const finished = Promise.allSettled(signalHooks.map(async (hook) => hook()));
+      const expired = new Promise((done) => setTimeout(() => done('expired'), SIGNAL_HOOKS_TIMEOUT));
+      Promise.race([finished, expired]).then((result) => {
+        if (result === 'expired') {
+          console.error(`the cleanup after ${signal} did not finish within ${SIGNAL_HOOKS_TIMEOUT} ms`);
+        }
+        process.exit(128 + number);
+      });
     });
   }
 }

@@ -13,7 +13,8 @@ const START_TIMEOUT = 30000;
 const STOP_TIMEOUT = 10000;
 /**
  * 検査が合図で止められたとき、kemi に止める合図を送ってから終わるのを待つ上限。過ぎたものは 'exit' の段で
- * SIGKILL で止める。人が Ctrl+C を押してから長く待たせないよう、ふだんの止め方より短くする。
+ * SIGKILL で止める。人が Ctrl+C を押してから長く待たせないよう、ふだんの止め方より短くする。exit.mjs が合図の後に
+ * 待つ上限（SIGNAL_HOOKS_TIMEOUT）より短くする（長いと、止まるのを待ち切る前に打ち切られる）。
  */
 const SIGNAL_STOP_TIMEOUT = 3000;
 
