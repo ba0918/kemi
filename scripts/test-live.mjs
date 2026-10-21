@@ -76,55 +76,29 @@
 // - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
 //   一覧の残りも続きを出す操作ですべて見られる。
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 
+import { browserSession, visible } from './lib/browser.mjs';
+import { gitIn } from './lib/fixture.mjs';
+import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
 import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer, tablePage } from './live-dev-server.mjs';
 
-const run = promisify(execFile);
 if (!process.argv[2]) {
   console.error('usage: node scripts/test-live.mjs <kemi-bin>');
   process.exit(2);
 }
 const binary = resolve(process.argv[2]);
 const session = `kemi-live-${process.pid}`;
-const browser = async (...args) => {
-  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 16 * 1024 * 1024 })
-    .catch((error) => { throw new Error(`agent-browser ${args.join(' ')}: ${error.stdout ?? ''}`, { cause: error }); });
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, JSON.stringify(result));
-  return result.data;
-};
-const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
-const waitFor = async (code, timeout = 15000) => {
-  try {
-    await browser('wait', '--timeout', String(timeout), '--fn', code);
-  } catch (error) {
-    const snapshot = await evaluate(`JSON.stringify({ url: location.href, view: document.body?.dataset.liveView, side: document.querySelector('#live-stage')?.dataset.side, compare: document.querySelector('#live-stage')?.dataset.compare, notice: document.querySelector('.lv-band-notice')?.textContent, text: document.body?.innerText.slice(0, 400) })`).catch(() => 'no snapshot');
-    throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
-  }
-};
-
-/** 利用者の git の設定に左右されない git。 */
-function gitIn(dir) {
-  return (...args) => run('git', ['-C', dir, ...args], {
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: join(dir, '.git-test-global'),
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_AUTHOR_NAME: 'kemi',
-      GIT_AUTHOR_EMAIL: 'kemi@example.com',
-      GIT_COMMITTER_NAME: 'kemi',
-      GIT_COMMITTER_EMAIL: 'kemi@example.com',
-    },
-  });
-}
+// 待ちが尽きたら、ページの状態を添えて失敗にする。
+const { browser, evaluate, waitFor, close } = browserSession(session, {
+  timeout: 15000,
+  describe: `JSON.stringify({ url: location.href, view: document.body?.dataset.liveView, side: document.querySelector('#live-stage')?.dataset.side, compare: document.querySelector('#live-stage')?.dataset.compare, notice: document.querySelector('.lv-band-notice')?.textContent, text: document.body?.innerText.slice(0, 400) })`,
+});
 
 /** 変更のある作業ツリー。 */
 async function makeRepository() {
@@ -138,10 +112,6 @@ async function makeRepository() {
   return dir;
 }
 
-function environment(state) {
-  return { ...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home'), LOCALAPPDATA: join(state, 'localappdata') };
-}
-
 /** 空いているポートを 1 つ選ぶ（開発サーバを後から同じポートで起動するため）。 */
 async function freePort() {
   const server = createServer();
@@ -153,38 +123,8 @@ async function freePort() {
 }
 
 /** kemi を起動し、URL・review の id・中継の URL（`--live` のときだけ）がそろうのを待つ。 */
-async function startKemi(dir, state, args) {
-  const isLive = args.includes('--live') || args.includes('--resume');
-  const child = spawn(binary, [...args, '--port', '0', '--no-open'], { cwd: dir, env: environment(state), stdio: ['ignore', 'pipe', 'pipe'] });
-  let stderr = '';
-  let stdout = '';
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  const started = await new Promise((done, fail) => {
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-      // 行が途中で切れて届くことがあるので、改行まで届いた行だけを読む。
-      const url = stderr.match(/^kemi: (http:\/\/\S+)\n/m);
-      const review = stderr.match(/^kemi: review (\S+)\n/m);
-      const live = stderr.match(/^kemi: live (\S+)\n/m);
-      if (url && review && (live || !isLive)) done({ url: url[1], id: review[1], live: live?.[1] });
-    });
-    child.on('error', fail);
-    child.on('exit', (code) => fail(new Error(`kemi exited before serving (${code}): ${stderr}`)));
-  });
-  const exited = new Promise((done) => child.on('exit', (code) => done({ code, stdout, stderr })));
-  return { child, ...started, exited, stderr: () => stderr };
-}
-
-/** ページと同じオリジンから API を呼ぶ。 */
-async function post(url, path, body) {
-  const response = await fetch(new URL(path, url), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: new URL(url).origin },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  assert.equal(response.status, 200, `${path}: ${text}`);
-  return JSON.parse(text);
+function startKemi(dir, state, args) {
+  return launchKemi(binary, { cwd: dir, state, args, review: true, live: args.includes('--live') || args.includes('--resume') });
 }
 
 /**
@@ -198,12 +138,8 @@ async function handInThePage(kemi, dir, state) {
 }
 
 /** kemi wait を走らせる。終了コードで解決する。 */
-function startWaiting(kemi, dir, state) {
-  return new Promise((done, fail) => {
-    const child = spawn(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: environment(state), stdio: ['ignore', 'pipe', 'pipe'] });
-    child.on('error', fail);
-    child.on('exit', (code) => done(code));
-  });
+async function startWaiting(kemi, dir, state) {
+  return (await runKemi(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: isolatedEnvironment(state) })).code;
 }
 
 /** 「Hand to agent」を押せるようになるのを待って押す。 */
@@ -213,9 +149,8 @@ async function pressHand() {
   await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
 }
 
-async function stop(kemi) {
-  kemi.child.kill('SIGINT');
-  return kemi.exited;
+function stop(kemi) {
+  return stopKemi(kemi, 'SIGINT');
 }
 
 /** 中継（R-PAGE-PROXY）: HMR が中継越しに効き、中継用の cookie がページから読めない。 */
@@ -257,7 +192,7 @@ async function waitsForTheDevServer(repository) {
     dev = await startDevServer({ port });
     await waitFor(loaded);
     console.log('PASS 開発サーバを止めたまま起動すると、つながらない旨が出て、起動するとつながる');
-    await post(first.url, 'api/message', { body: 'keep this review' });
+    await postJson(first.url, 'api/message', { body: 'keep this review' });
   } finally {
     await stop(first);
     await dev?.close();
@@ -300,8 +235,6 @@ async function fileReloadsWhenItsCssIsSaved(repository) {
     await stop(kemi);
   }
 }
-
-const visible = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e !== null && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden'; })()`;
 
 /** 中継したページの中の点を押す（別のオリジンの枠なので、画面の座標で押す）。 */
 async function clickInLiveFrame(x, y) {
@@ -462,7 +395,7 @@ async function handingFromTheCodeViewOutsideGit() {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
     await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
-    await post(kemi.url, 'api/message', { body: 'please look' });
+    await postJson(kemi.url, 'api/message', { body: 'please look' });
     await browser('click', '.lv-view button[data-view="code"]');
     await waitFor(`${visible('#live-no-code')} && !${visible('#live-stage')}`);
     await handInThePage(kemi, dir, state);
@@ -498,7 +431,7 @@ async function handingFromTheExplanationView(repository) {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
     await waitFor(`document.body.dataset.reviewView === 'explanation' && document.body.dataset.liveView === 'page' && !${visible('#live-stage')} && ${recorded('Start')}`);
-    await post(kemi.url, 'api/message', { body: 'please look' });
+    await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
     await waitFor(recorded('Handed 1'));
     assert.equal(await evaluate(`document.body.dataset.reviewView`), 'explanation', 'handing keeps the explanation view');
@@ -736,7 +669,7 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && ${showsSnapshot('Recorded 1')}`);
     console.log('PASS スナップショットを持つ 2 つのページがツリーに表示幅と並び、押すとそのページ・その幅に移る');
 
-    await post(kemi.url, 'api/message', { body: 'please look' });
+    await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
     await waitFor(showsSnapshot('Handed 1'));
     console.log('PASS エージェントに渡すと表示中のページのスナップショットを取り、それが既定の比べる相手になる');
@@ -848,7 +781,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await chooseCompare('side');
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
-    await post(kemi.url, 'api/message', { body: 'before the mock' });
+    await postJson(kemi.url, 'api/message', { body: 'before the mock' });
     await handInThePage(kemi, repository, state);
     await waitFor(showsSnapshot('Handed 1'));
 
@@ -876,7 +809,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     console.log('PASS モックを外すと、最後に渡した時点のスナップショットに戻る');
 
     await evaluate(`window.__mockReports = []; window.addEventListener('message', (event) => { if (event.data && event.data.mockReport) window.__mockReports.push(event.data); }); true`);
-    const messagesBefore = (await (await fetch(new URL('api/review', kemi.url))).json()).messages.length;
+    const messagesBefore = (await getJson(kemi.url, 'api/review')).messages.length;
     await assignMockByPath('mocks/script.html');
     await waitFor(`window.__mockReports.length > 0`);
     const report = JSON.parse(await evaluate(`JSON.stringify(window.__mockReports[0])`));
@@ -885,7 +818,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await new Promise((done) => setTimeout(done, 500));
     const drawn = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'script-mock');
     assert.deepEqual(pixelAt(drawn, 200, 200), [0, 0, 200], 'the mock script runs');
-    const messagesAfter = (await (await fetch(new URL('api/review', kemi.url))).json()).messages.length;
+    const messagesAfter = (await getJson(kemi.url, 'api/review')).messages.length;
     assert.equal(messagesAfter, messagesBefore, 'the API refuses the mock even with the token');
     console.log('PASS JS で描くモックが描かれ、そのスクリプトからトークンは得られず、トークンを付けても API に断られる');
 
@@ -1144,7 +1077,7 @@ async function referenceNamesHeadingsAndNotices(repository) {
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
     for (const body of ['first', 'second']) {
-      await post(kemi.url, 'api/message', { body });
+      await postJson(kemi.url, 'api/message', { body });
       await handInThePage(kemi, repository, state);
     }
     const handed = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'handed' && snapshot.width === 1280);
@@ -1209,7 +1142,7 @@ async function recordingNowSwitchesTheReference(repository) {
     await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side' && ${visible(refPane)} && ${showsSnapshot('Recorded 1')}`);
     console.log('PASS 見る対象だけで手で取ると、見比べ方は変わらず比べる相手が取ったものになって知らせが出て、知らせの操作で並べるとそれが並ぶ');
 
-    await post(kemi.url, 'api/message', { body: 'please look' });
+    await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 1000));
     assert.equal(await evaluate(showsSnapshot('Recorded 1')), true, 'handing does not move the reference away from the recorded snapshot');
@@ -1274,7 +1207,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`Number(document.querySelector('#page-tree .lv-changes')?.dataset.main) > 0`);
     assert.equal(await evaluate(visible(guide)), false, 'later changes against a manual record are not presented as initialization changes');
-    await post(kemi.url, 'api/message', { body: 'compare after this hand-over' });
+    await postJson(kemi.url, 'api/message', { body: 'compare after this hand-over' });
     await handInThePage(kemi, repository, state);
     await chooseAuto();
     await waitFor(showsSnapshot('Handed 1'));
@@ -1550,7 +1483,7 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
     await savePageCommentInThePage('the button');
     await waitFor(`!${visible('.lv-hint')}`);
     const [saved] = (await reviewJson(kemi)).comments;
-    await post(kemi.url, 'api/comment', { op: 'delete', id: saved.id });
+    await postJson(kemi.url, 'api/comment', { op: 'delete', id: saved.id });
     await browser('open', kemi.url);
     await waitFor(`${visible('.lv-tools')} && document.querySelector('#comment-count').textContent === '0'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -2064,7 +1997,7 @@ async function wideTargetsAreRevealedSideways(repository) {
   const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
   const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
   try {
-    const far = await post(kemi.url, 'api/comment', {
+    const far = await postJson(kemi.url, 'api/comment', {
       op: 'add_page',
       page: { url: '/tall.html', width: 1280, places: [{ n: 1, kind: 'arrow', points: [{ x: 1080, y: 1000 }, { x: 1200, y: 1060 }], elements: [] }] },
       body: 'far to the right',
@@ -2185,7 +2118,7 @@ async function changeListFollowsThePage(repository) {
     assert.ok(was !== -1 && swatches.indexOf('rgb(214, 69, 69)', was + 1) > was, JSON.stringify(swatches));
     console.log('PASS ボタンの背景色を HMR の CSS の差し替えで変えると、そのボタンが主な変化に入り、色の前後が出る');
 
-    await post(kemi.url, 'api/message', { body: 'please look' });
+    await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
     await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
     await assignMockByPath('mocks/diff-mock.html');
@@ -2275,7 +2208,7 @@ async function changeListFollowsThePage(repository) {
 
     // コードの見方から渡すとき（舞台ごと隠れている）に取るスナップショットも同じ。
     await browser('set', 'viewport', '1280', '800');
-    await post(kemi.url, 'api/message', { body: 'once more' });
+    await postJson(kemi.url, 'api/message', { body: 'once more' });
     await browser('click', '.lv-view button[data-view="code"]');
     await waitFor(`!${visible('#live-stage')}`);
     await handInThePage(kemi, repository, state);
@@ -3007,7 +2940,7 @@ async function chooseTool(tool) {
 
 /** kemi の API からレビューを読む（ページへのコメントを確かめる）。 */
 async function reviewJson(kemi) {
-  return (await fetch(new URL('api/review', kemi.url))).json();
+  return getJson(kemi.url, 'api/review');
 }
 
 /** ページの中の描き込み（画面モックの紫）。 */
@@ -3035,7 +2968,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューで押せるので、先に一度渡しておく。
-    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     await handInThePage(kemi, repository, state);
 
     await chooseTool('element');
@@ -3256,7 +3189,7 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
-    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     await handInThePage(kemi, repository, state);
     await keepSavedImage();
     // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない余白。
@@ -3546,7 +3479,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 500));
@@ -3656,7 +3589,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
-    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 500));
@@ -3669,7 +3602,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await waitFor(`${heldRequests} === 1`);
     await browser('click', '.lv-view button[data-view="code"]');
     await waitFor(`document.body.dataset.liveView === 'code'`);
-    await post(kemi.url, 'api/message', { body: 'once more' });
+    await postJson(kemi.url, 'api/message', { body: 'once more' });
     const waiting = startWaiting(kemi, repository, state);
     await pressHand();
     await waitFor(`${heldRequests} === 2`);
@@ -3765,7 +3698,7 @@ async function placesMakeNoChange(repository) {
 
 /** API でページへのコメントを足す（画面の操作は pageCommentPlacesArePutAndSaved で確かめる）。 */
 async function addPageComment(kemi, url, width, body) {
-  return post(kemi.url, 'api/comment', {
+  return postJson(kemi.url, 'api/comment', {
     op: 'add_page',
     page: { url, width, places: [{ n: 1, kind: 'element', points: [], elements: [{ selector: '#button', text: 'Press', rect: { x: 0, y: 200, w: 300, h: 100 } }] }] },
     body,
@@ -3866,8 +3799,8 @@ async function placesGlowFromTheListAndTheThread(repository) {
   // 下の方（文書の y 2500 付近、帯 9 の中）を指す、帯の文字から離れた矢印。保存したコメントの場所に使う。
   const arrowLow = (width, left) => ({ url: '/tall.html', width, places: [{ n: 1, kind: 'arrow', points: [{ x: left, y: 2450 }, { x: left + 130, y: 2560 }], elements: [] }] });
   try {
-    const c1 = await post(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(1280, 700), body: 'low at 1280' });
-    const c2 = await post(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(390, 200), body: 'low at 390' });
+    const c1 = await postJson(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(1280, 700), body: 'low at 1280' });
+    const c2 = await postJson(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(390, 200), body: 'low at 390' });
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
@@ -3966,13 +3899,7 @@ async function placesGlowFromTheListAndTheThread(repository) {
  * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
  */
 async function handAndWait(kemi, dir, state) {
-  const waiting = new Promise((done, fail) => {
-    const child = spawn(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: environment(state), stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.on('error', fail);
-    child.on('exit', (code) => done({ code, stdout }));
-  });
+  const waiting = runKemi(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: isolatedEnvironment(state) });
   const button = `(${visible('#rail-hand')} ? document.querySelector('#rail-hand') : ${visible('#btn-hand')} ? document.querySelector('#btn-hand') : null)`;
   await waitFor(`${button} !== null && !${button}.disabled`);
   await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
@@ -4004,7 +3931,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
     await waitFor(showsSnapshot('Start'));
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await post(kemi.url, 'api/message', { body: 'let me show you' });
+    await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
     await chooseTool('element');
@@ -4029,7 +3956,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
     assert.ok(image.width > 0 && image.height > 0);
     console.log(`PASS 画面で要素・矢印・ペンの 3 つの場所を持つコメントを付けて渡すと、kemi wait に 3 つの場所と画像の絶対パスが届き、PNG として読める（${image.width}×${image.height}）`);
 
-    await post(kemi.url, 'api/submit', { verdict: 'approved' });
+    await postJson(kemi.url, 'api/submit', { verdict: 'approved' });
     const { code, stdout } = await kemi.exited;
     assert.equal(code, 0);
     const submitted = JSON.parse(stdout).comments.find((item) => item.id === comment.id);
@@ -4049,7 +3976,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
       await waitFor(showsSnapshot('Start'));
-      await post(kemi.url, 'api/message', { body: 'start' });
+      await postJson(kemi.url, 'api/message', { body: 'start' });
       await handInThePage(kemi, repository, strictState);
       await chooseTool('element');
       await clickInPane(livePane, 100, 150);
@@ -4065,13 +3992,6 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
       await strict.close();
     }
   }
-}
-
-/** ページと同じオリジンから API を読む。 */
-async function getJson(url, path) {
-  const response = await fetch(new URL(path, url));
-  assert.equal(response.status, 200, path);
-  return response.json();
 }
 
 /**
@@ -4097,7 +4017,7 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
     const [listed] = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'start');
     start = await getJson(kemi.url, `api/snapshot/${listed.id}`);
     await addPageComment(kemi, '/rich.html', 1280, 'keep this review');
-    await post(kemi.url, 'api/mock', { page: '/other.html', path: 'mocks/resumed.html' });
+    await postJson(kemi.url, 'api/mock', { page: '/other.html', path: 'mocks/resumed.html' });
   } finally {
     await stop(kemi);
   }
@@ -4222,5 +4142,5 @@ try {
     await verifyLiveReview(repository);
   }
 } finally {
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await close();
 }
