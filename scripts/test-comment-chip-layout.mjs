@@ -1,45 +1,27 @@
 // コメント札が本文だけを省略し、場所と印を 1 行で表示することを実バイナリで確かめる（R-VIEW）。
 // node scripts/test-comment-chip-layout.mjs <kemi-bin>
 import assert from 'node:assert/strict';
-import {spawn, execFile} from 'node:child_process';
 import {mkdtemp, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {promisify} from 'node:util';
 
-const run = promisify(execFile);
+import {browserSession} from './lib/browser.mjs';
+import {getJson, launchKemi, postJson, stopKemi} from './lib/kemi.mjs';
+
 assert.ok(process.argv[2], 'pass the kemi binary');
 const binary = resolve(process.argv[2]);
 const fixture = await mkdtemp(join(tmpdir(), 'kemi-chip-layout-'));
 const state = await mkdtemp(join(tmpdir(), 'kemi-chip-layout-state-'));
 const session = `kemi-chip-layout-${process.pid}`;
-const browser = async (...args) => {
-  const {stdout} = await run('agent-browser', ['--session', session, '--json', ...args]);
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, result.error);
-  return result.data;
-};
-const evaluate = async code => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
-const wait = code => browser('wait', '--fn', code);
+const {browser, evaluate, waitFor: wait, close} = browserSession(session);
 const lines = Array.from({length: 20}, (_, i) => `const value${i + 1} = ${i + 1};\n`).join('');
 const manifest = join(fixture, 'review.json');
 await writeFile(manifest, JSON.stringify({title: 'Comment layout', groups: [{id: 'group', title: 'Changes', diffs: [{path: 'sample.ts', old: lines, new: lines.replaceAll('const', 'let')}]}], approval: []}));
-const child = spawn(binary, [manifest, '--no-open', '--port', '0'], {cwd: fixture, env: {...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home')}, stdio: ['ignore', 'pipe', 'pipe']});
-child.stdout.resume();
-const exited = new Promise(resolve => child.on('close', resolve));
+const kemi = await launchKemi(binary, {cwd: fixture, state, args: [manifest]});
 try {
-  let stderr = '';
-  const url = await new Promise((resolve, reject) => {
-    child.stderr.on('data', chunk => {stderr += chunk; const match = stderr.match(/^kemi: (http:\/\/\S+)\n/m); if (match) resolve(match[1]);});
-    child.on('error', reject);
-    child.on('exit', () => reject(new Error('kemi exited before starting')));
-  });
-  const post = async body => {
-    const response = await fetch(new URL('api/comment', url), {method: 'POST', headers: {'Content-Type': 'application/json', Origin: new URL(url).origin}, body: JSON.stringify(body)});
-    assert.equal(response.status, 200, await response.clone().text());
-    return response.json();
-  };
-  const review = await (await fetch(new URL('api/review', url))).json();
+  const {url} = kemi;
+  const post = body => postJson(url, 'api/comment', body);
+  const review = await getJson(url, 'api/review');
   const file_id = review.groups[0].files[0].id;
   const body = 'Keep the location readable and show the complete comment when its thread is opened. '.repeat(5);
   const first = await post({op: 'add', file_id, side: 'new', start_line: 4, end_line: 4, body});
@@ -85,7 +67,6 @@ try {
   await wait(`document.querySelector('#cv-thread-body')?.textContent.includes(${JSON.stringify(body)}) && document.querySelector('#cv-thread-body').textContent.includes('A reply in the thread.')`);
   console.log('PASS opening the chip shows the complete comment and its reply');
 } finally {
-  await browser('close').catch(()=>{});
-  if (child.exitCode === null) child.kill('SIGTERM');
-  await exited;
+  await close();
+  await stopKemi(kemi, 'SIGTERM');
 }
