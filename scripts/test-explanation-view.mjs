@@ -39,7 +39,7 @@ function start(args) {
 const bodyA = '**A begins**\n\n![external](https://example.invalid/a.png) ![relative](a.png) ![data](data:image/png;base64,AA) ![reference][r]\n\n[r]: https://example.invalid/ref.png\n\n<img src="html.png">\n\nA ends\n';
 const codeB = { type: 'code', body: '<script>literal B</script>\n', language: 'pseudocode', role: 'example', title: 'Code B' };
 const parts = [{ type: 'text', body: bodyA }, codeB, { type: 'text', body: '**C survives**' }];
-// 描けないときの表示は、まだ描いていない本文で起こす（一度描いた本文は控えから出し、描き直させない）。
+// 描けないときの表示は、まだ描いていない本文で起こす（同じ本文を描き直させることに頼らない）。
 const lateA = bodyA.replace('A ends', 'A ends late');
 const lateReplyA = bodyA.replace('A ends', 'A ends in the reply');
 /** 本文 body の text パーツが描けず、元の文のまま失敗の知らせと並んでいる所（無ければ undefined）を読む式。 */
