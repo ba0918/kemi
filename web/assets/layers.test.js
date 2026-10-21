@@ -76,15 +76,21 @@ function isLiveModule(path) {
 }
 
 /**
- * features の順番。PROJECT.md の `a → b → …` の 1 か所を正典にする。
+ * PROJECT.md に `a → b → …` の形で書いた順番。lead の直後にある 1 か所を正典にする。
+ * @param {string} lead 順番の直前の言葉
  * @returns {string[]}
  */
-function featureOrder() {
+function orderAfter(lead) {
   const project = readFileSync(join(root, "PROJECT.md"), "utf8");
-  const chains = [...project.matchAll(/`([\w-]+(?: → [\w-]+)+)`/g)];
-  assert.equal(chains.length, 1, "PROJECT.md に features の順番（`a → b → …`）がちょうど 1 つあること");
+  const chains = [...project.matchAll(/`([\w-]+(?: → [\w-]+)+)`/g)].filter((chain) =>
+    project.slice(0, chain.index).trimEnd().endsWith(lead),
+  );
+  assert.equal(chains.length, 1, `PROJECT.md に「${lead}」の後の順番（\`a → b → …\`）がちょうど 1 つあること`);
   return chains[0][1].split(" → ");
 }
+
+/** features の順番。 */
+const featureOrder = () => orderAfter("`features/` の中の順番は");
 
 /**
  * モジュールの層。features/ の下のディレクトリは同じ名前の feature の一部（child）。
@@ -163,6 +169,16 @@ test("features は自分より前の feature だけを直接 import し、featur
       return order.indexOf(target.name) < order.indexOf(source.name);
     },
   );
+  assert.deepEqual(found, []);
+});
+
+test("features/live/ の部品は自分より前の部品だけを import する", () => {
+  const order = orderAfter("部品の順は");
+  const part = (/** @type {string} */ path) => path.slice("features/live/".length).replace(/\.js$/, "");
+  const isPart = (/** @type {string} */ path) => path.startsWith("features/live/");
+  const unknown = [...graph.keys()].filter(isPart).map(part).filter((name) => !order.includes(name));
+  assert.deepEqual(unknown, [], "部品の順に載っていない部品");
+  const found = violations(isPart, (from, to) => !isPart(to) || order.indexOf(part(to)) < order.indexOf(part(from)));
   assert.deepEqual(found, []);
 });
 

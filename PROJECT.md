@@ -46,9 +46,10 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
    `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
 - `features/live/` は `live` の部品で、親の `features/live.js`（起動と結線、見方・側・表示幅・ページの切り替え、
-  ページからの知らせの振り分け、帯と比べる相手の描画）が import する。部品の順は state（共有の状態）、
-  channel（ページとの往復）、stage（枠の置き方）、snapshots、mock、changes（変化の一覧と印）、compose
-  （ページへのコメントを書く）で、部品は自分より前の部品だけを import し、親は import しない。
+  ページからの知らせの振り分け、帯と比べる相手の描画）が import する。部品の順は
+  `state → channel → stage → snapshots → mock → changes → compose` で（state は共有の状態、channel はページとの
+  往復、stage は枠の置き方、changes は変化の一覧と印、compose はページへのコメントを書く）、部品は自分より前の
+  部品だけを import し、親は import しない。
   `features/live/state.js` は画面を開いている間の状態（`live`）と骨組みの要素（`shell`）を持ち、ほかの部品と
   親が読み書きする。部品から親の関数（描き直し、見方・側・表示幅・ページの切り替え）を呼ぶときは
   `state.js` の `liveActions` を通す。中身は親が `startLive` の最初に `bindLiveActions` で 1 回だけ入れる。
@@ -60,11 +61,11 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
   ESM は依存を 1 段ずつ発見するため。実測で読み込み完了が約 2 割短くなった）。
   モジュールを足したり改名したりしたら、その一覧も直す。ズレても壊れず、ブラウザの
   コンソールに警告が出るだけ。
-- 上の規則（features の順番と `features/<name>/` の下から親を import しないこと、views が import しないもの、
-  leaf の許可表）と `modulepreload` の一覧は `web/assets/layers.test.js`（`node --test web`）が import 文から
-  確かめる。features の順番は上の行をそのまま読む。JSDoc の `import("…")` は型だけの参照で読み込みを
-  生まないので数えない。動的な `import(…)` は、下の例外（`app.js` が `--live` のモジュールを読む所）だけで
-  あることも確かめる。`index.html` の stylesheet の順（部品の `parts.css`・`explanation.css` の後に
+- 上の規則（features の順番と `features/<name>/` の下から親を import しないこと、`features/live/` の部品の順、
+  views が import しないもの、leaf の許可表）と `modulepreload` の一覧は `web/assets/layers.test.js`
+  （`node --test web`）が import 文から確かめる。features の順番と部品の順は上の行をそのまま読む。
+  JSDoc の `import("…")` は型だけの参照で読み込みを生まないので数えない。動的な `import(…)` は、下の例外
+  （`app.js` が `--live` のモジュールを読む所）だけであることも確かめる。`index.html` の stylesheet の順（部品の `parts.css`・`explanation.css` の後に
   `style.css`）も確かめる。詳細度の同じ規則は後に読んだ方が勝つので、この順が見た目を決める。
   読み込んだだけで走る文の規則は確かめない。
 - 例外は `--live` のページの見方（`features/live.js` と `features/live/`・`views/live.js`（骨組み・上部バー・書く欄）・
