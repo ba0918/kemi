@@ -101,12 +101,9 @@ the review result: take only the exit code from the main process, and read its s
 the cases [the loop](references/conversation.md#the-loop) names. Without the review line or a
 call to wait, the review is submit-only.
 
-Reply to ordinary questions. When the explanation's account, judgment points, or caveats
-become stale, read [explanation updates](references/explanation-update.md)
-and replace the document to match what the review actually shows, not merely newer files.
-Confirm success JSON and exit `0` before claiming it saved. Explain does not reply to or
-resolve a thread; send a reply separately when needed. Readers keep their open explanation
-until opening the notice, and displayed Code does not auto-refresh with an explanation update.
+When the explanation's account, judgment points, or caveats become stale, read
+[the update procedure](references/explanation-update.md). An update is not a reply: answer the
+thread with `kemi reply` as well.
 
 ## Resume an interrupted review
 
@@ -118,16 +115,7 @@ startup diff; `--live` is the exception and rereads the working tree and reconne
 ## Handle the result
 
 After the main process exits, collect its exit code and the result (its stdout, or the
-`submitted` result from `kemi wait`), and read [results](references/results.md) for field
-interpretation or `kemi --result` recovery.
-Check the contract version (`kemi: 4` for new result/wait output) and that `verdict` matches
-the exit code. Do not guess unknown versions; stored version 1 to 3 results are returned
-unchanged. Recovery retrieves a stored result, not the current review's eventual submit.
-
-Read comments on approvals as well as change requests. Compare approval identities with
-current bytes before using approval, and suggestion `quote` with the file before applying
-it. Locate outdated comments by their text rather than old line numbers. Keep typed `parts`
-intact. Explanation comments quote a complete original block/revision; `selection` is only
-a location hint. A display version identifies metadata, not fixed bytes or correctness.
-For `--live` page comments, read the numbered places and their image from wait before submit;
-the result does not retain that image path.
+`submitted` result from `kemi wait`), and read [results](references/results.md) before acting
+on it: it covers the contract version, every field, and `kemi --result` recovery. Before
+acting, check that `verdict` agrees with the exit code, and before using an approval, compute
+each `identity` again from the current bytes and compare.
