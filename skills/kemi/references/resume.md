@@ -20,7 +20,7 @@ is gone. Live reload and its update badge are off.
 
 `--live` is the exception: resume rereads the current working tree, keeps live reload and
 the update badge, and reconnects the same page. Snapshots and mock assignments return too;
-see [live inputs](inputs.md#reviewing-a-running-page).
+see [live review](live.md#reviewing-a-running-page).
 
 Resume continues the same session id. A later submit stores its result for the workspace
 where the review originally started, with manifest `approval` unchanged. Keep the resumed
@@ -36,7 +36,7 @@ empty stdout when none exist. In a terminal, cancelling the chooser (Esc or Ctrl
 `--resume` takes only `--port`, `--bind`, `--no-open`, `--serve`, and `--live-port`.
 An input mode, `--digest`, or `--explanation` beside it is a usage error (exit `2`).
 `--digest` and `--result` never create sessions. To change a resumed explanation, use
-[explain](explanation.md#updating-the-explanation), not the original explanation file.
+[explain](explanation-update.md#updating-the-explanation), not the original explanation file.
 
 ## Restored content and versions
 

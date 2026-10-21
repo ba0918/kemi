@@ -24,11 +24,12 @@ Use one input mode per run and leave out already reviewed work:
 | Running loopback page or local HTML, with the working tree | `kemi --live <url\|file>` |
 | Drafts or groups you define | `kemi <manifest.json>` or `kemi -` for stdin |
 
-Read [inputs](references/inputs.md) for manifests, commit grouping, focus marks, `--live`,
-`--digest`, or optional flags. Use `--no-open` when a browser should not appear on the
-person's machine. The default bind is `127.0.0.1`; use `--bind` only for intended network
-exposure (the URL and API are plain HTTP). For approval, identify the exact bytes; a
-manifest's `approval` is returned unchanged, not checked by kemi.
+Read [inputs](references/inputs.md) for manifests, commit grouping, focus marks, `--digest`, or
+optional flags, and [live review](references/live.md) for `--live` and its page comments. Use
+`--no-open` when a browser should not appear on the person's machine. The default bind is
+`127.0.0.1`; use `--bind` only for intended network exposure (the URL and API are plain HTTP).
+For approval, identify the exact bytes; a manifest's `approval` is returned unchanged, not
+checked by kemi.
 
 ## Prepare the explanation before handing off
 
@@ -57,12 +58,9 @@ content, tested diagram templates, and the evidence to show at handoff, and
 a separate JSON file with only `sections`, then pass `--explanation <file>`
 with the input mode. Startup validates and saves it before publishing the review; failure
 exits `2` before any URL. Do not fetch context for a review that has not started.
-For an already running or resumed review, read [the update procedure](references/explanation.md#updating-the-explanation)
-instead; `--resume` cannot take `--explanation`.
-
-For large running-review contexts, use [selective context reading](references/explanation.md#reading-a-large-context)
-instead of loading every reference and explanation body. The optional bundled
-`scripts/context_summary.py` runs with Python 3.9+ (`python3`), using only its standard library.
+For an already running or resumed review, read [the update procedure](references/explanation-update.md)
+instead, which also covers reading a large context selectively; `--resume` cannot take
+`--explanation`.
 
 ## Run and wait
 
@@ -102,7 +100,7 @@ This loop is independent of waiting for the main process: its exit code and stdo
 the review result. Without the review line or a call to wait, the review is submit-only.
 
 Reply to ordinary questions. When the explanation's account, judgment points, or caveats
-become stale, read [explanation updates](references/explanation.md#updating-the-explanation)
+become stale, read [explanation updates](references/explanation-update.md)
 and replace the document to match what the review actually shows, not merely newer files.
 Confirm success JSON and exit `0` before claiming it saved. Explain does not reply to or
 resolve a thread; send a reply separately when needed. Readers keep their open explanation

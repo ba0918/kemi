@@ -151,7 +151,7 @@ Share the review URL, not the separate `kemi: live` URL.
 
 If kemi cannot embed resources needed for a comment image, it saves the comment
 and its places without an image and shows the reason.
-See [live inputs](skills/kemi/references/inputs.md#reviewing-a-running-page)
+See [live review](skills/kemi/references/live.md#reviewing-a-running-page)
 for allowed options and comparison behaviour.
 
 ## Resume a review or read its result
@@ -200,9 +200,11 @@ in `docs/spec/` are the authoritative contracts and are written in Japanese.
 | Topic | Read next |
 |---|---|
 | Input modes, flags, manifests, focus files, and digest | [Input reference](skills/kemi/references/inputs.md) |
+| Running-page input (`--live`) and page comments | [Live review reference](skills/kemi/references/live.md) |
 | Agent replies and feedback delivery | [Conversation reference](skills/kemi/references/conversation.md) |
 | What an explanation should say, and diagram templates | [Writing explanations](skills/kemi/references/explanation-writing.md) |
-| Explanation JSON, references, and updates | [Explanation reference](skills/kemi/references/explanation.md) |
+| Explanation JSON and references | [Explanation reference](skills/kemi/references/explanation.md) |
+| Updating the explanation of a running review | [Explanation update reference](skills/kemi/references/explanation-update.md) |
 | Result JSON and saved results | [Result reference](skills/kemi/references/results.md) |
 | Interrupted reviews and saved sessions | [Resume reference](skills/kemi/references/resume.md) |
 | Detailed page controls, rendered files, and keyboard shortcuts | [Reading](docs/spec/reading.md), [rendering](docs/spec/render.md), and [narrow screens](docs/spec/narrow.md) |

@@ -145,7 +145,7 @@ URLは`localhost`または`127.0.0.1`などのIPv4ループバックアドレス
 共有するのはレビューURLです。別に表示される`kemi: live`のURLではありません。
 
 コメント画像に必要な資源を埋め込めない場合は、画像なしでコメント本文と場所を保存し、その理由を表示します。
-併用できるオプションや比較方法は、英語の[live入力の説明](skills/kemi/references/inputs.md#reviewing-a-running-page)を参照してください。
+併用できるオプションや比較方法は、英語の[live入力の説明](skills/kemi/references/live.md#reviewing-a-running-page)を参照してください。
 
 ## レビューの再開と結果の取り直し
 
@@ -194,9 +194,11 @@ kemiはこれらの設定を変更しません。
 | 調べたいこと | 参照先 |
 |---|---|
 | 入力モード、フラグ、manifest、focusファイル、digest | [入力の参照資料](skills/kemi/references/inputs.md)（英語） |
+| 動いているページの入力（`--live`）とページへのコメント | [liveの参照資料](skills/kemi/references/live.md)（英語） |
 | エージェントの返信とフィードバックの受け渡し | [会話の参照資料](skills/kemi/references/conversation.md)（英語） |
 | 説明文書に書く内容と図の雛形 | [説明文書の書き方](skills/kemi/references/explanation-writing.md)（英語） |
-| 説明文書のJSON、参照、更新 | [説明文書の参照資料](skills/kemi/references/explanation.md)（英語） |
+| 説明文書のJSON、参照 | [説明文書の参照資料](skills/kemi/references/explanation.md)（英語） |
+| 動いているレビューの説明文書の更新 | [説明文書の更新の参照資料](skills/kemi/references/explanation-update.md)（英語） |
 | 結果のJSONと保存済みの結果 | [結果の参照資料](skills/kemi/references/results.md)（英語） |
 | 中断したレビューと保存済みセッション | [再開の参照資料](skills/kemi/references/resume.md)（英語） |
 | 画面の詳しい操作、描画表示、キーボードショートカット | [読み進める操作](docs/spec/reading.md)、[描画表示](docs/spec/render.md)、[狭い画面](docs/spec/narrow.md) |

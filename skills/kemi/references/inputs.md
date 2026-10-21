@@ -9,7 +9,7 @@ One input mode per run. Giving two is an error (exit `2`).
 | A range of commits | `kemi --from <base> [--to <head>]` | both groupings, see below |
 | The working tree | `kemi --worktree` | one group, untracked files included |
 | The index | `kemi --staged` | one group |
-| A running page and the working tree | `kemi --live <url\|file>` | the working tree, as `--worktree` |
+| A running page and the working tree | `kemi --live <url\|file>` | the working tree, as `--worktree`; see [live review](live.md) |
 | Anything whose reasons only you know | `kemi <manifest.json>`, or `kemi -` to read it from stdin | the groups you write |
 
 `--to` defaults to `HEAD`. A commit range carries both of its groupings at once, and the page
@@ -47,39 +47,6 @@ The `--focus` file looks like this:
 A group id is `all` for the final form, the full commit sha for a per-commit group, `worktree`,
 `staged`, or an id you chose in a manifest. An id or a path that does not exist is an error
 (exit `2`); kemi never quietly ignores one.
-
-## Reviewing a running page
-
-`kemi --live <url|file>` puts a running page under review together with the working tree.
-The URL must be `http://` on `localhost` or `127.0.0.0/8` (a dev server or Storybook). A file
-must be a `.html` or `.htm` inside the git working tree kemi starts in, or inside the launch
-directory outside git; a symlink counts where it points, and nothing in `.git/` is served.
-Anything else is a usage error (exit `2`). The code view is the same as `--worktree`; outside
-a git repository there is none. `--live` combines only with `--port`, `--bind`, `--no-open`,
-`--live-port <n>`, `--focus`, `--explanation`, and `--serve`. The review title is `Live review of <url>`, and
-for a file the URL is its path from that directory, such as `/docs/mock.html`.
-
-kemi prints `kemi: live <url>` after the review line: the page relayed through a second port
-(`--live-port`, default a free one). It opens only in a browser that opened the review URL first,
-so send the person the review URL, not this one. When the dev server is not running, the page
-says so and waits for it. A file page is served on that port too, reloads when it or a file it
-loaded is saved, and waits when the file is missing.
-
-The page has a **Page** view (the running page beside what it is compared with, at a chosen width
-from 320 to 3840) and a **Code** view (the working-tree diff). What the page is compared with is a
-snapshot — a script-free copy kemi takes at the start, at each hand-over to you, and on
-**Record now** — or a mock, an HTML file in the served directory the person assigns to the page.
-They can be shown side by side or overlaid with adjustable opacity. Against a snapshot, the page
-also lists and marks what changed (look, text, added and removed elements, and, folded, what only
-moved); against a mock it does not. Handing over is the person's
-action: their next hand-over (or **Record now**) takes a fresh snapshot.
-
-The person can also comment on the page itself, putting numbered places on it with the
-**Element**, **Arrow**, and **Pen** tools. Such a comment reaches you with `page` instead of a
-file and lines: the URL and width it was left at, its places with the elements they point at,
-and, from `kemi wait`, the path of a PNG of the area with the places drawn on it. Read the
-[result reference](results.md) for the shape, and look at the image before changing the page:
-the body refers to a place as `#n`, the place whose `n` is that number.
 
 ## Surveying a large change first
 

@@ -73,55 +73,8 @@
   `author` is `reviewer` (the person) or `agent` (you, through `kemi reply`). `variants`,
   `chosen`, and `applied` are `[]`, `null`, and `null` outside a review of a running page.
 - `resolved` is `true` when the person closed the thread. Only the person resolves.
-- `page` is `null` except on a comment the person left on a running page (`kemi --live`). Such a
-  comment has `group_id` `page` and `group_title` `Page`; its `path`, `side`, `start_line`,
-  `end_line`, and `suggestion` are `null`, `quote` is `[]`, and `outdated` is always `false`.
-  Its `page` is:
-
-  ```json
-  {
-    "url": "/products?x=1",
-    "width": 390,
-    "places": [
-      {
-        "n": 1,
-        "kind": "element",
-        "points": [],
-        "elements": [{"selector": "#buy", "text": "Buy", "rect": {"x": 0, "y": 120, "w": 200, "h": 60}}]
-      },
-      {
-        "n": 2,
-        "kind": "arrow",
-        "points": [{"x": 12, "y": 340}, {"x": 60, "y": 352}, {"x": 96, "y": 380}],
-        "elements": [{"selector": "#total", "text": "$12", "rect": {"x": 80, "y": 370, "w": 60, "h": 24}}]
-      }
-    ],
-    "image": null
-  }
-  ```
-
-  `url` is the path and query the person was viewing, and `width` the viewport width in CSS
-  pixels. `places` are where the comment points, in order of `n`; the body refers to them by
-  number as `#n` (`#2` is the place whose `n` is 2; a number without `#` is not a reference), and
-  the numbers run from 1 without gaps. `kind` is
-  `element` (a chosen element, `points` is `[]`), `arrow` (the points of the arrow, and the
-  element at its head), or `pen` (the points of the line, and up to five elements that overlap
-  the area it encloses, even partly, largest overlap first; elements that contain the whole line, such as a wrapper around the
-  page, are left out, and a line drawn inside one element names that innermost element). `html` and
-  `body` are never named: an arrow pointing at the empty background, or a line around nothing but
-  background, has `elements` `[]` and only its `points` (an area only); look at the comment's
-  `image` to see what it points at. Arrow and pen `points` are whole numbers, rounded and thinned
-  so that every dropped point lies within 1 CSS pixel of the line through the kept ones; the
-  first and last points are where the line began and ended (an arrow's head is at the last).
-  Points saved by a kemi before contract version `4` keep their saved values,
-  which may be fractional. There is one image per comment, not per place. Each element carries a `selector`, its `text`, and its `rect`; all
-  coordinates are CSS pixels of the page, independent of scrolling. For an element inside an
-  open shadow root, `selector` joins the host's selector and the selector inside the shadow root
-  with ` >>> ` (for example `#host >>> p:nth-of-type(2)`), which is not CSS: query the host in the
-  document, then its `shadowRoot` with the part after ` >>> ` (repeated for nested roots).
-  `image` is the absolute path of a PNG of the area with the places drawn on it, given only in
-  what `kemi wait` returns; in the result it is always `null`, because the file is removed with
-  the session on submit.
+- `page` is `null` except on a comment the person left on a running page (`kemi --live`);
+  its shape is in [page comments](live.md#page-comments).
 - `messages` are notes on the whole review rather than on one comment, in creation order, with
   the same `author` values; `[]` when there are none.
 - `comments` come in creation order. `approval` is returned exactly as it was given, and is `[]`

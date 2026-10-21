@@ -2,8 +2,8 @@
 
 This reference covers what an explanation says and how it shows it: the bar it must reach, a
 reading order, what each kind of change needs, which part to use for what, and tested diagram
-templates. The JSON format, references, limits, and the update procedure are in
-[explanation](explanation.md).
+templates. The JSON format, references, and limits are in [explanation](explanation.md), and the
+update procedure in [explanation updates](explanation-update.md).
 
 ## The bar
 
