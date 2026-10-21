@@ -81,7 +81,7 @@ import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { browserSession, visible } from './lib/browser.mjs';
 import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
@@ -136,18 +136,64 @@ function startKemi(dir, state, args) {
 }
 
 /**
+ * 場面の前後の決まった形。page を渡すと試験用の開発サーバを立て、kemi に `--live <開発サーバの page>` と args を渡して
+ * 起動する。page を省くと開発サーバは立てず、args だけで起動する。scene を走らせ、終わったら（落ちても）kemi を止め、
+ * 開発サーバを閉じる。
+ * @param {{
+ *   repository: string,
+ *   page?: string,
+ *   args?: string[],
+ *   prepare?: (dev: Awaited<ReturnType<typeof startDevServer>>) => Promise<void>,
+ *   viewportAfter?: [string, string],
+ * }} options prepare は kemi を起動する前の開発サーバの準備（ページの書き換えなど）。viewportAfter は、kemi を止める前に
+ *   戻す画面の大きさ
+ * @param {(review: { kemi: Awaited<ReturnType<typeof startKemi>>, dev: Awaited<ReturnType<typeof startDevServer>> | null, state: string }) => Promise<void>} scene
+ */
+async function withLiveReview({ repository, page, args = [], prepare, viewportAfter }, scene) {
+  const dev = page === undefined ? null : await startDevServer();
+  try {
+    if (dev !== null) {
+      await prepare?.(dev);
+    }
+    const state = await temporaryDirectory('kemi-live-state-');
+    const kemi = await startKemi(repository, state, dev === null ? args : ['--live', `${dev.url}${page}`, ...args]);
+    try {
+      await scene({ kemi, dev, state });
+    } finally {
+      if (viewportAfter) {
+        await browser('set', 'viewport', ...viewportAfter);
+      }
+      await stop(kemi);
+    }
+  } finally {
+    await dev?.close();
+  }
+}
+
+/**
  * 画面の「Hand to agent」で渡す。ボタンはエージェントが kemi wait を呼んだレビューでだけ押せるので、
  * 先に待たせておき、渡して返るのを待つ。
  */
 async function handInThePage(kemi, dir, state) {
   const waiting = startWaiting(kemi, dir, state);
   await pressHand();
-  assert.equal(await waiting, 0, 'kemi wait returns what was handed');
+  assert.equal((await waiting).code, 0, 'kemi wait returns what was handed');
 }
 
-/** kemi wait を走らせる。終了コードで解決する。 */
-async function startWaiting(kemi, dir, state) {
-  return (await runKemi(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: isolatedEnvironment(state) })).code;
+/**
+ * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
+ */
+async function handAndWait(kemi, dir, state) {
+  const waiting = startWaiting(kemi, dir, state);
+  await pressHand();
+  const { code, stdout } = await waiting;
+  assert.equal(code, 0, 'kemi wait returns what was handed');
+  return JSON.parse(stdout);
+}
+
+/** kemi wait を走らせる。終わったら終了コードと標準出力で解決する。 */
+function startWaiting(kemi, dir, state) {
+  return runKemi(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: isolatedEnvironment(state) });
 }
 
 /** 「Hand to agent」を押せるようになるのを待って押す。 */
@@ -179,10 +225,7 @@ function stop(kemi) {
 
 /** 中継（R-PAGE-PROXY）: HMR が中継越しに効き、中継用の cookie がページから読めない。 */
 async function relayCarriesHmrAndHidesTheCookie(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', dev.url]);
-  try {
+  await withLiveReview({ repository, page: '' }, async ({ kemi, dev }) => {
     await browser('open', kemi.url);
     await browser('open', kemi.live);
     await waitFor(`document.documentElement.dataset.hmrConnected === 'true'`);
@@ -192,10 +235,7 @@ async function relayCarriesHmrAndHidesTheCookie(repository) {
     await waitFor(`${box} === 'rgb(0, 0, 255)'`);
     assert.equal(await evaluate(`document.cookie.includes('kemi_live')`), false, 'the relay cookie must be HttpOnly');
     console.log('PASS 中継越しに HMR が効き、中継用の cookie がページの document.cookie に出ない');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 開発サーバにつながらないときは出して待ち、起動したらつながる（R-PAGE-MODE、R-PAGE-SESSION）。 */
@@ -239,13 +279,10 @@ async function waitsForTheDevServer(repository) {
 
 /** 手元の HTML ファイル（R-PAGE-MODE、R-LIVE）: 参照する CSS を保存し直すと読み込み直される。 */
 async function fileReloadsWhenItsCssIsSaved(repository) {
-  const { mkdir } = await import('node:fs/promises');
   await mkdir(join(repository, 'site'), { recursive: true });
   await writeFile(join(repository, 'site', 'page.html'), '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><p class="box">file page</p></body></html>\n');
   await writeFile(join(repository, 'site', 'style.css'), '.box { color: rgb(255, 0, 0); }\n');
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', 'site/page.html']);
-  try {
+  await withLiveReview({ repository, args: ['--live', 'site/page.html'] }, async ({ kemi }) => {
     assert.match(kemi.live, /\/site\/page\.html$/);
     await browser('open', kemi.url);
     await browser('open', kemi.live);
@@ -255,26 +292,12 @@ async function fileReloadsWhenItsCssIsSaved(repository) {
     await writeFile(join(repository, 'site', 'style.css'), '.box { color: rgb(0, 128, 0); }\n');
     await waitFor(`${color} === 'rgb(0, 128, 0)' && window.__kemiBeforeReload === undefined`);
     console.log('PASS 手元の HTML ファイルが参照する CSS を保存し直すと、ページが読み込み直される');
-  } finally {
-    await stop(kemi);
-  }
-}
-
-/** 中継したページの中の点を押す（別のオリジンの枠なので、画面の座標で押す）。 */
-async function clickInLiveFrame(x, y) {
-  const box = await evaluate(`(() => { const r = document.querySelector('#live-stage .lv-pane[data-side="live"] .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
-  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
-  await browser('mouse', 'move', String(Math.round(box.x + x * scale)), String(Math.round(box.y + y * scale)));
-  await browser('mouse', 'down');
-  await browser('mouse', 'up');
+  });
 }
 
 /** ページの見方（R-PAGE-VIEW、R-PAGE-PROXY）: 枠を拒むページが出て書き換えの表示が出る、表示幅の範囲、狭い画面。 */
 async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}framed.html`]);
-  try {
+  await withLiveReview({ repository, page: 'framed.html', viewportAfter: ['1280', '800'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
     await waitFor(visible('#live-stage'));
@@ -317,11 +340,7 @@ async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
     await browser('click', '#page-tree .lv-page-open');
     await waitFor(`document.querySelector('#page-tree').dataset.drawer === undefined`);
     console.log('PASS 幅 390px では動いているページと比べる相手を 1 枚ずつ切り替えて見て、ページのツリーは引き出しに入る');
-  } finally {
-    await browser('set', 'viewport', '1280', '800');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 上部バーのコード用の操作と数（R-PAGE-MODE）。ページの見方の間は見えない。 */
@@ -335,49 +354,46 @@ const codeTopbarShown = (shown) => CODE_TOPBAR.map((selector) => `${shown ? '' :
  * 作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わって差分が新しくなる。
  */
 async function modeTabsSwitchTheTopbar(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
-    await browser('set', 'viewport', '1280', '900');
-    await browser('open', kemi.url);
-    await waitFor(`${visible('#live-stage')} && document.body.dataset.liveView === 'page'`);
-    await waitFor(codeTopbarShown(false));
-    const top = '.topbar .lv-topmeta';
-    await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
-    await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
-    const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
-    assert.ok(files > 0);
-    await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
-    await browser('click', '.lv-widths button[data-width="768"]');
-    await waitFor(`document.querySelector('${top}').textContent.includes('768')`);
-    console.log('PASS ページの見方の上部バーに、コード用の操作と数が見えず、ページの URL・表示幅・エージェントの状態が見え、コードのタブに変更ファイルの数が出る');
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
+    try {
+      await browser('set', 'viewport', '1280', '900');
+      await browser('open', kemi.url);
+      await waitFor(`${visible('#live-stage')} && document.body.dataset.liveView === 'page'`);
+      await waitFor(codeTopbarShown(false));
+      const top = '.topbar .lv-topmeta';
+      await waitFor(`${visible(top)} && document.querySelector('${top}').textContent.includes('/rich.html') && document.querySelector('${top}').textContent.includes('1280')`);
+      await waitFor(`${visible('.topbar .lv-top-agent')} && document.querySelector('.topbar .lv-top-agent').dataset.kemiAgentState === document.querySelector('#agent-status').dataset.kemiAgentState && document.querySelector('.topbar .lv-top-agent').textContent === document.querySelector('#agent-status').textContent`);
+      const files = (await reviewJson(kemi)).groups.flatMap((group) => group.files).length;
+      assert.ok(files > 0);
+      await waitFor(`document.querySelector('.topbar .lv-view button[data-view="code"]').textContent.includes(${JSON.stringify(String(files))})`);
+      await browser('click', '.lv-widths button[data-width="768"]');
+      await waitFor(`document.querySelector('${top}').textContent.includes('768')`);
+      console.log('PASS ページの見方の上部バーに、コード用の操作と数が見えず、ページの URL・表示幅・エージェントの状態が見え、コードのタブに変更ファイルの数が出る');
 
-    await browser('click', '.topbar .lv-view button[data-view="code"]');
-    await waitFor(`document.body.dataset.liveView === 'code' && ${codeTopbarShown(true)} && !${visible(top)}`);
-    assert.equal(await evaluate(visible('#live-band')), false, 'the code view shows no page-view controls');
-    await browser('click', '.topbar .lv-view button[data-view="page"]');
-    await waitFor(`document.body.dataset.liveView === 'page' && ${codeTopbarShown(false)}`);
-    console.log('PASS コードのタブを押すとコード用の操作と数が見えてページの見方の操作の帯は見えず、ページのタブで戻る');
+      await browser('click', '.topbar .lv-view button[data-view="code"]');
+      await waitFor(`document.body.dataset.liveView === 'code' && ${codeTopbarShown(true)} && !${visible(top)}`);
+      assert.equal(await evaluate(visible('#live-band')), false, 'the code view shows no page-view controls');
+      await browser('click', '.topbar .lv-view button[data-view="page"]');
+      await waitFor(`document.body.dataset.liveView === 'page' && ${codeTopbarShown(false)}`);
+      console.log('PASS コードのタブを押すとコード用の操作と数が見えてページの見方の操作の帯は見えず、ページのタブで戻る');
 
-    await chooseTool('element');
-    await clickInPane(livePane, 150, 250);
-    await waitFor(`${draftNumbers} === '[1]'`);
-    await savePageCommentInThePage('the button');
-    await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
-    assert.equal(await evaluate(visible('#progress')), false, 'the seen progress stays hidden after saving a page comment');
-    console.log('PASS ページへのコメントを保存した後も、ページの見方では見たの進捗が見えない');
+      await chooseTool('element');
+      await clickInPane(livePane, 150, 250);
+      await waitFor(`${draftNumbers} === '[1]'`);
+      await savePageCommentInThePage('the button');
+      await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+      assert.equal(await evaluate(visible('#progress')), false, 'the seen progress stays hidden after saving a page comment');
+      console.log('PASS ページへのコメントを保存した後も、ページの見方では見たの進捗が見えない');
 
-    await writeFile(join(repository, 'a.txt'), 'one\nTWO\nthree from the agent\n');
-    await waitFor(visible('#update-badge'));
-    await browser('click', '#update-badge');
-    await waitFor(`document.body.dataset.liveView === 'code' && Array.from(document.querySelectorAll('[data-kemi-row]')).some((row) => row.textContent.includes('three from the agent'))`);
-    console.log('PASS ページの見方の間に作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わり差分が新しくなる');
-  } finally {
-    await writeFile(join(repository, 'a.txt'), 'one\nTWO\n');
-    await stop(kemi);
-    await dev.close();
-  }
+      await writeFile(join(repository, 'a.txt'), 'one\nTWO\nthree from the agent\n');
+      await waitFor(visible('#update-badge'));
+      await browser('click', '#update-badge');
+      await waitFor(`document.body.dataset.liveView === 'code' && Array.from(document.querySelectorAll('[data-kemi-row]')).some((row) => row.textContent.includes('three from the agent'))`);
+      console.log('PASS ページの見方の間に作業ツリーを変えると更新バッジが出て、押すとコードの見方に切り替わり差分が新しくなる');
+    } finally {
+      await writeFile(join(repository, 'a.txt'), 'one\nTWO\n');
+    }
+  });
 }
 
 /** git の外（R-PAGE-MODE）: コードの見方の代わりに理由が出る。範囲の別の HTML へのリンクで見る対象が移り、ツリーに出る。 */
@@ -385,9 +401,7 @@ async function outsideGitFilePages() {
   const dir = await temporaryDirectory('kemi-live-nogit-');
   await writeFile(join(dir, 'index.html'), '<!doctype html><html><head><style>body{margin:0} a{display:block;width:400px;height:200px;background:#ddd}</style></head><body><a id="next" href="other.html">Other</a></body></html>\n');
   await writeFile(join(dir, 'other.html'), '<!doctype html><html><head></head><body><h1>Other</h1></body></html>\n');
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(dir, state, ['--live', 'index.html']);
-  try {
+  await withLiveReview({ repository: dir, args: ['--live', 'index.html'] }, async ({ kemi }) => {
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('#live-stage .lv-pane[data-side="live"] .lv-bar-label')?.textContent.includes('/index.html')`);
     await browser('click', '.lv-view button[data-view="code"]');
@@ -397,12 +411,10 @@ async function outsideGitFilePages() {
     await browser('click', '.lv-view button[data-view="page"]');
     await waitFor(visible('#page-tree'));
     await chooseTool('interact');
-    await clickInLiveFrame(100, 100);
+    await clickInPane(livePane, 100, 100);
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html'`);
     console.log('PASS ファイルのページの中で範囲の別の HTML へのリンクを押すと、見る対象が移り、ページのツリーにそのページが出る');
-  } finally {
-    await stop(kemi);
-  }
+  });
 }
 
 /**
@@ -412,10 +424,7 @@ async function outsideGitFilePages() {
  */
 async function handingFromTheCodeViewOutsideGit() {
   const dir = await temporaryDirectory('kemi-live-nogit-');
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(dir, state, ['--live', `${dev.url}changing.html`]);
-  try {
+  await withLiveReview({ repository: dir, page: 'changing.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
     await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
@@ -430,10 +439,7 @@ async function handingFromTheCodeViewOutsideGit() {
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view outside git shows no change against the unchanged page');
     console.log('PASS git の外のコードの見方から渡したときのスナップショットと、変えていないページを比べると変化が 0');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -442,16 +448,13 @@ async function handingFromTheCodeViewOutsideGit() {
  * 並べた文書から記述する。ページを変えずにページの見方に戻せば、どちらと比べても変化は 0。
  */
 async function handingFromTheExplanationView(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   // 説明のファイルは作業ツリーの外に置く（ほかの場面の差分を変えない）。
-  const explanation = join(state, 'explanation.json');
+  const explanation = join(await temporaryDirectory('kemi-live-explanation-'), 'explanation.json');
   await writeFile(explanation, JSON.stringify({ sections: [{ id: 'overview', title: 'Overview', blocks: [{ id: 'note', part: { type: 'text', body: 'Read the page before handing.' }, references: [] }] }] }));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`, '--explanation', explanation]);
   const recorded = (label) => `Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith(${JSON.stringify(label)}))`;
   // 一覧の見出しの名前は、選んだ比べる相手の選択の文字に含まれる。選び直した直後の前の相手の一覧を読まない。
   const listedAgainstChosen = `(() => { const vs = ${changeList}?.querySelector('.lv-changes-vs'); return Boolean(vs) && document.querySelector('.lv-compare-select').selectedOptions[0].textContent.includes(vs.textContent); })()`;
-  try {
+  await withLiveReview({ repository, page: 'changing.html', args: ['--explanation', explanation] }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
     await waitFor(`document.body.dataset.reviewView === 'explanation' && document.body.dataset.liveView === 'page' && !${visible('#live-stage')} && ${recorded('Start')}`);
@@ -470,17 +473,12 @@ async function handingFromTheExplanationView(repository) {
     }
     assert.deepEqual(against, { 'Handed 1': '0/0', Start: '0/0' }, 'snapshots taken in the explanation view show no change against the unchanged page');
     console.log('PASS 説明の見方で始めて取った開始時のスナップショットも、説明の見方から渡したときのスナップショットも、変えていないページと比べると変化が 0');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** `--live` でないレビューは、ページ用のファイルを読み込まない（R-VERIFY）。 */
 async function otherReviewsLoadNoPageFiles(repository) {
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--worktree']);
-  try {
+  await withLiveReview({ repository, args: ['--worktree'] }, async ({ kemi }) => {
     await browser('open', kemi.url);
     await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
     const loaded = await evaluate(`JSON.stringify(performance.getEntriesByType('resource').map((entry) => entry.name))`);
@@ -489,9 +487,7 @@ async function otherReviewsLoadNoPageFiles(repository) {
     const pageFiles = urls.filter((url) => /live/.test(new URL(url).pathname));
     assert.deepEqual(pageFiles, [], 'no page file may be loaded');
     console.log(`PASS --live でないレビューは、ページ用のファイルを読み込まない（読み込んだ URL ${urls.length} 件）`);
-  } finally {
-    await stop(kemi);
-  }
+  });
 }
 
 // ---- 画素の比較（スナップショットの見た目） ----
@@ -616,10 +612,36 @@ async function chooseAuto() {
 const showsSnapshot = (label) => `document.querySelector('${refPane}').dataset.reference === 'snapshot' && document.querySelector('${refPane} .lv-bar-label').textContent.startsWith(${JSON.stringify(label)})`;
 const notRecorded = `document.querySelector('${refPane}').dataset.reference === 'none' && ${visible(`${refPane} .lv-empty`)}`;
 
+/** 舞台の縮めた倍率（--lv-scale）を読む式。 */
+const STAGE_SCALE = `Number(getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1')`;
+
+/** 舞台の縮めた倍率。 */
+async function stageScale() {
+  return Number(await evaluate(STAGE_SCALE));
+}
+
+/** 透かし具合の操作に値を入れる。 */
+async function setOpacity(value) {
+  await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+}
+
+/**
+ * 要素の上で回したホイールを作って送る（agent-browser のホイールは押した位置に届かず、画面の左上に届く）。at は要素の
+ * 左上からの位置で、その要素に送る。at を省くと要素の真ん中で、そこで一番上にある要素に送る。
+ * @param {string} selector
+ * @param {{ x?: number, y?: number, at?: number }} [wheel] x と y は横と縦の量
+ */
+async function wheelOn(selector, { x = 0, y = 0, at } = {}) {
+  const target = at === undefined
+    ? `const px = r.left + r.width / 2; const py = r.top + r.height / 2; const target = document.elementFromPoint(px, py);`
+    : `const px = r.x + ${at}; const py = r.y + ${at}; const target = element;`;
+  await evaluate(`(() => { const element = document.querySelector(${JSON.stringify(selector)}); const r = element.getBoundingClientRect(); ${target} return target.dispatchEvent(new WheelEvent('wheel', { deltaX: ${x}, deltaY: ${y}, clientX: px, clientY: py, bubbles: true, cancelable: true })); })()`);
+}
+
 /** 枠の中の点を押す。 */
 async function clickInPane(pane, x, y) {
   const box = await evaluate(`(() => { const r = document.querySelector('${pane} .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
-  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+  const scale = await stageScale();
   await browser('mouse', 'move', String(Math.round(box.x + x * scale)), String(Math.round(box.y + y * scale)));
   await browser('mouse', 'down');
   await browser('mouse', 'up');
@@ -627,11 +649,8 @@ async function clickInPane(pane, x, y) {
 
 /** スナップショット（R-PAGE-SNAPSHOT、R-PAGE-VIEW、R-PAGE-REF）。 */
 async function snapshotsAreTakenShownAndChosen(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -697,10 +716,7 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     await handInThePage(kemi, repository, state);
     await waitFor(showsSnapshot('Handed 1'));
     console.log('PASS エージェントに渡すと表示中のページのスナップショットを取り、それが既定の比べる相手になる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -708,11 +724,8 @@ async function snapshotsAreTakenShownAndChosen(repository) {
  * 読めないので、CSS と画像の参照が中継を指したままだと、その箱が描かれない。
  */
 async function snapshotsCarryTheirResources(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}resources.html`]);
-  try {
+  await withLiveReview({ repository, page: 'resources.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -732,10 +745,7 @@ async function snapshotsCarryTheirResources(repository) {
     assert.notDeepEqual(poster, [255, 255, 255], 'the running page draws the poster (control)');
     assert.deepEqual(colors(snapshot), seen, `the snapshot draws every box as the running page does: ${join(shots, 'resources-snapshot.png')}`);
     console.log('PASS 別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じに出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 画像の (x, y) の色。 */
@@ -772,8 +782,6 @@ const listedMockFiles = `JSON.stringify(Array.from(document.querySelectorAll('${
 
 /** モック（R-PAGE-MOCK、R-PAGE-REF、R-PAGE-VIEW）。 */
 async function mocksAreAssignedShownAndKeptApart(repository) {
-  const { mkdir } = await import('node:fs/promises');
-  const { basename, dirname } = await import('node:path');
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'mock.html'), '<!doctype html><html><head><link rel="stylesheet" href="mock.css"></head><body><img src="dot.png" alt="" style="display:block;width:40px;height:40px"></body></html>\n');
   await writeFile(join(repository, 'mocks', 'mock.css'), 'html, body { margin: 0; background: rgb(0, 200, 0); }\n');
@@ -784,12 +792,10 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
   const outside = join(dirname(repository), `outside-${basename(repository)}.html`);
   await writeFile(outside, '<p>outside</p>\n');
 
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', dev.url]);
-  const token = new URL(kemi.url).pathname.split('/')[2];
-  await writeFile(join(repository, 'mocks', 'script.html'), `<!doctype html><html><head></head><body style="margin:0"><p id="drawn"></p><script>
+  await withLiveReview({ repository, page: '' }, async ({ kemi, dev, state }) => {
+    const token = new URL(kemi.url).pathname.split('/')[2];
+    await writeFile(join(repository, 'mocks', 'script.html'), `<!doctype html><html><head></head><body style="margin:0"><p id="drawn"></p><script>
     document.body.style.background = 'rgb(0, 0, 200)';
     document.getElementById('drawn').textContent = 'drawn by the mock';
     const tryRead = (read) => { try { return String(read()); } catch { return 'blocked'; } };
@@ -799,7 +805,6 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
       .catch(() => {})
       .finally(() => parent.postMessage(report, '*'));
   </script></body></html>\n`);
-  try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -833,7 +838,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     console.log('PASS モックを外すと、最後に渡した時点のスナップショットに戻る');
 
     await evaluate(`window.__mockReports = []; window.addEventListener('message', (event) => { if (event.data && event.data.mockReport) window.__mockReports.push(event.data); }); true`);
-    const messagesBefore = (await getJson(kemi.url, 'api/review')).messages.length;
+    const messagesBefore = (await reviewJson(kemi)).messages.length;
     await assignMockByPath('mocks/script.html');
     await waitFor(`window.__mockReports.length > 0`);
     const report = JSON.parse(await evaluate(`JSON.stringify(window.__mockReports[0])`));
@@ -842,7 +847,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await new Promise((done) => setTimeout(done, 500));
     const drawn = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'script-mock');
     assert.deepEqual(pixelAt(drawn, 200, 200), [0, 0, 200], 'the mock script runs');
-    const messagesAfter = (await getJson(kemi.url, 'api/review')).messages.length;
+    const messagesAfter = (await reviewJson(kemi)).messages.length;
     assert.equal(messagesAfter, messagesBefore, 'the API refuses the mock even with the token');
     console.log('PASS JS で描くモックが描かれ、そのスクリプトからトークンは得られず、トークンを付けても API に断られる');
 
@@ -860,10 +865,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await browser('click', '#page-tree .lv-page[data-page="/other.html"] .lv-page-open');
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html' && document.querySelector('${refPane}').dataset.reference === 'mock'`);
     console.log('PASS モックの割り当てだけがあるページがツリーに出て、押すとそのページへ移りモックと比べる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -884,26 +886,23 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
   const address = images.address();
   // localhost と 127.0.0.1 は別のオリジンなので、中継のページから見て外部の画像になる。
   const image = `http://localhost:${typeof address === 'object' && address ? address.port : 0}/image.png`;
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}referrer.html?image=${encodeURIComponent(image)}`]);
-  const token = new URL(kemi.url).pathname.split('/')[2];
-  const relay = new URL(kemi.live).origin;
   try {
-    await browser('set', 'viewport', '1280', '900');
-    await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
-    // 中継のページと写すときの読み込みは中継のオリジンを referrer にする。それ以外がスナップショットの枠から。
-    const deadline = Date.now() + 15000;
-    while (!received.some(({ referer }) => !referer?.startsWith(relay)) && Date.now() < deadline) {
-      await new Promise((done) => setTimeout(done, 100));
-    }
-    assert.ok(received.some(({ referer }) => !referer?.startsWith(relay)), `the snapshot frame loads the image: ${JSON.stringify(received)}`);
-    assert.equal(received.some(({ referer }) => referer?.includes(token)), false, JSON.stringify(received));
-    console.log('PASS スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていても Referer にトークンの URL を受け取らない');
+    await withLiveReview({ repository, page: `referrer.html?image=${encodeURIComponent(image)}` }, async ({ kemi }) => {
+      const token = new URL(kemi.url).pathname.split('/')[2];
+      const relay = new URL(kemi.live).origin;
+      await browser('set', 'viewport', '1280', '900');
+      await browser('open', kemi.url);
+      await waitFor(showsSnapshot('Start'));
+      // 中継のページと写すときの読み込みは中継のオリジンを referrer にする。それ以外がスナップショットの枠から。
+      const deadline = Date.now() + 15000;
+      while (!received.some(({ referer }) => !referer?.startsWith(relay)) && Date.now() < deadline) {
+        await new Promise((done) => setTimeout(done, 100));
+      }
+      assert.ok(received.some(({ referer }) => !referer?.startsWith(relay)), `the snapshot frame loads the image: ${JSON.stringify(received)}`);
+      assert.equal(received.some(({ referer }) => referer?.includes(token)), false, JSON.stringify(received));
+      console.log('PASS スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていても Referer にトークンの URL を受け取らない');
+    });
   } finally {
-    await stop(kemi);
-    await dev.close();
     images.closeAllConnections();
     await new Promise((done) => images.close(() => done(undefined)));
   }
@@ -911,15 +910,12 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
 
 /** 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）。 */
 async function overlayFollowsTheScrollAndTheOpacity(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   const opacity = async (value) => {
-    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+    await setOpacity(value);
     await new Promise((done) => setTimeout(done, 300));
   };
-  try {
+  await withLiveReview({ repository, page: 'tall.html', viewportAfter: ['1280', '800'] }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -987,11 +983,7 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
     await browser('click', '.lv-side button[data-side="live"]');
     await waitFor(`${visible(livePane)} && !${visible(refPane)}`);
     console.log('PASS 広い画面で重ねて透かすを選んだまま幅 390px にすると、重ねずに 1 枚ずつ切り替えて見る');
-  } finally {
-    await browser('set', 'viewport', '1280', '800');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 見比べ方を切り替え、舞台がその見比べ方になるのを待つ。 */
@@ -1013,11 +1005,8 @@ const isLastBand = ([r, g, b]) => r > 215 && g > 105 && g < 145 && b > 170 && b 
  * 縮む。読み込み直す操作で見る対象が読み込み直される。
  */
 async function compareModesScaleAndReload(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
-  try {
+  await withLiveReview({ repository, page: 'tall.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
@@ -1052,13 +1041,13 @@ async function compareModesScaleAndReload(repository) {
     await evaluate(`document.querySelector('${livePane} .lv-viewport').scrollLeft = 200; true`);
     await waitFor(`document.querySelector('${refPane} .lv-viewport').scrollLeft === 200 && /translate\\(0px, -[1-9]/.test(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform)`);
     await new Promise((done) => setTimeout(done, 500));
-    const setOpacity = async (value) => {
-      await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
+    const opacity = async (value) => {
+      await setOpacity(value);
       await new Promise((done) => setTimeout(done, 300));
     };
-    await setOpacity(0);
+    await opacity(0);
     const underneath = await shot(`${livePane} .lv-viewport`, shots, 'full-overlay-0');
-    await setOpacity(100);
+    await opacity(100);
     const overlaid = await shot(`${livePane} .lv-viewport`, shots, 'full-overlay-100');
     const compared = await comparePixels(underneath, overlaid, join(shots, 'full-overlay-diff.png'));
     if (compared.different === 0) {
@@ -1076,10 +1065,7 @@ async function compareModesScaleAndReload(repository) {
       await new Promise((done) => setTimeout(done, 100));
     }
     console.log('PASS 読み込み直す操作を押すと、見る対象のページが読み込み直される');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -1089,14 +1075,8 @@ async function compareModesScaleAndReload(repository) {
  * 画面を読み込み直すと、見る対象だけ・枠に合わせるに戻る。
  */
 async function referenceNamesHeadingsAndNotices(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
-  const opacity = async (value) => {
-    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
-  };
   const heading = `document.querySelector('.lv-stage-name').textContent`;
-  try {
+  await withLiveReview({ repository, page: 'tall.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
@@ -1114,7 +1094,7 @@ async function referenceNamesHeadingsAndNotices(repository) {
     await chooseCompare('overlay');
     const headings = [];
     for (const value of [0, 50, 100]) {
-      await opacity(value);
+      await setOpacity(value);
       headings.push(await evaluate(heading));
     }
     await chooseCompare('now');
@@ -1135,10 +1115,7 @@ async function referenceNamesHeadingsAndNotices(repository) {
     await browser('open', kemi.url);
     await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('.lv-zoom button[data-zoom="fit"]').getAttribute('aria-pressed') === 'true'`);
     console.log('PASS 並べると等倍にしてから画面を読み込み直すと、見る対象だけ・枠に合わせるに戻る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 帯の知らせ（取れたこと・取れなかったこと）と、その操作。 */
@@ -1152,10 +1129,7 @@ const bandNoticeAction = `${bandNotice} .lv-notice-action`;
  * 戻る。幅 390px で手で取ると知らせの操作で比べる相手の 1 枚に切り替わり、取ったスナップショットが出る。
  */
 async function recordingNowSwitchesTheReference(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${showsSnapshot('Start')} && document.querySelector('#live-stage').dataset.compare === 'now'`);
@@ -1185,19 +1159,13 @@ async function recordingNowSwitchesTheReference(repository) {
     await browser('click', bandNoticeAction);
     await waitFor(`document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)} && ${showsSnapshot('Recorded 2')}`);
     console.log('PASS 幅 390px で手で取ると知らせが出て、その操作で比べる相手の 1 枚に切り替わり、取ったものが出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 async function changesFromStartExplainHowToCompareFromNow(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   const guide = '#page-tree .lv-start-comparison';
   const useCurrent = `${guide} button`;
-  try {
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${showsSnapshot('Start')} && document.querySelector('#page-tree .lv-changes')?.dataset.main === '0'`);
@@ -1263,10 +1231,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
     assert.equal(await evaluate(`document.querySelector('${useCurrent}').disabled`), false, 'failed recording releases the recording state');
     assert.equal((await getJson(kemi.url, 'api/snapshots')).snapshots.filter((item) => item.kind === 'manual').length, 2, 'a failed record does not create a new baseline');
     console.log('PASS 記録に失敗した場合は理由を出し、比較相手を変えず、再操作できる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 空のディレクトリ（git の外）に HTML を書く。 */
@@ -1362,10 +1327,8 @@ async function mockPanelListsTheFilesToChoose() {
 async function mockMenuRemovesAndUndoes(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'menu-mock.html'), '<!doctype html><p>menu mock</p>\n');
-  const dev = await startDevServer();
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}rich.html`]);
   const mockShown = `document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('${refPane} .lv-bar-label').textContent.includes('mocks/menu-mock.html')`;
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -1410,10 +1373,7 @@ async function mockMenuRemovesAndUndoes(repository) {
     await browser('click', '.lv-band .lv-record-now');
     await waitFor(`${showsSnapshot('Recorded 1')} && document.querySelector('${bandNotice}').dataset.kind === 'done' && ${visible(bandNoticeAction)}`);
     console.log('PASS 取り消しが断られた知らせが出ていても、見る対象だけのときに手で取ると、取れたことの知らせとそれを見る操作が出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -1427,33 +1387,27 @@ async function sideBySidePagesShareTheirTop(repository) {
   const path = `ignored-mocks/${'m'.repeat(200 - 'ignored-mocks/'.length - '.html'.length)}.html`;
   assert.equal(path.length, 200);
   await writeFile(join(repository, path), '<!doctype html><html><body style="margin:0"><p>mock</p></body></html>\n');
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}other.html`]);
   try {
-    await browser('set', 'viewport', '900', '800');
-    await browser('open', kemi.url);
-    await chooseCompare('side');
-    await assignMockByPath(path);
-    await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
-    await waitFor(`${visible(`${refPane} .lv-viewport`)} && ${visible(`${livePane} .lv-viewport`)}`);
-    const gap = await evaluate(`Math.abs(document.querySelector('${refPane} .lv-viewport').getBoundingClientRect().top - document.querySelector('${livePane} .lv-viewport').getBoundingClientRect().top)`);
-    assert.ok(gap <= 1, `the tops differ by ${gap}px`);
-    console.log(`PASS パスが 200 文字のモックを並べても、両方のページの上端の差が 1px 以内（${gap}px）`);
+    await withLiveReview({ repository, page: 'other.html' }, async ({ kemi }) => {
+      await browser('set', 'viewport', '900', '800');
+      await browser('open', kemi.url);
+      await chooseCompare('side');
+      await assignMockByPath(path);
+      await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
+      await waitFor(`${visible(`${refPane} .lv-viewport`)} && ${visible(`${livePane} .lv-viewport`)}`);
+      const gap = await evaluate(`Math.abs(document.querySelector('${refPane} .lv-viewport').getBoundingClientRect().top - document.querySelector('${livePane} .lv-viewport').getBoundingClientRect().top)`);
+      assert.ok(gap <= 1, `the tops differ by ${gap}px`);
+      console.log(`PASS パスが 200 文字のモックを並べても、両方のページの上端の差が 1px 以内（${gap}px）`);
+    });
   } finally {
-    await stop(kemi);
-    await dev.close();
     await rm(join(repository, 'ignored-mocks'), { recursive: true, force: true });
   }
 }
 
 /** 見る対象だけの見比べ方でも、変化の一覧と見る対象の側の印が出る（R-PAGE-VIEW、R-PAGE-REF）。 */
 async function changesShowWithThePageAlone(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
-  try {
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
@@ -1466,10 +1420,7 @@ async function changesShowWithThePageAlone(repository) {
     await waitForPixels(`${livePane} .lv-frame`, shots, 'alone-marks', changingRegions(false).button, isRed);
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now');
     console.log('PASS 見る対象だけのまま CSS を変えると、変化の一覧と見る対象の側の印が出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -1478,12 +1429,9 @@ async function changesShowWithThePageAlone(repository) {
  * 要素の道具のまま等倍にしても、横にも下端までもスクロールできる。
  */
 async function toolsAndTheHintStartTheFirstComment(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const compose = '#live-compose';
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
@@ -1513,14 +1461,9 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
     await new Promise((done) => setTimeout(done, 500));
     assert.equal(await evaluate(visible('.lv-hint')), false, 'the hint does not come back after the comment is deleted');
     console.log('PASS 案内はページへのコメントを保存すると消え、そのコメントを消して開き直しても出ない');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 
-  const tallDev = await startDevServer();
-  const tall = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${tallDev.url}tall.html`]);
-  try {
+  await withLiveReview({ repository, page: 'tall.html' }, async ({ kemi: tall }) => {
     await browser('open', tall.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
     assert.equal(await evaluate(`document.querySelector('.lv-tools button[aria-pressed="true"]')?.dataset.tool`), 'element');
@@ -1528,25 +1471,21 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
     await waitFor(`${liveScale} === 1`);
     const viewport = `document.querySelector('${livePane} .lv-viewport')`;
     const height = await evaluate(`Math.floor(${viewport}.getBoundingClientRect().height)`);
-    // agent-browser のホイールは押した位置に届かない（画面の左上に届く）ので、道具の層の上で回したホイールを作って送る。
-    const wheel = (x, y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaX: ${x}, deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
-    await wheel(300, 0);
+    // 道具の層の上で回したホイール。
+    await wheelOn(`${livePane} .lv-capture`, { x: 300, at: 100 });
     await waitFor(`${viewport}.scrollLeft > 0`);
-    await wheel(0, 6000);
+    await wheelOn(`${livePane} .lv-capture`, { y: 6000, at: 100 });
     await waitForPixels(`${livePane} .lv-viewport`, shots, 'element-tool-bottom', [0, height - 60, 300, height - 30], isLastBand);
     assert.equal(await evaluate(draftNumbers), '[]', 'scrolling puts no place');
     console.log('PASS 要素の道具のまま等倍にしても、横にも下端までもスクロールできる');
-  } finally {
-    await stop(tall);
-    await tallDev.close();
-  }
+  });
 }
 
 /** 見る対象の枠の、縮める前の高さ（ページの CSS ピクセル）。 */
 const liveFrameHeight = `document.querySelector('${livePane} .lv-frame').offsetHeight`;
 
 /** 見る対象の枠の外側の高さを、縮めた倍率で割ったもの（枠がそこまで伸びているべき高さ）。 */
-const liveRoomHeight = `(document.querySelector('${livePane} .lv-viewport').clientHeight / Number(getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'))`;
+const liveRoomHeight = `(document.querySelector('${livePane} .lv-viewport').clientHeight / ${STAGE_SCALE})`;
 
 /**
  * 書く欄を閉じた後の枠の高さ（R-PAGE-COMMENT）: 場所を置いて書く欄を開き、保存しても取り消しても、見る対象の枠の高さは
@@ -1554,11 +1493,9 @@ const liveRoomHeight = `(document.querySelector('${livePane} .lv-viewport').clie
  * きっかけ（道具を選び直す）があっても同じ。
  */
 async function closingTheComposeBoxRestoresTheFrame(repository) {
-  const dev = await startDevServer();
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}rich.html`]);
   const compose = '#live-compose';
   const sameHeight = (expected) => `Math.abs(${liveFrameHeight} - ${expected}) <= 1`;
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')} && ${visible('.lv-hint')}`);
@@ -1591,17 +1528,11 @@ async function closingTheComposeBoxRestoresTheFrame(repository) {
       assert.ok(await evaluate(sameHeight(before)), `after ${close}, the frame is as high as before the box opened: ${await evaluate(liveFrameHeight)} for ${before}`);
     }
     console.log('PASS 書く欄を開いて保存しても取り消しても、見る対象の枠の高さは欄を開く前と同じ');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -1625,18 +1556,12 @@ async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
     const after = await evaluate(`document.querySelector('#rail-hand-note').getBoundingClientRect().bottom`);
     assert.ok(after > layout.noteBottom, 'the note returns to the folded rail position when the compose box closes');
     console.log('PASS 会話を畳んだ案内はコメント欄を覆わず、コマンドを写せ、場所の×も押せる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1920', '1000');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -1655,10 +1580,7 @@ async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository
     assert.deepEqual(pixelAt(image, image.width - 12, 120).slice(0, 3), reviewColor, 'outside the page uses the review background instead of white');
     assert.deepEqual(pixelAt(image, Math.floor(layout.pageWidth - 20), 120).slice(0, 3), [255, 255, 255], 'the actual white page remains white');
     console.log('PASS 選択したページ幅の外はレビュー画面の背景になり、ページ自身の白い背景は変わらない');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -1668,10 +1590,7 @@ async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository
  * 全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらの浮かぶものも見えない。
  */
 async function narrowToolsFloatWithHand(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html', viewportAfter: ['1280', '800'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '844');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
@@ -1699,11 +1618,7 @@ async function narrowToolsFloatWithHand(repository) {
     await browser('click', '.topbar .lv-view button[data-view="code"]');
     await waitFor(`document.body.dataset.liveView === 'code' && ${visible('#hand-float')} && !${visible('.lv-toolbar .lv-hand')}`);
     console.log('PASS 幅 390px のコードの見方では、全モード共通の浮かぶ「Hand to agent」だけが出る');
-  } finally {
-    await browser('set', 'viewport', '1280', '800');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -1713,11 +1628,8 @@ async function narrowToolsFloatWithHand(repository) {
  * メニューには表示の操作のうちテーマだけがある。1 段目のタブでコードの見方に切り替わる。
  */
 async function narrowPageViewFitsOneRow(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const band = '#live-band';
-  try {
+  await withLiveReview({ repository, page: 'rich.html', viewportAfter: ['1280', '800'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '390', '844');
     await browser('open', kemi.url);
     await waitFor(`${visible(livePane)} && ${visible('.lv-side')} && ${visible(`${band} .lv-menu-button`)}`);
@@ -1747,11 +1659,7 @@ async function narrowPageViewFitsOneRow(repository) {
     await browser('click', '.topbar .lv-view button[data-view="code"]');
     await waitFor(`document.body.dataset.liveView === 'code' && ${visible('#progress')}`);
     console.log('PASS 幅 390px で上部バーの 1 段目のタブを押すと、コードの見方に切り替わる');
-  } finally {
-    await browser('set', 'viewport', '1280', '800');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -1762,13 +1670,10 @@ async function narrowPageViewFitsOneRow(repository) {
  * 狭くしても、見出しは見る対象だけのときと同じになる。
  */
 async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   const heading = `document.querySelector('.lv-stage-name').textContent`;
   const refViewport = `document.querySelector('${refPane} .lv-viewport')`;
   const refScale = `Number(document.querySelector('${refPane} .lv-bar-label').textContent.match(/×([0-9.]+)/)?.[1] ?? NaN)`;
-  try {
+  await withLiveReview({ repository, page: 'tall.html', viewportAfter: ['1280', '800'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${visible(livePane)} && document.querySelector('#live-stage').dataset.compare === 'now' && document.querySelector('${refPane}').dataset.reference === 'snapshot'`);
@@ -1803,11 +1708,7 @@ async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
     await browser('set', 'viewport', '390', '844');
     await waitFor(`${visible('.lv-side')} && ${visible(livePane)} && ${heading} === ${JSON.stringify(nowHeading)}`);
     console.log('PASS 並べたまま幅 390px にすると、見出しが見る対象だけのときと同じになる');
-  } finally {
-    await browser('set', 'viewport', '1280', '800');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 表示中のページの変化の一覧。無ければ null。 */
@@ -1837,12 +1738,10 @@ const backgroundsIn = (row) => `Array.from(${row}.querySelectorAll('*')).map((el
  * 兄弟の途中に要素を足しても `html` と `body` はずれただけに出ず、`body` の背景色を変えると `body` が主な変化に出る。
  */
 async function changeRowsAreElementsThatLeadToThePage(repository) {
-  const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const frame = `${livePane} .lv-frame`;
-  const wheel = (y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
-  try {
+  const wheel = (y) => wheelOn(`${livePane} .lv-capture`, { y, at: 100 });
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
@@ -1896,10 +1795,7 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     await writeFile(join(dev.dir, 'changing.css'), `${changingCss()}body { background: rgb(255, 250, 230); }\n`);
     await waitFor(`${mainRows}.some((item) => item.dataset.tag === 'body')`);
     console.log('PASS 兄弟の途中に要素を足しても html と body はずれただけに出ず、body の背景色を変えると body が主な変化に出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** /changing.html の末尾の余白の下に、下の方の要素（#low）を足したもの。 */
@@ -1918,15 +1814,13 @@ const changingWithEnd = () => changingPage().replace('<div class="tail"></div>',
  * 見える位置で光り、見る対象と比べる相手の位置がそろったまま。
  */
 async function removedRowsLeadToTheSnapshot(repository) {
-  const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const refView = `${refPane} .lv-viewport`;
   const endRow = `(Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).find((item) => item.textContent.includes('End element')) ?? null)`;
   // 枠の上の方（ページの先頭にある青いボタンが写る所）を除いた範囲。ボタンの青は光の色に近い。
   const belowTheButton = [0, 250, 100000, 100000];
   const pressRemovedRow = () => evaluate(`${removedRow}.querySelector('button').click(); true`);
-  try {
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
@@ -1951,7 +1845,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
     const shifted = `new DOMMatrix(getComputedStyle(${refFrameNow}).transform).m42`;
     const down = await evaluate(shifted);
     assert.ok(down < 0, `the snapshot is moved up to the element: ${down}`);
-    await evaluate(`(() => { const layer = document.querySelector('${refPane} .lv-ref-wheel'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: r.x + 50, clientY: r.y + 50, bubbles: true, cancelable: true })); })()`);
+    await wheelOn(`${refPane} .lv-ref-wheel`, { y: -300, at: 50 });
     await waitFor(`${shifted} > ${down}`);
     await chooseCompare('now');
     await chooseCompare('side');
@@ -1992,16 +1886,13 @@ async function removedRowsLeadToTheSnapshot(repository) {
 
     // 末尾より先へずらした後に今のページの末尾の要素の行を押すと、ずらすのをやめ、その要素が枠の下端に見えて光る
     // （ずらしたままだと光は要素より上に描かれる）。重ねた比べる相手は見えなくして、見る対象の光だけを見る。
-    await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '0'; range.dispatchEvent(new Event('input')); return true; })()`);
+    await setOpacity(0);
     const liveView = `${livePane} .lv-viewport`;
     const bottom = await evaluate(`document.querySelector('${liveView}').clientHeight`);
     await evaluate(`${endRow}.querySelector('button').click(); true`);
     await waitForPixels(liveView, shots, 'end-after-overscroll', [0, bottom - END_HEIGHT - 20, 100000, bottom], isGlow);
     console.log('PASS 重ねて透かして末尾より先へずらした後に、今のページの末尾の要素の行を押すと、その要素の所で光る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 幅 1280 の文書の右下の方に要素（#far）を置いたページ（/tall.html を置き換えて使う）。`far` が false なら置かない。 */
@@ -2018,13 +1909,11 @@ ${far ? '<div id="far" style="position:absolute;left:1100px;top:900px;width:120p
  * その場所まで動く。
  */
 async function wideTargetsAreRevealedSideways(repository) {
-  const dev = await startDevServer();
-  await writeFile(join(dev.dir, 'tall.html'), farPage(true));
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const liveView = `document.querySelector('${livePane} .lv-viewport')`;
   const refView = `document.querySelector('${refPane} .lv-viewport')`;
   const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
-  try {
+  const prepare = (dev) => writeFile(join(dev.dir, 'tall.html'), farPage(true));
+  await withLiveReview({ repository, page: 'tall.html', prepare }, async ({ kemi, dev }) => {
     const far = await postJson(kemi.url, 'api/comment', {
       op: 'add_page',
       page: { url: '/tall.html', width: 1280, places: [{ n: 1, kind: 'arrow', points: [{ x: 1080, y: 1000 }, { x: 1200, y: 1060 }], elements: [] }] },
@@ -2048,7 +1937,7 @@ async function wideTargetsAreRevealedSideways(repository) {
     const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
     const shifted = `new DOMMatrix(getComputedStyle(${refFrameNow}).transform).m42`;
     const before = await evaluate(shifted);
-    await evaluate(`(() => { const v = ${refView}.getBoundingClientRect(); const x = v.left + v.width / 2; const y = v.top + v.height / 2; return document.elementFromPoint(x, y).dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: x, clientY: y, bubbles: true, cancelable: true })); })()`);
+    await wheelOn(`${refPane} .lv-viewport`, { y: -300 });
     await waitFor(`${shifted} > ${before}`);
     console.log('PASS 横に動いた後も、比べる相手の見えている所の上のホイールでずらした比べる相手が動く');
 
@@ -2060,10 +1949,7 @@ async function wideTargetsAreRevealedSideways(repository) {
     await browser('click', '#cv-thread .cv-go');
     await waitFor(`${liveView}.scrollLeft > 0`);
     console.log('PASS 等倍で枠より広いページの右の方の場所を持つコメントの「ページで見る」を押すと、見る対象の枠が横にもその場所まで動く');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 幅 3000 の文書の左の方に要素（#near）を置いたページ（/tall.html を置き換えて使う）。`near` が false なら置かない。 */
@@ -2080,13 +1966,11 @@ ${near ? '<div id="near" style="position:absolute;left:600px;top:300px;width:120
  * 左にずれている）。
  */
 async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
-  const dev = await startDevServer();
-  await writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(true));
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const refView = `document.querySelector('${refPane} .lv-viewport')`;
   const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
   const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
-  try {
+  const prepare = (dev) => writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(true));
+  await withLiveReview({ repository, page: 'tall.html', prepare }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '900', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
@@ -2101,21 +1985,14 @@ async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
     await evaluate(`${removedRow}.querySelector('button').click(); true`);
     await waitFor(glowInside);
     console.log('PASS 重ねて透かす等倍で動いているページを横にスクロールしているとき、消えた要素の行を押すと、その要素が描かれている所の光が枠の中に見える');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 差分（R-PAGE-DIFF、R-PAGE-VIEW の変化の一覧、R-PAGE-REF の一覧はスナップショットのときだけ）。 */
 async function changeListFollowsThePage(repository) {
-  const { mkdir } = await import('node:fs/promises');
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
-  try {
+  await withLiveReview({ repository, page: 'changing.html', viewportAfter: ['1280', '800'] }, async ({ kemi, dev, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2246,11 +2123,7 @@ async function changeListFollowsThePage(repository) {
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view shows no change against the unchanged page');
     console.log('PASS コードの見方から渡したときのスナップショットと、変えていないページを比べると変化が 0');
     assert.equal(await evaluate(`window.__kemiNotReloaded === true`), true, 'the review page was not reloaded');
-  } finally {
-    await browser('set', 'viewport', '1280', '800');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 画像の範囲 [左, 上, 右, 下) の中で、条件に合う画素の数。 */
@@ -2316,19 +2189,15 @@ async function chooseReference(label) {
 
 /** 印（R-PAGE-VIEW の変わったところに印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）。 */
 async function marksFollowTheChanges(repository) {
-  const { mkdir } = await import('node:fs/promises');
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   const liveShot = async (name) => {
     await new Promise((done) => setTimeout(done, 400));
     return shot(`${livePane} .lv-frame`, shots, name);
   };
   const refFrame = `${refPane} .lv-frame:not([hidden])`;
-  try {
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2393,7 +2262,6 @@ async function marksFollowTheChanges(repository) {
 
     await browser('click', '.lv-mode button[data-compare="overlay"]');
     await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay'`);
-    const setOpacity = (value) => evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
     await setOpacity(100);
     await waitForPixels(refFrame, shots, 'marks-overlay-removed', removedAt, isRed);
     await setOpacity(0);
@@ -2433,21 +2301,16 @@ async function marksFollowTheChanges(repository) {
     assert.equal(countPixels(image, button, isBlue), 0, `the reference keeps its scroll across a reload of the same page: ${join(shots, 'scroll-reloaded.png')}`);
     assert.equal(await evaluate(`${changeList}.dataset.main`), '2', 'the same changes are listed after the reload');
     console.log('PASS 比べる相手の枠をスクロールしてから同じページを読み込み直しても、消えた要素の組が同じなら枠のスクロール位置が変わらない');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 変化の印を隠すアイコン（R-PAGE-VIEW）。隠すのは印だけで、一覧と行を押したときの光は残る。 */
 async function marksCanBeHidden(repository) {
-  const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const liveFrame = `${livePane} .lv-frame`;
   const refFrame = `${refPane} .lv-frame:not([hidden])`;
   const marksButton = `document.querySelector('.lv-marks')`;
-  try {
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2483,10 +2346,7 @@ async function marksCanBeHidden(repository) {
     await waitForPixels(liveFrame, shots, 'again-live', button, isRed);
     await waitForPixels(refFrame, shots, 'again-ref', removedAt, isRed);
     console.log('PASS 印を隠すアイコンをもう一度押すと、両方の側の印が戻る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2494,11 +2354,8 @@ async function marksCanBeHidden(repository) {
  * R-PAGE-PROXY は script-src のほかの CSP を変えない）。
  */
 async function marksAreDrawnUnderAStrictStylePolicy(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?csp=1`]);
-  try {
+  await withLiveReview({ repository, page: 'changing.html?csp=1' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2513,10 +2370,7 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
     const image = await shot(`${livePane} .lv-frame`, shots, 'csp-marks');
     assert.ok(countPixels(image, changingRegions(false).button, isRed) > 0, `the changed button is marked: ${join(shots, 'csp-marks.png')}`);
     console.log("PASS style-src 'self' の CSP を返すページでも、変わった要素に印が付く");
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2524,10 +2378,7 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
  * （R-PAGE-SNAPSHOT。R-PAGE-PROXY は script-src のほかの CSP を変えない）。
  */
 async function snapshotsAreTakenUnderTrustedTypes(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?tt=1`]);
-  try {
+  await withLiveReview({ repository, page: 'changing.html?tt=1' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2546,10 +2397,7 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
     await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src; return true; })()`);
     await waitFor(`${changeList}?.querySelector('.lv-change[data-kind="removed"]') && ${changeList}.querySelector('.lv-changes-unmarked') !== null`);
     console.log("PASS require-trusted-types-for 'script' の CSP を返すページで要素を消すと、一覧に出し、スナップショットに印を付けられないことを出す");
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2557,12 +2405,9 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
  * （R-PAGE-VIEW の変わったところに印）。スクリプトが tbody を挟まずに組んだ表の後ろの兄弟を消す。
  */
 async function removedMarksSurviveReparsing(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}table.html`]);
   const { row, item } = TABLE_GEOMETRY;
-  try {
+  await withLiveReview({ repository, page: 'table.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2575,10 +2420,7 @@ async function removedMarksSurviveReparsing(repository) {
     await waitFor(`${changeList}?.dataset.main === '1'`);
     await waitForPixels(`${refPane} .lv-frame:not([hidden])`, shots, 'table-removed', [0, row + 2 * item, 390, row + 3 * item], isRed);
     console.log('PASS スクリプトが組んだ表（読み直すと tbody が足される）の後ろの要素を消しても、スナップショットのその要素に消えたの印が付く');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2586,17 +2428,14 @@ async function removedMarksSurviveReparsing(repository) {
  * 変化、R-PAGE-VIEW の変わったところに印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。
  */
 async function scrollingMakesNoChangeAndMarksStay(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}scrolling.html`]);
   // 別のオリジンの枠の中は、ページ内の目印へ移して（同じ文書のままスクロールさせて）動かす。
   const moveTo = async (anchor) => {
     await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#${anchor}'; return true; })()`);
     await new Promise((done) => setTimeout(done, 600));
   };
   const { box, row, scrollMargin, badge } = SCROLLING_GEOMETRY;
-  try {
+  await withLiveReview({ repository, page: 'scrolling.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2638,10 +2477,7 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     assert.equal(countPixels(image, [0, 0, 390, badge.top], isRed), 0, `the mark of the row hidden in the box is not drawn: ${join(shots, 'box-scrolled-back.png')}`);
     assert.ok(countPixels(image, badgeAt, isRed) > 0, 'the fixed badge still has its mark');
     console.log('PASS スクロールしても、固定した札と中でスクロールする箱の要素の印は要素に付いたまま');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2649,10 +2485,7 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
  * 今のページに合わせて変わる（R-PAGE-DIFF、R-PAGE-VIEW の変わったところに印）。
  */
 async function cssomChangesAreFollowed(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}adopted.html`]);
-  try {
+  await withLiveReview({ repository, page: 'adopted.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
@@ -2667,10 +2500,7 @@ async function cssomChangesAreFollowed(repository) {
     const was = swatches.indexOf('rgb(49, 89, 214)');
     assert.ok(was !== -1 && swatches.indexOf('rgb(214, 69, 69)', was + 1) > was, JSON.stringify(swatches));
     console.log('PASS 構築したスタイルシートを replaceSync で差し替えてボタンの背景色を変えると、DOM が変わらなくても主な変化に入る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2678,10 +2508,7 @@ async function cssomChangesAreFollowed(repository) {
  * 変化の一覧が出る（R-PAGE-VIEW の今の表示幅での変化の一覧）。
  */
 async function widthSwitchesWithoutResizingTheDocument(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}wide.html`]);
-  try {
+  await withLiveReview({ repository, page: 'wide.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -2700,10 +2527,7 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
     await chooseReference('Recorded 1');
     await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
     console.log('PASS 表示幅を変えても文書の幅が変わらないページでも、切り替えた幅の変化の一覧が出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2712,13 +2536,12 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
  */
 async function manyElementsAreRecordedAndCompared(repository) {
   const cards = 18000;
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const page = `${dev.url}many.html?cards=${cards}`;
-  const html = await (await fetch(page)).text();
-  assert.ok(new Blob([html]).size < 2 * 1024 * 1024, 'the page is under 2 MB');
-  const kemi = await startKemi(repository, state, ['--live', page]);
-  try {
+  const page = `many.html?cards=${cards}`;
+  const prepare = async (dev) => {
+    const html = await (await fetch(`${dev.url}${page}`)).text();
+    assert.ok(new Blob([html]).size < 2 * 1024 * 1024, 'the page is under 2 MB');
+  };
+  await withLiveReview({ repository, page, prepare }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`, 120000);
@@ -2733,10 +2556,7 @@ async function manyElementsAreRecordedAndCompared(repository) {
     })()`);
     assert.equal(listed, cards, 'every change can be listed');
     console.log('PASS 変化が多いときも、続きを出す操作で一覧の残りをすべて見られる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** コメントの画像の頼みに、ページが答えるまで待つ上限（agent-browser の評価は 30 秒で打ち切られ、理由が分からない）。 */
@@ -2799,10 +2619,7 @@ async function commentImagesLookLikeThePage(repository) {
     },
   ];
   for (const { page, rect, places } of pages) {
-    const dev = await startDevServer();
-    const state = await temporaryDirectory('kemi-live-state-');
-    const kemi = await startKemi(repository, state, ['--live', `${dev.url}${page}`]);
-    try {
+    await withLiveReview({ repository, page }, async ({ kemi }) => {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
       await waitFor(showsSnapshot('Start'));
@@ -2825,17 +2642,11 @@ async function commentImagesLookLikeThePage(repository) {
       const drawnPath = join(shots, `${name}-places.png`);
       await writeFile(drawnPath, Buffer.from(drawn.png, 'base64'));
       console.log(`CHECK 場所の描き込みと番号を重ねたコメントの画像（${page}）: ${drawnPath}（人が確かめる）`);
-    } finally {
-      await stop(kemi);
-      await dev.close();
-    }
+    });
   }
 
   for (const query of ['csp=1', 'tt=1']) {
-    const dev = await startDevServer();
-    const state = await temporaryDirectory('kemi-live-state-');
-    const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?${query}`]);
-    try {
+    await withLiveReview({ repository, page: `changing.html?${query}` }, async ({ kemi }) => {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
       await waitFor(showsSnapshot('Start'));
@@ -2849,10 +2660,7 @@ async function commentImagesLookLikeThePage(repository) {
         assert.ok(made.error.length > 0, 'a reason is given');
         console.log(`PASS changing.html?${query} の CSP の下ではコメントの画像を作れず、理由が返る: ${made.error}`);
       }
-    } finally {
-      await stop(kemi);
-      await dev.close();
-    }
+    });
   }
 }
 
@@ -2866,22 +2674,21 @@ async function unreadableResourcesMakeNoPartialCommentImage(repository, only = n
 }
 
 async function unembeddedResourceMakesNoImage(repository, resource) {
-  const dev = await startDevServer();
-  const cross = dev.url.replace('127.0.0.1', 'localhost');
-  const sources = {
-    import: `<style>@import url("${cross}cross-imported.css");</style>`,
-    link: `<link rel="stylesheet" href="${cross}cross.css">`,
-    background: '<style>.box { background: url("/missing.png"); }</style>',
-    image: '<img src="/missing.png" alt="missing resource">',
-    canvas: `<canvas id="tainted" width="80" height="80"></canvas><script>const image=new Image();image.onload=()=>{document.querySelector('#tainted').getContext('2d').drawImage(image,0,0);document.body.dataset.ready='true'};image.src='${cross}cross.svg';</script>`,
-  };
   const page = resource === 'resources' ? 'resources.html' : 'other.html';
-  if (resource !== 'resources') {
-    await writeFile(join(dev.dir, page), `<!doctype html><html><head><style>body{margin:0}.box{width:80px;height:80px}</style>${sources[resource]}</head><body><div class="box cross cross-imported">Target</div></body></html>`);
-  }
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}${page}`]);
-  try {
+  const prepare = async (dev) => {
+    const cross = dev.url.replace('127.0.0.1', 'localhost');
+    const sources = {
+      import: `<style>@import url("${cross}cross-imported.css");</style>`,
+      link: `<link rel="stylesheet" href="${cross}cross.css">`,
+      background: '<style>.box { background: url("/missing.png"); }</style>',
+      image: '<img src="/missing.png" alt="missing resource">',
+      canvas: `<canvas id="tainted" width="80" height="80"></canvas><script>const image=new Image();image.onload=()=>{document.querySelector('#tainted').getContext('2d').drawImage(image,0,0);document.body.dataset.ready='true'};image.src='${cross}cross.svg';</script>`,
+    };
+    if (resource !== 'resources') {
+      await writeFile(join(dev.dir, page), `<!doctype html><html><head><style>body{margin:0}.box{width:80px;height:80px}</style>${sources[resource]}</head><body><div class="box cross cross-imported">Target</div></body></html>`);
+    }
+  };
+  await withLiveReview({ repository, page, prepare }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -2900,7 +2707,7 @@ async function unembeddedResourceMakesNoImage(repository, resource) {
     await browser('fill', '#live-compose .lv-compose-body', 'Keep the body and the place');
     await browser('click', '#live-compose .lv-compose-save');
     await waitFor(`document.querySelector('#live-compose').hidden`);
-    const saved = (await getJson(kemi.url, 'api/review')).comments;
+    const saved = (await reviewJson(kemi)).comments;
     assert.equal(saved.length, 1);
     assert.equal(saved[0].body, 'Keep the body and the place');
     assert.equal(saved[0].page.places.length, 1);
@@ -2912,10 +2719,7 @@ async function unembeddedResourceMakesNoImage(repository, resource) {
       console.log(`CHECK incomplete image refused; saved comment and notice: ${join(shots, 'saved-without-image.png')}`);
     }
     console.log(`PASS ${resource}: image returns a reason without PNG, HTML snapshot remains available, and UI saves the body/place with a notice`);
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -2923,11 +2727,8 @@ async function unembeddedResourceMakesNoImage(repository, resource) {
  * 動いているページと同じ表示幅と画面の高さで並べた写しを描く（幅で変わる CSS と vh が範囲の大きさで変わらない）。
  */
 async function commentImagesKeepTheLayoutOfTheViewport(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-images-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}responsive.html`]);
-  try {
+  await withLiveReview({ repository, page: 'responsive.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -2950,16 +2751,13 @@ async function commentImagesKeepTheLayoutOfTheViewport(repository) {
     assert.ok(green(at(height / 2 + 30)), `the 50vh band ends where it does on the page: ${at(height / 2 + 30)} ${path}`);
     assert.ok(orange(at(height * 2 + 30)), `the band after 50vh + 150vh is where it is on the page: ${at(height * 2 + 30)} ${path}`);
     console.log('PASS コメントの画像は、範囲が表示幅より狭く画面の高さと違っても、動いているページと同じ幅の CSS と vh で描かれる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 枠の中の点を順にたどって描く（押して、動かして、離す）。 */
 async function dragInPane(pane, points) {
   const box = await evaluate(`(() => { const r = document.querySelector('${pane} .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
-  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+  const scale = await stageScale();
   const at = ([x, y]) => [String(Math.round(box.x + x * scale)), String(Math.round(box.y + y * scale))];
   await browser('mouse', 'move', ...at(points[0]));
   await browser('mouse', 'down');
@@ -2992,11 +2790,8 @@ const isPlaceInk = ([r, g, b]) => r > 95 && r < 160 && g > 50 && g < 120 && b > 
  * `#n` が入る。保存した後も画面は例外を出さない。
  */
 async function pageCommentPlacesArePutAndSaved(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -3080,10 +2875,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await new Promise((done) => setTimeout(done, 300));
     assert.deepEqual(JSON.parse(await evaluate('JSON.stringify(window.__kemiErrors)')), [], 'the review page raises no error with a page comment');
     console.log('PASS ページへのコメントを保存した後も、会話パネルを開いて例外が出ない');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3091,10 +2883,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
  * 含む一番内側の要素 1 つになる。
  */
 async function penPlacesLeaveOutWhatContainsTheLine(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3118,15 +2907,11 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
     assert.deepEqual(around.elements.filter(contains), [], `no element containing the whole line is named: ${JSON.stringify(around.elements)}`);
     assert.deepEqual(inside.elements.map((element) => element.selector), ['#button'], 'a line inside one element names that element');
     console.log('PASS ペンで囲んだ範囲を丸ごと含む外側の要素は場所の要素に入らず、1 つの要素の内側だけを囲むとその要素 1 つになる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 async function penGlowAndImageStayAroundTheDrawnArea(repository) {
-  const dev = await startDevServer();
-  await writeFile(join(dev.dir, 'rich.html'), `<!doctype html><html><head><style>
+  const prepare = (dev) => writeFile(join(dev.dir, 'rich.html'), `<!doctype html><html><head><style>
     body { margin:0; background:#161a20; color:#e4e8ee; font:16px sans-serif; }
     header { height:60px; background:#222731; }
     #layout { display:flex; height:1000px; }
@@ -3134,11 +2919,9 @@ async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     main { flex:1; }
     button { display:block; width:180px; height:40px; margin:0 0 20px; }
   </style></head><body><header>Header</header><div id="layout"><nav><button>First</button><button>Second</button></nav><main>Content</main></div></body></html>`);
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const frame = `${livePane} .lv-frame`;
-  try {
+  await withLiveReview({ repository, page: 'rich.html', prepare }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3161,7 +2944,7 @@ async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     const glow = await evaluate('window.__boundsGlow');
     assert.ok(Math.abs(glow.w - width) < 0.05, `the pen glow follows the drawn width (${glow.w} vs ${width}), not selected elements`);
     assert.ok(Math.abs(glow.h - height) < 0.05, `the pen glow follows the drawn height (${glow.h} vs ${height})`);
-    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    const scale = await stageScale();
     await waitForPixels(frame, shots, 'pen-outline', [Math.round((width + 20) * scale), 50, Math.round((width + 30) * scale), 150], isGlow);
     await savePageCommentInThePage('the drawn pen area');
     const image = decodePng(Buffer.from(await evaluate('window.__kemiSavedImage'), 'base64'));
@@ -3192,10 +2975,7 @@ async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     assert.ok(Math.abs(arrowGlow.w - (Math.max(arrow.points[0].x, target.x + target.w) - Math.min(arrow.points.at(-1).x, target.x))) < 0.05);
     assert.ok(Math.abs(arrowGlow.h - (Math.max(arrow.points[0].y, target.y + target.h) - Math.min(arrow.points.at(-1).y, target.y))) < 0.05);
     console.log('PASS 要素の枠は要素の箱、矢印の枠は線と先端の要素の範囲を維持する');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** 保存の要求に載せた画像を `window.__kemiSavedImage` に控える。 */
@@ -3217,10 +2997,7 @@ async function keepSavedImage() {
  * 文書全体ではなく場所の周りを写す。
  */
 async function placesOnTheBackgroundAreAreasOnly(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3265,10 +3042,7 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
     const shown = `${image.width}x${image.height}, places ${JSON.stringify(points)}`;
     assert.ok(image.width > 0 && image.width < 390, `the image is narrower than the page: ${shown}`);
     console.log('PASS 余白に置いた場所の画像は、文書全体ではなく場所の周りを写す');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3278,14 +3052,11 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
  * オリジンの枠なので要素は読めない）。
  */
 async function savedCommentsAreQuietMarks(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   // ボタン（左上 (0, 200) の 300×100）の左上の番号の札の辺りと、2 段目の入力欄（左上 (12, 96) 付近）の辺り。
   const buttonCorner = [0, 185, 40, 230];
   const fieldCorner = [0, 80, 60, 125];
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3306,7 +3077,7 @@ async function savedCommentsAreQuietMarks(repository) {
     console.log('PASS c1 を保存してから新しいコメントを書き始めると、c1 の場所に番号が出ず、書きかけの場所にだけ番号が出る');
 
     // 要素の道具の層にポインタの動きを送る（agent-browser のマウスは層の上の動きを確かに届けられないため）。
-    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    const scale = await stageScale();
     await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame').getBoundingClientRect(); const layer = document.querySelector('${livePane} .lv-capture'); return layer.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, clientX: frame.x + 300 * ${scale}, clientY: frame.y + 200 * ${scale}, bubbles: true })); })()`);
     await waitFor(`${visible(`${livePane} .lv-saved-tip`)} && document.querySelector('${livePane} .lv-saved-tip').textContent.includes('The button label is too long')`);
     assert.equal(await evaluate(draftNumbers), '[1]', 'moving the pointer puts no place');
@@ -3315,14 +3086,11 @@ async function savedCommentsAreQuietMarks(repository) {
     await clickUncovered('#cv-rail');
     await browser('click', `.cv-card[data-id="${c1.id}"]`);
     await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
-    const opened = await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`);
-    const corner = buttonCorner.map((value) => Math.round(value * Number(opened)));
+    const opened = await stageScale();
+    const corner = buttonCorner.map((value) => Math.round(value * opened));
     await waitForPixels(`${livePane} .lv-frame`, shots, 'saved-focused', corner, isPlaceInk);
     console.log('PASS c1 のスレッドを開くと、c1 の場所に番号が出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3330,11 +3098,8 @@ async function savedCommentsAreQuietMarks(repository) {
  * 戻る操作で戻ると場所を足せ、保存したコメントはその表示幅を持つ。
  */
 async function draftPlacesStayAtTheirWidth(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const firstSelector = `document.querySelector('#live-compose .lv-place[data-n="1"]')?.dataset.selector`;
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3364,10 +3129,7 @@ async function draftPlacesStayAtTheirWidth(repository) {
     const comment = (await reviewJson(kemi)).comments.at(-1);
     assert.deepEqual([comment.page.url, comment.page.width, comment.page.places.map((place) => place.n)], ['/rich.html', 390, [1, 2]]);
     console.log('PASS 書きかけの URL と表示幅に戻る操作で戻ると場所を足せ、保存したコメントはその表示幅を持つ');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3410,10 +3172,7 @@ async function releaseRequests(type) {
  * 書きかけに入り、別の幅では戻る操作が出る。
  */
 async function latePlacesKeepTheirWidth(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3432,10 +3191,7 @@ async function latePlacesKeepTheirWidth(repository) {
     await waitFor(visible('#live-compose .lv-compose-back'));
     assert.match(await evaluate(`document.querySelector('#live-compose .lv-compose-back').textContent`), /at 390px/);
     console.log('PASS ページが場所を返す前に表示幅を変えても、場所は押したときの表示幅のものになり、戻る操作が出る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3443,10 +3199,7 @@ async function latePlacesKeepTheirWidth(repository) {
  * できず、保存し終えると書く欄が空いて、また書ける。保存したコメントは保存を押したときの場所と本文を持つ。
  */
 async function draftsStayWhileSaving(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3497,10 +3250,7 @@ async function draftsStayWhileSaving(repository) {
     await clickInPane(livePane, 40, 100);
     await waitFor(`${draftNumbers} === '[1]'`);
     console.log('PASS ページへのコメントを保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3508,10 +3258,7 @@ async function draftsStayWhileSaving(repository) {
  * 読み込まれ直しても、コメントの画像は作られる。
  */
 async function narrowReferenceSideSavesTheImage(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html', viewportAfter: ['1280', '900'] }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3546,11 +3293,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
     assert.equal(typeof comment.page.image, 'string', `the image is made while the running page is hidden: ${JSON.stringify(comment.page)}`);
     assert.ok(decodePng(await readFile(comment.page.image)).width > 0);
     console.log('PASS 狭い画面で比べる相手の側を見ている間にページが読み込まれ直しても、保存するとコメントの画像が作られる');
-  } finally {
-    await browser('set', 'viewport', '1280', '900');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3559,10 +3302,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
  * （場所の要素の矩形に上下の余白を足した高さ）を写す。場所の一部を切り落とした画像にも、null にもならない。
  */
 async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
-  try {
+  await withLiveReview({ repository, page: 'tall.html', viewportAfter: ['1280', '900'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3607,11 +3347,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
         await new Promise((done) => setTimeout(done, 500));
       }
     }
-  } finally {
-    await browser('set', 'viewport', '1280', '900');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3620,10 +3356,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
  * 選んだ幅で並べた文書から記述する。ページを変えずにページの見方へ戻せば、それと比べた変化は 0。
  */
 async function savingAndHandingKeepThePageLaidOut(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html', viewportAfter: ['1280', '900'] }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3647,7 +3380,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await releaseRequests('image');
     await waitFor(`${draftNumbers} === '[]'`, 30000);
     await releaseRequests();
-    assert.equal(await waiting, 0, 'kemi wait returns what was handed');
+    assert.equal((await waiting).code, 0, 'kemi wait returns what was handed');
     await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 2'))`);
     await browser('click', '.lv-view button[data-view="page"]');
     await chooseReference('Handed 2');
@@ -3656,11 +3389,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken while a save ends shows no change against the unchanged page');
     console.log('PASS 保存が終わっても、重なって取っていた渡す前のスナップショットと、変えていないページを比べると変化が 0');
-  } finally {
-    await browser('set', 'viewport', '1280', '900');
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /**
@@ -3669,10 +3398,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
  * 画像として保存しない。画像は null になり、コメントと場所は保存される。
  */
 async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -3695,18 +3421,12 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
     assert.deepEqual([comment.body, comment.page.url], ['saved while the page moved', '/rich.html']);
     assert.equal(await evaluate('window.__kemiSavedImage ?? null'), null, 'no image of the page the frame moved to is saved');
     console.log('PASS 画像を作る頼みが届く前に動いているページが別のページへ移ると、移った先の画像を保存せず、画像は null になる');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）。 */
 async function placesMakeNoChange(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
-  try {
+  await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -3728,10 +3448,7 @@ async function placesMakeNoChange(repository) {
     await new Promise((done) => setTimeout(done, 1200));
     assert.equal(await evaluate(`${changeList}?.dataset.main + ',' + ${changeList}?.dataset.shifted`), '0,0', 'saving a page comment changes nothing');
     console.log('PASS 場所を描いている間と保存した後で、変化の一覧の数が変わらない');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 }
 
 /** API でページへのコメントを足す（画面の操作は pageCommentPlacesArePutAndSaved で確かめる）。 */
@@ -3777,7 +3494,7 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
     await new Promise((done) => setTimeout(done, 800));
     const marked = await shot(`${livePane} .lv-frame`, shots, 'saved-places');
     // 会話パネルを開いた分だけ枠が縮んでいるので、ボタンの周りの範囲も同じ倍率で縮める。
-    const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+    const scale = await stageScale();
     const around = [0, 195, 305, 305].map((value) => Math.round(value * scale));
     assert.ok(countPixels(marked, around, isPlaceInk) > 0, `the place of the open thread is drawn on the page: ${join(shots, 'saved-places.png')}`);
     console.log('PASS スレッドを開いたコメントの場所が、そのコメントの URL と表示幅で見ているときにページの上に出る');
@@ -3813,7 +3530,7 @@ const isGlow = ([r, g, b]) => r < 95 && g < 110 && b > 140 && b - r > 60;
  * 混ざって光や描き込みの色に近い画素を作るので、それより右だけを見る。
  */
 async function rightOf(x) {
-  const scale = Number(await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`));
+  const scale = await stageScale();
   return [Math.round(x * scale), 0, 100000, 100000];
 }
 
@@ -3829,14 +3546,12 @@ async function pointAt(selector) {
  * 下の方のそのコメントの場所までスクロールして光る。別の表示幅で付けたコメントでも、幅が切り替わってから同じになる。
  */
 async function placesGlowFromTheListAndTheThread(repository) {
-  const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const frame = `${livePane} .lv-frame`;
-  const wheel = (y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
+  const wheel = (y) => wheelOn(`${livePane} .lv-capture`, { y, at: 100 });
   // 下の方（文書の y 2500 付近、帯 9 の中）を指す、帯の文字から離れた矢印。保存したコメントの場所に使う。
   const arrowLow = (width, left) => ({ url: '/tall.html', width, places: [{ n: 1, kind: 'arrow', points: [{ x: left, y: 2450 }, { x: left + 130, y: 2560 }], elements: [] }] });
-  try {
+  await withLiveReview({ repository, page: 'tall.html' }, async ({ kemi }) => {
     const c1 = await postJson(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(1280, 700), body: 'low at 1280' });
     const c2 = await postJson(kemi.url, 'api/comment', { op: 'add_page', page: arrowLow(390, 200), body: 'low at 390' });
     await browser('set', 'viewport', '1280', '900');
@@ -3927,23 +3642,7 @@ async function placesGlowFromTheListAndTheThread(repository) {
     await waitForPixels(frame, shots, 'other-width-shown', narrow, isGlow);
     await waitForPixels(frame, shots, 'other-width-shown-place', narrow, isPlaceInk);
     console.log('PASS 別の表示幅で付けたコメントの「ページで見る」でも、幅が切り替わってからその場所までスクロールして光る');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
-}
-
-/**
- * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
- */
-async function handAndWait(kemi, dir, state) {
-  const waiting = runKemi(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: isolatedEnvironment(state) });
-  const button = `(${visible('#rail-hand')} ? document.querySelector('#rail-hand') : ${visible('#btn-hand')} ? document.querySelector('#btn-hand') : null)`;
-  await waitFor(`${button} !== null && !${button}.disabled`);
-  await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
-  const { code, stdout } = await waiting;
-  assert.equal(code, 0, 'kemi wait returns what was handed');
-  return JSON.parse(stdout);
+  });
 }
 
 /** 書いたページへのコメントを保存し、書く欄が空くのを待つ。 */
@@ -3960,10 +3659,7 @@ async function savePageCommentInThePage(body) {
  * コメントと場所は届く。
  */
 async function handedPageCommentsReachWaitAndSubmit(repository) {
-  const dev = await startDevServer();
-  const state = await temporaryDirectory('kemi-live-state-');
-  let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
-  try {
+  await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(showsSnapshot('Start'));
@@ -4001,16 +3697,10 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
     assert.deepEqual(submitted.page.places, comment.page.places);
     assert.equal(submitted.page.image, null);
     console.log('PASS 同じコメントを submit すると、JSON の page に同じ場所が入り、image は null');
-  } finally {
-    await stop(kemi);
-    await dev.close();
-  }
+  });
 
   for (const query of ['csp=1', 'tt=1']) {
-    const strict = await startDevServer();
-    const strictState = await temporaryDirectory('kemi-live-state-');
-    kemi = await startKemi(repository, strictState, ['--live', `${strict.url}changing.html?${query}`]);
-    try {
+    await withLiveReview({ repository, page: `changing.html?${query}` }, async ({ kemi, state: strictState }) => {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
       await waitFor(showsSnapshot('Start'));
@@ -4025,10 +3715,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
       assert.ok(comment, `a page comment is handed under ${query}`);
       assert.equal(comment.page.places[0].elements[0].selector, '#buy');
       console.log(`PASS changing.html?${query} の CSP のページでも、コメントと場所が kemi wait に届く（画像: ${comment.page.image === null ? 'null' : '絶対パス'}）`);
-    } finally {
-      await stop(kemi);
-      await strict.close();
-    }
+    });
   }
 }
 
