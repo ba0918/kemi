@@ -3,18 +3,11 @@ import { createServer } from 'node:http';
 import { readFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
-const run = promisify(execFile);
+import { attachToPage, browserSession } from './lib/browser.mjs';
+
 const session = `kemi-hscroll-${process.pid}`;
-const browser = async (...args) => {
-  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 4 * 1024 * 1024 });
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, JSON.stringify(result));
-  return result.data;
-};
-const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
+const { browser, evaluate, close } = browserSession(session);
 const file = (id) => ({ id, path: `${id}.js`, old_path: null, status: 'modified', add: 2, del: 2, binary: false, old_size: 100, new_size: 100, focus: false, note: '', noise: false, seen: false, collapsed: false });
 const rows = Array.from({ length: 500 }, (_, i) => ({ kind: i === 2 ? 'insert' : i===0 || i===300 ? 'replace' : 'equal', old: i === 2 ? null : { number: i + 1, text: i === 0 ? 'old '.repeat(150) + 'OLD_END' : 'short old' }, new: { number: i + 1, text: i === 0 ? 'new '.repeat(250) + 'NEW_END' : i === 300 ? 'longer '.repeat(400) + 'LATER_END' : 'short new' } }));
 // 折りたたみが 2 つあるファイル。2 つ目の折りたたみの行は、検査が離すまで返さない（全行の展開の途中を作る）。
@@ -65,7 +58,7 @@ const server = createServer(async (req, res) => {
   } catch { res.writeHead(404); res.end(); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-let inputSocket;
+let page;
 try {
   await browser('--hide-scrollbars', 'false', 'open', `http://127.0.0.1:${server.address().port}`);
   await browser('wait', '--fn', `document.querySelector('#diff-content').textContent.includes('NEW_END')`);
@@ -91,21 +84,8 @@ try {
     assert.equal(right.cells[i].cell.height, initial.cells[i].cell.height);
     assert.ok(Math.abs(initial.cells[i].text.x-right.cells[i].text.x-right.left)<1, '短い行と空の側も同量動く');
   }
-  const { cdpUrl } = await browser('get', 'cdp-url');
-  const socket = new WebSocket(cdpUrl);
-  inputSocket = socket;
-  await new Promise((resolve,reject) => { socket.onopen=resolve; socket.onerror=reject; });
-  let sequence = 0;
-  const cdp = (method, params = {}, sessionId) => new Promise((resolve,reject) => {
-    const id = ++sequence;
-    const receive = event => { const response=JSON.parse(event.data); if(response.id!==id)return; socket.removeEventListener('message',receive); response.error ? reject(new Error(JSON.stringify(response.error))) : resolve(response.result); };
-    socket.addEventListener('message',receive);
-    socket.send(JSON.stringify({id,method,params,sessionId}));
-  });
-  const targets = await cdp('Target.getTargets');
-  const target = targets.targetInfos.find(t=>t.type==='page' && t.url.startsWith('http://127.0.0.1:'));
-  const attached = await cdp('Target.attachToTarget',{targetId:target.targetId,flatten:true});
-  const input = params => cdp('Input.dispatchMouseEvent',params,attached.sessionId);
+  page = await attachToPage(browser);
+  const input = params => page.cdp('Input.dispatchMouseEvent',params);
   await input({type:'mouseWheel',x:right.cells[0].code.x+50,y:right.cells[0].code.y+12,deltaX:180,deltaY:0});
   await browser('wait', '--fn', `document.querySelector('#horizontal-scroll').scrollLeft > ${right.left}`);
   const wheel = await snapshot();
@@ -120,7 +100,7 @@ try {
   await input({type:'mouseReleased',...selectionPoint,x:selectionPoint.x+80});
   assert.ok(await evaluate(`getSelection().toString().length>0`),'移動したコードをマウスで選択できる');
   await evaluate('getSelection().removeAllRanges()');
-  socket.close();
+  page.close();
   const mouse = await snapshot();
   console.log('PASS バーのマウス・キーボードとコード上の横wheel、固定領域・全行の同期');
   await evaluate(`document.querySelector('#diff-viewport').scrollTop=2400`);
@@ -276,8 +256,8 @@ try {
   console.log('PASS 内容更新で幅を測り直して左端へ補正');
 
 } finally {
-  inputSocket?.close();
-  await browser('close');
+  page?.close();
+  await close();
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
 }
