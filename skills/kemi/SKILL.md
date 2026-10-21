@@ -96,8 +96,10 @@ that path yields no review JSON. Report any printed resume command if continuati
 When stderr prints `kemi: review <id>`, read [conversation](references/conversation.md) and
 run `kemi wait <id>` in the background. Read handed comments, replies, and notes; address
 them within scope, answer with `kemi reply <id>` (JSON on stdin), then wait again until submit.
-This loop is independent of waiting for the main process: its exit code and stdout remain
-the review result. Without the review line or a call to wait, the review is submit-only.
+Keep waiting for the main process too. When `kemi wait` returns `submitted`, its `result` is
+the review result: take only the exit code from the main process, and read its stdout only in
+the cases [the loop](references/conversation.md#the-loop) names. Without the review line or a
+call to wait, the review is submit-only.
 
 Reply to ordinary questions. When the explanation's account, judgment points, or caveats
 become stale, read [explanation updates](references/explanation-update.md)
@@ -115,8 +117,9 @@ startup diff; `--live` is the exception and rereads the working tree and reconne
 
 ## Handle the result
 
-After the main process exits, collect its exit code and stdout and read
-[results](references/results.md) for field interpretation or `kemi --result` recovery.
+After the main process exits, collect its exit code and the result (its stdout, or the
+`submitted` result from `kemi wait`), and read [results](references/results.md) for field
+interpretation or `kemi --result` recovery.
 Check the contract version (`kemi: 4` for new result/wait output) and that `verdict` matches
 the exit code. Do not guess unknown versions; stored version 1 to 3 results are returned
 unchanged. Recovery retrieves a stored result, not the current review's eventual submit.

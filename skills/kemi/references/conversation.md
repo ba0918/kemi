@@ -139,8 +139,10 @@ open a comment or resolve one; only the person does that.
    then answer with `kemi reply <id>`: say what you changed, or why you did not.
 4. Start `kemi wait <id>` again. Repeat until an event of type `submitted` arrives, or until
    `kemi wait` exits `2` because the review is no longer running (the person submitted while
-   you were working, or the main `kemi` process exited). Then handle the result as usual: take
-   it from the main process's stdout, or from `kemi --result`.
+   you were working, or the main `kemi` process exited). A `submitted` event's `result` is the
+   review result, the same document the main process prints: check the main process's exit
+   code, but do not read its stdout again. When `kemi wait` exits `2` instead, or its output
+   reached you cut short, take the result from the main process's stdout, or `kemi --result`.
 
 ## Hand-over status
 
