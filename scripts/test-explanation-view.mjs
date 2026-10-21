@@ -33,6 +33,13 @@ function start(args) {
 const bodyA = '**A begins**\n\n![external](https://example.invalid/a.png) ![relative](a.png) ![data](data:image/png;base64,AA) ![reference][r]\n\n[r]: https://example.invalid/ref.png\n\n<img src="html.png">\n\nA ends\n';
 const codeB = { type: 'code', body: '<script>literal B</script>\n', language: 'pseudocode', role: 'example', title: 'Code B' };
 const parts = [{ type: 'text', body: bodyA }, codeB, { type: 'text', body: '**C survives**' }];
+// 描けないときの表示は、まだ描いていない本文で起こす（一度描いた本文は控えから出し、描き直させない）。
+const lateA = bodyA.replace('A ends', 'A ends late');
+const lateReplyA = bodyA.replace('A ends', 'A ends in the reply');
+/** 本文 body の text パーツが描けず、元の文のまま失敗の知らせと並んでいる所（無ければ undefined）を読む式。 */
+const failedPart = body => `Array.from(document.querySelectorAll('pre')).find(e=>e.textContent===${JSON.stringify(body)} && e.previousElementSibling?.getAttribute('role')==='status' && e.previousElementSibling.textContent.includes('Network connection lost'))`;
+/** text パーツの本文が bodies のどれかなら、描く頼みを通信の失敗にする。 */
+const failRendering = bodies => `const original=window.fetch; window.fetch=(input,init)=> { let part; try {part=JSON.parse(init?.body)} catch {} if(part?.type==='text' && ${JSON.stringify(bodies)}.includes(part.body)) return Promise.reject(new TypeError('Network connection lost')); return original(input,init); }; true`;
 const sequence = { type: 'sequence', title: 'Sequence operations', role: 'example', participants: [{ id: 'a', label: 'Reader' }, { id: 'b', label: 'Server' }], events: [{ type: 'message', from: 'a', to: 'b', label: 'Request', kind: 'call' }, { type: 'message', from: 'b', to: 'a', label: 'Response', kind: 'return' }, { type: 'message', from: 'a', to: 'a', label: 'Self', kind: 'call' }] };
 const grid = { type: 'diagram', title: 'Grid example', role: 'example', source: `a = ${'長いラベル'.repeat(30)}\nb = ? Pending\n| a | b |\na -> b : next` };
 const flow = { type: 'flow', title: 'Flow operations', role: 'proposal', nodes: [{id:'a',kind:'process',label:'First'},{id:'b',kind:'process',label:'Second'}], edges:[{from:'a',to:'b'}] };
@@ -82,13 +89,13 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   const traffic = JSON.parse(await readFile(har, 'utf8'));
   assert.equal(traffic.log.entries.filter(e => /example\.invalid|\/a\.png|\/html\.png|\/api\/image\//.test(e.request.url)).length, 0);
   console.log('PASS: restored plain/Markdown/code order and no image requests');
-  await evaluate(`const original=window.fetch; window.fetch=(input,init)=> { let part; try {part=JSON.parse(init?.body)} catch {} if(part?.type==='text' && part.body===${JSON.stringify(bodyA)}) return Promise.reject(new TypeError('Network connection lost')); return original(input,init); }; true`);
-  // 会話を閉じて開くと、通常のPart描画経路から再び取得する。
-  await browser('find', 'role', 'button', 'click', '--name', 'Conversation (1 comment)');
-  await browser('find', 'role', 'button', 'click', '--name', 'Open the conversation');
-  await wait(`document.body.textContent.includes('Network connection lost')`);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('pre')).some(e=>e.textContent===${JSON.stringify(bodyA)})`), true);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='C survives') && document.body.textContent.includes('literal B')`), true);
+  // 失敗を仕込んでから、エージェントが新しい発言を書く。届いた発言は通常のパーツの描画の経路で描く。
+  await evaluate(failRendering([lateA, lateReplyA]));
+  const reply = writes => kemiOutput(binary, ['reply', id], { cwd: root, env: isolatedEnvironment(root), input: JSON.stringify({ writes }) });
+  await reply([{ type: 'message', parts: [{ type: 'text', body: lateA }, codeB, { type: 'text', body: '**C survives**' }] }]);
+  await wait(`${failedPart(lateA)} !== undefined`);
+  // 隣のパーツは同じ発言の中で描ける。
+  assert.equal(await evaluate(`(()=>{const post=${failedPart(lateA)}.closest('section').parentElement;return post.textContent.includes('literal B') && Array.from(post.querySelectorAll('strong')).some(e=>e.textContent==='C survives')})()`), true);
   console.log('PASS: ordinary fetch failure preserves the complete original A and adjacent B/C');
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations')`);
    await evaluate(`document.body.style.zoom='1.5';true`);
@@ -134,9 +141,10 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.deepEqual(await evaluate(`${failedTitles}.filter(title=>${JSON.stringify(tallTitles)}.includes(title))`), [], 'long Start/End labels fit with a font whose line box is taller than the line step');
   await evaluate(`document.querySelector('#tall-font').remove();true`);
   console.log('PASS: grid full labels, real layout rejection, keyboard zoom/pan/fit, separate view return, font/zoom revalidation');
+  await reply([{ type: 'reply', comment_id: comment.id, parts: [{ type: 'text', body: lateReplyA }, codeB, { type: 'text', body: '**C survives**' }] }]);
   await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Comment stays')).click();true`);
-  await wait(`document.body.textContent.includes('Network connection lost')`);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('pre')).some(e=>e.textContent===${JSON.stringify(bodyA)}) && document.body.textContent.includes('Comment stays') && Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='C survives')`),true);
+  await wait(`${failedPart(lateReplyA)} !== undefined`);
+  assert.equal(await evaluate(`document.body.textContent.includes('Comment stays') && Array.from(${failedPart(lateReplyA)}.closest('section').parentElement.querySelectorAll('strong')).some(e=>e.textContent==='C survives')`),true);
   console.log('PASS: the same Part fallback preserves reply content and its comment');
   await browser('find', 'role', 'button', 'click', '--name', '‹ Conversation');
   await evaluate(`document.body.style.zoom='1';true`);
@@ -304,12 +312,13 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Open explanation revision 2');
   await wait(`document.body.textContent.includes('Renamed heading')`);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`),true);
-  await evaluate(`const original=window.fetch; window.fetch=(input,init)=>{let part;try{part=JSON.parse(init?.body)}catch{};if(part?.type==='text' && part.body===${JSON.stringify(bodyA)}) return Promise.reject(new TypeError('Network connection lost'));return original(input,init)};true`);
-  await update(sections);
+  // 版 3 は、まだ描いていない本文のブロックを 1 つ足したもの（ほかのブロックは変えないので、コメントは outdated にならない）。
+  await evaluate(failRendering([lateA]));
+  await update([{...sections[0],blocks:[sections[0].blocks[0],{id:'late',part:{type:'text',body:lateA},references:[]},...sections[0].blocks.slice(1)]},sections[1]]);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 3'))`);
   await browser('find','role','button','click','--name','Open explanation revision 3');
-  await wait(`document.body.textContent.includes('Network connection lost')`);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('pre')).some(e=>e.textContent===${JSON.stringify(bodyA)}) && document.body.textContent.includes('Question remains') && document.body.textContent.includes('literal B') && Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='C survives')`),true);
+  await wait(`${failedPart(lateA)} !== undefined`);
+  assert.equal(await evaluate(`document.body.textContent.includes('Question remains') && document.body.textContent.includes('literal B') && Array.from(document.querySelectorAll('strong')).some(e=>e.textContent==='C survives')`),true);
   // AだけがCodeをD2へ取り込む。別tab BはD1の一覧を持ち続ける。
   await browser('tab','new',running.url);
   await wait(`document.body.textContent.includes('C survives')`);
