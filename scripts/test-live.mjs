@@ -2720,6 +2720,9 @@ async function manyElementsAreRecordedAndCompared(repository) {
   }
 }
 
+/** コメントの画像の頼みに、ページが答えるまで待つ上限（agent-browser の評価は 30 秒で打ち切られ、理由が分からない）。 */
+const IMAGE_TIMEOUT = 20000;
+
 /**
  * 中継したページにコメントの画像（R-PAGE-COMMENT）を頼み、返った PNG の base64 か、作れなかった理由を返す。
  * 道具の画面を通さず、レビュー画面と同じオリジンから枠へ頼みを送る。
@@ -2728,10 +2731,15 @@ async function askImage(rect, places) {
   const reply = await evaluate(`new Promise((done) => {
     const frame = document.querySelector('${livePane} .lv-frame');
     const id = 'image-' + Math.random();
+    const timer = setTimeout(() => {
+      removeEventListener('message', listen);
+      done(JSON.stringify({ unanswered: true }));
+    }, ${IMAGE_TIMEOUT});
     const listen = (event) => {
       const data = event.data;
       if (event.source !== frame.contentWindow || data?.kemi !== 'live' || data.type !== 'imaged' || data.id !== id) return;
       removeEventListener('message', listen);
+      clearTimeout(timer);
       done(JSON.stringify({ png: data.png ?? null, error: data.error ?? null }));
     };
     addEventListener('message', listen);
@@ -2739,7 +2747,10 @@ async function askImage(rect, places) {
     const view = { page: page.pathname + page.search, width: parseFloat(frame.style.width), height: frame.clientHeight };
     frame.contentWindow.postMessage({ kemi: 'live', type: 'image', id, ...view, rect: ${JSON.stringify(rect)}, places: ${JSON.stringify(places)} }, page.origin);
   })`);
-  return JSON.parse(reply);
+  const answer = JSON.parse(reply);
+  // 返事が来なかったことを、作れなかった理由（error）と取り違えない。
+  assert.notEqual(answer.unanswered, true, `the page did not answer the image request within ${IMAGE_TIMEOUT} ms`);
+  return answer;
 }
 
 /** 画像の左上から width × height を切り出す。 */

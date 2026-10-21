@@ -30,6 +30,7 @@ import { join, resolve } from 'node:path';
 import { browserSession, visible } from './lib/browser.mjs';
 import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
 import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
+import { until } from './lib/wait.mjs';
 
 if (!process.argv[2]) {
   console.error('usage: node scripts/test-agent-channel.mjs <kemi-bin>');
@@ -89,6 +90,11 @@ async function makeRangeFixture() {
 /** kemi を起動し、URL と review の id がそろうのを待つ。 */
 function startKemi(dir, state, source = ['--worktree']) {
   return launchKemi(binary, { cwd: dir, state, args: source, review: true });
+}
+
+/** サーバが、kemi wait が待っている（待機中）と返すのを待つ。 */
+function serverWaiting(url) {
+  return until(async () => (await getJson(url, 'api/review')).agent?.status === 'waiting', { what: 'api/review reporting the agent as waiting' });
 }
 
 /** `kemi wait` / `kemi reply` を走らせ、(終了コード, stdout, stderr) を返す。 */
@@ -201,11 +207,7 @@ try {
   await browser('reload');
   await waitFor(`window.__kemiHeld === true`);
   const loadingWait = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '10']);
-  for (;;) {
-    const current = await getJson(kemi.url, 'api/review');
-    if (current.agent?.status === 'waiting') break;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  await serverWaiting(kemi.url);
   // 状態はサーバが時々知らせ直すことがあるが、発言は一度しか届かない。
   const early = await agentCommand(fixture, state, ['reply', kemi.id], JSON.stringify({
     writes: [{ type: 'message', body: markdownMessage }],
@@ -389,11 +391,7 @@ const rangeState = await temporaryDirectory('kemi-agent-range-state-');
 const rangeKemi = await startKemi(range.dir, rangeState, ['--from', range.from]);
 try {
   // コミットごとの単位は、最初の api/review の後に裏で作られる。
-  for (;;) {
-    const current = await getJson(rangeKemi.url, 'api/review');
-    if (current.units?.find((unit) => unit.unit === 'commit')?.state === 'ready') break;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  await until(async () => (await getJson(rangeKemi.url, 'api/review')).units?.find((unit) => unit.unit === 'commit')?.state === 'ready', { what: 'the per-commit unit to be ready' });
   const commitReview = await getJson(rangeKemi.url, 'api/review?unit=commit');
   const second = commitReview.groups.find((group) => group.title === 'second');
   await postJson(rangeKemi.url, 'api/comment', { op: 'add', file_id: second.files[0].id, side: 'new', start_line: 1, end_line: 1, body: 'about the second commit' });
