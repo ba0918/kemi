@@ -7,70 +7,7 @@
 // 場面は場面の関数の名前で選ぶ（例 `placesGlowFromTheListAndTheThread`）。`unreadableResourcesMakeNoPartialCommentImage:canvas`
 // のように `:` の後ろを渡すと、その場面は渡したものだけを確かめる。
 //
-// 確かめること:
-// - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
-//   まま新しく起動しても、止めたまま復元しても、つながらない旨が出て、開発サーバを起動すると
-//   つながる。
-// - 手元の HTML ファイル: 参照する CSS を保存し直すと読み込み直される。
-// - ページの見方: 枠を拒むページが出て書き換えの表示が出る。表示幅の 319 と 3841 を断り範囲を
-//   出す。幅 390px で 1 枚ずつ切り替える。git の外ではコードの見方の代わりに理由が出る。範囲の
-//   別の HTML へのリンクで見る対象が移り、ツリーに出る。`--live` でないレビューはページ用の
-//   ファイルを読み込まない。
-// - スナップショット: 渡す前は開始時が既定。390 と 1280 で取って切り替える。無い幅・別の URL では
-//   記録されていない旨と取る操作が出る。動いているページと画素を比べる（完全に一致しなければ
-//   差の画像と割合を出して人の確認に回す）。onclick が動かない。2 つのページがツリーに並ぶ。
-//   渡すと取る。手で取ると比べる相手がそれに切り替わって知らせが出て、見る対象だけのときは知らせの操作で並べ、幅 390px では
-//   比べる相手の 1 枚にする。その後に渡しても変わらず、読み込み直すと自動に戻る。別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の
-//   poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じ色に出る。
-// - コメントの画像: ページの中で写しを描いて作った描き込み無しの画像を、動いているページの同じ範囲と画素で比べる
-//   （差の割合と差の画像を出して人の確認に回す）。描き込みを重ねた画像も残す。インラインのスタイルを止める CSP と
-//   Trusted Types を求める CSP のページでは、画像が作れるか、作れない理由が返る。範囲が表示幅より狭く画面の高さと違っても、
-//   動いているページと同じ幅の CSS と vh で描く。
-// - ページへのコメント: 要素・ペン・矢印で場所を置くと番号が振られてページの上に描かれ、2 番目を消すと番号と本文の #n が
-//   詰まり、渡した JSON も同じ。消した場所を指す #n があると保存できない。一覧の番号を押すと本文に #n が入る。矢印の先の要素は先端の位置の要素。並べた比べる相手の側では場所が増えず、重ねて透かしている間は
-//   見る対象の要素が場所になる。ペンの場所には囲んだ範囲を丸ごと含む外側の要素が入らず、1 つの要素の内側だけを囲むと
-//   その要素 1 つになる。要素の道具で余白を押しても場所は増えず、余白を指す矢印と余白だけを囲むペンは要素の無い範囲だけの場所になり、画像は文書全体ではなく場所の周りを写す。書きかけの場所と別の表示幅では場所を足せず保存もできず、戻る操作で戻ると足せる。ページが場所を返す前に表示幅を変えても、場所は押したときの幅のものになる。保存している間は書きかけも表示幅もページも変えられず、保存し終えるとまた書ける。幅 390px で比べる相手の側を見ている間にページが読み込まれ直しても、保存すると画像が作られる。保存している間にコードの見方や比べる相手の側へ切り替えても、画像は場所の周りを写す。画像を作る頼みが届く前に動いているページが別のページへ移ると、画像は null になる。描いている間も保存した後も変化の一覧は変わらない。書く欄を閉じると（保存・取り消し）見る対象の枠は欄を開く前の高さに戻り、最初の保存で案内が消えると空いた高さまで伸びる。書きかけの場所の行に乗せるとその場所が光り、押すとそこまでスクロールして光る。スレッドの「ページで見る」は、別の表示幅のコメントでも幅を切り替えてから、そのコメントの場所までスクロールして光らせる。コメントだけがあるページがツリーに
-//   コメントの数とともに出て、表示幅の札で移れる。別の幅で付けたコメントのスレッドは付けた幅を出し、押すとそこへ移り、
-//   場所の印が出る。保存したコメントの場所は、スレッドを開いている間だけ番号付きで、それ以外は番号の無い小さな印で、
-//   乗せるとレビュー画面にそのコメントの短い名前が出る。本文だけを編集できる。保留して復元しても会話パネルとツリーに出る。画面で付けた 3 つの場所を持つ
-//   コメントを渡すと、kemi wait に場所と PNG の画像の絶対パスが届き、submit では画像が null になる。CSP の厳しいページでも届く。
-// - 保留と復元: コメントと手で取ったスナップショットのあるレビューを保留して復元すると、比べる相手の選択に開始時と
-//   手で取ったものが出て、開始時が既定になる。開始時のものは保留の前と同じ id と HTML で 1 つだけ（取り直さない）。
-//   モックを割り当てて保留し、モックのファイルを消してから復元すると、読めない旨が出る。
-// - モック: 比べる相手の選択肢の最後の「モックのファイル」でパネルが開き、追跡中と無視されない未追跡の HTML だけが一覧に出て
-//   検索で絞れる。git が無視する HTML はパスの欄で割り当てられる。git の外では起動したディレクトリの下の HTML が出る。201 個
-//   置くと 200 件と全体の数 201 が出て、検索で残りが出る。外すと取り消す操作つきの知らせが出て、押すと同じモックに戻る。見る
-//   対象だけのときは一覧の見出しにモックの名前とメニューが出る。範囲の外と .txt を理由つきで断る。CSS と画像ごと同じ幅で出る。外すとスナップショットに
-//   戻る。JS のモックが描かれ、トークンが（referrer からも）得られず API に断られる。モックだけがあるページがツリーに出る。
-//   スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていてもトークンの URL を受け取らない。
-// - 重ねて透かす: スクロールがそろう（並べる間にスクロールしてから切り替えても）、透かし具合で見え方が変わる、幅 390px でも切り替えられる。
-// - 差分: スナップショットを取った後に同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。
-//   兄弟の途中に足した要素だけが増えたになり、ボタンの背景色の変化が前後の色の見本つきで主な変化に入る。
-//   ボタンの文字色・背景色・枠を同時に変えると一覧ではそのボタンが 1 行になり、押すとそのボタンまでスクロールして印が光る。
-//   見る対象だけのときも、一覧の見出しの名前が並べたときの比べる相手の選択の文字に含まれる。html と body はずれただけに
-//   出ず、body の背景色の変化は主な変化に出る。下の方の消えた要素の行を押すと、見る対象だけなら並べる見比べ方に、幅 390px
-//   では比べる相手の 1 枚にしてスナップショットのその要素が見えて光る（その間もホイールで動かせ、見比べ方を変えると元の形に
-//   戻る）。等倍で枠より広いページでは、右の方の消えた要素の行と、右の方の場所の「ページで見る」で枠が横にも動く。重ねて透かすときは見比べ方を変えず、そろったままその位置へ動いて光る。
-//   モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページにだけ出る。別のページへ移ると、前の
-//   ページの一覧を新しいページの下に出さない。幅 390px では引き出しの中。幅 390px で比べる相手の側を見ている（動いている
-//   ページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。枠が隠れている間（比べる相手の
-//   側を見ている、コードの見方・説明の見方から渡す。git の外のコードの見方からも。説明の見方で始めたときの開始時のものも）に取った
-//   スナップショットも、変えていないページとは変化 0。
-// - 印: 主な変化と増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わって
-//   いない要素には付かない。印を付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす
-//   表示でも同じ印。モックと比べる間は付かない。動いているページの側の印だけを付け直すときは、比べる相手の
-//   枠のスクロール位置は変わらない。同じページを読み込み直しても、消えた要素の組が同じなら変わらない。並べる表示の比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
-//   インラインのスタイルを止める CSP のページでも印が付く。Trusted Types を求める CSP のページで要素を消すと、一覧には出し、
-//   スナップショットに印を付けられないことを出す。HTML として読み直すと要素の並びが変わる（スクリプトが
-//   tbody を挟まずに組んだ表の）ページでも、消えた要素の印はスナップショットのその要素に付く。スクロールしただけでは変化にならず、印は
-//   スクロールしても要素に付いたまま（固定・張り付く要素、中でスクロールする箱でも）。
-// - CSSOM だけの変化: 構築したスタイルシートを replaceSync で差し替えると、DOM が変わらなくても変化の一覧が変わる。
-// - 表示幅の切り替え: <html> の min-width より狭い幅どうしで切り替えても（文書の幅は変わらない）、切り替えた幅の
-//   変化の一覧が出る。
-// - 狭い画面の道具: 幅 390px のページの見方では、道具と「Hand to agent」が画面の下の 1 つの浮かぶツールバーにあり、
-//   コードの見方では全モード共通の浮かぶ「Hand to agent」だけ。幅 1280px ではどちらも見えない。
-// - 要素の多いページ: HTML が 2 MB 未満なら、要素が 7 万を超えてもスナップショットが取れ、変化の一覧が出る。
-//   一覧の残りも続きを出す操作ですべて見られる。
+// 確かめることは、場面ごとの関数のドキュメントコメントに書く。
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
@@ -244,7 +181,10 @@ async function relayCarriesHmrAndHidesTheCookie(repository) {
   });
 }
 
-/** 開発サーバにつながらないときは出して待ち、起動したらつながる（R-PAGE-MODE、R-PAGE-SESSION）。 */
+/**
+ * 開発サーバにつながらないときは出して待ち、起動したらつながる（R-PAGE-MODE、R-PAGE-SESSION）: 開発サーバを止めたまま
+ * 新しく起動しても、止めたまま復元しても、つながらない旨が出て、開発サーバを起動するとつながる。
+ */
 async function waitsForTheDevServer(repository) {
   const port = await freePort();
   const state = await temporaryDirectory('kemi-live-state-');
@@ -772,7 +712,13 @@ async function clickInPane(pane, x, y) {
   await browser('mouse', 'up');
 }
 
-/** スナップショット（R-PAGE-SNAPSHOT、R-PAGE-VIEW、R-PAGE-REF）。 */
+/**
+ * スナップショット（R-PAGE-SNAPSHOT、R-PAGE-VIEW、R-PAGE-REF）: 渡す前は開始時のものが既定の比べる相手。390 と 1280 で
+ * 取って幅を切り替えると、動いているページと比べる相手が同じ幅で描かれ、無い幅・別の URL では記録されていない旨と取る
+ * 操作が出る。動いているページと画素を比べる（完全に一致しなければ差の画像と割合を出して人の確認に回す）。スナップショット
+ * では onclick が動かない。スナップショットを持つ 2 つのページがツリーに表示幅と並び、押すとそのページ・その幅に移る。
+ * 渡すと表示中のページのスナップショットを取り、それが既定の比べる相手になる。
+ */
 async function snapshotsAreTakenShownAndChosen(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
@@ -846,7 +792,9 @@ async function snapshotsAreTakenShownAndChosen(repository) {
 
 /**
  * スナップショットが要る資源（R-PAGE-SNAPSHOT の同じ見た目）: スナップショットの枠は中継のポートから
- * 読めないので、CSS と画像の参照が中継を指したままだと、その箱が描かれない。
+ * 読めないので、CSS と画像の参照が中継を指したままだと、その箱が描かれない。別のオリジンの CSS・@import・style 属性の
+ * url()・<picture> の <source>・video の poster・SVG の <image>・<input type=image> が、スナップショットでも動いている
+ * ページと同じ色に出る。
  */
 async function snapshotsCarryTheirResources(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
@@ -907,7 +855,12 @@ async function chooseFromMockMenu(item) {
 /** パネルの一覧に出ているファイル。 */
 const listedMockFiles = `JSON.stringify(Array.from(document.querySelectorAll('${mockPanel} .lv-mock-file')).map((item) => item.dataset.path))`;
 
-/** モック（R-PAGE-MOCK、R-PAGE-REF、R-PAGE-VIEW）。 */
+/**
+ * モック（R-PAGE-MOCK、R-PAGE-REF、R-PAGE-VIEW）: 配れる範囲の外のパスと .txt は理由つきで断る。CSS と画像を参照する
+ * モックは同じ表示幅でスタイルと画像ごと出て、外すと最後に渡した時点のスナップショットに戻る。JS で描くモックが描かれ、
+ * そのスクリプトからトークンは（referrer からも）得られず、トークンを付けても API に断られる。モックの割り当てだけが
+ * あるページがツリーに出て、押すとそのページへ移りモックと比べる。
+ */
 async function mocksAreAssignedShownAndKeptApart(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'mock.html'), '<!doctype html><html><head><link rel="stylesheet" href="mock.css"></head><body><img src="dot.png" alt="" style="display:block;width:40px;height:40px"></body></html>\n');
@@ -1032,7 +985,10 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
   }
 }
 
-/** 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）。 */
+/**
+ * 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）: 見る対象をスクロールすると重ねた比べる相手も同じだけ動き
+ * （並べる間にスクロールしてから切り替えても）、透かし具合で見え方が変わる。幅 390px では重ねずに 1 枚ずつ切り替える。
+ */
 async function overlayFollowsTheScrollAndTheOpacity(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const opacity = setOpacityAndWait;
@@ -1278,6 +1234,11 @@ async function recordingNowSwitchesTheReference(repository) {
   });
 }
 
+/**
+ * 開始時からの変化の案内（R-PAGE-REF、R-PAGE-SNAPSHOT）: 開始時からの変化に案内と比較基準を取り直す操作が出て、記録中は
+ * 重ねて押せず、記録とコメントを残して比べる相手を取り直したものに切り替える。手で取った時点や渡した時点との変化には
+ * 開始時の案内を出さず、狭い画面の一覧からも取り直せる。記録に失敗したら理由を出し、比べる相手を変えず、また押せる。
+ */
 async function changesFromStartExplainHowToCompareFromNow(repository) {
   const guide = '#page-tree .lv-start-comparison';
   const useCurrent = `${guide} button`;
@@ -1642,6 +1603,10 @@ async function closingTheComposeBoxRestoresTheFrame(repository) {
   });
 }
 
+/**
+ * 会話パネルを畳んだときの渡す案内（R-AGENT-STATE、R-PAGE-COMMENT）: 案内は書く欄を覆わず、コマンドを写せ、場所の×も押せる。
+ * 書く欄を閉じると案内は畳んだ帯の位置に戻る。
+ */
 async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
@@ -1670,6 +1635,7 @@ async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
   });
 }
 
+/** 選んだ表示幅の外（R-PAGE-VIEW）: ページの外はレビュー画面の背景になり、ページ自身の白い背景は変わらない。 */
 async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
@@ -2101,7 +2067,14 @@ async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
   });
 }
 
-/** 差分（R-PAGE-DIFF、R-PAGE-VIEW の変化の一覧、R-PAGE-REF の一覧はスナップショットのときだけ）。 */
+/**
+ * 差分（R-PAGE-DIFF、R-PAGE-VIEW の変化の一覧、R-PAGE-REF の一覧はスナップショットのときだけ）: スナップショットを取った後に
+ * 同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。兄弟の途中に足した要素だけが増えたになり、ボタンの
+ * 背景色の変化が前後の色の見本つきで主な変化に入る。モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページに
+ * だけ出て、別のページへ移ると前のページの一覧を新しいページの下に出さない。幅 390px では引き出しの中にある。幅 390px で
+ * 比べる相手の側を見ている（動いているページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。
+ * 枠が隠れている間に取ったスナップショットも、コードの見方から渡したときのスナップショットも、変えていないページとは変化 0。
+ */
 async function changeListFollowsThePage(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
@@ -2312,7 +2285,13 @@ async function chooseReference(kemi, which) {
   await waitFor(showsSnapshot(id));
 }
 
-/** 印（R-PAGE-VIEW の変わったところに印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）。 */
+/**
+ * 印（R-PAGE-VIEW の変わったところに印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）: 主な変化と
+ * 増えた要素は動いているページの側に、消えた要素はスナップショットの側に印が付き、変わっていない要素には付かない。印を
+ * 付けても変化は増えず、その後に取ったスナップショットとは変化 0。重ねて透かす表示でも同じ印。モックと比べる間は付かない。
+ * 動いているページの側の印だけを付け直すときは、比べる相手の枠のスクロール位置は変わらない。同じページを読み込み直しても、
+ * 消えた要素の組が同じなら変わらない。
+ */
 async function marksFollowTheChanges(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
@@ -2551,7 +2530,8 @@ async function removedMarksSurviveReparsing(repository) {
 
 /**
  * スクロールしただけでは変化にならず、印はスクロールしても要素に付いたまま（R-PAGE-DIFF の位置と大きさの
- * 変化、R-PAGE-VIEW の変わったところに印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。
+ * 変化、R-PAGE-VIEW の変わったところに印）。上に張り付く見出し、画面に固定した札、中でスクロールする箱で。並べる表示の
+ * 比べる相手は、画面に固定した要素も動いているページと同じ場所に出る。
  */
 async function scrollingMakesNoChangeAndMarksStay(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
@@ -2661,7 +2641,7 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
 
 /**
  * 要素の多いページ（R-PAGE-SNAPSHOT の 2 MB は HTML に掛ける）: HTML が 2 MB 未満のページは、要素の記述が
- * 大きくても取れて、変化の一覧が出る。
+ * 大きくても（要素が 7 万を超えても）取れて、変化の一覧が出る。一覧の残りも続きを出す操作ですべて見られる。
  */
 async function manyElementsAreRecordedAndCompared(repository) {
   const cards = 18000;
@@ -3040,6 +3020,10 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
   });
 }
 
+/**
+ * 光の枠と画像の範囲（R-PAGE-COMMENT）: 大きな要素を拾ったペンでも、光の枠と画像は描いた範囲に収まる。要素の枠は要素の箱、
+ * 矢印の枠は線と先端の要素の範囲になる。
+ */
 async function penGlowAndImageStayAroundTheDrawnArea(repository) {
   const prepare = (dev) => writeFile(join(dev.dir, 'rich.html'), `<!doctype html><html><head><style>
     body { margin:0; background:#161a20; color:#e4e8ee; font:16px sans-serif; }
@@ -3556,7 +3540,7 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
   });
 }
 
-/** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）。 */
+/** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）: 場所を描いている間も保存した後も、変化の数が変わらない。 */
 async function placesMakeNoChange(repository) {
   await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
@@ -3855,8 +3839,9 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
 }
 
 /**
- * 保留と復元（R-PAGE-SESSION、R-PAGE-REF、R-PAGE-MOCK）: スナップショットとモックの割り当てが戻り、開始時の
- * スナップショットが既定の比べる相手のまま取り直されない。消したモックは読めない旨が出る。
+ * 保留と復元（R-PAGE-SESSION、R-PAGE-REF、R-PAGE-MOCK）: コメントと手で取ったスナップショットのあるレビューを保留して
+ * 復元すると、比べる相手の選択に開始時と手で取ったものが出て、開始時が既定になる。開始時のものは保留の前と同じ id と
+ * HTML で 1 つだけ（取り直さない）。モックを割り当てて保留し、モックのファイルを消してから復元すると、読めない旨が出る。
  */
 async function snapshotsAndMocksComeBackAfterResuming(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
