@@ -147,6 +147,9 @@ const notLoading = `(!document.querySelector('#notice') || document.querySelecto
 
 const at = (path) => `document.querySelector('#file-header .path')?.textContent === ${JSON.stringify(path)}`;
 
+/** 文書の中で、出せない画像の代わりの枠（img を持たず、title にその画像のパスを持つ）。 */
+const imageFrames = '#rendered-doc [data-kemi-block] [title]:not(img)';
+
 /** ツリーからファイルを選び、取得が終わるのを待つ。 */
 async function selectFile(path) {
   const name = path.split('/').pop();
@@ -215,18 +218,22 @@ try {
   assert.equal(await evaluate(`document.querySelector('#file-header .view-rendered').getAttribute('aria-pressed')`), 'false');
   await browser('press', 'r');
   await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc tr').length === 4`);
-  const rows = await evaluate(`Array.from(document.querySelectorAll('#rendered-doc tr')).map(tr => [tr.dataset.kemiBlock, tr.className, Array.from(tr.children).map(c => c.tagName + ':' + c.textContent).join('|')])`);
+  const rows = await evaluate(`Array.from(document.querySelectorAll('#rendered-doc tr')).map(tr => [tr.dataset.kemiBlock, Array.from(tr.children).map(c => c.tagName + ':' + c.textContent).join('|')])`);
   assert.deepEqual(rows, [
-    ['new:1-1', 'kb', 'TH:name|TH:note'],
-    ['new:2-2', 'kb', 'TD:x|TD:fine'],
-    ['old:3-3', 'kb kb-del', 'TD:y|TD:two'],
-    ['new:3-3', 'kb kb-add', 'TD:y|TD:three'],
+    ['new:1-1', 'TH:name|TH:note'],
+    ['new:2-2', 'TD:x|TD:fine'],
+    ['old:3-3', 'TD:y|TD:two'],
+    ['new:3-3', 'TD:y|TD:three'],
   ]);
+  // 書き換えた行の旧は削除色、新は追加色で、変わらない行の色とも違う（色そのものはテーマが決める）。
+  const cellColor = (block) => evaluate(`getComputedStyle(document.querySelector('#rendered-doc tr[data-kemi-block="${block}"] > td')).backgroundColor`);
+  const [kept, removed, added] = [await cellColor('new:2-2'), await cellColor('old:3-3'), await cellColor('new:3-3')];
+  assert.equal(new Set([kept, removed, added]).size, 3, `the old row, the new row and an unchanged row have different backgrounds: ${[kept, removed, added]}`);
   console.log('PASS 表は見出し行が <th> で、書き換えの行が上下に並ぶ');
 
   // (7) SVG は切り替えありで既定が描画表示、PNG は切り替え無しで描画表示。
   await selectFile('art/icon.svg');
-  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc .kb-image img').length === 2`);
+  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc img').length === 2`);
   assert.deepEqual(
     await evaluate(`Array.from(document.querySelectorAll('#file-header .view-switch button')).map(b => b.textContent + ':' + b.getAttribute('aria-pressed'))`),
     ['Rendered:true', 'Source:false'],
@@ -234,37 +241,41 @@ try {
   await browser('press', 'r');
   await waitFor(`document.querySelector('#rendered-doc').hidden && document.querySelectorAll('[data-kemi-row]').length > 0`);
   await selectFile('art/photo.png');
-  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc .kb-image img').length === 2`);
+  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc img').length === 2`);
   assert.equal(await evaluate(`document.querySelectorAll('#file-header .view-switch').length`), 0);
   console.log('PASS SVG は切り替えありで既定が描画表示、PNG は切り替え無し');
 
   // (8) 画像は 2 列で左右、1 列で上下に並び、バイト数が付く。改名で同じバイト列なら 1 枚と "unchanged"。
-  await waitFor(`Array.from(document.querySelectorAll('#rendered-doc .kb-image img')).every(i => i.complete && i.naturalWidth === 1)`);
+  await waitFor(`Array.from(document.querySelectorAll('#rendered-doc img')).every(i => i.complete && i.naturalWidth === 1)`);
+  // 旧、新の順に、それぞれの側の名前（img の alt）とバイト数が付く。
   assert.deepEqual(
-    await evaluate(`Array.from(document.querySelectorAll('#rendered-doc .kb-image')).map(f => f.className + '/' + f.querySelector('figcaption').textContent)`),
-    ['kb-image kb-image-old/old69 B', 'kb-image kb-image-new/new69 B'],
+    await evaluate(`Array.from(document.querySelectorAll('#rendered-doc figure')).map(f => f.querySelector('img').alt + '/' + f.textContent)`),
+    ['old/old69 B', 'new/new69 B'],
   );
+  const figures = `Array.from(document.querySelectorAll('#rendered-doc figure')).map(f => f.getBoundingClientRect())`;
   await browser('press', 's');
-  await waitFor(`getComputedStyle(document.querySelector('#rendered-doc .kb-images')).flexDirection === 'row'`);
+  await waitFor(`(([old, now]) => Math.abs(old.top - now.top) < 1 && old.right <= now.left)(${figures})`);
   await browser('press', 'u');
-  await waitFor(`getComputedStyle(document.querySelector('#rendered-doc .kb-images')).flexDirection === 'column'`);
+  await waitFor(`(([old, now]) => old.bottom <= now.top && Math.abs(old.left - now.left) < 1)(${figures})`);
   await selectFile('art/renamed.png');
-  await waitFor(`${renderedShown} && document.querySelector('#rendered-doc .kb-image-same') !== null`);
-  assert.equal(await evaluate(`document.querySelector('#rendered-doc .kb-image-same figcaption').textContent`), 'unchanged69 B');
+  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc figure').length === 1`);
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('#rendered-doc figure')).map(f => f.querySelectorAll('img').length + '/' + f.textContent)`), ['1/unchanged69 B']);
   console.log('PASS 画像は 2 列で左右・1 列で上下に並び、改名で同じなら 1 枚と unchanged');
 
   // (9) 壊れた画像はバイト数だけの枠になる。
   await selectFile('art/broken.png');
-  await waitFor(`${renderedShown} && document.querySelector('#rendered-doc .kb-image-new .kb-image-broken') !== null`);
-  assert.equal(await evaluate(`document.querySelector('#rendered-doc .kb-image-new .kb-img-path').textContent`), '11 B');
-  assert.equal(await evaluate(`document.querySelector('#rendered-doc .kb-image-old img').naturalWidth`), 1);
+  // 新の側は img が枠に差し替わる（枠にも、添え書きにもバイト数が出る）。旧の側は img のまま。
+  const sides = `Array.from(document.querySelectorAll('#rendered-doc figure'))`;
+  await waitFor(`${renderedShown} && ${sides}.length === 2 && ${sides}[1].querySelector('img') === null`);
+  assert.equal(await evaluate(`${sides}[1].textContent.split('11 B').length - 1`), 2);
+  assert.equal(await evaluate(`${sides}[0].querySelector('img').naturalWidth`), 1);
   console.log('PASS 読み込みに失敗した側はバイト数だけの枠になる');
 
   // (10) symlink・無いファイルの相対パス画像は 404 で枠、レビュー対象とリポジトリの画像は出る。
   await selectFile('docs/images.md');
   await browser('press', 'r');
-  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc .rendered-body .kb-img-frame').length === 2 && Array.from(document.querySelectorAll('#rendered-doc .rendered-body img')).every(i => i.complete && i.naturalWidth === 1)`);
-  const images = await evaluate(`Array.from(document.querySelectorAll('#rendered-doc .rendered-body img, #rendered-doc .rendered-body .kb-img-frame')).map(e => e.tagName === 'IMG' ? 'img:' + e.getAttribute('src').replace(/review[/]f[0-9]+/, 'review/<id>').replace(/repo[/]f[0-9]+/, 'repo/<id>') : 'frame:' + e.title)`);
+  await waitFor(`${renderedShown} && document.querySelectorAll(${JSON.stringify(imageFrames)}).length === 2 && Array.from(document.querySelectorAll('#rendered-doc [data-kemi-block] img')).every(i => i.complete && i.naturalWidth === 1)`);
+  const images = await evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(`#rendered-doc [data-kemi-block] img, ${imageFrames}`)})).map(e => e.tagName === 'IMG' ? 'img:' + e.getAttribute('src').replace(/review[/]f[0-9]+/, 'review/<id>').replace(/repo[/]f[0-9]+/, 'repo/<id>') : 'frame:' + e.title)`);
   assert.deepEqual(images, ['img:api/image/review/<id>/new', 'frame:img/link.png', 'frame:img/missing.png', 'img:api/image/repo/<id>/new/docs/img/base.png']);
   console.log('PASS symlink と無いファイルの相対パス画像は枠になり、他は出る');
 
@@ -299,8 +310,8 @@ try {
   assert.equal(await evaluate(`document.querySelector('#file-header .view-rendered').getAttribute('aria-pressed')`), 'false');
   assert.equal(await evaluate(`document.querySelector('#rendered-doc').hidden`), true);
   await browser('press', 'r');
-  await waitFor(`${renderedShown} && document.querySelectorAll('#rendered-doc .rendered-body .kb-img-frame').length === 3 && Array.from(document.querySelectorAll('#rendered-doc .rendered-body img')).every(i => i.complete && i.naturalWidth === 1)`);
-  const restored = await evaluate(`Array.from(document.querySelectorAll('#rendered-doc .rendered-body img, #rendered-doc .rendered-body .kb-img-frame')).map(e => e.tagName === 'IMG' ? 'img:' + e.getAttribute('src').replace(/review[/]f[0-9]+/, 'review/<id>') : 'frame:' + e.title)`);
+  await waitFor(`${renderedShown} && document.querySelectorAll(${JSON.stringify(imageFrames)}).length === 3 && Array.from(document.querySelectorAll('#rendered-doc [data-kemi-block] img')).every(i => i.complete && i.naturalWidth === 1)`);
+  const restored = await evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(`#rendered-doc [data-kemi-block] img, ${imageFrames}`)})).map(e => e.tagName === 'IMG' ? 'img:' + e.getAttribute('src').replace(/review[/]f[0-9]+/, 'review/<id>') : 'frame:' + e.title)`);
   assert.deepEqual(restored, ['img:api/image/review/<id>/new', 'frame:img/link.png', 'frame:img/missing.png', 'frame:img/base.png']);
   await selectFile('docs/guide.md');
   await browser('press', 'r');
