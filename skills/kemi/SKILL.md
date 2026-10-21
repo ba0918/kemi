@@ -50,15 +50,15 @@ typed Code references where they help the person inspect evidence, not hashes as
 This requirement does not apply to self-inspection, `--digest`, or stored-result retrieval.
 
 The person will not read the diff to catch what the explanation gets wrong, so check it before
-sharing the URL. Unless the change has no structure or logic to show and its whole explanation
-is a sentence or two, a reader without the session first restates the change from the
-explanation alone, then compares it with the reviewed diff; fix every misreading and every
-mismatch, and report both results in the handoff, or that no such reader was available.
+sharing the URL: a reader who has seen neither the session nor the diff restates the change
+from the explanation alone, and only then compares it with the reviewed diff. Fix every
+misreading and every mismatch, and report both results, or what went unchecked, in the
+message that shares the URL.
 
 Before a new handoff, read [writing explanations](references/explanation-writing.md) for the
-content, tested diagram templates, and the evidence to show at handoff, and
-[explanation authoring](references/explanation.md#adding-an-explanation) for the format: write
-a separate JSON file with only `sections`, then pass `--explanation <file>`
+content, tested diagram templates, and the evidence to show at handoff, including how to run
+this check, and [explanation authoring](references/explanation.md#adding-an-explanation) for
+the format: write a separate JSON file with only `sections`, then pass `--explanation <file>`
 with the input mode. Startup validates and saves it before publishing the review; failure
 exits `2` before any URL. Do not fetch context for a review that has not started.
 For an already running or resumed review, read [the update procedure](references/explanation-update.md)

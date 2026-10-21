@@ -218,18 +218,27 @@ this reference:
 
 ## Before handing off
 
-Show this evidence in the handoff message rather than asserting the explanation is clear:
+Show this evidence in the message that shares the URL rather than asserting the explanation is
+clear:
 
 - **Every diagram drew.** The review page shows no `Diagram unavailable` in any block, or the
-  handoff says the page could not be opened to check. A failure the person reports from their
+  message says the page could not be opened to check. A failure the person reports from their
   own browser still needs fixing: their fonts decide.
-- **A cold reader understood it, and it matches the diff.** Required for every handoff except a
-  change with no structure or logic to show, whose whole explanation is a sentence or two. A reader
-  without the session, such as another agent given only the explanation file, first restated
-  the five points in [the bar](#the-bar) from the explanation alone. Only then did the same reader
-  read the reviewed diff and list what the explanation claims that the diff does not support, and
-  what the diff changes that the explanation leaves out. Each misreading and each mismatch was
-  fixed in the explanation or in the change. If no such reader was available, the handoff says so.
+- **A cold reader understood it, and it matches the diff.** A cold reader has seen neither the
+  session nor the diff, such as another agent or a fresh session. Ask in two steps:
+  1. Give only the explanation file, and ask for the five points in [the bar](#the-bar) in the
+     reader's own words. Withhold the diff, the repository, and the session.
+  2. Once the restatement is back, give the same reader the reviewed diff, and ask what the
+     explanation claims that the diff does not support, and what the diff changes that the
+     explanation leaves out. If you cannot send the same reader a second message, ask a
+     second cold reader for this comparison alone, giving the explanation before the diff.
+
+  Fix each misreading and each mismatch in the explanation or in the change. A fix that adds or
+  changes a claim, a number, a step, or a decision, not only the wording, goes to a new cold
+  reader for both steps again. If no cold reader was available, or a fix went unchecked, the
+  message says so. Skip the check only when the whole explanation is a sentence or two because
+  there is nothing more to say, such as a typo or a version bump; a small diff that changes a
+  rule or a behaviour does not qualify.
 
 The order matters: a reader who has seen the diff fills the explanation's gaps from it and can no
 longer tell you what the explanation alone conveys. The comparison matters because the person
