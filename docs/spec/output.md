@@ -7,7 +7,7 @@
 
 ## R-SUBMIT 送信と契約
 
-新しく作るresultとwaitの `kemi` は4（結果JSONの契約の版4）。版4の形と追加キー、説明の `versions` の規則は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4) を適用する。以下の例と規約は版2の時点の形で、R-EXPLANATION-RESULTがこれに優先する。
+新しく作るresultとwaitの `kemi` は4（結果JSONの契約の版4）。版4の形と追加キー、説明の `versions` の規則は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4) を適用する。以下の例と規約は版2の時点の形で（`page` の `points` の規則と、`kemi` の版の移り変わりだけは版4まで書き足した）、R-EXPLANATION-RESULTがこれに優先する。
 
 **要件**
 
@@ -122,7 +122,8 @@
   - `group_id` は `R-INPUT` の表の値。`group_title` はそのグループの `title`。
   - `comments` は作成順。`kemi` は結果 JSON の契約の版（数値）。ライブ改訂で `2` に上げた
     （`replies` に中身が入り、`page` と `messages` が増えた）。説明の改訂で `3`、説明へのコメントが
-    無い結果の `explanation.versions` を空にする改訂で `4` に上げた
+    無い結果の `explanation.versions` を空にし、矢印とペンの点を整数に丸めて間引く（座標を `12` と書く）改訂で
+    `4` に上げた
     （[R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4)）。新しく作る
     結果は `4`。読む側は契約の版を見て、知らない契約の版を推測で読まない。
 
