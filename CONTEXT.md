@@ -233,7 +233,8 @@ kemi は画面に出さず、検証もしない。結果の JSON にそのまま
 `[workspace.package] version` とタグ）。「セッション形式の版」は保存したセッションの
 ファイルの形式の番号で、読めない版のセッションは復元しない（`R-SESSION`）。どちらかを
 指すときは「製品の版」「セッション形式の版」と書き、「版」だけでは書かない。結果 JSON の
-`kemi` の数字は「結果 JSON の契約の版」と書く。
+`kemi` の数字は「結果 JSON の契約の版」と書く。`kemi explain --context` が出す JSON の `kemi` の
+数字は「context の契約の版」と書く。結果 JSON の契約の版とは別に数え、context の形を変えるときだけ進める。
 
 ## unix
 このリポジトリの文書（仕様、README、コードのコメント）で「Linux と macOS」を
