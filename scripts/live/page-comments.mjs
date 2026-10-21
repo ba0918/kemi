@@ -17,7 +17,6 @@ import {
   startKemi,
   withLiveReview,
   handInThePage,
-  handAndWait,
   startWaiting,
   pressHand,
   clickUncovered,
@@ -35,7 +34,6 @@ import {
   stageScale,
   settled,
   nextPageMessage,
-  eventually,
   wheelOn,
   clickInPane,
   chooseCompare,
@@ -49,12 +47,34 @@ import {
   chooseTool,
   reviewJson,
   holdRequests,
-  heldRequests,
   releaseRequests,
   addPageComment,
   isGlow,
   savePageCommentInThePage,
 } from './common.mjs';
+
+/**
+ * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
+ */
+async function handAndWait(kemi, dir, state) {
+  const waiting = startWaiting(kemi, dir, state);
+  await pressHand();
+  const { code, stdout } = await waiting;
+  assert.equal(code, 0, 'kemi wait returns what was handed');
+  return JSON.parse(stdout);
+}
+
+/** 式が真になるのを待つ。期限までに真にならなければ、message（何を確かめていたかと、そのときの値）で落とす。 */
+async function eventually(code, message) {
+  try {
+    await waitFor(code);
+  } catch (error) {
+    throw new Error(typeof message === 'function' ? await message() : message, { cause: error });
+  }
+}
+
+/** 預かった頼みの数。 */
+const heldRequests = `(window.__kemiHeld ?? []).length`;
 
 /**
  * 道具の既定と始め方の案内（R-PAGE-COMMENT）: 開いた直後の道具は要素で、ページを押すと場所が置かれる。道具を選び直した

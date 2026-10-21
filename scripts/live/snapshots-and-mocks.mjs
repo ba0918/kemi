@@ -37,7 +37,6 @@ import {
   waitForOption,
   notRecorded,
   setOpacity,
-  setOpacityAndWait,
   settled,
   nextPageMessage,
   clickInPane,
@@ -50,7 +49,6 @@ import {
   isLastBand,
   changeList,
   isBlue,
-  isYellow,
   shotUntil,
   waitForPixels,
   chooseTool,
@@ -59,6 +57,14 @@ import {
   releaseRequests,
   addPageComment,
 } from './common.mjs';
+
+/** 透かし具合を入れ、重ねた比べる相手がその透かし具合で描かれるのを待つ。 */
+async function setOpacityAndWait(value) {
+  await setOpacity(value);
+  await waitFor(`getComputedStyle(document.querySelector('${refPane} .lv-box')).opacity === '${value / 100}'`);
+}
+
+const isYellow = ([r, g, b]) => r > 200 && g > 200 && b < 80;
 
 /**
  * スナップショット（R-PAGE-SNAPSHOT、R-PAGE-VIEW、R-PAGE-REF）: 渡す前は開始時のものが既定の比べる相手。390 と 1280 で

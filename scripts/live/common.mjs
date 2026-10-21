@@ -98,17 +98,6 @@ export async function handInThePage(kemi, dir, state) {
   assert.equal((await waiting).code, 0, 'kemi wait returns what was handed');
 }
 
-/**
- * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
- */
-export async function handAndWait(kemi, dir, state) {
-  const waiting = startWaiting(kemi, dir, state);
-  await pressHand();
-  const { code, stdout } = await waiting;
-  assert.equal(code, 0, 'kemi wait returns what was handed');
-  return JSON.parse(stdout);
-}
-
 /** kemi wait を走らせる。終わったら終了コードと標準出力で解決する。 */
 export function startWaiting(kemi, dir, state) {
   return runKemi(binary, ['wait', kemi.id, '--timeout', '30'], { cwd: dir, env: isolatedEnvironment(state) });
@@ -227,12 +216,6 @@ export async function setOpacity(value) {
   await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
 }
 
-/** 透かし具合を入れ、重ねた比べる相手がその透かし具合で描かれるのを待つ。 */
-export async function setOpacityAndWait(value) {
-  await setOpacity(value);
-  await waitFor(`getComputedStyle(document.querySelector('${refPane} .lv-box')).opacity === '${value / 100}'`);
-}
-
 /** settled の待つ上限（ms）。 */
 const SETTLE_TIMEOUT = 5000;
 
@@ -282,24 +265,12 @@ export async function countPageMessages() {
 /** 数え始めてから届いた、その種類の知らせの数を読む式。 */
 export const seenMessages = (type) => `(window.__kemiSeen?.[${JSON.stringify(type)}] ?? 0)`;
 
-/** 数え始めてから最後に届いたスクロールの知らせの、ページの縦の位置を読む式。まだ無ければ undefined。 */
-export const lastScrollY = 'window.__kemiScrollY';
-
 /** action を行い、その後に動いているページからその種類の知らせが届くのを待つ。 */
 export async function nextPageMessage(type, action) {
   await countPageMessages();
   const before = await evaluate(seenMessages(type));
   await action();
   await waitFor(`${seenMessages(type)} > ${before}`);
-}
-
-/** 式が真になるのを待つ。期限までに真にならなければ、message（何を確かめていたかと、そのときの値）で落とす。 */
-export async function eventually(code, message) {
-  try {
-    await waitFor(code);
-  } catch (error) {
-    throw new Error(typeof message === 'function' ? await message() : message, { cause: error });
-  }
 }
 
 /**
@@ -363,11 +334,7 @@ export const isLastBand = ([r, g, b]) => r > 215 && g > 105 && g < 145 && b > 17
 /** 表示中のページの変化の一覧。無ければ null。 */
 export const changeList = `document.querySelector('#page-tree .lv-page[data-current="true"] .lv-changes')`;
 
-export const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
-export const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;
 export const isBlue = ([r, g, b]) => r < 90 && g < 130 && b > 180;
-export const isPurple = ([r, g, b]) => r > 150 && r < 210 && g > 140 && g < 190 && b > 195;
-export const isYellow = ([r, g, b]) => r > 200 && g > 200 && b < 80;
 
 /**
  * 枠を撮り直しながら、accept が真を返す画像になるのを待つ。期限を過ぎたら最後に撮った画像を返す（呼ぶ側が、何を
@@ -431,9 +398,6 @@ export async function holdRequests(...types) {
     return true;
   })()`);
 }
-
-/** 預かった頼みの数。 */
-export const heldRequests = `(window.__kemiHeld ?? []).length`;
 
 /** 枠を元に戻し、預かった頼み（type を渡せばその種類のものだけ）をページに送る。残りは次に送るまで預かったまま。 */
 export async function releaseRequests(type) {

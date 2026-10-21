@@ -38,7 +38,6 @@ import {
   notRecorded,
   setOpacity,
   countPageMessages,
-  lastScrollY,
   nextPageMessage,
   seenMessages,
   wheelOn,
@@ -46,15 +45,19 @@ import {
   chooseFromMockMenu,
   chooseCompare,
   changeList,
-  isRed,
-  isGreen,
   isBlue,
-  isPurple,
   shotUntil,
   waitForPixels,
   chooseReference,
   isGlow,
 } from './common.mjs';
+
+/** 数え始めてから最後に届いたスクロールの知らせの、ページの縦の位置を読む式。まだ無ければ undefined。 */
+const lastScrollY = 'window.__kemiScrollY';
+
+const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
+const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;
+const isPurple = ([r, g, b]) => r > 150 && r < 210 && g > 140 && g < 190 && b > 195;
 
 /** 見る対象だけの見比べ方でも、変化の一覧と見る対象の側の印が出る（R-PAGE-VIEW、R-PAGE-REF）。 */
 export async function changesShowWithThePageAlone(repository) {
