@@ -201,16 +201,24 @@ async function pressHand() {
 
 /**
  * 要素を押す。agent-browser は、押す点（要素の中心）が別の要素に覆われているとすぐに失敗するので、押す点で一番上に
- * あるのがその要素（かその中）になるのを待ってから押す。覆われたままなら、そのときの配置を添えて落とす。
+ * あるのがその要素（かその中）になるのを待ってから押す。覆われたままなら、そのときの配置を添えて落とす。最初に
+ * 覆われていたら、覆っていたものと待った時間を NOTE の行に出す（一時的に覆う原因を後で追えるように）。
  */
 async function clickUncovered(selector) {
   const element = `document.querySelector(${JSON.stringify(selector)})`;
   const center = `(() => { const r = ${element}.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`;
+  const layout = `JSON.stringify((() => { const c = ${center}; const top = document.elementFromPoint(c.x, c.y); const box = (e) => e && Object.fromEntries(['x', 'y', 'width', 'height'].map((k) => [k, Math.round(e.getBoundingClientRect()[k])])); return { center: c, element: box(${element}), top: top && top.outerHTML.slice(0, 120), topBox: box(top), scroll: [scrollX, scrollY] }; })())`;
+  const uncovered = `(() => { const e = ${element}; if (!e) return false; const c = ${center}; const top = document.elementFromPoint(c.x, c.y); return top !== null && e.contains(top); })()`;
+  const covered = await evaluate(`${element} !== null && !${uncovered}`) ? await evaluate(layout) : null;
+  const started = performance.now();
   try {
-    await waitFor(`(() => { const e = ${element}; if (!e) return false; const c = ${center}; const top = document.elementFromPoint(c.x, c.y); return top !== null && e.contains(top); })()`);
+    await waitFor(uncovered);
   } catch (error) {
-    const layout = await evaluate(`JSON.stringify((() => { const c = ${center}; const top = document.elementFromPoint(c.x, c.y); const box = (e) => e && Object.fromEntries(['x', 'y', 'width', 'height'].map((k) => [k, Math.round(e.getBoundingClientRect()[k])])); return { center: c, element: box(${element}), top: top && top.outerHTML.slice(0, 120), topBox: box(top), scroll: [scrollX, scrollY] }; })())`).catch(() => 'no layout');
-    throw new Error(`${selector} stayed covered at its click point: ${layout}`, { cause: error });
+    const stayed = await evaluate(layout).catch(() => 'no layout');
+    throw new Error(`${selector} stayed covered at its click point: ${stayed}`, { cause: error });
+  }
+  if (covered !== null) {
+    console.log(`NOTE ${selector} was covered at its click point and was clicked after ${Math.round(performance.now() - started)} ms: ${covered}`);
   }
   await browser('click', selector);
 }
