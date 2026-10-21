@@ -175,8 +175,9 @@ const changingWithEnd = () => changingPage().replace('<div class="tail"></div>',
 /**
  * 消えた要素の行（R-PAGE-VIEW、R-PAGE-DIFF、R-PAGE-SNAPSHOT）: スナップショットにあって今のページから消した、下の方の要素が
  * 一覧に出る。見る対象だけのときにその行を押すと並べる見比べ方になり、比べる相手の枠の中でその要素が見える位置にあって
- * 光っている。幅 390px では比べる相手の 1 枚に切り替わって同じになる。重ねて透かすときは見比べ方を変えず、その要素が
- * 見える位置で光り、見る対象と比べる相手の位置がそろったまま。
+ * 光っている（ずらした形の間も比べる相手をホイールで動かせ、見比べ方を変えると元の形に戻る）。幅 390px では比べる相手の
+ * 1 枚に切り替わって同じになる。重ねて透かすときは見比べ方を変えず、その要素が見える位置で光り、見る対象と比べる相手の
+ * 位置がそろったまま。
  */
 export async function removedRowsLeadToTheSnapshot(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));

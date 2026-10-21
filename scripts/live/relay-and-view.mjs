@@ -124,7 +124,10 @@ export async function fileReloadsWhenItsCssIsSaved(repository) {
   });
 }
 
-/** ページの見方（R-PAGE-VIEW、R-PAGE-PROXY）: 枠を拒むページが出て書き換えの表示が出る、表示幅の範囲、狭い画面。 */
+/**
+ * ページの見方（R-PAGE-VIEW、R-PAGE-PROXY）: 枠を拒むページが出て書き換えの表示が出る、表示幅の範囲（319 と 3841 を断って
+ * 範囲を出し、範囲の中の数字は受け付ける）、狭い画面。
+ */
 export async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
   await withLiveReview({ repository, page: 'framed.html', viewportAfter: ['1280', '800'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '800');
