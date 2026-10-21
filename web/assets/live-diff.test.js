@@ -326,6 +326,8 @@ test("a list of changes compared again is the same only when every field of ever
     was: "rgb(1, 1, 1)",
     is: "rgb(2, 2, 2)",
   };
+  // 変化に項目が増えたら、その項目も 1 つずつ変えて確かめる（比べ忘れを見逃さない）。
+  assert.deepEqual(Object.keys(others).sort(), Object.keys(changes[0]).sort());
   for (const [field, value] of Object.entries(others)) {
     const other = structuredClone(changes);
     other[0] = { ...other[0], [field]: value };
