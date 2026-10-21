@@ -17,6 +17,7 @@ import {
   undoPlace,
   chooseReference,
   chooseSnapshot,
+  commentShortName,
   compareHeading,
   consumeOverscroll,
   glowBox,
@@ -526,6 +527,14 @@ test("undo takes away the place added last", () => {
   draft = undoPlace(draft);
   assert.deepEqual(numbers(draft), [1]);
   assert.deepEqual(numbers(undoPlace(undoPlace(draft))), []);
+});
+
+test("the name of a saved comment written with emoji has no broken character", () => {
+  // 絵文字は 2 つの符号単位で書かれる。名前を切る位置が偶数でも奇数でも 1 文字を割らないよう、前に置く文字の数を変える。
+  for (const before of ["", "a"]) {
+    const name = commentShortName(`${before}${"😀".repeat(500)}`);
+    assert.doesNotMatch(name, /\p{Cs}/u, `a lone surrogate after ${JSON.stringify(before)}`);
+  }
 });
 
 test("a place at another URL or width is not added to a draft that has places", () => {
