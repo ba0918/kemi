@@ -37,6 +37,7 @@ import {
   waitForOption,
   notRecorded,
   setOpacity,
+  settled,
   countPageMessages,
   nextPageMessage,
   seenMessages,
@@ -439,7 +440,8 @@ export async function changeListFollowsThePage(repository) {
 
     await browser('set', 'viewport', '390', '800');
     await waitFor(`getComputedStyle(document.querySelector('#page-tree')).visibility === 'hidden'`);
-    await new Promise((done) => setTimeout(done, 500));
+    // 幅をまたいだ直後は上部バーの並びが変わるので、押すボタンが動かなくなってから押す。
+    await settled('#btn-tree');
     await browser('click', '#btn-tree');
     await waitFor(`document.querySelector('#page-tree').dataset.drawer === 'open' && ${visible('#page-tree .lv-changes')}`);
     console.log('PASS 幅 390px で開くと、変化の一覧が引き出しの中にある');

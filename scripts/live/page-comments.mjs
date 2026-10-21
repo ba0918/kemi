@@ -921,7 +921,8 @@ export async function switchingWhileSavingKeepsTheImageAroundThePlace(repository
       if (away === 'side') {
         await browser('set', 'viewport', '390', '844');
         await waitFor(visible('.lv-side'));
-        await new Promise((done) => setTimeout(done, 500));
+        // 幅をまたいだ直後は書く欄の置き場所が変わるので、押す保存のボタンが動かなくなってから書いて押す。
+        await settled('#live-compose .lv-compose-save');
       }
       await browser('fill', '#live-compose .lv-compose-body', `saved after switching the ${away}`);
       await holdRequests('image');
