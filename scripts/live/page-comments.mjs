@@ -47,6 +47,7 @@ import {
   chooseTool,
   reviewJson,
   holdRequests,
+  heldRequests,
   releaseRequests,
   addPageComment,
   isGlow,
@@ -72,9 +73,6 @@ async function eventually(code, message) {
     throw new Error(typeof message === 'function' ? await message() : message, { cause: error });
   }
 }
-
-/** 預かった頼みの数。 */
-const heldRequests = `(window.__kemiHeld ?? []).length`;
 
 /**
  * 道具の既定と始め方の案内（R-PAGE-COMMENT）: 開いた直後の道具は要素で、ページを押すと場所が置かれる。道具を選び直した

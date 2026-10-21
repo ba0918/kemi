@@ -41,6 +41,7 @@ import {
   countPageMessages,
   nextPageMessage,
   seenMessages,
+  lastScrollY,
   wheelOn,
   assignMockByPath,
   chooseFromMockMenu,
@@ -52,9 +53,6 @@ import {
   chooseReference,
   isGlow,
 } from './common.mjs';
-
-/** 数え始めてから最後に届いたスクロールの知らせの、ページの縦の位置を読む式。まだ無ければ undefined。 */
-const lastScrollY = 'window.__kemiScrollY';
 
 const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
 const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;

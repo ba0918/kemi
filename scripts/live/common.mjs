@@ -1,5 +1,7 @@
 // `--live` のブラウザ検査（scripts/test-live.mjs）の場面が共通に使う補助: kemi と試験用の開発サーバの起動、
 // 画面の操作と待ち、比べる相手と変化の一覧の読み方、画素の見方。
+// ここの補助が書くグローバルを読む式は、使う領域が 1 つだけでも、書く補助の隣に置く（グローバルの名前を直すときに
+// 1 つのファイルで済む）。
 
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -266,6 +268,9 @@ export async function countPageMessages() {
 /** 数え始めてから届いた、その種類の知らせの数を読む式。 */
 export const seenMessages = (type) => `(window.__kemiSeen?.[${JSON.stringify(type)}] ?? 0)`;
 
+/** 数え始めてから最後に届いたスクロールの知らせの、ページの縦の位置を読む式。まだ無ければ undefined。 */
+export const lastScrollY = 'window.__kemiScrollY';
+
 /** action を行い、その後に動いているページからその種類の知らせが届くのを待つ。 */
 export async function nextPageMessage(type, action) {
   await countPageMessages();
@@ -399,6 +404,9 @@ export async function holdRequests(...types) {
     return true;
   })()`);
 }
+
+/** 預かった頼みの数。 */
+export const heldRequests = `(window.__kemiHeld ?? []).length`;
 
 /** 枠を元に戻し、預かった頼み（type を渡せばその種類のものだけ）をページに送る。残りは次に送るまで預かったまま。 */
 export async function releaseRequests(type) {
