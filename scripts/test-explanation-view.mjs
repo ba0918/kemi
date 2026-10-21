@@ -102,7 +102,7 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   console.log('PASS: ordinary fetch failure preserves the complete original A and adjacent B/C');
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations')`);
    await evaluate(`document.body.style.zoom='1.5';true`);
-  console.log('PASS: sequence measured with the actual browser font');
+  console.log('PASS: the sequence diagram is drawn');
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Grid example')`);
   assert.equal(await evaluate(`(()=>{const svg=Array.from(document.querySelectorAll('svg[role="img"]')).find(e=>e.getAttribute('aria-label')==='Grid example');const label=Array.from(svg.querySelectorAll('text')).find(e=>e.textContent==='next').getBBox();const y=Number(svg.querySelector('line').getAttribute('y1'));return label.y>y||label.y+label.height<y})()`), true, 'a left-to-right grid edge label stays off its line');
   await browser('find', 'role', 'button', 'click', '--name', '長いラベル'.repeat(30));
