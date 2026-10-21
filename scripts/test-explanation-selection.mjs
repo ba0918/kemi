@@ -131,16 +131,17 @@ try {
   // 図の操作はポインタとフォーカスで出入りし、ホバーできない端末では常に出る。
   page=await attachToPage(browser);
   const {cdp}=page;
-  // Chrome の Emulation.setEmulatedMedia は hover を変えられない（調べた結果）。この環境のブラウザは hover: none
-  // なので、ホバーできる端末の見え方は (hover: none) の規則を一時的に外して確かめる。
-  assert.equal(await evaluate(`matchMedia('(hover: none)').matches`),true,'this browser reports a device without hover');
-  const hoverRule=`(()=>{for(const sheet of document.styleSheets){let rules;try{rules=Array.from(sheet.cssRules)}catch{continue}const index=rules.findIndex(r=>r instanceof CSSMediaRule && r.conditionText.replace(/\\s/g,'')==='(hover:none)' && r.cssText.includes('part-diagram-controls'));if(index>=0)return {sheet,index,text:rules[index].cssText};}return null})()`;
+  // Chrome の Emulation.setEmulatedMedia は hover を変えられない（調べた結果）。ブラウザが報告する hover によらず
+  // 確かめられるよう、図の操作の (hover: none) の規則の条件を書き換えて、ホバーできる端末（決して当たらない
+  // not all）とできない端末（いつも当たる all）の見え方にする。
+  const hoverRule=`(()=>{for(const sheet of document.styleSheets){let rules;try{rules=Array.from(sheet.cssRules)}catch{continue}const rule=rules.find(r=>r instanceof CSSMediaRule && r.conditionText.replace(/\\s/g,'')==='(hover:none)' && r.cssText.includes('part-diagram-controls'));if(rule)return rule;}return null})()`;
   const hover=async value=>{
-    if (value==='hover') assert.equal(await evaluate(`(()=>{const rule=${hoverRule};if(!rule)return false;window.hoverNoneRule=rule;rule.sheet.deleteRule(rule.index);return true})()`),true,'the hover: none rule for diagram controls exists');
-    else await evaluate(`(()=>{const rule=window.hoverNoneRule;if(rule){rule.sheet.insertRule(rule.text,rule.index);window.hoverNoneRule=null}return true})()`);
+    const media=value==='hover'?'not all':'all';
+    assert.equal(await evaluate(`(()=>{const rule=window.hoverNoneRule??=${hoverRule};if(!rule)return false;rule.media.mediaText=${JSON.stringify(media)};return true})()`),true,'the hover: none rule for diagram controls exists');
   };
   const tools=`document.querySelector('[aria-label="Example exchange view tools"]')`;
-  const opacity=async()=>{await evaluate(`new Promise(resolve=>setTimeout(resolve,200))`);return evaluate(`Number(getComputedStyle(${tools}).opacity)`);};
+  // 見え方の遷移が終わってから読む（決まった時間だけ待つと、描画が遅れたときに途中の値を読む）。
+  const opacity=()=>evaluate(`new Promise(done=>{const tools=${tools},deadline=performance.now()+3000;const settle=()=>{const value=Number(getComputedStyle(tools).opacity);if(tools.getAnimations().length===0 || performance.now()>deadline)done(value);else requestAnimationFrame(settle);};requestAnimationFrame(settle);})`);
   await evaluate(`${block('diagram')}.scrollIntoView({block:'center'});true`);
   await wait(`Boolean(${tools}) && !document.querySelector('[aria-label="Example exchange view tools"] [aria-label="Zoom in"]').closest('[hidden]')`);
   await hover('hover');await browser('mouse','move','5','5');await frames();
