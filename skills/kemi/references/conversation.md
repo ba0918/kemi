@@ -151,6 +151,7 @@ you do, the person's page shows that thread as being worked on. After `kemi wait
 page shows you as not responding once 10 minutes pass with neither `kemi wait` nor a
 `kemi reply` that writes something, unless your writes have already answered the hand-over.
 When the work takes longer, write partway: a progress `message` restarts the 10 minutes and
-leaves the threads shown as being worked on, while a reply in a thread marks that thread
+leaves the threads shown as being worked on (on a hand-over of messages only, any message
+answers it), while a reply in a thread marks that thread
 answered. The person can hand you comments only after you run `kemi wait <id>` in that review;
 a review where you never call it stays submit-only.

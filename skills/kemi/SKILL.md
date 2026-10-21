@@ -71,7 +71,7 @@ no result yet. If the environment cannot preserve the process and collect its re
 that limitation rather than inventing a verdict.
 
 Read stderr without the `kemi: comment …` lines, one per comment, which are for a person
-watching the terminal. Every other line is for you: the contract lines (`kemi: <url>`,
+watching the terminal. Every other line may matter to you: the contract lines (`kemi: <url>`,
 `kemi: review <id>`, `kemi: live <url>`, `kemi: resume with: …`), warnings such as a failed
 save or exposure on the LAN, and, when kemi exits `2`, the error. Any filter that drops the
 lines starting with `kemi: comment ` works. For example, in a POSIX shell (in PowerShell,

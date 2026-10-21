@@ -101,13 +101,13 @@
   make it outdated. Identical content returning under the same id makes it current again.
 - Top-level `explanation` is null when the review had no explanation, otherwise
   `{current_revision, versions}`. `versions` is `[]` when no comment targets the explanation;
-  its text is then what you wrote: your explanation file, or the last replacement kemi accepted
-  (the update printed success JSON and exited `0`). With at least one explanation comment,
-  `versions` holds every retained version in ascending revision order; read the retained
-  original when a comment targets an old version.
+  its text is then what you wrote: your explanation file, or the replacement kemi accepted whose
+  success JSON printed a `revision` equal to `current_revision`. With at least one explanation
+  comment, `versions` holds every retained version in ascending revision order; read the
+  retained original when a comment targets an old version.
 - `diff_display_version` is the review's display version at submit: a generation of the
-  review's metadata, not a guarantee of file bytes or of the explanation's correctness. It is
-  not an approval target.
+  review's metadata, not a guarantee of file bytes or of the explanation's correctness, nor that
+  the person's page had loaded that version. It is not an approval target.
 
 ## Fetching a result you missed
 
