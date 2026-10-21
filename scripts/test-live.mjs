@@ -157,6 +157,22 @@ async function pressHand() {
   await evaluate(`${button}.id`).then((id) => browser('click', `#${id}`));
 }
 
+/**
+ * 要素を押す。agent-browser は、押す点（要素の中心）が別の要素に覆われているとすぐに失敗するので、押す点で一番上に
+ * あるのがその要素（かその中）になるのを待ってから押す。覆われたままなら、そのときの配置を添えて落とす。
+ */
+async function clickUncovered(selector) {
+  const element = `document.querySelector(${JSON.stringify(selector)})`;
+  const center = `(() => { const r = ${element}.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`;
+  try {
+    await waitFor(`(() => { const e = ${element}; if (!e) return false; const c = ${center}; const top = document.elementFromPoint(c.x, c.y); return top !== null && e.contains(top); })()`);
+  } catch (error) {
+    const layout = await evaluate(`JSON.stringify((() => { const c = ${center}; const top = document.elementFromPoint(c.x, c.y); const box = (e) => e && Object.fromEntries(['x', 'y', 'width', 'height'].map((k) => [k, Math.round(e.getBoundingClientRect()[k])])); return { center: c, element: box(${element}), top: top && top.outerHTML.slice(0, 120), topBox: box(top), scroll: [scrollX, scrollY] }; })())`).catch(() => 'no layout');
+    throw new Error(`${selector} stayed covered at its click point: ${layout}`, { cause: error });
+  }
+  await browser('click', selector);
+}
+
 function stop(kemi) {
   return stopKemi(kemi, 'SIGINT');
 }
@@ -2034,7 +2050,7 @@ async function wideTargetsAreRevealedSideways(repository) {
 
     await evaluate(`${liveView}.scrollLeft = 0; true`);
     await waitFor(`${liveView}.scrollLeft === 0`);
-    await browser('click', '#cv-rail');
+    await clickUncovered('#cv-rail');
     await browser('click', `.cv-card[data-id="${far.id}"]`);
     await waitFor(`document.querySelector('#cv-thread .cv-go:not(.cv-page-width)') !== null`);
     await browser('click', '#cv-thread .cv-go');
@@ -3056,7 +3072,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await waitFor(`${body} === 'see#1'`);
     console.log('PASS 場所の一覧の番号を押すと、本文の入力位置に #n が入る');
 
-    await browser('click', '#cv-rail');
+    await clickUncovered('#cv-rail');
     await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
     await new Promise((done) => setTimeout(done, 300));
     assert.deepEqual(JSON.parse(await evaluate('JSON.stringify(window.__kemiErrors)')), [], 'the review page raises no error with a page comment');
@@ -3293,7 +3309,7 @@ async function savedCommentsAreQuietMarks(repository) {
     assert.equal(await evaluate(draftNumbers), '[1]', 'moving the pointer puts no place');
     console.log('PASS 要素の道具のまま c1 の印にポインタを乗せると、レビュー画面に c1 の短い名前が出る');
 
-    await browser('click', '#cv-rail');
+    await clickUncovered('#cv-rail');
     await browser('click', `.cv-card[data-id="${c1.id}"]`);
     await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
     const opened = await evaluate(`getComputedStyle(document.querySelector('#live-stage')).getPropertyValue('--lv-scale') || '1'`);
@@ -3749,7 +3765,7 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
     await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
     await browser('click', '.lv-widths button[data-width="1280"]');
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/rich.html') && document.querySelector('${livePane} .lv-frame').style.width === '1280px'`);
-    await browser('click', '#cv-rail');
+    await clickUncovered('#cv-rail');
     await browser('click', `.cv-card[data-id="${rich.id}"]`);
     await waitFor(`document.querySelector('#cv-thread .cv-page-width')?.textContent === '390px'`);
     await browser('click', '#cv-thread .cv-page-width');
@@ -3777,7 +3793,7 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
     kemi = await startKemi(repository, state, ['--resume', kemi.id]);
     await browser('open', kemi.url);
     await waitFor(`${commentCount('/other.html')} === '1' && ${commentCount('/rich.html')} === '1'`);
-    await browser('click', '#cv-rail');
+    await clickUncovered('#cv-rail');
     await waitFor(`document.querySelector('.cv-card[data-id="${other.id}"]') !== null && document.querySelector('.cv-card[data-id="${rich.id}"]') !== null`);
     console.log('PASS ページへのコメントを持つレビューを保留して復元すると、会話パネルとページのツリーにそのコメントが出る');
   } finally {
@@ -3887,7 +3903,7 @@ async function placesGlowFromTheListAndTheThread(repository) {
 
     await browser('click', '#live-compose .lv-compose-cancel');
     await wheel(-6000);
-    await browser('click', '#cv-rail');
+    await clickUncovered('#cv-rail');
     await browser('click', `.cv-card[data-id="${c1.id}"]`);
     await waitFor(`document.querySelector('#cv-thread .cv-go:not(.cv-page-width)') !== null`);
     const opened = await rightOf(300);
