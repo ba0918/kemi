@@ -7,7 +7,7 @@
 
 ## R-SUBMIT 送信と契約
 
-新result/waitの版3と追加キーは [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。以下の版2の形に優先する。
+新しく作るresultとwaitの `kemi` は4（結果JSONの契約の版4）。版4の形と追加キー、説明の `versions` の規則は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4) を適用する。以下の例と規約は版2の時点の形で、R-EXPLANATION-RESULTがこれに優先する。
 
 **要件**
 
@@ -105,10 +105,10 @@
     （`body`）の中の `#n` は、同じコメントの場所 `n` を指す（`#` の付かない数字は参照ではない）。
     場所を詰め直したときは本文の `#n` も書き換えてあるので、`#n` と `n` は食い違わない
     （[live.md](live.md#r-page-comment-コメントの場所)）。この 3 つ（連番、空の `elements`、本文の
-    `#n`）は、ライブ改訂の使い勝手の見直しで決めた契約の変更。契約の版 `2` はまだリリースして
-    いない（CHANGELOG の Unreleased）ので、版を上げず、版 `2` の定義そのものを直す。実装する
+    `#n`）は、ライブ改訂の使い勝手の見直しで決めた契約の変更。そのとき契約の版 `2` はまだリリース
+    していなかった（CHANGELOG の Unreleased）ので、版を上げず、版 `2` の定義そのものを直した。実装した
     コミットで `skills/kemi/SKILL.md`（`references/results.md` の「numbers may skip」を含む）、README、
-    CHANGELOG も同時に直す（[R-DIST](distribution.md#r-dist-名称と配布)）。`image` は
+    CHANGELOG も同時に直した（[R-DIST](distribution.md#r-dist-名称と配布)）。`image` は
     描き込みを重ねた画像（[live.md](live.md#r-page-comment-コメントの場所)）。submit の
     確定でセッションと一緒に消えるので、submit の後は `null` にする。`kemi wait` の応答でも、画像を
     作れなかったときと、セッションの上限で保存しなかったとき
@@ -118,8 +118,10 @@
   - `approval` は入力をそのまま返す。無い場合は `[]`。
   - `group_id` は `R-INPUT` の表の値。`group_title` はそのグループの `title`。
   - `comments` は作成順。`kemi` は結果 JSON の契約の版（数値）。ライブ改訂で `2` に上げた
-    （`replies` に中身が入り、`page` と `messages` が増えた）。読む側は契約の版を見て、知らない
-    契約の版を推測で読まない。
+    （`replies` に中身が入り、`page` と `messages` が増えた）。説明の改訂で `3`、説明へのコメントが
+    無い結果の `explanation.versions` を空にする改訂で `4` に上げた
+    （[R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4)）。新しく作る
+    結果は `4`。読む側は契約の版を見て、知らない契約の版を推測で読まない。
 
 **成功条件**
 
@@ -150,7 +152,7 @@
 
 ## R-RESULT 結果ファイル
 
-新結果と過去結果の区別は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。
+新結果と過去結果の区別は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4) を適用する。
 
 submit の結果を、エージェントが受け取り損ねても後から読めるように残す。
 
@@ -182,7 +184,7 @@ submit の結果を、エージェントが受け取り損ねても後から読�
   で場所を指定できる）の最新の結果ファイルの中身を stdout に出して終わる。終了コードは
   元の verdict と同じ（承認 0 / 変更要求 1）。該当する結果が無ければ、stdout に何も
   出さず終了コード 2。`--any` を付けると場所に関係なく最新の結果を出す。結果ファイルの中身は
-  書き換えずに出す（ライブ改訂の前に書いた、結果 JSON の契約の版 1 の結果もそのまま）。
+  書き換えずに出す（ライブ改訂の前に書いた結果 JSON の契約の版 1 の結果も、版 4 より前の版 2・3 の結果もそのまま）。
 
 **成功条件**
 

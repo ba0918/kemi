@@ -1,6 +1,7 @@
 # EXPLANATIONに伴う既存契約の改訂
 
 - Status: 承認済み。承認対象は `55ba772` の三文書の契約本文と、その後に加えた説明コメントの `selection`（[説明](explanation.md#r-explanation-comment-対象と更新後の会話)）。
+  resultとwaitの契約の版4（説明へのコメントがないresultの `versions` を空にする）は、2026-10-20の利用者の判断で加えた（[R-EXPLANATION-RESULT](#r-explanation-result-resultとwaitの版4)）。
 - 承認対象: [説明](explanation.md)、[共通パーツ](content-parts.md)、この文書。
 - この文書は変更する契約だけを持つ。対応する正典節からこの文書へリンクし、改訂部分の正典を一箇所に保つ。
 
@@ -19,6 +20,9 @@
 | agent R-AGENT-WRITE | body、variants、applied | bodyかpartsの互換入力を追加。既存の案の対象制限は維持 |
 | agent R-AGENT-HAND | 渡す時点の値をイベントに保存 | 新contentの保存上限を全体で確認し、拒否時は未渡し状態を維持 |
 | CONTEXT コメント/quote/outdated/見方/版 | 説明対象の定義なし | explanation.mdの用語候補と対象別の読みを追加 |
+
+この表は説明の承認セットを決めた時点の対応で、表の「版3」はresult・waitの契約の版、R-SESSIONの行の「版3」「版4」はセッション形式の版を指す。
+新しく作るresultとwaitの契約の版は、その後4に進めた（[R-EXPLANATION-RESULT](#r-explanation-result-resultとwaitの版4)）。
 
 見た、File/Pageの対象保存、resolve、handのまとめ方と再配達、submitの一回性、approvalのbytes/identity、suggestionの適用主体は現行正典に従う。
 説明が追加されても、レビューの承認対象を説明の文字列へ置き換えない。
@@ -94,16 +98,23 @@
 
 - 部分更新後に不正な参照を見つける。保存失敗でも新版を成功応答する。context取得で返事済みになる。
 
-## R-EXPLANATION-RESULT resultとwaitの版3
+## R-EXPLANATION-RESULT resultとwaitの版4
 
 ### 要件
 
-- 新しく生成するsubmitの結果とwaitの外側は常に `kemi:3`。説明がないレビューも、版2・3のセッションを復元したレビューも同じ。
+- 新しく生成するsubmitの結果と、waitの外側は常に `kemi:4`（結果JSONの契約の版4）。説明がないレビューも同じ。
+  契約の版3以前のkemiが保存したセッション（セッション形式の版2・3・4）を復元したレビューも、新しく作る結果は版4。
+  結果JSONの契約の版はセッション形式の版（[R-EXPLANATION-SESSION](#r-explanation-session-保存と復元)）とは別に数え、この変更でセッション形式は変えない。
   digest/manifestの契約の版はこの変更で進めない。
-  過去resultを `--result` で読む場合は保存時の契約版と元文字列のまま出す。再シリアライズして版3にしない。
+  過去resultを `--result` で読む場合は保存時の契約版と元文字列のまま出す（版1・2・3の結果も）。再シリアライズして版4にしない。
+- 版3から版4で変わるのは、下の `versions` を空にする条件だけ。ほかのキー・形・null規則は版3と同じ。
 - resultの従来top-levelキーを残し、`diff_display_version` と `explanation` を必ず追加する。
-  explanationなしはnull。ありは `{current_revision,versions}`、versionsは説明版の保存値を版番号の昇順で並べる。
-  現在版と、コメント・引用・未配達イベントが参照する旧版を含める。説明を参照するresultが単独で読めること。
+  explanationなしはnull。ありは `{current_revision,versions}` で、どちらのキーも必ず出す。
+  resultの `comments` に `target_type` が `explanation` のコメントが一つもなければ、versionsは `[]`（キーを省略せず空配列にする。返信のvariantsなどを省略せず `[]` / `null` にする既存規則と同じ）。
+  一つ以上あれば版3と同じく、versionsは説明版の保存値を版番号の昇順で並べ、現在版と、コメント・引用・未配達イベントが参照する旧版を含める。説明を参照するresultが単独で読めること。
+  versionsを空にするのは、説明はエージェント自身が書いて手元に持っており、説明へのコメントがなければresultを読むのに説明の本文が要らないため。
+  current_revisionは空のときも残すので、どの説明版の時点で終えたレビューかは分かる。
+  承認の対象はmanifestの `approval` をそのまま返すもので、説明の文字列ではない（「現行との対応」の「レビューの承認対象を説明の文字列へ置き換えない」）。versionsを空にしても承認の意味は変わらない。
   resultのdiff_display_versionはsubmit時のサーバ現在メタデータ版で、全画面がその版を取り込んだという意味ではない。
 - コメントは既存キーを維持し、`target_type` と `explanation` を必ず追加する。
   target_typeは `file` / `page` / `explanation`。
@@ -119,9 +130,9 @@
   返信のvariants/chosen/appliedの省略でなく[]/null/nullにする既存規則は維持する。
   Page案は従来の許可対象と適用契約のまま。説明対象へ案を追加できない。
 - waitのeventsの型、順、handed/chosen/submitted、削除コメントはidのみという契約は維持する。
-  handed内のコメント・返信・発言は版3のresultと同じ形。
+  handed内のコメント・返信・発言は版4のresultと同じ形。
   Page imageがwaitのみ保存画像のパスで、submitはnullという既存の違いは維持する。
-  submitted.resultも版3。過去の未配達イベントは旧bodyをplainとして版3の形で出す。
+  submitted.resultも版4（versionsの規則も上と同じ）。過去の未配達イベントは旧bodyをplainとして版4の形で出す。
 - handで新contentを含むイベントを保存する場合は保存予定の追加部分の上限を先に確認する。
   超過時は全体を拒否し、未渡しのコメント・返信・発言、配達済みの位置を変更しない。
   人間には理由を表示する。受理したイベントは従来どおり受け取り確認まで保持する。
@@ -129,10 +140,11 @@
 ### JSON値の例・提案
 
 説明コメント一つを含む架空のresult。これは完成したJSON値であり、schemaの型記法ではない。
+説明へのコメントがあるので、versionsは版3と同じく説明版の保存値を持つ。
 
 ```json
 {
-  "kemi": 3,
+  "kemi": 4,
   "title": "更新のレビュー例",
   "verdict": "changes_requested",
   "approval": [],
@@ -154,16 +166,45 @@
 }
 ```
 
+説明（現在版2）はあるが、説明へのコメントがない架空のresult。Fileのコメントだけがあるので、versionsは `[]`。
+
+```json
+{
+  "kemi": 4,
+  "title": "更新のレビュー例",
+  "verdict": "changes_requested",
+  "approval": [],
+  "diff_display_version": "01K00000000000000000000000:2",
+  "explanation": {"current_revision": 2, "versions": []},
+  "comments": [{
+    "id": "c1", "target_type": "file",
+    "group_id": "g1", "group_title": "入力の検証", "path": "src/a.rs", "side": "new",
+    "start_line": 12, "end_line": 12, "quote": ["let n = input.len();"], "body": "空の入力を先に弾いてほしい。",
+    "page": null, "explanation": null,
+    "replies": [], "resolved": false, "outdated": false, "suggestion": null
+  }],
+  "messages": []
+}
+```
+
 ### 成功条件
 
-- File/Pageのみ、説明コメントあり、説明なし、旧セッション復元の各新result/waitがすべて版3を返す。
-- 保存された古いresult版1・2の `--result` は元文字列とverdict終了コードを保つ。
+- File/Pageのみ、説明コメントあり、説明なし、旧セッション復元の各新result/waitがすべて版4を返す。
+- 説明（現在版2）があり、Fileのコメント一つだけのレビューをsubmitすると、resultのexplanationは `{"current_revision":2,"versions":[]}` になる。
+  同じレビューの `kemi wait` の外側と `submitted.result` の `kemi` も4で、`submitted.result` のexplanationも同じ値になる（e2e）。
+- 説明版1のブロックへ説明コメントを一つ付け、その後 `kemi explain` で説明を版2にしてからsubmitすると、versionsは版1と版2の保存値をこの順に持つ（e2e）。
+  別のレビューで同じ手順のあと、submitの前にその説明コメントを消し、説明へのコメントがない状態でsubmitすると、versionsは `[]` になる（e2e）。
+- 説明がないレビューのresultはexplanationがnullで、`kemi` は4（e2e）。
+- 結果JSONの契約の版3のkemiが保存したセッションを復元してsubmitすると、resultの `kemi` は4で、説明へのコメントがなければversionsは `[]`（e2e）。
+- 保存された古いresult版1・2・3の `--result` は元文字列とverdict終了コードを保つ。説明の全文をversionsに持つ版3のresultも、そのまま出る。
 - 図付き返信と旧plain返信が上記null規則で区別でき、result単独から旧図の全データを読める。
 
 ### 反例
 
 - explanationを架空のファイルpathとして出す。partsの文章をbodyへ平坦化して図を失う。
-- 説明なしの新waitだけ版2を返す。--resultで古い結果を書き換える。
+- 説明なしの新waitだけ版3を返す。--resultで古い結果を書き換える。
+- 説明へのコメントがないのに、versionsに説明の全文が入る。versionsのキーを省く、または説明があるのにexplanationをnullにする。
+- 説明へのコメントがあるのに、そのコメントが参照する旧版がversionsにない。
 
 ## R-EXPLANATION-SESSION 保存と復元
 

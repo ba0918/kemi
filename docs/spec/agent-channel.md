@@ -48,7 +48,7 @@
 
 ## R-AGENT-HAND 渡す
 
-新contentの保存容量と全体拒否は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。
+新contentの保存容量と全体拒否は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4) を適用する。
 
 **要件**
 
@@ -184,7 +184,7 @@ explain/contextは [R-EXPLANATION-CLI](explanation-contracts.md#r-explanation-cl
 
 ## R-AGENT-EVENTS wait が返す JSON
 
-新waitの版3とcontent出力は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版3) を適用する。以下の版2の形に優先する。
+新しく作るwaitの `kemi` は4（結果JSONの契約の版4）。版4の形とcontent出力は [R-EXPLANATION-RESULT](explanation-contracts.md#r-explanation-result-resultとwaitの版4) を適用する。以下の例は版2の時点の形で、R-EXPLANATION-RESULTがこれに優先する。
 
 **要件**
 
