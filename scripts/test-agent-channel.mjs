@@ -92,7 +92,13 @@ function startKemi(dir, state, source = ['--worktree']) {
   return launchKemi(binary, { cwd: dir, state, args: source, review: true });
 }
 
-/** サーバが、kemi wait が待っている（待機中）と返すのを待つ。 */
+/**
+ * 期限切れで返る（終了コード 3）ことまで確かめる kemi wait の期限（秒）。待っている間に画面が待機中になることを
+ * 見るので、プロセスの起動・通知の配達・ブラウザへの問い合わせが遅れても、見る前に返ってしまわない長さにする。
+ */
+const OBSERVED_WAIT = 8;
+
+/** サーバが、kemi wait が待っている（待機中）と返すのを待つ。画面より先に見て、遅れがサーバと画面のどちらかを分ける。 */
 function serverWaiting(url) {
   return until(async () => (await getJson(url, 'api/review')).agent?.status === 'waiting', { what: 'api/review reporting the agent as waiting' });
 }
@@ -255,7 +261,8 @@ try {
   console.log('PASS ページの起動中に kemi wait と kemi reply の発言が来ても、待機中と押せる「Hand to agent」と発言が出る');
 
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
-  const waiting = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '2']);
+  const waiting = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', String(OBSERVED_WAIT)]);
+  await serverWaiting(kemi.url);
   await waitFor(statusIs('waiting'));
   assert.equal(await evaluate(visible('#btn-hand')), true);
   const waited = await waiting;
@@ -489,7 +496,8 @@ try {
   })()`);
   await evaluate(`Array.from(document.querySelectorAll('#tree button.file')).find(b => b.textContent.includes('b.txt')).click(); true`);
   await waitFor(`!document.querySelector('#overlay').hidden`);
-  const failedWait = agentCommand(fileFixture, fileState, ['wait', fileKemi.id, '--timeout', '1']);
+  const failedWait = agentCommand(fileFixture, fileState, ['wait', fileKemi.id, '--timeout', String(OBSERVED_WAIT)]);
+  await serverWaiting(fileKemi.url);
   await waitFor(statusIs('waiting'));
   await waitFor(`Array.from(${list}.querySelectorAll('.cv-card')).map(c => c.dataset.id).join(',') === 'c21,c22'`);
   assert.equal(await evaluate(`document.querySelector('#cv-newer').hidden`), true, 'nothing arrived, so no arrival mark');
