@@ -193,8 +193,8 @@ async function finishStroke() {
     renderCompose();
     return;
   }
-  const points = kind === "element" ? [] : strokePoints(kind, Array.isArray(answer.points) ? answer.points : []);
-  // 間引くと最後の 2 点が重なる矢印は、押しただけと同じく場所にしない（R-PAGE-COMMENT）。
+  const points = kind === "element" ? [] : strokePoints(Array.isArray(answer.points) ? answer.points : []);
+  // 間引くと最後の 2 点が重なる矢印とペンは、押しただけと同じく場所にしない（R-PAGE-COMMENT）。
   if (points === null) {
     return;
   }

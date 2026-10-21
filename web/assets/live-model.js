@@ -601,12 +601,12 @@ export function placeSummary(place) {
 /**
  * 矢印とペンの、保存する点（R-PAGE-COMMENT の「矢印とペンの点」）。描いている間の点（文書の座標）を最も近い整数に
  * 丸め、続けて並んだ同じ点を 1 つにまとめ、許容 1 CSS ピクセルで間引く。間引いた後の点が 2 つ未満か、最後の 2 点が
- * 同じ点になる矢印は、先の三角の向きが決まらないので場所にせず、null を返す。
- * @param {"arrow" | "pen"} kind
+ * 同じ点になる線は場所にせず、null を返す（矢印は先の三角の向きが決まらず、ペンは 1 つの点に重なって線が出ない）。
+ * 手順も場所にしない条件も、矢印とペンで同じ。
  * @param {{ x: number, y: number }[]} points 描いている間の点（文書の座標）
  * @returns {{ x: number, y: number }[] | null}
  */
-export function strokePoints(kind, points) {
+export function strokePoints(points) {
   /** @type {{ x: number, y: number }[]} */
   const rounded = [];
   for (const point of points) {
@@ -617,11 +617,9 @@ export function strokePoints(kind, points) {
     }
   }
   const kept = thinPoints(rounded);
-  if (kind === "arrow") {
-    const [from, to] = kept.slice(-2);
-    if (!from || !to || (from.x === to.x && from.y === to.y)) {
-      return null;
-    }
+  const [from, to] = kept.slice(-2);
+  if (!from || !to || (from.x === to.x && from.y === to.y)) {
+    return null;
   }
   return kept;
 }
