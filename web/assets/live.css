@@ -893,7 +893,7 @@ body[data-live-view="page"] #menu-comments {
 }
 
 /* ---- モック（live-compare.md の R-PAGE-MOCK）: パネルと、読み直す・外すのメニュー ----
-   開いた操作のすぐ下に開く（位置は features/live.js が開くときに入れる）。 */
+   開いた操作のすぐ下に開く（位置は features/live/mock.js が開くときに入れる）。 */
 .lv-popover:popover-open {
   position: fixed;
   inset: auto;
