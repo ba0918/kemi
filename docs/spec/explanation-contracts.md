@@ -116,7 +116,8 @@
 - resultの従来top-levelキーを残し、`diff_display_version` と `explanation` を必ず追加する。
   explanationなしはnull。ありは `{current_revision,versions}` で、どちらのキーも必ず出す。
   resultの `comments` に `target_type` が `explanation` のコメントが一つもなければ、versionsは `[]`（キーを省略せず空配列にする。返信のvariantsなどを省略せず `[]` / `null` にする既存規則と同じ）。
-  一つ以上あれば版3と同じく、versionsは説明版の保存値を版番号の昇順で並べ、現在版と、コメント・引用・未配達イベントが参照する旧版を含める。説明を参照するresultが単独で読めること。
+  一つ以上あれば版3と同じく、versionsは保持中の説明版をすべて（少なくとも現在版と、コメント・引用・未配達イベントが参照する旧版を含む）、保存値のまま版番号の昇順で並べる。説明を参照するresultが単独で読めること。
+  どの旧版を保持しているかは、容量のために無参照の旧版だけを古い順に消す規則（[R-EXPLANATION-SESSION](#r-explanation-session-保存と復元)）で決まる。resultを作るときに、参照されていない旧版を除くことはしない。
   versionsを空にするのは、説明はエージェント自身が書いて手元に持っており、説明へのコメントがなければresultを読むのに説明の本文が要らないため。
   current_revisionは空のときも残すので、どの説明版の時点で終えたレビューかは分かる。
   承認の対象はmanifestの `approval` をそのまま返すもので、説明の文字列ではない（「現行との対応」の「レビューの承認対象を説明の文字列へ置き換えない」）。versionsを空にしても承認の意味は変わらない。
