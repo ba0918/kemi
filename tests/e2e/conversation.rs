@@ -140,7 +140,7 @@ fn wait_and_reply_for_an_unknown_id_exit_2() {
         vec!["reply", "01HF7YAT00ZZZZZZZZZZZZZZZZ"],
         vec!["wait", "../../etc/passwd"],
     ] {
-        // kemi wait は stdin を読まない。
+        // kemi wait は stdin を読まない（reply は読むが、ここでは id を断ることだけを見る）。
         let output = run_command(
             kemi_command(&dir.path, &state.path).args(&args),
             Some(Input::MayBeUnread("{\"writes\":[]}")),
