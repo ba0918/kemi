@@ -8,6 +8,11 @@ use std::collections::HashSet;
 
 pub const MAX_REVISION: u64 = 9_007_199_254_740_991;
 
+/// `kemi explain --context` が出す JSON の契約の版（`kemi`。R-EXPLANATION-CLI）。結果 JSON の
+/// 契約の版とは別に数え、context の形を変えるときだけ進める。結果の版と一緒に進めると、
+/// 形の変わらない context を読むスキルまで止まる。
+pub const CONTEXT_CONTRACT_VERSION: u32 = 3;
+
 // 説明の容量の上限（content-parts.md の上限の表）。更新時と保存・復元時で同じ値を使う。
 /// 保持中の説明の版数。
 pub(crate) const MAX_RETAINED_VERSIONS: usize = 128;

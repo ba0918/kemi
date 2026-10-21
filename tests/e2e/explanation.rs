@@ -125,7 +125,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
         String::from_utf8_lossy(&wait.stderr)
     );
     let handed: serde_json::Value = serde_json::from_slice(&wait.stdout).unwrap();
-    assert_eq!(handed["kemi"], 3);
+    assert_eq!(handed["kemi"], 4);
     assert_eq!(
         handed["events"][0]["comments"][0]["comment"]["explanation"]["quote"],
         serde_json::json!(quote)
@@ -143,7 +143,7 @@ async fn version_four_process_resume_uses_frozen_d1_and_keeps_d2_explanation_par
     let (status, text) = kemi.wait();
     assert!(status.success());
     let result: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(result["kemi"], 3);
+    assert_eq!(result["kemi"], 4);
     assert_eq!(result["diff_display_version"], format!("{id}:1"));
     assert_eq!(
         result["comments"][0]["explanation"]["quote"],
@@ -294,10 +294,10 @@ async fn initial_explanation_and_cli_context_update_roundtrip() {
     kemi.post("api/submit", serde_json::json!({"verdict":"approved"}))
         .await;
     let (_, result) = kemi.wait();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&result).unwrap()["explanation"]["current_revision"],
-        2
-    );
+    let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    // context の契約の版は、結果の契約の版が進んでも一緒には進まない（R-EXPLANATION-CLI）。
+    assert_eq!(result["kemi"], 4);
+    assert_eq!(result["explanation"]["current_revision"], 2);
 }
 
 #[tokio::test]
@@ -901,7 +901,7 @@ async fn cli_context_does_not_wait_for_stdin_and_parts_roundtrip_through_all_tar
     );
     assert_eq!(waited.status.code(), Some(0));
     let waited: serde_json::Value = serde_json::from_slice(&waited.stdout).unwrap();
-    assert_eq!(waited["kemi"], 3);
+    assert_eq!(waited["kemi"], 4);
     let selection = serde_json::json!({"text":"plan","occurrence":0});
     for handed in waited["events"][0]["comments"].as_array().unwrap() {
         assert_eq!(handed["comment"]["replies"][0]["parts"], parts);

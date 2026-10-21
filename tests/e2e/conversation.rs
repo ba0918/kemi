@@ -20,7 +20,7 @@ async fn wait_with_the_largest_timeout_returns_the_comment_handed_while_it_waite
     let (code, stdout, stderr) = finish_agent(waiting).await;
     assert_eq!(code, Some(0), "{stderr}");
     let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(answer["kemi"], 3);
+    assert_eq!(answer["kemi"], 4);
     assert_eq!(answer["review"], id.as_str());
     assert_eq!(answer["events"][0]["type"], "handed");
     assert_eq!(
@@ -314,7 +314,7 @@ async fn a_handed_comment_has_the_same_keys_as_in_the_submit() {
     let (_, stdout) = kemi.wait();
 
     let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(answer["kemi"], 3);
+    assert_eq!(answer["kemi"], 4);
     assert_eq!(answer["review"], id.as_str());
     let handed = &answer["events"][0]["comments"][0]["comment"];
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();

@@ -7,12 +7,11 @@ use axum::{
 };
 use kemi_core::domain::agent::{AgentEvent, HandedComment};
 use kemi_core::domain::explanation::{
-    CodeReferenceEntry, ExplanationDocument, ExplanationHistory, ExplanationSection,
-    ExplanationVersion, ReferenceContext, ReferenceUnit, RetainedVersions, history_candidate,
-    validate_update, validate_version,
+    CONTEXT_CONTRACT_VERSION, CodeReferenceEntry, ExplanationDocument, ExplanationHistory,
+    ExplanationSection, ExplanationVersion, ReferenceContext, ReferenceUnit, RetainedVersions,
+    history_candidate, validate_update, validate_version,
 };
 use kemi_core::domain::review::{Comment, CommentTarget};
-use kemi_core::domain::submit::RESULT_CONTRACT_VERSION;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -103,7 +102,7 @@ pub(crate) async fn context(
     let session = state.session.lock().expect("session poisoned");
     let display = session.state.display.as_ref().expect("display assigned");
     Ok(Json(
-        json!({"kemi":RESULT_CONTRACT_VERSION,"review":state.display_id,"diff_display_version":display.current,
+        json!({"kemi":CONTEXT_CONTRACT_VERSION,"review":state.display_id,"diff_display_version":display.current,
         "explanation_revision":session.state.explanation.as_ref().map_or(0, |h| h.current_revision),
         "explanation":session.state.explanation.as_ref().and_then(|h| h.current()),
         "references":{"code":code,"pages":pages.iter().map(|url| json!({"url":url})).collect::<Vec<_>>()}}),

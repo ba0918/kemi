@@ -1,8 +1,8 @@
 //! submit の結果の契約（R-SUBMIT / R-RESULT）。
 
-/// 結果 JSON の契約の版（`kemi`）。wait の出力（R-AGENT-EVENTS）と説明の context も
-/// 同じ版を名乗るので、片方だけ上げると契約が食い違う。
-pub const RESULT_CONTRACT_VERSION: u32 = 3;
+/// 結果 JSON の契約の版（`kemi`）。wait の出力（R-AGENT-EVENTS）も同じ版を名乗るので、
+/// 片方だけ上げると契約が食い違う。説明の context は別に数える（`CONTEXT_CONTRACT_VERSION`）。
+pub const RESULT_CONTRACT_VERSION: u32 = 4;
 
 /// submit で示す判断。終了コードは承認 0 / 変更要求 1（R-SUBMIT）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

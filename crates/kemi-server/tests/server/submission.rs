@@ -88,7 +88,7 @@ async fn submit_schema_follows_contract() {
     assert_eq!(response.status(), 200);
     let document = server.finish().await;
 
-    assert_eq!(document["kemi"], 3);
+    assert_eq!(document["kemi"], 4);
     assert_eq!(document["title"], "テストのレビュー");
     assert_eq!(document["messages"], json!([]));
     assert_eq!(document["verdict"], "approved");
@@ -279,7 +279,7 @@ async fn submit_hands_the_result_to_the_waiting_request_and_then_stops() {
     let submitted = events.last().unwrap();
     assert_eq!(submitted["type"], "submitted");
     assert_eq!(submitted["result"]["verdict"], "changes_requested");
-    assert_eq!(submitted["result"]["kemi"], 3);
+    assert_eq!(submitted["result"]["kemi"], 4);
     let document = server.page.finish().await;
     assert_eq!(document["verdict"], "changes_requested");
 }

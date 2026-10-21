@@ -5,7 +5,7 @@ fn explanation_sections() -> Value {
 }
 
 #[tokio::test]
-async fn new_result_without_explanation_has_version_three_and_explicit_content_keys() {
+async fn new_result_without_explanation_has_version_four_and_explicit_content_keys() {
     let server = TestServer::start().await;
     let review: Value = server.get("api/review").await.json().await.unwrap();
     assert!(review["diff_display_version"].as_str().is_some());
@@ -18,7 +18,7 @@ async fn new_result_without_explanation_has_version_three_and_explicit_content_k
         .await;
     assert!(response.status().is_success());
     let result = server.finish().await;
-    assert_eq!(result["kemi"], 3);
+    assert_eq!(result["kemi"], 4);
     assert_eq!(
         result["diff_display_version"],
         review["diff_display_version"]
@@ -129,7 +129,7 @@ async fn restored_explanation_target_keeps_its_complete_quote_and_parts_in_wait_
             .is_success()
     );
     let result = server.page.finish().await;
-    assert_eq!(result["kemi"], 3);
+    assert_eq!(result["kemi"], 4);
     assert_eq!(
         result["explanation"]["versions"].as_array().unwrap().len(),
         2

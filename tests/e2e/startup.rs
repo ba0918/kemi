@@ -244,7 +244,8 @@ async fn exit_code_approved_is_0_and_stdout_json() {
     let (status, stdout) = kemi.wait();
     assert_eq!(status.code(), Some(0));
     let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(document["kemi"], 3);
+    assert_eq!(document["kemi"], 4);
+    assert!(document.get("explanation").unwrap().is_null());
     assert_eq!(document["verdict"], "approved");
     assert_eq!(document["comments"][0]["body"], "ここ直して");
     assert_eq!(document["comments"][0]["page"], serde_json::Value::Null);

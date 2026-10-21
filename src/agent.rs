@@ -387,7 +387,7 @@ mod tests {
         let printed: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(
             printed,
-            serde_json::json!({ "kemi": 3, "review": "01K5", "events": answer["events"] })
+            serde_json::json!({ "kemi": 4, "review": "01K5", "events": answer["events"] })
         );
     }
 

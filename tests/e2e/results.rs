@@ -103,6 +103,17 @@ async fn result_flag_prints_past_contract_versions_without_reserializing() {
     let output = run_with_state(&dir.path, &["--result"], &state.path);
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(String::from_utf8(output.stdout).unwrap(), version_2);
+    // 説明へのコメントが無くても説明の全文を versions に持ち、点を 10.0 と書いた版 3 の結果。
+    let version_3 = "{\"kemi\":3,\"diff_display_version\":\"01K00000000000000000000000:2\",\
+        \"explanation\":{\"current_revision\":1,\"versions\":[{\"revision\":1,\
+        \"base_display_version\":\"01K00000000000000000000000:1\",\"sections\":[]}]},\
+        \"title\":\"old\",\"verdict\":\"changes_requested\",\"approval\":[],\"comments\":[{\"id\":\"c1\",\
+        \"target_type\":\"page\",\"page\":{\"places\":[{\"n\":1,\"kind\":\"pen\",\
+        \"points\":[{\"x\":10.0,\"y\":20.5}]}]}}],\"messages\":[]}\n";
+    std::fs::write(&result_files(&state.path)[0], version_3).unwrap();
+    let output = run_with_state(&dir.path, &["--result"], &state.path);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), version_3);
 }
 
 #[test]
