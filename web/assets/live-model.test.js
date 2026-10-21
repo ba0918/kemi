@@ -285,14 +285,30 @@ const recordedNow = () => {
   };
 };
 
+// 帯の文言は仕様が決めていない（画面モックで決める）。何を知らせているかは kind と action と、文に入る値（パスや
+// snapshotLabel の名前）で見分け、操作の名前（label・title）は空か空でないかだけを見る。
+
+/**
+ * 取ったスナップショットの名前（live-compare.md の R-PAGE-REF: 取った記録を基準に比べていることが読み取れる）。
+ * @param {ReturnType<typeof recordedNow>} recorded
+ */
+const recordedName = (recorded) => snapshotLabel(recorded.snapshots, recorded.reference.snapshot);
+
 test("the band tells one thing: a failure to record, then a refused undo, then a removed mock, then the recorded snapshot", () => {
   const removedMock = { page: "/", path: "m.html" };
   const undoMockFailed = { page: "/", text: "Mock not assigned again · m.html: gone" };
-  const all = { ...recordedNow(), removedMock, undoMockFailed, refNotice: "Not recorded: the page is not loaded" };
-  assert.equal(band(all).text, "Not recorded: the page is not loaded");
-  assert.equal(band({ ...all, refNotice: "" }).text, "Mock not assigned again · m.html: gone");
-  assert.equal(band({ ...all, refNotice: "", undoMockFailed: null }).text, "Mock removed · m.html");
-  assert.equal(band({ ...all, refNotice: "", undoMockFailed: null, removedMock: null }).text, "Comparing from Recorded 1");
+  const recorded = recordedNow();
+  const all = { ...recorded, removedMock, undoMockFailed, refNotice: "Not recorded: the page is not loaded" };
+  const failed = band(all);
+  assert.deepEqual([failed.text, failed.action], ["Not recorded: the page is not loaded", null]);
+  const refused = band({ ...all, refNotice: "" });
+  assert.deepEqual([refused.text, refused.action], ["Mock not assigned again · m.html: gone", null]);
+  const removed = band({ ...all, refNotice: "", undoMockFailed: null });
+  assert.equal(removed.action, "undo-mock");
+  assert.ok(removed.text.includes("m.html"), removed.text);
+  const taken = band({ ...all, refNotice: "", undoMockFailed: null, removedMock: null });
+  assert.equal(taken.action, "show-recorded");
+  assert.ok(taken.text.includes(recordedName(recorded)), taken.text);
 });
 
 test("a snapshot that was not saved is told on the band only when nothing else is", () => {
@@ -310,13 +326,11 @@ test("a snapshot that was not saved is told on the band only when nothing else i
 });
 
 test("a removed mock is told with an undo, and a refused undo without one, only on the page they belong to", () => {
-  assert.deepEqual(band({ removedMock: { page: "/", path: "m.html" } }), {
-    text: "Mock removed · m.html",
-    kind: "done",
-    label: "Undo",
-    title: "Assign m.html again",
-    action: "undo-mock",
-  });
+  const removed = band({ removedMock: { page: "/", path: "m.html" } });
+  assert.deepEqual([removed.kind, removed.action], ["done", "undo-mock"]);
+  assert.ok(removed.text.includes("m.html"), removed.text);
+  assert.notEqual(removed.label, "");
+  assert.notEqual(removed.title, "");
   assert.equal(band({ removedMock: { page: "/other", path: "m.html" } }).text, "");
   assert.deepEqual(band({ undoMockFailed: { page: "/", text: "refused" } }), {
     text: "refused",
@@ -340,29 +354,31 @@ test("the recorded snapshot is told only while it is still the chosen reference 
 
 test("the recorded snapshot carries an action to see it only while it is not shown", () => {
   const recorded = recordedNow();
+  /** @param {ReturnType<typeof band>} notice */
+  const shown = (notice) => {
+    assert.equal(notice.kind, "done");
+    assert.ok(notice.text.includes(recordedName(recorded)), notice.text);
+    return notice;
+  };
   // 広い画面では見る対象だけのときだけ、並べる見比べ方へ切り替える操作を付ける。
-  assert.deepEqual(band({ ...recorded, compare: "now" }), {
-    text: "Comparing from Recorded 1",
-    kind: "done",
-    label: "Compare →",
-    title: "Show the recorded snapshot side by side",
-    action: "show-recorded",
-  });
+  const wide = shown(band({ ...recorded, compare: "now" }));
+  assert.equal(wide.action, "show-recorded");
+  assert.notEqual(wide.label, "");
+  assert.notEqual(wide.title, "");
   for (const compare of /** @type {const} */ (["side", "overlay"])) {
-    assert.deepEqual(band({ ...recorded, compare }), {
-      text: "Comparing from Recorded 1",
-      kind: "done",
-      label: "",
-      title: "",
-      action: null,
-    });
+    const seen = shown(band({ ...recorded, compare }));
+    assert.deepEqual([seen.label, seen.title, seen.action], ["", "", null], compare);
   }
   // 狭い画面では見比べ方によらず、動いているページの側を見ている間だけ、比べる相手の 1 枚にする操作を付ける。
   for (const compare of /** @type {const} */ (["now", "side", "overlay"])) {
-    const onLive = band({ ...recorded, narrow: true, side: "live", compare });
-    assert.deepEqual([onLive.label, onLive.title, onLive.action], ["Compare →", "Show the recorded snapshot", "show-recorded"]);
-    const onRef = band({ ...recorded, narrow: true, side: "ref", compare });
-    assert.deepEqual([onRef.label, onRef.title, onRef.action], ["", "", null]);
+    const onLive = shown(band({ ...recorded, narrow: true, side: "live", compare }));
+    assert.equal(onLive.action, "show-recorded", compare);
+    assert.notEqual(onLive.label, "", compare);
+    // 広い画面と狭い画面では切り替え先が違う（並べる・比べる相手の 1 枚）ので、何をするかの説明も違う。
+    assert.notEqual(onLive.title, "", compare);
+    assert.notEqual(onLive.title, wide.title, compare);
+    const onRef = shown(band({ ...recorded, narrow: true, side: "ref", compare }));
+    assert.deepEqual([onRef.label, onRef.title, onRef.action], ["", "", null], compare);
   }
 });
 
