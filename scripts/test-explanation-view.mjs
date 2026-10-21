@@ -249,7 +249,15 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
     await writeFile(join(root,'update.json'),JSON.stringify({expected_revision:current.explanation_revision,base_display_version:base,sections}));
     return JSON.parse(await cli('explain',id,'--file',join(root,'update.json')));
   };
-  const moduleState=`(await import(new URL('assets/state.js',location.href))).state`;
+  // 画面に出る版で確かめる。読んでいる版は説明の見方の状態の行（Revision n）に、コードの表示の版は、説明の基点と
+  // 食い違うときだけ知らせ（更新のボタンと状態の行）に Code <版> として出る（合っていれば知らせは無い）。
+  const d1=review.diff_display_version;
+  const statusText=`document.querySelector('#explanation-status').textContent`;
+  const updateText=`document.querySelector('#explanation-update').textContent`;
+  const shownCode=version=>`${statusText}.includes(${JSON.stringify(`/ Code ${version}`)})`;
+  const reading=revision=>`${statusText}.includes(${JSON.stringify(`Revision ${revision}`)})`;
+  const noMismatch=`!/different display version|not loaded/.test(${statusText})`;
+  const comments=async()=>(await getJson(running.url,'api/review')).comments;
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /fixed file contents|proof/.test(e.textContent))`),false);
   await browser('find','text','About the explanation base','click');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('p')).some(e=>e.checkVisibility() && /not fixed file contents/.test(e.textContent) && /proof/.test(e.textContent))`),true);
@@ -278,8 +286,10 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   console.log('PASS: UI correction keeps the same comment ID, original revision/block/full quote and existing replies');
   await browser('find','role','button','click','--name','Close','--exact');
   await browser('find','role','button','click','--name','Go to Middle section','--exact');
-   await evaluate(`window.readingDocument=document.querySelector('[aria-label="Explanation"][role="region"]');window.originalTop=readingDocument.scrollTop;window.originalCode=(${moduleState}).codeToken;true`);
+  await evaluate(`window.readingDocument=document.querySelector('[aria-label="Explanation"][role="region"]');window.originalTop=readingDocument.scrollTop;true`);
   assert.ok(await evaluate('originalTop>0'));
+  // 版 1 の基点（D1）とコードの表示の版が同じ。
+  assert.equal(await evaluate(`${reading(1)} && ${noMismatch}`),true);
   await browser('find','role','button','click','--name','Code a.txt (new)','--exact');
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Code' && e.getAttribute('aria-pressed')==='true')`);
   // 説明へのコメントはファイルに属さない（第三の対象）ので、コードの見方のファイルの札にも行の札にも出ない。
@@ -287,9 +297,10 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.deepEqual(await evaluate(`['#floating-threads','#diff-area'].filter(s=>document.querySelector(s).textContent.includes('Question remains'))`),[],'a comment on the explanation is not shown on the file in Code');
   await update([{...sections[0],title:'Renamed heading'},sections[1]]);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 2'))`);
-   assert.equal(await evaluate(`(${moduleState}).explanation.reading.revision===1 && (${moduleState}).codeToken===window.originalCode`),true);
+  // 知らせに食い違いが出ない: 説明を更新してもコードの表示の版は D1 のまま。
+  assert.equal(await evaluate(updateText),'Open explanation revision 2');
   await browser('find','role','button','click','--name','Back to explanation');
-  assert.equal(await evaluate(`readingDocument.scrollTop===window.originalTop && (${moduleState}).explanation.reading.revision===1`),true);
+  assert.equal(await evaluate(`readingDocument.scrollTop===window.originalTop && ${reading(1)} && readingDocument.textContent.includes('Reading order') && !readingDocument.textContent.includes('Renamed heading')`),true);
   await browser('find','role','button','click','--name','Open explanation revision 2');
   await wait(`document.body.textContent.includes('Renamed heading')`);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`),true);
@@ -302,7 +313,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   // AだけがCodeをD2へ取り込む。別tab BはD1の一覧を持ち続ける。
   await browser('tab','new',running.url);
   await wait(`document.body.textContent.includes('C survives')`);
-   await evaluate(`window.bToken=(${moduleState}).codeToken;true`);
+  assert.equal(await evaluate(`${reading(3)} && ${noMismatch}`),true);
   await browser('tab','t1');
   await browser('find','role','button','click','--name','Code','--exact');
   await writeFile(join(root,'a.txt'),'new\nfrom the agent\n');
@@ -313,26 +324,28 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.notEqual(d2,review.diff_display_version);
   await update(sections,d2);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 4'))`);
-  assert.equal(await evaluate(`(${moduleState}).codeToken===${JSON.stringify(d2)}`),true);
+  // A のコードは D2 を取り込んだので、D2 を基点にした版 4 の知らせに食い違いが無い。
+  assert.equal(await evaluate(updateText),'Open explanation revision 4');
   await browser('tab','t2');
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 4') && e.textContent.includes('different display version'))`);
-   assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && (${moduleState}).explanation.reading.revision===3`),true);
+  assert.equal(await evaluate(`${updateText}.includes(${JSON.stringify(`(${d2} / Code ${d1})`)}) && ${reading(3)}`),true);
   await browser('find','role','button','click','--name','Open explanation revision 4');
+  // 通知の取りこぼしからの読み直しには画面の入口が無いので、受け口（app.js の onMissed と同じ 2 つ）を直接呼ぶ。
   await evaluate(`window.fetchCount=0;const original=window.fetch;window.fetch=(...args)=>{if(String(args[0]).includes('api/review'))fetchCount++;return original(...args)};const app=await import(new URL('assets/features/explanation.js',location.href));await app.receiveExplanation(null);const agent=await import(new URL('assets/features/agent.js',location.href));agent.receiveMissed();true`);
   await wait(`window.fetchCount>0`);
-   assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken`),true);
+  assert.equal(await evaluate(`${reading(4)} && ${shownCode(d1)}`),true);
   await evaluate(`document.body.style.zoom='1.25';true`);
-  assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
+  assert.equal(await evaluate(`${shownCode(d1)} && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
   await evaluate(`document.body.style.zoom='1';true`);
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations')`);
   await evaluate(`const style=document.createElement('style');style.id='explanation-font-probe';style.textContent='.explanation-diagram {font-size:180px!important;font-family:serif!important}';document.head.append(style);true`);
   await wait(`Array.from(document.querySelectorAll('pre')).some(e=>{try{return JSON.parse(e.textContent).title==='Sequence operations'}catch{return false}})`);
-  assert.equal(await evaluate(`(${moduleState}).codeToken===window.bToken && (${moduleState}).explanation.reading.revision===4 && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
+  assert.equal(await evaluate(`${shownCode(d1)} && ${reading(4)} && Array.from(document.querySelectorAll('p')).some(e=>e.textContent.includes('Explanation for a different display version'))`),true);
   await evaluate(`document.querySelector('#explanation-font-probe').remove();true`);
   await browser('set','viewport','390','900');
   await browser('find','role','button','click','--name','Code a.txt (new)','--exact');
   await browser('find','role','button','click','--name','Back to explanation');
-  assert.equal(await evaluate(`(${moduleState}).explanation.reading.revision===4 && (${moduleState}).view==='explanation'`),true);
+  assert.equal(await evaluate(`${reading(4)} && document.querySelector('[aria-label="Explanation"][role="region"]').checkVisibility() && document.querySelector('#explanation-status').checkVisibility()`),true);
   await browser('find','role','button','click','--name','Open file tree');
   await wait(`document.querySelector('[aria-label="Explanation contents"]').getBoundingClientRect().left>=-1`);
   await browser('find','role','button','click','--name','Go to Middle section','--exact');
@@ -343,14 +356,15 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await update([sections[1]],d2);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 5'))`);
   await wait(`document.body.textContent.includes('Outdated explanation block')`);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('textarea')).some(e=>e.value==='Draft across views') && (${moduleState}).allComments[0].explanation.revision===1 && (${moduleState}).entries.every(e=>!e.file.seen)`),true);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('textarea')).some(e=>e.value==='Draft across views') && document.querySelector('#progress-text').textContent.startsWith('Seen 0 /')`),true);
+  assert.equal((await comments())[0].explanation.revision,1);
   await browser('find','role','button','click','--name','Close','--exact');
   await browser('find','role','button','click','--name','Open explanation revision 5');
   await update(sections,d2);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 6'))`);
   await browser('find','role','button','click','--name','Open explanation revision 6');
   await wait(`Array.from(document.querySelectorAll('article')).some(e=>e.textContent.includes('Question remains'))`);
-  assert.equal(await evaluate(`(${moduleState}).allComments[0].outdated`),false);
+  assert.equal((await comments())[0].outdated,false);
   await unlink(join(root,'b.txt'));
   await browser('find','role','button','click','--name','Code b.txt (new)','--exact');
   await wait(`document.querySelector('#overlay-card')?.textContent.includes('Reference unavailable for this display version')`);
@@ -365,7 +379,8 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.equal(frozen.explanation.base_display_version,d2);
   assert.equal(frozen.explanation_revision,6);
   await wait(`document.body.textContent.includes('Explanation for a different display version')`);
-  assert.equal(await evaluate(`(${moduleState}).allComments[0].explanation.revision===1 && (${moduleState}).allComments[0].explanation.quote.block.part.body===${JSON.stringify(bodyA)}`),true);
+  const restored=(await comments())[0].explanation;
+  assert.equal(restored.revision,1);assert.equal(restored.quote.block.part.body,bodyA);
   // 既知の旧基点で受理した未知対象・未知行数・消えた行は画面の一覧で理由を出す。
   await update([{id:'unavailable',title:'Unavailable targets',blocks:[{id:'targets',part:{type:'text',body:'Unavailable links'},references:[
     {...ref,path:'missing.txt'}, {...ref,start_line:2,end_line:3}, {...ref,path:'skip.txt',start_line:1,end_line:1}
@@ -382,7 +397,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Explanation','--exact');
   await browser('find','role','button','click','--name','Code a.txt:2–3 (new)','--exact');
   await wait(`document.body.textContent.includes('requested lines are no longer present')`);
-  assert.equal(await evaluate(`(${moduleState}).view==='explanation' && (${moduleState}).codeToken===${JSON.stringify(review.diff_display_version)}`),true);
+  assert.equal(await evaluate(`document.querySelector('[aria-label="Explanation"][role="region"]').checkVisibility() && ${shownCode(d1)}`),true);
   console.log('PASS: initial Explanation, base details, old reading position, unchanged comments, no explanation comment on the Code file, isolated Part fallback, two-screen Code tokens, missed notification recovery and 390px reference return');
   console.log('PASS: non-live process resume without the explanation input restores frozen Code, unchanged full quote and explanation base; unavailable/unknown/out-of-range references stay on the explanation with a reason');
 } finally {
@@ -409,7 +424,8 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     const context=async()=>JSON.parse(await cli('explain',id,'--context'));
     const initial=await context();
     // 通常のPage操作で辿ったページを登録し、Code世代は変えない。
-    await evaluate(`const live=await import(new URL('assets/features/live.js',location.href));live.setLiveView('page','/other?one=1');true`);
+    // ページの中で別のページへ移る（ページのリンクを辿るのと同じ）。
+    await evaluate(`(()=>{const frame=document.querySelector('#live-stage .lv-pane[data-side="live"] .lv-frame');frame.src=new URL('/other?one=1',frame.src).href;return true})()`);
     await wait(`document.querySelector('#live-stage')?.textContent.includes('/other?one=1')`);
     let map;
     for(let attempt=0;attempt<50;attempt++) {map=await context();if(map.references.pages.some(p=>p.url==='/other?one=1'))break;await new Promise(r=>setTimeout(r,50));}
