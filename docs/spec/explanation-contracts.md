@@ -45,6 +45,8 @@
   新版番号はサーバが現在値+1とする。同じ内容の再送でも受理すれば進む。
 - `kemi explain <review-id> --context` はstdinを読まず、stdoutにcontextのJSON一つを出す。--fileとは排他。
   contextは `{kemi:3,review,diff_display_version,explanation_revision,explanation,references}`。
+  contextの `kemi` はcontextの契約の版で、結果JSONの契約の版（[R-EXPLANATION-RESULT](#r-explanation-result-resultとwaitの版4)）とは別に数える。
+  contextの形を変えるときだけ進め、結果JSONの契約の版が進んでも一緒には進めない。resultとwaitが版4のいまも、contextは3。
   explanationは現在の説明版の保存値またはnull。referencesは `{code:[...],pages:[...]}`。
   code各項目は `{unit,group_id,path,old_present,new_present,old_lines,new_lines}`。
   presentは片側の有無を表すboolean。片側なし・行数未取得は行数nullとし、行参照には非nullの行数が必要。
@@ -91,6 +93,7 @@
 ### 成功条件
 
 - manifest stdinと別の説明ファイルで開始でき、途中explainで版が1から2になる。
+- resultとwaitの `kemi` が4のkemiで、`kemi explain <review-id> --context` のstdoutの `kemi` は3（e2e）。
 - 二つのexpected_revision=1の同時更新は一方だけ成功し、もう一方が再取得できる競合理由を示す。
 - 不正な参照、保存先障害、submit後の更新で元状態が変わらず、stdoutに成功JSONが出ない。
 
@@ -105,7 +108,7 @@
 - 新しく生成するsubmitの結果と、waitの外側は常に `kemi:4`（結果JSONの契約の版4）。説明がないレビューも同じ。
   契約の版3以前のkemiが保存したセッション（セッション形式の版2・3・4）を復元したレビューも、新しく作る結果は版4。
   結果JSONの契約の版はセッション形式の版（[R-EXPLANATION-SESSION](#r-explanation-session-保存と復元)）とは別に数え、この変更でセッション形式は変えない。
-  digest/manifestの契約の版はこの変更で進めない。
+  digest/manifestの契約の版と、`kemi explain --context` のcontextの契約の版（3。[R-EXPLANATION-CLI](#r-explanation-cli-初期投入と全体更新)）はこの変更で進めない。
   過去resultを `--result` で読む場合は保存時の契約版と元文字列のまま出す（版1・2・3の結果も）。再シリアライズして版4にしない。
 - 版3から版4で変わるのは、下の `versions` を空にする条件だけ。ほかのキー・形・null規則は版3と同じ。
 - resultの従来top-levelキーを残し、`diff_display_version` と `explanation` を必ず追加する。
