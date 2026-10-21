@@ -238,10 +238,10 @@ clear:
 
   Fix each misreading and each mismatch in the explanation or in the change. A fix that adds or
   changes a claim, a number, a step, or a decision, not only the wording, goes to a new cold
-  reader for both steps again. If no cold reader was available, or a fix went unchecked, the
-  message says so. Skip the check only when the whole explanation is a sentence or two because
-  there is nothing more to say, such as a typo or a version bump; a small diff that changes a
-  rule or a behaviour does not qualify.
+  reader for both steps once; fixes after that second reader are not checked again. If no cold
+  reader was available, or a fix went unchecked, the message says so. Skip the check only when
+  the whole explanation is a sentence or two because there is nothing more to say, such as a
+  typo or a version bump; a small diff that changes a rule or a behaviour does not qualify.
 
 The order matters: a reader who has seen the diff fills the explanation's gaps from it and can no
 longer tell you what the explanation alone conveys. The comparison matters because the person
