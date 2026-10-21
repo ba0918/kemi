@@ -64,7 +64,8 @@ try {
   await browser('open', url);
   await wait(`document.querySelectorAll('#diff-content .cchip').length === 3`);
   await browser('click', `.cchip[data-id="${first.id}"]`);
-  await wait(`document.querySelector('#cv-thread-body')?.textContent.includes(${JSON.stringify(body)}) && document.querySelector('#cv-thread-body').textContent.includes('A reply in the thread.')`);
+  // スレッドは本文を Markdown として描くので、段落の末尾の空白は残らない。
+  await wait(`document.querySelector('#cv-thread-body')?.textContent.includes(${JSON.stringify(body.trim())}) && document.querySelector('#cv-thread-body').textContent.includes('A reply in the thread.')`);
   console.log('PASS opening the chip shows the complete comment and its reply');
 } finally {
   await close();
