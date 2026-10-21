@@ -29,7 +29,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `skills/kemi/SKILL.md` | エージェント向けの kemi の使い方。仕様から派生した配布物で、契約の正典ではない |
 | `scripts/` | フィクスチャ生成、起動時間の計測、ブラウザ自動化（`test-*.mjs`）、`--live` の検査に使う試験用の開発サーバ（`live-dev-server.mjs`） |
 | `scripts/lib/` | ブラウザ検査の共通の部品（agent-browser の呼び出し、kemi の起動と止め方と API、検査が落ちたときの後始末、待ち、フィクスチャ、PNG） |
-| `scripts/live/` | `scripts/test-live.mjs` の場面。領域ごとのファイルと、2 つ以上の領域の場面が使う補助（`common.mjs`） |
+| `scripts/live/` | `scripts/test-live.mjs` の場面。領域ごとのファイルと、2 つ以上の領域の場面が使う補助と、その補助が書くグローバルを読む式（`common.mjs`） |
 
 ### `web/assets/` の層
 
