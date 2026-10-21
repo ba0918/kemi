@@ -1,18 +1,19 @@
 // 説明本文の文字を選んでその場でコメントし、選んだ文字が引用として result まで届くことを実バイナリで確かめる。
 import assert from 'node:assert/strict';
-import {spawn,execFile} from 'node:child_process';
+import {execFile} from 'node:child_process';
 import {mkdtemp,writeFile,readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {promisify} from 'node:util';
+
+import {attachToPage,browserSession,isVisible as visible} from './lib/browser.mjs';
+import {getJson,isolatedEnvironment,launchKemi,postJson,stopKemi} from './lib/kemi.mjs';
+
 const run=promisify(execFile), binary=resolve(process.argv[2]);
 const root=await mkdtemp(join(tmpdir(),'kemi-selection-')), session=`kemi-selection-${process.pid}`;
-const env={...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')};
-async function browser(...args) {const {stdout}=await run('agent-browser',['--session',session,'--json',...args],{maxBuffer:8*1024*1024});const r=JSON.parse(stdout);assert.ok(r.success,stdout);return r.data;}
-const evaluate=async code=>(await browser('eval','-b',Buffer.from(code).toString('base64'))).result;
-const wait=code=>browser('wait','--fn',code);
+const env=isolatedEnvironment(root);
+const {browser,evaluate,waitFor:wait,close}=browserSession(session);
 const frames=()=>evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
-const visible=selector=>`(()=>{const e=${selector};return Boolean(e && e.checkVisibility())})()`;
 const popup=`Array.from(document.querySelectorAll('button')).find(e=>e.getAttribute('aria-label')==='Comment on selection')`;
 const hint=`Array.from(document.querySelectorAll('[role="status"]')).find(e=>e.textContent.includes('cannot span blocks'))`;
 const editor=`document.querySelector('form[aria-label="New explanation comment"]')`;
@@ -33,13 +34,13 @@ const tail={id:'tail',part:{type:'text',body:`${'Filler sentence for scrolling. 
 const sections=[{id:'one-section',title:'Selection review',blocks:[first,second,code,diagram,grid]},{id:'later',title:'Later section',blocks:[tail]}];
 const firstParagraph=`${block('kept-text')}.querySelector('.part-markdown p')`;
 const intentParagraph=`${block('kept-text')}.querySelectorAll('.part-markdown p')[1]`;
-let child, socket;
+let kemi, page;
 try {
   await writeFile(join(root,'a.txt'),'old\n');await run('git',['init','-q',root]);await run('git',['-C',root,'add','a.txt']);await run('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture']);await writeFile(join(root,'a.txt'),'new\n');
   await writeFile(join(root,'explanation.json'),JSON.stringify({sections}));
-  child=spawn(binary,['--worktree','--explanation',join(root,'explanation.json'),'--port','0','--no-open'],{cwd:root,env,stdio:['ignore','pipe','pipe']});
-  let stderr='';const url=await new Promise((resolve,reject)=>{child.stderr.on('data',chunk=>{stderr+=chunk;const match=stderr.match(/^kemi: (http:\/\/\S+)/m);if(match)resolve(match[1]);});child.on('error',reject);child.on('exit',code=>reject(new Error(`${code}: ${stderr}`)));});
-  const review=async()=>(await (await fetch(`${url}api/review`)).json());
+  kemi=await launchKemi(binary,{cwd:root,env,args:['--worktree','--explanation',join(root,'explanation.json')]});
+  const url=kemi.url;
+  const review=()=>getJson(url,'api/review');
   await browser('set','viewport','1280','900');await browser('open',url);
   await wait(`!!document.querySelector('.part-markdown strong') && !!${block('literal-code')}`);
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).some(e=>/^Comment on .* · Block \\d+$/.test(e.getAttribute('aria-label')??''))`),false,'no block has a persistent comment control');
@@ -128,18 +129,8 @@ try {
   console.log('PASS: editor scrolls with the text; code selection offers the button; cross-block selection shows the reason');
 
   // 図の操作はポインタとフォーカスで出入りし、ホバーできない端末では常に出る。
-  const {cdpUrl}=await browser('get','cdp-url');
-  socket=new WebSocket(cdpUrl);
-  await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
-  let sequence=0;
-  const cdp=(method,params={},sessionId)=>new Promise((resolve,reject)=>{
-    const id=++sequence;
-    const receive=event=>{const response=JSON.parse(event.data);if(response.id!==id)return;socket.removeEventListener('message',receive);response.error?reject(new Error(JSON.stringify(response.error))):resolve(response.result);};
-    socket.addEventListener('message',receive);
-    socket.send(JSON.stringify({id,method,params,sessionId}));
-  });
-  const target=(await cdp('Target.getTargets')).targetInfos.find(t=>t.type==='page' && t.url.startsWith('http://127.0.0.1:'));
-  const {sessionId}=await cdp('Target.attachToTarget',{targetId:target.targetId,flatten:true});
+  page=await attachToPage(browser);
+  const {cdp}=page;
   // Chrome の Emulation.setEmulatedMedia は hover を変えられない（調べた結果）。この環境のブラウザは hover: none
   // なので、ホバーできる端末の見え方は (hover: none) の規則を一時的に外して確かめる。
   assert.equal(await evaluate(`matchMedia('(hover: none)').matches`),true,'this browser reports a device without hover');
@@ -195,8 +186,8 @@ try {
   assert.equal(await evaluate(`document.activeElement.getAttribute('aria-label')`),'Comment on Example exchange','Escape returns focus to the diagram button');
   await evaluate(`${block('grid')}.scrollIntoView({block:'center'});true`);await frames();
   const gridButton=await evaluate(`(()=>{const b=document.querySelector('[aria-label="Comment on Grid map"]').getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}})()`);
-  await cdp('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:gridButton.x,y:gridButton.y}]},sessionId);
-  await cdp('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]},sessionId);
+  await cdp('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:gridButton.x,y:gridButton.y}]});
+  await cdp('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   await wait(`Boolean(${editor})`);
   assert.equal(await evaluate(`${editor}.querySelector('blockquote').textContent`),'Grid map','touch opens the diagram editor with the diagram title');
   await browser('find','label','Comment on Selection review','fill','Grid question');
@@ -207,9 +198,7 @@ try {
   console.log('PASS: diagram controls follow hover/focus and stay without hover; arrow-key pan; separate view keeps pan buttons and returns; diagram comment by keyboard and touch quotes the title');
 
   // 本文に無い text の selection は、ブロック全体のコメントとして出す。
-  const origin=new URL(url).origin;
-  const response=await fetch(`${url}api/comment`,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({op:'add_explanation',explanation_revision:1,block_id:'other-text',body:'No match here',selection:{text:'absent words',occurrence:0}})});
-  assert.equal(response.status,200);
+  await postJson(url,'api/comment',{op:'add_explanation',explanation_revision:1,block_id:'other-text',body:'No match here',selection:{text:'absent words',occurrence:0}});
   await browser('open',url);
   await wait(`document.body.textContent.includes('No match here') && !!document.querySelector('.part-markdown strong')`);
   assert.equal(await evaluate(`(()=>{const c=Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('No match here'));return c.parentElement.parentElement===${block('other-text')}})()`),true,'an unmatched selection falls back to a card below the block');
@@ -254,7 +243,7 @@ try {
   assert.deepEqual(narrowComment.explanation.selection,{text:'revision',occurrence:0});
   console.log('PASS: old revision target; 390px selection button, c, editor inside the viewport and above the hand bar, and a saved selection');
 } finally {
-  socket?.close();
-  await browser('close').catch(()=>{});
-  if(child && child.exitCode===null){child.kill('SIGINT');await new Promise(resolve=>child.on('exit',resolve));}
+  page?.close();
+  await close();
+  if(kemi) await stopKemi(kemi);
 }
