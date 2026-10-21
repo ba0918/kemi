@@ -221,7 +221,8 @@ mod tests {
     /// .NET は年ごとの時間帯の規則を持つが、時間帯に null を渡す SystemTimeToTzSpecificLocalTime は
     /// 今の規則だけを使いうる。2023 年より後に UTC からのずれが変わった地域（例: 2024 年から通年
     /// UTC-3 のパラグアイ）の手元では、この比較は合わないことがある。年ごとの規則まで合わせるには
-    /// ...Ex 版と動的な時間帯の情報が要り、一覧の時刻のためにそこまでは持たない。
+    /// SystemTimeToTzSpecificLocalTimeEx と DYNAMIC_TIME_ZONE_INFORMATION が要り、一覧の時刻のために
+    /// そこまでは持たない。
     #[cfg(windows)]
     #[test]
     fn local_time_matches_powershell() {
