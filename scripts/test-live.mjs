@@ -82,6 +82,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { browserSession, visible } from './lib/browser.mjs';
 import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
 import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
+import { until } from './lib/wait.mjs';
 import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer as startDevServerIn, tablePage } from './live-dev-server.mjs';
 
 if (!process.argv[2]) {
@@ -431,14 +432,14 @@ async function handingFromTheCodeViewOutsideGit() {
   await withLiveReview({ repository: dir, page: 'changing.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
-    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, startSnapshot, `${changeList}?.dataset.main === '0'`);
     await postJson(kemi.url, 'api/message', { body: 'please look' });
     await browser('click', '.lv-view button[data-view="code"]');
     await waitFor(`${visible('#live-no-code')} && !${visible('#live-stage')}`);
     await handInThePage(kemi, dir, state);
-    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 1'))`);
+    await waitForOption(kemi, handedSnapshot(1));
     await browser('click', '.lv-view button[data-view="page"]');
-    await chooseReference('Handed 1');
+    await chooseReference(kemi, handedSnapshot(1));
     await waitFor(`${changeList} !== null`);
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view outside git shows no change against the unchanged page');
@@ -455,23 +456,23 @@ async function handingFromTheExplanationView(repository) {
   // 説明のファイルは作業ツリーの外に置く（ほかの場面の差分を変えない）。
   const explanation = join(await temporaryDirectory('kemi-live-explanation-'), 'explanation.json');
   await writeFile(explanation, JSON.stringify({ sections: [{ id: 'overview', title: 'Overview', blocks: [{ id: 'note', part: { type: 'text', body: 'Read the page before handing.' }, references: [] }] }] }));
-  const recorded = (label) => `Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith(${JSON.stringify(label)}))`;
   // 一覧の見出しの名前は、選んだ比べる相手の選択の文字に含まれる。選び直した直後の前の相手の一覧を読まない。
   const listedAgainstChosen = `(() => { const vs = ${changeList}?.querySelector('.lv-changes-vs'); return Boolean(vs) && document.querySelector('.lv-compare-select').selectedOptions[0].textContent.includes(vs.textContent); })()`;
   await withLiveReview({ repository, page: 'changing.html', args: ['--explanation', explanation] }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '800');
     await browser('open', kemi.url);
-    await waitFor(`document.body.dataset.reviewView === 'explanation' && document.body.dataset.liveView === 'page' && !${visible('#live-stage')} && ${recorded('Start')}`);
+    const startId = await snapshotTaken(kemi, startSnapshot);
+    await waitFor(`document.body.dataset.reviewView === 'explanation' && document.body.dataset.liveView === 'page' && !${visible('#live-stage')} && ${listedOption(startId)}`);
     await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
-    await waitFor(recorded('Handed 1'));
+    await waitForOption(kemi, handedSnapshot(1));
     assert.equal(await evaluate(`document.body.dataset.reviewView`), 'explanation', 'handing keeps the explanation view');
     await browser('click', '.lv-view button[data-view="page"]');
     await waitFor(`document.body.dataset.reviewView === 'page' && ${visible('#live-stage')}`);
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     const against = {};
-    for (const label of ['Handed 1', 'Start']) {
-      await chooseReference(label);
+    for (const [label, which] of [['Handed 1', handedSnapshot(1)], ['Start', startSnapshot]]) {
+      await chooseReference(kemi, which);
       await waitFor(listedAgainstChosen);
       against[label] = await evaluate(counts);
     }
@@ -612,8 +613,52 @@ async function chooseAuto() {
   await evaluate(`(() => { const select = document.querySelector('.lv-compare-select'); select.value = 'latest'; select.dispatchEvent(new Event('change')); return true; })()`);
 }
 
-/** 比べる相手の枠に、その id のスナップショットが出るのを待つ。 */
-const showsSnapshot = (label) => `document.querySelector('${refPane}').dataset.reference === 'snapshot' && document.querySelector('${refPane} .lv-bar-label').textContent.startsWith(${JSON.stringify(label)})`;
+/** 比べる相手の枠に、その id のスナップショットが出ているかを読む式。 */
+const showsSnapshot = (id) => `document.querySelector('${refPane}').dataset.reference === 'snapshot' && document.querySelector('${refPane}').dataset.snapshot === ${JSON.stringify(id)}`;
+
+/**
+ * どのスナップショットか（種類と、その種類の中で取った順の番号）。見出しの名前（Start、Recorded n、Handed n）の
+ * 付け方は web/assets/live-model.test.js が確かめるので、ここでは文言でなく api/snapshots の種類と順で見分ける。
+ * @typedef {{ kind: 'start' | 'manual' | 'handed', n: number }} Which
+ */
+/** @type {Which} */
+const startSnapshot = { kind: 'start', n: 1 };
+/** @returns {Which} */
+const recordedSnapshot = (n) => ({ kind: 'manual', n });
+/** @returns {Which} */
+const handedSnapshot = (n) => ({ kind: 'handed', n });
+
+/**
+ * そのスナップショットが kemi に預けられるのを待ち、その id を返す。
+ * @param {Which} which
+ */
+async function snapshotTaken(kemi, { kind, n }, timeout = 15000) {
+  return until(async () => (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === kind)[n - 1]?.id, { timeout, what: `snapshot ${kind} ${n}` });
+}
+
+/**
+ * 比べる相手の枠にそのスナップショットが出るのを待つ（also を渡せば、それも成り立つまで）。その id を返す。
+ * @param {Which} which
+ * @param {string} [also] ページの中で読む式
+ */
+async function waitForSnapshot(kemi, which, also, timeout) {
+  const id = await snapshotTaken(kemi, which, timeout);
+  await waitFor(also === undefined ? showsSnapshot(id) : `${showsSnapshot(id)} && ${also}`, timeout);
+  return id;
+}
+
+/** 比べる相手の選択に、その id のスナップショットが出ているかを読む式。 */
+const listedOption = (id) => `Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.value === ${JSON.stringify(id)})`;
+
+/**
+ * 比べる相手の選択に、そのスナップショットが出るのを待つ。その id を返す。
+ * @param {Which} which
+ */
+async function waitForOption(kemi, which) {
+  const id = await snapshotTaken(kemi, which);
+  await waitFor(listedOption(id));
+  return id;
+}
 const notRecorded = `document.querySelector('${refPane}').dataset.reference === 'none' && ${visible(`${refPane} .lv-empty`)}`;
 
 /** 舞台の縮めた倍率（--lv-scale）を読む式。 */
@@ -658,13 +703,13 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     console.log('PASS 渡す前のレビューで、開始時のスナップショットが既定の比べる相手になる');
 
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(showsSnapshot('Recorded 1'));
+    await waitForSnapshot(kemi, recordedSnapshot(1));
     assert.equal(
       await evaluate(`document.querySelector('${refPane} .lv-frame').style.width === document.querySelector('${livePane} .lv-frame').style.width && document.querySelector('${livePane} .lv-frame').style.width === '390px'`),
       true,
@@ -673,13 +718,13 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     await browser('click', '.lv-widths button[data-width="1280"]');
     await waitFor(notRecorded);
     await chooseAuto();
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     assert.equal(await evaluate(`document.querySelector('${refPane} .lv-frame').style.width`), '1280px');
     console.log('PASS 390 と 1280 で取ってから幅を切り替えると、動いているページと比べる相手が同じ幅で描かれ、無い幅では記録されていない旨と取る操作が出る');
 
     // 画素の比較は 390 で（縮めずに描ける幅）。
     await browser('click', '.lv-widths button[data-width="390"]');
-    await waitFor(showsSnapshot('Recorded 1'));
+    await waitForSnapshot(kemi, recordedSnapshot(1));
     await new Promise((done) => setTimeout(done, 500));
     const before = await shot(`${refPane} .lv-frame`, shots, 'snapshot');
     const now = await shot(`${livePane} .lv-frame`, shots, 'live');
@@ -707,18 +752,18 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     console.log('PASS 別の URL に移ると、その URL のスナップショットが無い旨が出る');
 
     await browser('click', '.lv-record');
-    await waitFor(showsSnapshot('Recorded 2'));
+    await waitForSnapshot(kemi, recordedSnapshot(2));
     const pages = `Array.from(document.querySelectorAll('#page-tree .lv-page')).map((row) => row.dataset.page + ':' + Array.from(row.querySelectorAll('.lv-width-tag')).map((tag) => tag.dataset.width).join(','))`;
     await waitFor(`JSON.stringify(${pages}) === JSON.stringify(['/other.html:1280', '/rich.html:390,1280'])`);
     await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
-    await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/rich.html' && ${showsSnapshot('Start')}`);
+    await waitForSnapshot(kemi, startSnapshot, `document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/rich.html'`);
     await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-width-tag[data-width="390"]');
-    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && ${showsSnapshot('Recorded 1')}`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     console.log('PASS スナップショットを持つ 2 つのページがツリーに表示幅と並び、押すとそのページ・その幅に移る');
 
     await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
-    await waitFor(showsSnapshot('Handed 1'));
+    await waitForSnapshot(kemi, handedSnapshot(1));
     console.log('PASS エージェントに渡すと表示中のページのスナップショットを取り、それが既定の比べる相手になる');
   });
 }
@@ -733,11 +778,11 @@ async function snapshotsCarryTheirResources(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(showsSnapshot('Recorded 1'));
+    await waitForSnapshot(kemi, recordedSnapshot(1));
     await new Promise((done) => setTimeout(done, 800));
     const live = await shot(`${livePane} .lv-frame`, shots, 'resources-live');
     const snapshot = await shot(`${refPane} .lv-frame`, shots, 'resources-snapshot');
@@ -812,11 +857,11 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await postJson(kemi.url, 'api/message', { body: 'before the mock' });
     await handInThePage(kemi, repository, state);
-    await waitFor(showsSnapshot('Handed 1'));
+    await waitForSnapshot(kemi, handedSnapshot(1));
 
     for (const path of [`../${basename(outside)}`, 'mocks/notes.txt']) {
       await assignMockByPath(path);
@@ -838,7 +883,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     console.log('PASS CSS と画像を参照するモックを割り当てると、比べる相手がモックになり、同じ表示幅でスタイルと画像ごと出る');
 
     await chooseFromMockMenu('lv-mock-remove');
-    await waitFor(showsSnapshot('Handed 1'));
+    await waitForSnapshot(kemi, handedSnapshot(1));
     console.log('PASS モックを外すと、最後に渡した時点のスナップショットに戻る');
 
     await evaluate(`window.__mockReports = []; window.addEventListener('message', (event) => { if (event.data && event.data.mockReport) window.__mockReports.push(event.data); }); true`);
@@ -896,7 +941,7 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
       const relay = new URL(kemi.live).origin;
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
-      await waitFor(showsSnapshot('Start'));
+      await waitForSnapshot(kemi, startSnapshot);
       // 中継のページと写すときの読み込みは中継のオリジンを referrer にする。それ以外がスナップショットの枠から。
       const deadline = Date.now() + 15000;
       while (!received.some(({ referer }) => !referer?.startsWith(relay)) && Date.now() < deadline) {
@@ -923,12 +968,12 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
-    await waitFor(`${notRecorded} || ${showsSnapshot('Start')}`);
+    await waitFor(`${notRecorded} || ${showsSnapshot(await snapshotTaken(kemi, startSnapshot))}`);
     if (await evaluate(`document.querySelector('${refPane}').dataset.reference`) === 'none') {
       await browser('click', `${refPane} .lv-empty .lv-record`);
-      await waitFor(showsSnapshot('Recorded 1'));
+      await waitForSnapshot(kemi, recordedSnapshot(1));
     }
     await browser('click', '.lv-mode button[data-compare="overlay"]');
     await waitFor(`document.querySelector('#live-stage').dataset.compare === 'overlay' && ${visible('.lv-opacity')}`);
@@ -1136,21 +1181,21 @@ async function recordingNowSwitchesTheReference(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(`${showsSnapshot('Start')} && document.querySelector('#live-stage').dataset.compare === 'now'`);
+    await waitForSnapshot(kemi, startSnapshot, `document.querySelector('#live-stage').dataset.compare === 'now'`);
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${visible(bandNotice)} && document.querySelector('${bandNotice}').dataset.kind === 'done'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${visible(bandNotice)} && document.querySelector('${bandNotice}').dataset.kind === 'done'`);
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now', 'recording keeps the way of comparing');
     await browser('click', bandNoticeAction);
-    await waitFor(`document.querySelector('#live-stage').dataset.compare === 'side' && ${visible(refPane)} && ${showsSnapshot('Recorded 1')}`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `document.querySelector('#live-stage').dataset.compare === 'side' && ${visible(refPane)}`);
     console.log('PASS 見る対象だけで手で取ると、見比べ方は変わらず比べる相手が取ったものになって知らせが出て、知らせの操作で並べるとそれが並ぶ');
 
     await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
     await new Promise((done) => setTimeout(done, 1000));
-    assert.equal(await evaluate(showsSnapshot('Recorded 1')), true, 'handing does not move the reference away from the recorded snapshot');
+    assert.equal(await evaluate(showsSnapshot(await snapshotTaken(kemi, recordedSnapshot(1)))), true, 'handing does not move the reference away from the recorded snapshot');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(`document.querySelector('.lv-compare-select').value === 'latest' && ${showsSnapshot('Handed 1')}`);
+    await waitForSnapshot(kemi, handedSnapshot(1), `document.querySelector('.lv-compare-select').value === 'latest'`);
     console.log('PASS 手で取った後に渡しても比べる相手は取ったもののままで、読み込み直すと自動に戻る');
 
     await browser('set', 'viewport', '390', '844');
@@ -1159,9 +1204,9 @@ async function recordingNowSwitchesTheReference(repository) {
     await browser('click', '#live-band .lv-menu-button');
     await waitFor(visible('.lv-menu .lv-record-now'));
     await evaluate(`document.querySelector('.lv-menu .lv-record-now').click(); document.querySelector('.lv-menu').hidePopover(); true`);
-    await waitFor(`${showsSnapshot('Recorded 2')} && ${visible(bandNoticeAction)}`);
+    await waitForSnapshot(kemi, recordedSnapshot(2), `${visible(bandNoticeAction)}`);
     await browser('click', bandNoticeAction);
-    await waitFor(`document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)} && ${showsSnapshot('Recorded 2')}`);
+    await waitForSnapshot(kemi, recordedSnapshot(2), `document.querySelector('#live-stage').dataset.side === 'ref' && ${visible(refPane)}`);
     console.log('PASS 幅 390px で手で取ると知らせが出て、その操作で比べる相手の 1 枚に切り替わり、取ったものが出る');
   });
 }
@@ -1172,7 +1217,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
   await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(`${showsSnapshot('Start')} && document.querySelector('#page-tree .lv-changes')?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, startSnapshot, `document.querySelector('#page-tree .lv-changes')?.dataset.main === '0'`);
     assert.equal(await evaluate(visible(guide)), false, 'an unchanged page needs no initialization guidance');
     const start = (await getJson(kemi.url, 'api/snapshots')).snapshots.find((item) => item.kind === 'start');
     await writeFile(join(dev.dir, 'changing.css'), `${changingCss()}.buy { transform: translateX(30px); }`);
@@ -1191,7 +1236,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
     await browser('mouse', 'up');
     await waitFor(`document.querySelector('${useCurrent}')?.disabled && document.querySelector('.lv-band .lv-record-now').disabled`);
     await releaseRequests();
-    await waitFor(`${showsSnapshot('Recorded 1')} && !${visible(guide)}`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `!${visible(guide)}`);
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now', 'choosing a new baseline keeps the comparison mode');
     const recorded = (await getJson(kemi.url, 'api/snapshots')).snapshots;
     assert.ok(recorded.some((item) => item.id === start.id), 'the original Start remains recorded');
@@ -1206,7 +1251,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
     await postJson(kemi.url, 'api/message', { body: 'compare after this hand-over' });
     await handInThePage(kemi, repository, state);
     await chooseAuto();
-    await waitFor(showsSnapshot('Handed 1'));
+    await waitForSnapshot(kemi, handedSnapshot(1));
     await writeFile(join(dev.dir, 'changing.css'), changingCss());
     await waitFor(`Number(document.querySelector('#page-tree .lv-changes')?.dataset.main) > 0`);
     assert.equal(await evaluate(visible(guide)), false, 'changes against a handed record are not presented as initialization changes');
@@ -1220,7 +1265,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
     await browser('click', '#btn-tree');
     await waitFor(`${visible(useCurrent)} && document.querySelector('#page-tree').getBoundingClientRect().left >= 0`);
     await browser('click', useCurrent);
-    await waitFor(`${showsSnapshot('Recorded 2')} && !${visible(guide)}`);
+    await waitForSnapshot(kemi, recordedSnapshot(2), `!${visible(guide)}`);
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.side`), 'live', 'recording from the narrow tree does not switch the shown side');
     console.log('PASS 手で取った時点や渡した時点との変化には開始時の案内を出さず、狭い画面の一覧からも比較基準を取り直せる');
 
@@ -1274,7 +1319,7 @@ async function mockPanelListsTheFilesToChoose() {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     const options = `JSON.stringify(Array.from(document.querySelector('.lv-compare-select').options).filter((option) => !option.disabled).map((option) => option.value))`;
     assert.equal(JSON.parse(await evaluate(options)).at(-1), 'mock-file', 'the mock file comes last among the choices');
     await openMockPanel();
@@ -1336,11 +1381,11 @@ async function mockMenuRemovesAndUndoes(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await assignMockByPath('mocks/menu-mock.html');
     await waitFor(mockShown);
     await chooseFromMockMenu('lv-mock-remove');
-    await waitFor(`${showsSnapshot('Start')} && ${visible(bandNoticeAction)}`);
+    await waitForSnapshot(kemi, startSnapshot, `${visible(bandNoticeAction)}`);
     await browser('click', bandNoticeAction);
     await waitFor(mockShown);
     console.log('PASS 割り当てたモックを選択の横のメニューで外すと、取り消す操作つきの知らせが出て、押すと同じモックに戻る');
@@ -1351,7 +1396,7 @@ async function mockMenuRemovesAndUndoes(repository) {
     await evaluate(`${changeList}.querySelector('.lv-mock-menu-button').click(); true`);
     await waitFor(visible('.lv-mock-menu .lv-mock-remove'));
     await browser('click', '.lv-mock-menu .lv-mock-remove');
-    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main !== undefined`);
+    await waitForSnapshot(kemi, startSnapshot, `${changeList}?.dataset.main !== undefined`);
     console.log('PASS 見る対象だけのとき、変化の一覧の見出しに割り当てたファイルの名前が出て、そこから開いたメニューでモックを外せる');
 
     // 外した後に別のモックを選び直したら、前に外したモックへ戻す操作は残さない（選び直すまで比べる相手を変えない。R-PAGE-REF）。
@@ -1365,17 +1410,17 @@ async function mockMenuRemovesAndUndoes(repository) {
 
     // 取り消しが断られたら（外した後にファイルが消えた）、理由を画面に出す（R-PAGE-MOCK）。
     await chooseFromMockMenu('lv-mock-remove');
-    await waitFor(`${showsSnapshot('Start')} && ${visible(bandNoticeAction)}`);
+    await waitForSnapshot(kemi, startSnapshot, `${visible(bandNoticeAction)}`);
     await rm(join(repository, 'mocks', 'menu-mock-b.html'));
     await browser('click', bandNoticeAction);
     await waitFor(`${visible(bandNotice)} && document.querySelector('${bandNotice}').dataset.kind !== 'done' && !${visible(bandNoticeAction)}`);
-    assert.equal(await evaluate(showsSnapshot('Start')), true, 'the mock that could not be assigned again is not the reference');
+    assert.equal(await evaluate(showsSnapshot(await snapshotTaken(kemi, startSnapshot))), true, 'the mock that could not be assigned again is not the reference');
     console.log('PASS 外したモックのファイルが消えてから取り消すと、割り当てられず、その理由が帯に出る');
 
     // 断られた知らせが出ていても、見る対象だけのときに手で取れば、比べる相手がそれに切り替わったことと、それを並べて見る操作が出る（R-PAGE-REF）。
     await chooseCompare('now');
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`${showsSnapshot('Recorded 1')} && document.querySelector('${bandNotice}').dataset.kind === 'done' && ${visible(bandNoticeAction)}`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `document.querySelector('${bandNotice}').dataset.kind === 'done' && ${visible(bandNoticeAction)}`);
     console.log('PASS 取り消しが断られた知らせが出ていても、見る対象だけのときに手で取ると、取れたことの知らせとそれを見る操作が出る');
   });
 }
@@ -1539,7 +1584,7 @@ async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]' && !document.querySelector('#rail-hand-note').hidden`);
@@ -1568,7 +1613,7 @@ async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1920', '1000');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     for (let count = 0; count < 3 && await evaluate('document.documentElement.dataset.theme') !== 'dark'; count++) {
       await browser('click', '#btn-theme');
     }
@@ -1752,7 +1797,7 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${frame}').style.width === '390px' && document.querySelector('${livePane} .lv-notice').hidden && document.querySelector('${refPane}').dataset.reference === 'none'`);
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.css'), `${changingCss('rgb(214, 69, 69)')}.buy { color: rgb(20, 20, 20); border: 4px solid rgb(0, 150, 0); }\n`);
     await waitFor(`${changeList}?.dataset.main === '1'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -1778,7 +1823,7 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     assert.ok(chosen.includes(name), `the heading name ${JSON.stringify(name)} is in the choice ${JSON.stringify(chosen)}`);
     await chooseAuto();
     await browser('click', '.lv-widths button[data-width="1280"]');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await chooseCompare('now');
     await waitFor(`(${changeList}?.querySelector('.lv-changes-vs')?.textContent ?? ${JSON.stringify(name)}) !== ${JSON.stringify(name)}`);
     const auto = await evaluate(`${changeList}.querySelector('.lv-changes-vs').textContent`);
@@ -1833,7 +1878,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && document.querySelector('${livePane} .lv-notice').hidden`);
     await new Promise((done) => setTimeout(done, 1000));
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage());
     await waitFor(`${removedRow} !== null && ${removedRow}.textContent.includes('Low element')`);
     assert.equal(await evaluate(`document.querySelector('#live-stage').dataset.compare`), 'now');
@@ -1862,7 +1907,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
     await browser('open', kemi.url);
     await waitFor(visible(livePane));
     await evaluate(at390);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${removedRow} !== null`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${removedRow} !== null`);
     await pressRemovedRow();
     await waitForPixels(refView, shots, 'removed-narrow', belowTheButton, isGlow);
     await waitForPixels(refView, shots, 'removed-narrow-mark', belowTheButton, isRed);
@@ -1875,7 +1920,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
     await browser('open', kemi.url);
     await waitFor(visible(livePane));
     await evaluate(at390);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${removedRow} !== null && ${endRow} !== null`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${removedRow} !== null && ${endRow} !== null`);
     await chooseCompare('overlay');
     await waitFor(`${removedRow} !== null`);
     await pressRemovedRow();
@@ -1927,7 +1972,7 @@ async function wideTargetsAreRevealedSideways(repository) {
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-zoom button[data-zoom="full"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.transform === 'scale(1)' && ${liveView}.scrollWidth > ${liveView}.clientWidth`);
     await writeFile(join(dev.dir, 'tall.html'), farPage(false));
@@ -1979,7 +2024,7 @@ async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/tall.html')`);
     await chooseCompare('overlay');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-zoom button[data-zoom="full"]');
     await writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(false));
     await waitFor(`${removedRow} !== null && ${removedRow}.textContent.includes('Near the edge')`);
@@ -2001,7 +2046,7 @@ async function changeListFollowsThePage(repository) {
     await browser('open', kemi.url);
     await chooseCompare('side');
     await evaluate(`window.__kemiNotReloaded = true; true`);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await waitFor(`${changeList}?.dataset.main === '0' && ${changeList}.querySelector('.lv-changes-none') !== null`);
     console.log('PASS 開始時のスナップショットと変わらないページでは、変化の数 0 と変化が無いことが出る');
 
@@ -2028,18 +2073,18 @@ async function changeListFollowsThePage(repository) {
 
     await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
-    await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, handedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await assignMockByPath('mocks/diff-mock.html');
     // モックと比べている間は、一覧の代わりにモックの見出しだけが出る（変化の行も数も無い）。
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('#page-tree .lv-change') === null && ${changeList}?.dataset.main === undefined`);
     await chooseFromMockMenu('lv-mock-remove');
-    await waitFor(`${showsSnapshot('Handed 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, handedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     console.log('PASS モックを割り当てたページでは変化の一覧が出ず、外すと最後に渡した時点のスナップショットと比べた一覧（変化 0）が出る');
 
     await evaluate(`document.querySelector('${livePane} .lv-frame').src = ${JSON.stringify(`${new URL(kemi.live).origin}/other.html`)}; true`);
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/other.html' && ${notRecorded}`);
     await browser('click', '.lv-record');
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await browser('click', '#page-tree .lv-page[data-page="/changing.html"] .lv-page-open');
     await waitFor(`document.querySelector('#page-tree .lv-page[data-current="true"]')?.dataset.page === '/changing.html' && ${changeList} !== null`);
     assert.equal(await evaluate(`document.querySelectorAll('#page-tree .lv-changes').length`), 1);
@@ -2106,8 +2151,8 @@ async function changeListFollowsThePage(repository) {
     await evaluate(`document.querySelector('#live-band .lv-menu-button').click(); true`);
     await waitFor(`!${visible(`${livePane} .lv-frame`)} && ${visible('.lv-menu .lv-record-now')}`);
     await evaluate(`document.querySelector('.lv-menu .lv-record-now').click(); document.querySelector('.lv-menu').hidePopover(); true`);
-    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
-    await chooseReference('Recorded 2');
+    await waitForOption(kemi, recordedSnapshot(2));
+    await chooseReference(kemi, recordedSnapshot(2));
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
     await waitFor(`${visible(`${livePane} .lv-frame`)} && ${changeList} !== null`);
     await new Promise((done) => setTimeout(done, 1500));
@@ -2120,9 +2165,9 @@ async function changeListFollowsThePage(repository) {
     await browser('click', '.lv-view button[data-view="code"]');
     await waitFor(`!${visible('#live-stage')}`);
     await handInThePage(kemi, repository, state);
-    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 2'))`);
+    await waitForOption(kemi, handedSnapshot(2));
     await browser('click', '.lv-view button[data-view="page"]');
-    await chooseReference('Handed 2');
+    await chooseReference(kemi, handedSnapshot(2));
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view shows no change against the unchanged page');
     console.log('PASS コードの見方から渡したときのスナップショットと、変えていないページを比べると変化が 0');
@@ -2185,10 +2230,11 @@ function changingRegions(inserted) {
   };
 }
 
-/** 比べる相手を、その見出しで始まる時点に選ぶ。 */
-async function chooseReference(label) {
-  await evaluate(`(() => { const select = document.querySelector('.lv-compare-select'); const option = Array.from(select.options).find((item) => item.textContent.startsWith(${JSON.stringify(label)})); select.value = option.value; select.dispatchEvent(new Event('change')); return true; })()`);
-  await waitFor(showsSnapshot(label));
+/** 比べる相手を、そのスナップショットに選ぶ。 */
+async function chooseReference(kemi, which) {
+  const id = await waitForOption(kemi, which);
+  await evaluate(`(() => { const select = document.querySelector('.lv-compare-select'); select.value = ${JSON.stringify(id)}; select.dispatchEvent(new Event('change')); return true; })()`);
+  await waitFor(showsSnapshot(id));
 }
 
 /** 印（R-PAGE-VIEW の変わったところに印、R-PAGE-DIFF の控えめな印、R-PAGE-REF、R-LIVE のスクロール位置）。 */
@@ -2205,11 +2251,11 @@ async function marksFollowTheChanges(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
 
     let regions = changingRegions(false);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
@@ -2224,12 +2270,12 @@ async function marksFollowTheChanges(repository) {
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(counts), marked, 'marking adds no change');
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 2'))`);
-    await chooseReference('Recorded 2');
+    await waitForOption(kemi, recordedSnapshot(2));
+    await chooseReference(kemi, recordedSnapshot(2));
     await waitFor(`${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
     console.log('PASS 印を付けた後も変化の数が変わらず、印を付けた後に取ったスナップショットと比べると変化が 0');
 
-    await chooseReference('Recorded 1');
+    await chooseReference(kemi, recordedSnapshot(1));
     await writeFile(join(dev.dir, 'changing.css'), changingCss());
     await waitFor(`${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
@@ -2249,13 +2295,13 @@ async function marksFollowTheChanges(repository) {
     image = await liveShot('marks-mock');
     assert.equal(countPixels(image, regions.item(2), isGreen), 0, 'no mark while comparing with a mock');
     await chooseFromMockMenu('lv-mock-remove');
-    await chooseReference('Recorded 1');
+    await chooseReference(kemi, recordedSnapshot(1));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     console.log('PASS モックと比べている間は印が付かない');
 
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Recorded 3'))`);
-    await chooseReference('Recorded 3');
+    await waitForOption(kemi, recordedSnapshot(3));
+    await chooseReference(kemi, recordedSnapshot(3));
     await waitFor(`${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage());
     await waitFor(`${changeList}?.dataset.main === '1'`);
@@ -2318,13 +2364,13 @@ async function marksCanBeHidden(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
     await waitFor(notRecorded);
     await new Promise((done) => setTimeout(done, 1000));
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage());
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '2'`);
@@ -2363,11 +2409,11 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     await new Promise((done) => setTimeout(done, 400));
@@ -2386,11 +2432,11 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     console.log("PASS require-trusted-types-for 'script' の CSP を返すページでも、スナップショットが撮れて変化の一覧が出る");
@@ -2415,11 +2461,11 @@ async function removedMarksSurviveReparsing(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'table.html'), tablePage(['one', 'two', 'four']));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     await waitForPixels(`${refPane} .lv-frame:not([hidden])`, shots, 'table-removed', [0, row + 2 * item, 390, row + 3 * item], isRed);
@@ -2443,11 +2489,11 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0' && ${changeList}.dataset.shifted === '0'`);
 
     // 並べる表示の比べる相手は、見えている高さで描いて中でスクロールする（動いているページと同じ見え方）。
     const badgeAt = [badge.left, badge.top, badge.left + badge.width, badge.top + badge.height];
@@ -2492,7 +2538,7 @@ async function cssomChangesAreFollowed(repository) {
   await withLiveReview({ repository, page: 'adopted.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, startSnapshot, `${changeList}?.dataset.main === '0'`);
     // 見張りを始めた直後の知らせ（ResizeObserver は始めに必ず一度知らせる）を待ってから変える。先に変えると、
     // その知らせで比べ直されて、CSSOM の変化を見張れていなくても一覧が変わってしまう。
     await new Promise((done) => setTimeout(done, 1000));
@@ -2516,20 +2562,20 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, startSnapshot, `${changeList}?.dataset.main === '0'`);
     await browser('click', '.lv-widths button[data-width="768"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 2')} && ${changeList}?.dataset.main === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(2), `${changeList}?.dataset.main === '0'`);
     // 390 で取ったものに切り替わっているので、768 では記録されていない。768 で取ったものを選び直す。
     await browser('click', '.lv-widths button[data-width="768"]');
     await waitFor(notRecorded);
-    await chooseReference('Recorded 1');
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0'`);
+    await chooseReference(kemi, recordedSnapshot(1));
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     console.log('PASS 表示幅を変えても文書の幅が変わらないページでも、切り替えた幅の変化の一覧が出る');
   });
 }
@@ -2548,7 +2594,7 @@ async function manyElementsAreRecordedAndCompared(repository) {
   await withLiveReview({ repository, page, prepare }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(`${showsSnapshot('Start')} && ${changeList}?.dataset.main === '0'`, 120000);
+    await waitForSnapshot(kemi, startSnapshot, `${changeList}?.dataset.main === '0'`, 120000);
     await writeFile(join(dev.dir, 'many.css'), manyCss('rgb(214, 69, 69)'));
     await waitFor(`${changeList}?.dataset.main === '${cards}'`, 120000);
     console.log(`PASS HTML が 2 MB 未満で要素が ${cards * 4} を超えるページのスナップショットが取れ、変化の一覧が出る`);
@@ -2626,7 +2672,7 @@ async function commentImagesLookLikeThePage(repository) {
     await withLiveReview({ repository, page }, async ({ kemi }) => {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
-      await waitFor(showsSnapshot('Start'));
+      await waitForSnapshot(kemi, startSnapshot);
       await browser('click', '.lv-widths button[data-width="390"]');
       await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
       await new Promise((done) => setTimeout(done, 800));
@@ -2653,7 +2699,7 @@ async function commentImagesLookLikeThePage(repository) {
     await withLiveReview({ repository, page: `changing.html?${query}` }, async ({ kemi }) => {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
-      await waitFor(showsSnapshot('Start'));
+      await waitForSnapshot(kemi, startSnapshot);
       const made = await askImage(null, [{ n: 1, kind: 'element', points: [], elements: [{ rect: { x: 0, y: 120, w: 200, h: 60 } }] }]);
       if (made.error === null) {
         const path = join(shots, `changing-${query.replace('=1', '')}.png`);
@@ -2695,7 +2741,7 @@ async function unembeddedResourceMakesNoImage(repository, resource) {
   await withLiveReview({ repository, page, prepare }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     const snapshot = (await getJson(kemi.url, 'api/snapshots')).snapshots.find((entry) => entry.kind === 'start');
     const html = (await getJson(kemi.url, `api/snapshot/${snapshot.id}`)).html;
     if (resource !== 'canvas') {
@@ -2735,7 +2781,7 @@ async function commentImagesKeepTheLayoutOfTheViewport(repository) {
   await withLiveReview({ repository, page: 'responsive.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '1280px'`);
     // 枠の高さが、動いているページの画面の高さ（vh の 100）。
     const height = Number(await evaluate(`document.querySelector('${livePane} .lv-frame').clientHeight`));
@@ -2800,7 +2846,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await browser('open', kemi.url);
     await chooseCompare('side');
     await evaluate(`window.__kemiErrors = []; addEventListener('error', (event) => window.__kemiErrors.push(String(event.message))); addEventListener('unhandledrejection', (event) => window.__kemiErrors.push(String(event.reason))); true`);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -2890,7 +2936,7 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -2928,7 +2974,7 @@ async function penGlowAndImageStayAroundTheDrawnArea(repository) {
   await withLiveReview({ repository, page: 'rich.html', prepare }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await evaluate(`window.addEventListener('message', (event) => {
       if (event.data?.kemi !== 'live') return;
       if (event.data.type === 'placed') window.__boundsPlace = event.data;
@@ -3004,7 +3050,7 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3063,7 +3109,7 @@ async function savedCommentsAreQuietMarks(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3106,7 +3152,7 @@ async function draftPlacesStayAtTheirWidth(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3179,7 +3225,7 @@ async function latePlacesKeepTheirWidth(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3206,7 +3252,7 @@ async function draftsStayWhileSaving(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3265,7 +3311,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
   await withLiveReview({ repository, page: 'rich.html', viewportAfter: ['1280', '900'] }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
@@ -3309,7 +3355,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
   await withLiveReview({ repository, page: 'tall.html', viewportAfter: ['1280', '900'] }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3363,7 +3409,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
   await withLiveReview({ repository, page: 'rich.html', viewportAfter: ['1280', '900'] }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
@@ -3385,9 +3431,9 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await waitFor(`${draftNumbers} === '[]'`, 30000);
     await releaseRequests();
     assert.equal((await waiting).code, 0, 'kemi wait returns what was handed');
-    await waitFor(`Array.from(document.querySelectorAll('.lv-compare-select option')).some((option) => option.textContent.startsWith('Handed 2'))`);
+    await waitForOption(kemi, handedSnapshot(2));
     await browser('click', '.lv-view button[data-view="page"]');
-    await chooseReference('Handed 2');
+    await chooseReference(kemi, handedSnapshot(2));
     await waitFor(`${changeList} !== null`);
     await new Promise((done) => setTimeout(done, 1500));
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
@@ -3405,7 +3451,7 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await new Promise((done) => setTimeout(done, 500));
@@ -3434,11 +3480,11 @@ async function placesMakeNoChange(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
-    await waitFor(`${showsSnapshot('Recorded 1')} && ${changeList}?.dataset.main === '0' && ${changeList}?.dataset.shifted === '0'`);
+    await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0' && ${changeList}?.dataset.shifted === '0'`);
     await chooseTool('element');
     await clickInPane(livePane, 100, 150);
     await chooseTool('pen');
@@ -3479,7 +3525,7 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
     const rich = await addPageComment(kemi, '/rich.html', 390, 'the button is too wide');
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     const commentCount = (page) => `document.querySelector('#page-tree .lv-page[data-page="${page}"] .lv-comment-count')?.textContent`;
     await waitFor(`${commentCount('/other.html')} === '1' && ${commentCount('/rich.html')} === '1'`);
     await browser('click', '#page-tree .lv-page[data-page="/other.html"] .lv-width-tag[data-width="390"]');
@@ -3666,7 +3712,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
   await withLiveReview({ repository, page: 'rich.html' }, async ({ kemi, state }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
@@ -3707,7 +3753,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
     await withLiveReview({ repository, page: `changing.html?${query}` }, async ({ kemi, state: strictState }) => {
       await browser('set', 'viewport', '1280', '900');
       await browser('open', kemi.url);
-      await waitFor(showsSnapshot('Start'));
+      await waitForSnapshot(kemi, startSnapshot);
       await postJson(kemi.url, 'api/message', { body: 'start' });
       await handInThePage(kemi, repository, strictState);
       await chooseTool('element');
@@ -3733,16 +3779,15 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   await writeFile(mockFile, '<!doctype html><p>mock to be deleted</p>\n');
   const dev = await startDevServer();
   const state = await temporaryDirectory('kemi-live-state-');
-  const options = `Array.from(document.querySelectorAll('.lv-compare-select option')).map((option) => option.textContent)`;
   let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   let start;
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(showsSnapshot('Start'));
+    await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-band .lv-record-now');
-    await waitFor(`${options}.some((label) => label.startsWith('Recorded 1'))`);
+    await waitForOption(kemi, recordedSnapshot(1));
     const [listed] = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'start');
     start = await getJson(kemi.url, `api/snapshot/${listed.id}`);
     await addPageComment(kemi, '/rich.html', 1280, 'keep this review');
@@ -3756,7 +3801,7 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   try {
     await browser('open', kemi.url);
     await chooseCompare('side');
-    await waitFor(`${showsSnapshot('Start')} && ${options}.some((label) => label.startsWith('Recorded 1'))`);
+    await waitForSnapshot(kemi, startSnapshot, listedOption(await snapshotTaken(kemi, recordedSnapshot(1))));
     await waitFor(`document.querySelector('#page-tree .lv-page[data-page="/rich.html"] .lv-comment-count')?.textContent === '1'`);
     // 動いているページが読み込まれた後も、開始時のものを取り直さない。
     await new Promise((done) => setTimeout(done, 1500));
