@@ -69,7 +69,10 @@ fn page_json(page: &PageTarget) -> serde_json::Value {
         "places": page.places.iter().map(|place| json!({
             "n": place.n,
             "kind": place.kind.as_str(),
-            "points": place.points.iter().map(|point| json!({ "x": point.x, "y": point.y })).collect::<Vec<_>>(),
+            "points": place.points.iter().map(|point| json!({
+                "x": coordinate_json(point.x),
+                "y": coordinate_json(point.y),
+            })).collect::<Vec<_>>(),
             "elements": place.elements.iter().map(|element| json!({
                 "selector": element.selector,
                 "text": element.text,
@@ -83,6 +86,19 @@ fn page_json(page: &PageTarget) -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "image": null,
     })
+}
+
+/// 点の座標 1 つ。結果 JSON の契約の版 4 の kemi で置いた点は整数で、`12.0` でなく `12` と書く
+/// （R-PAGE-COMMENT）。それより前の kemi で保存した小数の点（`20.5`）は値を変えずに書く。点を整数の
+/// 型にせず f64 のまま持つのは、その小数の点を復元で読むため。整数として書くのは、`as i64` が
+/// 値を変えない範囲のうち、JavaScript の数が整数を正確に表せる範囲（±(2^53 − 1)）に限る。
+fn coordinate_json(value: f64) -> serde_json::Value {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    if value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER {
+        json!(value as i64)
+    } else {
+        json!(value)
+    }
 }
 
 /// R-SUBMIT の契約に合わせた返信の JSON。案（`variants`・`chosen`・`applied`）は
@@ -151,5 +167,27 @@ pub(super) fn agent_event_json(event: &AgentEvent) -> serde_json::Value {
             })).collect::<Vec<_>>(),
             "messages": handed.messages.iter().map(message_json).collect::<Vec<_>>(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coordinate_json;
+
+    /// 契約の版 4 の点は整数で `12.0` と書かない。それより前に保存した小数の点は値を変えずに書く。
+    /// JavaScript の数が整数を正確に表せる範囲を超える値は、整数にせずそのまま書く。
+    #[test]
+    fn whole_coordinates_are_written_as_integers_and_others_keep_their_value() {
+        for (value, written) in [
+            (12.0, "12"),
+            (-3.0, "-3"),
+            (0.0, "0"),
+            (20.5, "20.5"),
+            (-0.25, "-0.25"),
+            (9_007_199_254_740_991.0, "9007199254740991"),
+            (9_007_199_254_740_992.0, "9007199254740992.0"),
+        ] {
+            assert_eq!(coordinate_json(value).to_string(), written, "{value}");
+        }
     }
 }

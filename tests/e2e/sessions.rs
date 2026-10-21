@@ -922,6 +922,95 @@ async fn a_page_comment_handed_before_suspending_comes_back_with_its_image_after
     resumed.kill();
 }
 
+/// ページへのコメントを、場所の点を `points` から (x, y) の並びとして読む。
+fn place_points(comment: &serde_json::Value) -> Vec<Vec<(f64, f64)>> {
+    comment["page"]["places"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|place| {
+            place["points"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| (point["x"].as_f64().unwrap(), point["y"].as_f64().unwrap()))
+                .collect()
+        })
+        .collect()
+}
+
+/// 版 4 より前の kemi で保存したページへのコメントの点は、復元してから渡しても submit しても、
+/// 点の数も値も保存したときのまま出る。版 4 の kemi で置いた点の座標は、`kemi wait` と submit の
+/// stdout で `12` と書き、`12.0` と書かない（live.md の R-PAGE-COMMENT）。サーバは受け取った点を
+/// 変えずに保存し、セッションの形式も版 4 の前と同じなので、版 4 の前の画面が送った点（小数を
+/// 含み、版 4 の手順なら間引かれる点を残した矢印とペン）を API で置いて保留すれば、版 4 の前の
+/// kemi が保存したセッションと同じになる。
+#[cfg(unix)]
+#[tokio::test]
+async fn page_comment_points_keep_their_saved_values_after_resuming_and_new_ones_are_whole_numbers()
+{
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_live_review(&dir, &state);
+    let saved = serde_json::json!([
+        { "n": 1, "kind": "arrow", "points": [{ "x": 0, "y": 0 }, { "x": 5, "y": 0.5 }, { "x": 10, "y": 0 }] },
+        { "n": 2, "kind": "pen", "points": [{ "x": 10, "y": 20.5 }, { "x": 15.25, "y": 20.5 }, { "x": 20, "y": 20.5 }] },
+    ]);
+    let saved_points = vec![
+        vec![(0.0, 0.0), (5.0, 0.5), (10.0, 0.0)],
+        vec![(10.0, 20.5), (15.25, 20.5), (20.0, 20.5)],
+    ];
+    let response = kemi
+        .post(
+            "api/comment",
+            serde_json::json!({
+                "op": "add_page", "body": "saved before version 4",
+                "page": { "url": "/app", "width": 390, "places": saved },
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    signal(&kemi.child, "-INT");
+    let (status, _, _) = kemi.wait_with_stderr();
+    assert_eq!(status.code(), Some(130));
+    let mut resumed =
+        Kemi::spawn_with_state(&dir.path, &["--resume", &id, "--no-open"], &state.path);
+    assert_eq!(resumed.review_id(), id);
+    let response = resumed
+        .post(
+            "api/comment",
+            serde_json::json!({
+                "op": "add_page", "body": "placed by version 4",
+                "page": { "url": "/app", "width": 390, "places": [
+                    { "n": 1, "kind": "pen", "points": [{ "x": 12, "y": 340 }, { "x": 40, "y": 340 }, { "x": 40, "y": 400 }] },
+                ] },
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    resumed.hand().await;
+    let whole = r#""points":[{"x":12,"y":340},{"x":40,"y":340},{"x":40,"y":400}]"#;
+
+    let waited = run_agent(&dir.path, &state.path, &["wait", &id], "");
+    resumed.submit("changes_requested").await;
+    let (status, submitted) = resumed.wait();
+
+    assert_eq!(waited.status.code(), Some(0), "{waited:?}");
+    assert_eq!(status.code(), Some(1));
+    let waited = String::from_utf8(waited.stdout).unwrap();
+    let answer: serde_json::Value = serde_json::from_str(&waited).unwrap();
+    let handed = &answer["events"][0]["comments"];
+    assert_eq!(handed[0]["comment"]["body"], "saved before version 4");
+    assert_eq!(place_points(&handed[0]["comment"]), saved_points);
+    let result: serde_json::Value = serde_json::from_str(&submitted).unwrap();
+    assert_eq!(result["comments"][0]["body"], "saved before version 4");
+    assert_eq!(place_points(&result["comments"][0]), saved_points);
+    for written in [&waited, &submitted] {
+        assert!(written.contains(whole), "{written}");
+        assert!(!written.contains(r#""x":12.0"#), "{written}");
+    }
+}
+
 #[tokio::test]
 async fn submitting_removes_the_files_of_the_session() {
     let dir = TempDir::new();

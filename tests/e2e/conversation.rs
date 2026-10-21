@@ -365,9 +365,10 @@ async fn a_handed_page_comment_reaches_wait_with_its_places_and_a_readable_image
         assert_eq!(place["elements"][0]["text"], "Buy");
         assert_eq!(place["elements"][0]["rect"]["w"], 200.0);
     }
+    // 小数部の無い座標は整数として書く（R-PAGE-COMMENT）。
     assert_eq!(
         places[1]["points"][1],
-        serde_json::json!({ "x": 100.0, "y": 150.0 })
+        serde_json::json!({ "x": 100, "y": 150 })
     );
     let image = Path::new(page["image"].as_str().unwrap());
     assert!(image.is_absolute(), "{image:?}");

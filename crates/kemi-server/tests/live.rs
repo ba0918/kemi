@@ -1159,9 +1159,10 @@ async fn a_page_comment_is_added_in_the_page_group_with_its_places_in_number_ord
     );
     assert_eq!(comment["page"]["places"][1]["n"], 2);
     assert_eq!(comment["page"]["places"][1]["kind"], "pen");
+    // 小数部の無い座標は整数として書き、小数の座標はそのままの値で書く（R-PAGE-COMMENT）。
     assert_eq!(
         comment["page"]["places"][1]["points"],
-        serde_json::json!([{ "x": 10.0, "y": 20.5 }, { "x": 30.0, "y": 40.0 }])
+        serde_json::json!([{ "x": 10, "y": 20.5 }, { "x": 30, "y": 40 }])
     );
     assert!(comment["page"]["image"].is_null());
     let review = get_review_json(&running, "api/review").await;
