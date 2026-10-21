@@ -12,29 +12,30 @@ const RENDERED_LIMIT = 500;
 /**
  * 明暗と本文ごとの、サーバが描いた Markdown。会話パネルは描き直すたびに並びを全部作り直すので、
  * 控えが無いと、状態の通知やファイルの選択のたびに見えている本文の数だけ描かせ直す。サーバは同じ
- * 入力に同じ HTML を返す。古いものから捨てる。
+ * 入力に同じ HTML を返す。上限を超えたら、最後に使ったのが最も前のものから捨てる。上限は件数で
+ * 数え、本文の長さは数えない。
  * @type {Map<string, Promise<any>>}
  */
-const rendered = new Map();
+const renderedMarkdown = new Map();
 
 /** @param {string} body @param {boolean} dark */
 function renderMarkdown(body, dark) {
   const key = `${dark ? 'dark' : 'light'}:${body}`;
-  const known = rendered.get(key);
+  const known = renderedMarkdown.get(key);
   if (known) {
-    rendered.delete(key);
-    rendered.set(key, known);
+    renderedMarkdown.delete(key);
+    renderedMarkdown.set(key, known);
     return known;
   }
   const result = renderPart({ type: 'text', body }, dark);
-  rendered.set(key, result);
+  renderedMarkdown.set(key, result);
   // 失敗は控えない。次に描くときに問い合わせ直す。
   result.catch(() => {
-    if (rendered.get(key) === result) rendered.delete(key);
+    if (renderedMarkdown.get(key) === result) renderedMarkdown.delete(key);
   });
-  if (rendered.size > RENDERED_LIMIT) {
-    const oldest = rendered.keys().next().value;
-    if (oldest !== undefined) rendered.delete(oldest);
+  if (renderedMarkdown.size > RENDERED_LIMIT) {
+    const leastRecent = renderedMarkdown.keys().next().value;
+    if (leastRecent !== undefined) renderedMarkdown.delete(leastRecent);
   }
   return result;
 }
