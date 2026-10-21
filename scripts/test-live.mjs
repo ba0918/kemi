@@ -78,6 +78,7 @@ import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { browserSession, visible } from './lib/browser.mjs';
 import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
@@ -674,6 +675,81 @@ async function setOpacity(value) {
   await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
 }
 
+/** 透かし具合を入れ、重ねた比べる相手がその透かし具合で描かれるのを待つ。 */
+async function setOpacityAndWait(value) {
+  await setOpacity(value);
+  await waitFor(`getComputedStyle(document.querySelector('${refPane} .lv-box')).opacity === '${value / 100}'`);
+}
+
+/** settled の待つ上限（ms）。 */
+const SETTLE_TIMEOUT = 5000;
+
+/**
+ * 要素の置き方（位置・大きさ・transform）と舞台の倍率が、5 フレーム続けて変わらなくなるのを待つ。表示幅や画面の
+ * 大きさを変えた後、スクロールさせた後に、枠の中の座標で押したり撮ったりする前に使う。
+ */
+async function settled(selector) {
+  const result = await evaluate(`new Promise((done) => {
+    const read = () => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element) return 'missing';
+      const r = element.getBoundingClientRect();
+      return [r.x, r.y, r.width, r.height, getComputedStyle(element).transform, ${STAGE_SCALE}].join(' ');
+    };
+    const deadline = performance.now() + ${SETTLE_TIMEOUT};
+    let previous = read();
+    let stable = 0;
+    const check = () => {
+      const now = read();
+      stable = now === previous && now !== 'missing' ? stable + 1 : 0;
+      previous = now;
+      if (stable >= 5) done('settled');
+      else if (performance.now() > deadline) done('still moving: ' + now);
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  })`);
+  assert.equal(result, 'settled', `${selector} did not settle within ${SETTLE_TIMEOUT} ms`);
+}
+
+/** 動いているページからの知らせを種類ごとに数え始める（レビュー画面を開くたびに数え直す）。 */
+async function countPageMessages() {
+  await evaluate(`(() => {
+    if (!window.__kemiSeen) {
+      window.__kemiSeen = {};
+      addEventListener('message', (event) => {
+        if (event.data?.kemi !== 'live') return;
+        window.__kemiSeen[event.data.type] = (window.__kemiSeen[event.data.type] ?? 0) + 1;
+        if (event.data.type === 'scroll') window.__kemiScrollY = event.data.y;
+      });
+    }
+    return true;
+  })()`);
+}
+
+/** 数え始めてから届いた、その種類の知らせの数を読む式。 */
+const seenMessages = (type) => `(window.__kemiSeen?.[${JSON.stringify(type)}] ?? 0)`;
+
+/** 数え始めてから最後に届いたスクロールの知らせの、ページの縦の位置を読む式。まだ無ければ undefined。 */
+const lastScrollY = 'window.__kemiScrollY';
+
+/** action を行い、その後に動いているページからその種類の知らせが届くのを待つ。 */
+async function nextPageMessage(type, action) {
+  await countPageMessages();
+  const before = await evaluate(seenMessages(type));
+  await action();
+  await waitFor(`${seenMessages(type)} > ${before}`);
+}
+
+/** 式が真になるのを待つ。期限までに真にならなければ、message（何を確かめていたかと、そのときの値）で落とす。 */
+async function eventually(code, message) {
+  try {
+    await waitFor(code);
+  } catch (error) {
+    throw new Error(typeof message === 'function' ? await message() : message, { cause: error });
+  }
+}
+
 /**
  * 要素の上で回したホイールを作って送る（agent-browser のホイールは押した位置に届かず、画面の左上に届く）。at は要素の
  * 左上からの位置で、その要素に送る。at を省くと要素の真ん中で、そこで一番上にある要素に送る。
@@ -725,8 +801,8 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     // 画素の比較は 390 で（縮めずに描ける幅）。
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitForSnapshot(kemi, recordedSnapshot(1));
-    await new Promise((done) => setTimeout(done, 500));
-    const before = await shot(`${refPane} .lv-frame`, shots, 'snapshot');
+    // スナップショットが描かれたことを、1 段目の SVG の青い円で見る。
+    const before = await waitForPixels(`${refPane} .lv-frame`, shots, 'snapshot', [0, 0, 390, 80], isBlue);
     const now = await shot(`${livePane} .lv-frame`, shots, 'live');
     const compared = await comparePixels(before, now, join(shots, 'diff.png'));
     if (compared.different === 0) {
@@ -741,8 +817,8 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     const afterClick = await shot(`${refPane} .lv-frame`, shots, 'snapshot-clicked');
     assert.equal((await comparePixels(before, afterClick, join(shots, 'clicked-diff.png'))).different, 0, 'the snapshot must not run onclick');
     await clickInPane(livePane, 150, 250);
-    await new Promise((done) => setTimeout(done, 300));
-    const liveClicked = await shot(`${livePane} .lv-frame`, shots, 'live-clicked');
+    // 押した onclick がページの背景を黄色にするのを、ボタンの下の余白で見る。
+    const liveClicked = await shotUntil(`${livePane} .lv-frame`, shots, 'live-clicked', (image) => countPixels(image, [0, 320, 390, 400], isYellow) > 0);
     assert.ok((await comparePixels(now, liveClicked, join(shots, 'live-clicked-diff.png'))).different > 0, 'the running page runs onclick (control)');
     console.log('PASS onclick を持つ要素を押しても、スナップショットではスクリプトが動かない（動いているページでは動く）');
 
@@ -783,14 +859,16 @@ async function snapshotsCarryTheirResources(repository) {
     await waitFor(notRecorded);
     await browser('click', `${refPane} .lv-empty .lv-record`);
     await waitForSnapshot(kemi, recordedSnapshot(1));
-    await new Promise((done) => setTimeout(done, 800));
-    const live = await shot(`${livePane} .lv-frame`, shots, 'resources-live');
-    const snapshot = await shot(`${refPane} .lv-frame`, shots, 'resources-snapshot');
     const colors = (image) => Object.fromEntries(RESOURCE_BOXES.map(({ name, left, top }) => [name, pixelAt(image, left + 40, top + 40)]));
-    const seen = colors(live);
+    const drawn = Object.fromEntries(RESOURCE_BOXES.filter(({ name }) => name !== 'poster').map(({ name, color }) => [name, color]));
     // video の上には操作部が重なるので、色そのものではなく白でない（poster が出た）ことを見る。
+    const everyBox = (image) => { const { poster, ...plain } = colors(image); return isDeepStrictEqual(plain, drawn) && !isDeepStrictEqual(poster, [255, 255, 255]); };
+    // 箱は資源を読み込んでから描かれるので、描かれるまで撮り直す。
+    const live = await shotUntil(`${livePane} .lv-frame`, shots, 'resources-live', everyBox);
+    const seen = colors(live);
+    const snapshot = await shotUntil(`${refPane} .lv-frame`, shots, 'resources-snapshot', (image) => isDeepStrictEqual(colors(image), seen));
     const { poster, ...plain } = seen;
-    assert.deepEqual(plain, Object.fromEntries(RESOURCE_BOXES.filter(({ name }) => name !== 'poster').map(({ name, color }) => [name, color])), 'the running page draws every box (control)');
+    assert.deepEqual(plain, drawn, 'the running page draws every box (control)');
     assert.notDeepEqual(poster, [255, 255, 255], 'the running page draws the poster (control)');
     assert.deepEqual(colors(snapshot), seen, `the snapshot draws every box as the running page does: ${join(shots, 'resources-snapshot.png')}`);
     console.log('PASS 別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じに出る');
@@ -874,8 +952,8 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
 
     await assignMockByPath('mocks/mock.html');
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock' && !${visible(mockPanel)}`);
-    await new Promise((done) => setTimeout(done, 800));
-    const mock = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'mock');
+    // モックの CSS と画像は後から読み込まれるので、両方が描かれるまで撮り直す。
+    const mock = await shotUntil(`${refPane} .lv-frame:not([hidden])`, shots, 'mock', (image) => isDeepStrictEqual(pixelAt(image, 200, 200), [0, 200, 0]) && isDeepStrictEqual(pixelAt(image, 10, 10), [255, 0, 0]));
     assert.deepEqual(pixelAt(mock, 200, 200), [0, 200, 0], 'the mock CSS is applied');
     assert.deepEqual(pixelAt(mock, 10, 10), [255, 0, 0], 'the mock image is shown');
     assert.equal(mock.width, 390);
@@ -893,8 +971,8 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
     const report = JSON.parse(await evaluate(`JSON.stringify(window.__mockReports[0])`));
     assert.equal(report.sawToken, false, JSON.stringify(report));
     assert.equal(report.parent, 'blocked', JSON.stringify(report));
-    await new Promise((done) => setTimeout(done, 500));
-    const drawn = await shot(`${refPane} .lv-frame:not([hidden])`, shots, 'script-mock');
+    // モックは API への書き込みが終わってから知らせを送るので、断られたかはもう読める。描いた色は撮り直して待つ。
+    const drawn = await shotUntil(`${refPane} .lv-frame:not([hidden])`, shots, 'script-mock', (image) => isDeepStrictEqual(pixelAt(image, 200, 200), [0, 0, 200]));
     assert.deepEqual(pixelAt(drawn, 200, 200), [0, 0, 200], 'the mock script runs');
     const messagesAfter = (await reviewJson(kemi)).messages.length;
     assert.equal(messagesAfter, messagesBefore, 'the API refuses the mock even with the token');
@@ -943,10 +1021,7 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
       await browser('open', kemi.url);
       await waitForSnapshot(kemi, startSnapshot);
       // 中継のページと写すときの読み込みは中継のオリジンを referrer にする。それ以外がスナップショットの枠から。
-      const deadline = Date.now() + 15000;
-      while (!received.some(({ referer }) => !referer?.startsWith(relay)) && Date.now() < deadline) {
-        await new Promise((done) => setTimeout(done, 100));
-      }
+      await until(() => received.some(({ referer }) => !referer?.startsWith(relay)), { timeout: 15000, interval: 100 }).catch(() => {});
       assert.ok(received.some(({ referer }) => !referer?.startsWith(relay)), `the snapshot frame loads the image: ${JSON.stringify(received)}`);
       assert.equal(received.some(({ referer }) => referer?.includes(token)), false, JSON.stringify(received));
       console.log('PASS スナップショットの中の外部の画像は、referrerpolicy="unsafe-url" を付けていても Referer にトークンの URL を受け取らない');
@@ -960,10 +1035,7 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
 /** 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）。 */
 async function overlayFollowsTheScrollAndTheOpacity(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const opacity = async (value) => {
-    await setOpacity(value);
-    await new Promise((done) => setTimeout(done, 300));
-  };
+  const opacity = setOpacityAndWait;
   await withLiveReview({ repository, page: 'tall.html', viewportAfter: ['1280', '800'] }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
@@ -982,7 +1054,7 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
     // 別のオリジンの枠の中は、ページ内の目印へ移して（同じ文書のままスクロールさせて）動かす。
     await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#band-3'; return true; })()`);
     await waitFor(`/translate\\(0px, -[1-9]/.test(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform)`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${refPane} .lv-frame:not([hidden])`);
     await opacity(0);
     const underneath = await shot(`${livePane} .lv-viewport`, shots, 'overlay-0');
     await opacity(100);
@@ -1015,8 +1087,8 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
     // 見る対象を変えると、透かし具合で見え方が変わる。
     await writeFile(join(dev.dir, 'tall.html'), (await readFile(join(dev.dir, 'tall.html'), 'utf8')).replaceAll('hsl(', 'hsl(180deg + '));
     // 目印へ移した後の URL（# の付いた今の URL）を入れ直しても、同じ文書の中を移るだけで読み込み直されない。
-    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0]; return true; })()`);
-    await new Promise((done) => setTimeout(done, 1500));
+    await nextPageMessage('page', () => evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0]; return true; })()`));
+    await settled(`${livePane} .lv-frame`);
     await opacity(0);
     const live0 = await shot(`${livePane} .lv-viewport`, shots, 'changed-0');
     await opacity(100);
@@ -1090,14 +1162,10 @@ async function compareModesScaleAndReload(repository) {
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'snapshot'`);
     await evaluate(`document.querySelector('${livePane} .lv-viewport').scrollLeft = 200; true`);
     await waitFor(`document.querySelector('${refPane} .lv-viewport').scrollLeft === 200 && /translate\\(0px, -[1-9]/.test(document.querySelector('${refPane} .lv-frame:not([hidden])').style.transform)`);
-    await new Promise((done) => setTimeout(done, 500));
-    const opacity = async (value) => {
-      await setOpacity(value);
-      await new Promise((done) => setTimeout(done, 300));
-    };
-    await opacity(0);
+    await settled(`${refPane} .lv-frame:not([hidden])`);
+    await setOpacityAndWait(0);
     const underneath = await shot(`${livePane} .lv-viewport`, shots, 'full-overlay-0');
-    await opacity(100);
+    await setOpacityAndWait(100);
     const overlaid = await shot(`${livePane} .lv-viewport`, shots, 'full-overlay-100');
     const compared = await comparePixels(underneath, overlaid, join(shots, 'full-overlay-diff.png'));
     if (compared.different === 0) {
@@ -1110,10 +1178,7 @@ async function compareModesScaleAndReload(repository) {
 
     const before = dev.loads('/tall.html');
     await browser('click', '.lv-reload');
-    for (const until = Date.now() + 10000; dev.loads('/tall.html') === before;) {
-      assert.ok(Date.now() < until, 'the page is loaded again');
-      await new Promise((done) => setTimeout(done, 100));
-    }
+    await until(() => dev.loads('/tall.html') !== before, { timeout: 10000, interval: 100, what: 'the page is loaded again' });
     console.log('PASS 読み込み直す操作を押すと、見る対象のページが読み込み直される');
   });
 }
@@ -1554,11 +1619,7 @@ async function closingTheComposeBoxRestoresTheFrame(repository) {
     await chooseTool('arrow');
     await savePageCommentInThePage('the first comment');
     await waitFor(`!${visible('.lv-hint')} && !${visible(compose)}`);
-    await new Promise((done) => setTimeout(done, 300));
-    assert.ok(
-      await evaluate(sameHeight(liveRoomHeight)),
-      `the frame grows into the room the hint left: ${await evaluate(liveFrameHeight)} for ${await evaluate(liveRoomHeight)}`,
-    );
+    await eventually(sameHeight(liveRoomHeight), async () => `the frame grows into the room the hint left: ${await evaluate(liveFrameHeight)} for ${await evaluate(liveRoomHeight)}`);
     console.log('PASS 最初の保存で始め方の案内が消えると、見る対象の枠が空いた高さまで伸びる');
 
     await chooseTool('element');
@@ -1574,8 +1635,7 @@ async function closingTheComposeBoxRestoresTheFrame(repository) {
         await browser('click', `${compose} .lv-compose-cancel`);
       }
       await waitFor(`!${visible(compose)}`);
-      await new Promise((done) => setTimeout(done, 300));
-      assert.ok(await evaluate(sameHeight(before)), `after ${close}, the frame is as high as before the box opened: ${await evaluate(liveFrameHeight)} for ${before}`);
+      await eventually(sameHeight(before), async () => `after ${close}, the frame is as high as before the box opened: ${await evaluate(liveFrameHeight)} for ${before}`);
     }
     console.log('PASS 書く欄を開いて保存しても取り消しても、見る対象の枠の高さは欄を開く前と同じ');
   });
@@ -1800,8 +1860,8 @@ async function changeRowsAreElementsThatLeadToThePage(repository) {
     await browser('click', '.lv-band .lv-record-now');
     await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.css'), `${changingCss('rgb(214, 69, 69)')}.buy { color: rgb(20, 20, 20); border: 4px solid rgb(0, 150, 0); }\n`);
-    await waitFor(`${changeList}?.dataset.main === '1'`);
-    await new Promise((done) => setTimeout(done, 500));
+    // 一覧が今の CSS（変えた背景色）と比べたものになるまで待つ。
+    await waitFor(`${changeList}?.dataset.main === '1' && ${mainRows}.length > 0 && ${backgroundsIn(`${mainRows}[0]`)}.includes('rgb(214, 69, 69)')`);
     assert.equal(await evaluate(`${mainRows}.length`), 1, await evaluate(`JSON.stringify(${mainRows}.map((row) => row.textContent))`));
     const row = `${mainRows}[0]`;
     assert.match(await evaluate(`${row}.textContent`), /button[\s\S]*Buy/);
@@ -1874,10 +1934,12 @@ async function removedRowsLeadToTheSnapshot(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/changing.html')`);
-    await browser('click', '.lv-widths button[data-width="390"]');
+    // 下の方の要素を足し、ページの中身が差し替わったことを開始時との一覧で見てから、幅 390px で取る。
+    await waitForSnapshot(kemi, startSnapshot);
     await writeFile(join(dev.dir, 'changing.html'), changingWithLow());
+    await waitFor(`${mainRows}.some((item) => item.dataset.kind === 'added' && item.textContent.includes('Low element'))`);
+    await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && document.querySelector('${livePane} .lv-notice').hidden`);
-    await new Promise((done) => setTimeout(done, 1000));
     await browser('click', '.lv-band .lv-record-now');
     await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage());
@@ -2191,19 +2253,29 @@ const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
 const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;
 const isBlue = ([r, g, b]) => r < 90 && g < 130 && b > 180;
 const isPurple = ([r, g, b]) => r > 150 && r < 210 && g > 140 && g < 190 && b > 195;
+const isYellow = ([r, g, b]) => r > 200 && g > 200 && b < 80;
 
 /**
- * 枠を撮り直しながら、範囲の中に条件に合う画素が出る（`present` が false なら無くなる）のを待つ。
- * スナップショットの枠はスクリプトの止まった別のオリジンで、中を調べられないため画素で見る。
+ * 枠を撮り直しながら、accept が真を返す画像になるのを待つ。期限を過ぎたら最後に撮った画像を返す（呼ぶ側が、何を
+ * 確かめていたかを添えて落とす）。スナップショットの枠はスクリプトの止まった別のオリジンで、中を調べられないため
+ * 画素で見る。
  */
-async function waitForPixels(selector, dir, name, region, test, present = true, timeout = 10000) {
-  const until = Date.now() + timeout;
+async function shotUntil(selector, dir, name, accept, timeout = 10000) {
+  const deadline = Date.now() + timeout;
   for (;;) {
     const image = await shot(selector, dir, name);
-    if ((countPixels(image, region, test) > 0) === present) return image;
-    if (Date.now() > until) assert.fail(`${present ? 'no' : 'still'} matching pixels in ${region.join(',')}: ${join(dir, `${name}.png`)}`);
+    if (await accept(image) || Date.now() > deadline) return image;
+    // 撮り直す間隔。
     await new Promise((done) => setTimeout(done, 300));
   }
+}
+
+/** 枠を撮り直しながら、範囲の中に条件に合う画素が出る（`present` が false なら無くなる）のを待つ。 */
+async function waitForPixels(selector, dir, name, region, test, present = true, timeout = 10000) {
+  const matches = (image) => (countPixels(image, region, test) > 0) === present;
+  const image = await shotUntil(selector, dir, name, matches, timeout);
+  if (!matches(image)) assert.fail(`${present ? 'no' : 'still'} matching pixels in ${region.join(',')}: ${join(dir, `${name}.png`)}`);
+  return image;
 }
 
 /**
@@ -2216,7 +2288,6 @@ async function pageDownInReference() {
   await browser('mouse', 'down');
   await browser('mouse', 'up');
   await browser('press', 'PageDown');
-  await new Promise((done) => setTimeout(done, 500));
 }
 
 /** /changing.html の要素の範囲（文書の座標）。`inserted` は兄弟を 1 つ足したとき。 */
@@ -2243,10 +2314,7 @@ async function marksFollowTheChanges(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const liveShot = async (name) => {
-    await new Promise((done) => setTimeout(done, 400));
-    return shot(`${livePane} .lv-frame`, shots, name);
-  };
+  const liveFrame = `${livePane} .lv-frame`;
   const refFrame = `${refPane} .lv-frame:not([hidden])`;
   await withLiveReview({ repository, page: 'changing.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
@@ -2261,7 +2329,8 @@ async function marksFollowTheChanges(repository) {
     let regions = changingRegions(false);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '1'`);
-    let image = await liveShot('marks-button');
+    // 印はページが比べ直した後に付くので、付くまで撮り直す。
+    let image = await shotUntil(liveFrame, shots, 'marks-button', (shown) => countPixels(shown, regions.button, isRed) > 0);
     assert.ok(countPixels(image, regions.button, isRed) > 0, `the changed button is marked: ${join(shots, 'marks-button.png')}`);
     assert.equal(countPixels(image, regions.note, isRed), 0, 'the element below the button is not marked');
     console.log('PASS ボタンの背景色を変えると、そのボタンに主な変化の印が付き、その下の変わっていない要素には付かない');
@@ -2282,7 +2351,7 @@ async function marksFollowTheChanges(repository) {
     await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
     await waitFor(`${changeList}?.dataset.main === '1'`);
     regions = changingRegions(true);
-    image = await liveShot('marks-inserted');
+    image = await shotUntil(liveFrame, shots, 'marks-inserted', (shown) => countPixels(shown, regions.item(2), isGreen) > 0 && countPixels(shown, regions.item(3), isPurple) > 0);
     assert.ok(countPixels(image, regions.item(2), isGreen) > 0, `the inserted element is marked as added: ${join(shots, 'marks-inserted.png')}`);
     for (const index of [3, 4]) {
       assert.equal(countPixels(image, regions.item(index), isRed), 0, `sibling ${index} after the inserted one has no main mark`);
@@ -2293,7 +2362,8 @@ async function marksFollowTheChanges(repository) {
 
     await assignMockByPath('mocks/diff-mock.html');
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
-    image = await liveShot('marks-mock');
+    await new Promise((done) => setTimeout(done, 400));
+    image = await shot(liveFrame, shots, 'marks-mock');
     assert.equal(countPixels(image, regions.item(2), isGreen), 0, 'no mark while comparing with a mock');
     await chooseFromMockMenu('lv-mock-remove');
     await chooseReference(kemi, recordedSnapshot(1));
@@ -2317,7 +2387,7 @@ async function marksFollowTheChanges(repository) {
     await waitForPixels(refFrame, shots, 'marks-overlay-removed', removedAt, isRed);
     await setOpacity(0);
     regions = changingRegions(false);
-    image = await liveShot('marks-overlay');
+    image = await shotUntil(liveFrame, shots, 'marks-overlay', (shown) => countPixels(shown, regions.item(2), isPurple) > 0);
     assert.ok(countPixels(image, regions.item(2), isPurple) > 0, `the shifted sibling keeps its mark in the overlay: ${join(shots, 'marks-overlay.png')}`);
     console.log('PASS 重ねて透かす表示に切り替えても、同じ要素に同じ印がある');
 
@@ -2366,10 +2436,11 @@ async function marksCanBeHidden(repository) {
     await browser('open', kemi.url);
     await chooseCompare('side');
     await waitForSnapshot(kemi, startSnapshot);
-    await browser('click', '.lv-widths button[data-width="390"]');
+    // 兄弟を足し、ページの中身が差し替わったことを開始時との一覧で見てから、幅 390px で取る。
     await writeFile(join(dev.dir, 'changing.html'), changingPage(['one', 'two', 'inserted', 'three', 'four']));
+    await waitFor(`${mainRows}.some((item) => item.dataset.kind === 'added' && item.textContent.includes('inserted'))`);
+    await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(notRecorded);
-    await new Promise((done) => setTimeout(done, 1000));
     await browser('click', `${refPane} .lv-empty .lv-record`);
     await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.html'), changingPage());
@@ -2417,8 +2488,7 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
     await waitForSnapshot(kemi, recordedSnapshot(1), `${changeList}?.dataset.main === '0'`);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '1'`);
-    await new Promise((done) => setTimeout(done, 400));
-    const image = await shot(`${livePane} .lv-frame`, shots, 'csp-marks');
+    const image = await shotUntil(`${livePane} .lv-frame`, shots, 'csp-marks', (shown) => countPixels(shown, changingRegions(false).button, isRed) > 0);
     assert.ok(countPixels(image, changingRegions(false).button, isRed) > 0, `the changed button is marked: ${join(shots, 'csp-marks.png')}`);
     console.log("PASS style-src 'self' の CSP を返すページでも、変わった要素に印が付く");
   });
@@ -2481,10 +2551,7 @@ async function removedMarksSurviveReparsing(repository) {
 async function scrollingMakesNoChangeAndMarksStay(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   // 別のオリジンの枠の中は、ページ内の目印へ移して（同じ文書のままスクロールさせて）動かす。
-  const moveTo = async (anchor) => {
-    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#${anchor}'; return true; })()`);
-    await new Promise((done) => setTimeout(done, 600));
-  };
+  const moveTo = (anchor) => evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0] + '#${anchor}'; return true; })()`);
   const { box, row, scrollMargin, badge } = SCROLLING_GEOMETRY;
   await withLiveReview({ repository, page: 'scrolling.html' }, async ({ kemi, dev }) => {
     await browser('set', 'viewport', '1280', '900');
@@ -2501,14 +2568,17 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     const isBadge = ([r, g, b]) => r === 120 && g === 120 && b === 120;
     const unscrolled = await shot(`${refPane} .lv-viewport`, shots, 'unscrolled-reference');
     await pageDownInReference();
-    const reference = await shot(`${refPane} .lv-viewport`, shots, 'scrolled-reference');
+    const reference = await shotUntil(`${refPane} .lv-viewport`, shots, 'scrolled-reference', async (shown) => (await comparePixels(unscrolled, shown, join(shots, 'scrolled-reference-diff.png'))).different > 0);
     assert.ok((await comparePixels(unscrolled, reference, join(shots, 'scrolled-reference-diff.png'))).different > 0, 'the snapshot scrolled');
     assert.ok(countPixels(reference, badgeAt, isBadge) > badge.width * badge.height * 0.5, `the fixed badge stays in place in the scrolled snapshot: ${join(shots, 'scrolled-reference.png')}`);
     console.log('PASS 並べる表示で比べる相手をスクロールしても、画面に固定した要素は動いているページと同じ場所に描かれる');
 
     // 箱の中を 6 行目まで、ページを末尾までスクロールしてから、札と 6 行目の色を変えて比べ直させる。
+    await countPageMessages();
     await moveTo('row-6');
     await moveTo('end');
+    // 末尾の目印へ移ると、ページが下までスクロールしたことを知らせる（箱の中だけのスクロールは知らせない）。
+    await waitFor(`${lastScrollY} > ${badge.top}`);
     await writeFile(join(dev.dir, 'scrolling.css'), scrollingCss({ badge: 'rgb(40, 160, 220)', row: 'rgb(250, 200, 0)' }));
     await waitFor(`${changeList}?.dataset.main === '2'`);
     await new Promise((done) => setTimeout(done, 1500));
@@ -2516,15 +2586,17 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     console.log('PASS ページと中の箱をスクロールしただけでは、張り付く見出し・固定した札・箱の中の要素が変化に入らない');
 
     // ページを先頭へ戻す。札は画面の同じ場所に、6 行目は箱の中のスクロールで箱の上端から scroll-margin-top 下に見える。
+    // 先頭へ戻ったことは印の位置で見る。CSS の差し替えの間にページが先頭へ戻っていることがあり、そのときは
+    // スクロールの知らせが来ない。
     await moveTo('start');
     const rowAt = [0, box.top + scrollMargin, 390, box.top + scrollMargin + row];
-    let image = await shot(`${livePane} .lv-frame`, shots, 'scrolled-marks');
+    let image = await shotUntil(`${livePane} .lv-frame`, shots, 'scrolled-marks', (shown) => countPixels(shown, badgeAt, isRed) > 0 && countPixels(shown, rowAt, isRed) > 0);
     assert.ok(countPixels(image, badgeAt, isRed) > 0, `the fixed badge keeps its mark: ${join(shots, 'scrolled-marks.png')}`);
     assert.ok(countPixels(image, rowAt, isRed) > 0, `the row in the scrolled box keeps its mark: ${join(shots, 'scrolled-marks.png')}`);
 
     // 箱の中を先頭へ戻すと、6 行目（箱の中の上から 5 行ぶん下）は箱の見えている範囲の外に出て、その印も見えなくなる。
     await moveTo('row-1');
-    image = await shot(`${livePane} .lv-frame`, shots, 'box-scrolled-back');
+    image = await shotUntil(`${livePane} .lv-frame`, shots, 'box-scrolled-back', (shown) => countPixels(shown, [0, 0, 390, badge.top], isRed) === 0);
     assert.equal(countPixels(image, [0, 0, 390, badge.top], isRed), 0, `the mark of the row hidden in the box is not drawn: ${join(shots, 'box-scrolled-back.png')}`);
     assert.ok(countPixels(image, badgeAt, isRed) > 0, 'the fixed badge still has its mark');
     console.log('PASS スクロールしても、固定した札と中でスクロールする箱の要素の印は要素に付いたまま');
@@ -2676,7 +2748,7 @@ async function commentImagesLookLikeThePage(repository) {
       await waitForSnapshot(kemi, startSnapshot);
       await browser('click', '.lv-widths button[data-width="390"]');
       await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-      await new Promise((done) => setTimeout(done, 800));
+      await settled(`${livePane} .lv-frame`);
       const name = page.replace('.html', '');
       const plain = await askImage(rect, []);
       assert.equal(plain.error, null, `the image of ${page} is made`);
@@ -2850,7 +2922,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューで押せるので、先に一度渡しておく。
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     await handInThePage(kemi, repository, state);
@@ -2867,9 +2939,8 @@ async function pageCommentPlacesArePutAndSaved(repository) {
     await chooseTool('arrow');
     await dragInPane(livePane, [[340, 160], [260, 210], [150, 250]]);
     await waitFor(`${draftNumbers} === '[1,2,3]'`);
-    await new Promise((done) => setTimeout(done, 300));
-    const drawn = await shot(`${livePane} .lv-frame`, shots, 'places-drawn');
     // 押した要素（左上 (0, 200) の 300×100 のボタン）の周りに描いた枠。
+    const drawn = await shotUntil(`${livePane} .lv-frame`, shots, 'places-drawn', (shown) => countPixels(shown, [0, 195, 305, 305], isPlaceInk) > 0);
     assert.ok(countPixels(drawn, [0, 195, 305, 305], isPlaceInk) > 0, `the places are drawn on the page: ${join(shots, 'places-drawn.png')}`);
     console.log('PASS 要素・ペン・矢印で場所を置くと、1 から番号が振られ、ページの上に描かれる。並べた比べる相手の側を押しても場所は増えない');
 
@@ -2940,7 +3011,7 @@ async function penPlacesLeaveOutWhatContainsTheLine(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('pen');
     // 1 段目の並び（左上 (0, 0) の幅いっぱいの .row）の中身を囲む。
     await dragInPane(livePane, [[5, 5], [380, 5], [380, 78], [5, 78], [5, 7]]);
@@ -3054,7 +3125,7 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     await handInThePage(kemi, repository, state);
     await keepSavedImage();
@@ -3113,7 +3184,7 @@ async function savedCommentsAreQuietMarks(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
@@ -3121,8 +3192,8 @@ async function savedCommentsAreQuietMarks(repository) {
     const [c1] = (await reviewJson(kemi)).comments;
     await clickInPane(livePane, 40, 105);
     await waitFor(`${draftNumbers} === '[1]' && document.querySelector('#live-compose .lv-place[data-n="1"]').dataset.selector === '#field'`);
-    await new Promise((done) => setTimeout(done, 500));
-    const drafting = await shot(`${livePane} .lv-frame`, shots, 'saved-and-draft');
+    // 書きかけの場所の番号が描かれてから、保存した場所に番号が無いことを見る。
+    const drafting = await shotUntil(`${livePane} .lv-frame`, shots, 'saved-and-draft', (shown) => countPixels(shown, fieldCorner, isPlaceInk) > 0);
     assert.equal(countPixels(drafting, buttonCorner, isPlaceInk), 0, `the saved comment shows no number: ${join(shots, 'saved-and-draft.png')}`);
     assert.ok(countPixels(drafting, fieldCorner, isPlaceInk) > 0, `the draft place shows its number: ${join(shots, 'saved-and-draft.png')}`);
     console.log('PASS c1 を保存してから新しいコメントを書き始めると、c1 の場所に番号が出ず、書きかけの場所にだけ番号が出る');
@@ -3156,14 +3227,14 @@ async function draftPlacesStayAtTheirWidth(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]' && ${firstSelector} === '#button'`);
 
     await browser('click', '.lv-widths button[data-width="1280"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '1280px' && ${visible('#live-compose .lv-compose-back')}`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     // 1280 では入力欄（左上の 2 段目）を押す。
     await clickInPane(livePane, 40, 100);
     await new Promise((done) => setTimeout(done, 800));
@@ -3173,7 +3244,7 @@ async function draftPlacesStayAtTheirWidth(repository) {
 
     await browser('click', '#live-compose .lv-compose-back');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && !${visible('#live-compose .lv-compose-back')}`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await clickInPane(livePane, 40, 100);
     await waitFor(`${draftNumbers} === '[1,2]'`);
     await savePageCommentInThePage('kept at 390');
@@ -3229,7 +3300,7 @@ async function latePlacesKeepTheirWidth(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await holdRequests('place');
     await clickInPane(livePane, 150, 250);
@@ -3256,7 +3327,7 @@ async function draftsStayWhileSaving(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
@@ -3318,7 +3389,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
@@ -3331,9 +3402,8 @@ async function narrowReferenceSideSavesTheImage(repository) {
     // 比べる相手の側のまま、ページのツリーから同じページを開き直す（隠れた枠でページが読み込まれ直す）。
     await browser('click', '#btn-tree');
     await waitFor(`document.querySelector('#page-tree').dataset.drawer === 'open' && getComputedStyle(document.querySelector('#page-tree')).visibility === 'visible' && document.querySelector('#page-tree').getBoundingClientRect().x === 0`);
-    await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
+    await nextPageMessage('page', () => browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open'));
     await waitFor(`document.querySelector('#page-tree').dataset.drawer === undefined && !${visible(livePane)}`);
-    await new Promise((done) => setTimeout(done, 1500));
     await browser('fill', '#live-compose .lv-compose-body', 'saved from the reference side');
     await browser('click', '#live-compose .lv-compose-save');
     await waitFor(`${draftNumbers} === '[]'`, 30000);
@@ -3359,7 +3429,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await keepSavedImage();
     for (const away of ['view', 'side']) {
       await chooseTool('element');
@@ -3395,7 +3465,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
       if (away === 'view') {
         await browser('click', '.lv-view button[data-view="page"]');
         await waitFor(visible(livePane));
-        await new Promise((done) => setTimeout(done, 500));
+        await settled(`${livePane} .lv-frame`);
       }
     }
   });
@@ -3414,7 +3484,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await postJson(kemi.url, 'api/message', { body: 'let me show you' });
     // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
     await handInThePage(kemi, repository, state);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
@@ -3455,7 +3525,7 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
     await waitForSnapshot(kemi, startSnapshot);
     await browser('click', '.lv-widths button[data-width="390"]');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
     await chooseTool('element');
     await clickInPane(livePane, 150, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
@@ -3464,8 +3534,7 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
     await holdRequests('image');
     await browser('click', '#live-compose .lv-compose-save');
     await waitFor(`${heldRequests} === 1`);
-    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = new URL('/other.html', frame.src).href; return true; })()`);
-    await new Promise((done) => setTimeout(done, 1500));
+    await nextPageMessage('page', () => evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = new URL('/other.html', frame.src).href; return true; })()`));
     await releaseRequests();
     await waitFor(`${draftNumbers} === '[]'`, 30000);
     const comment = (await reviewJson(kemi)).comments.at(-1);
@@ -3542,11 +3611,11 @@ async function savedPageCommentsAreListedShownAndSwitched(repository) {
     await browser('click', '#cv-thread .cv-page-width');
     await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px' && document.querySelector('${livePane} .lv-bar-label').textContent.startsWith('/rich.html') && document.querySelector('#cv-thread .cv-page-width') === null`);
     console.log('PASS 390 で付けたコメントのスレッドを 1280 で開くと付けた幅が出て、押すと 390 に切り替わる');
-    await new Promise((done) => setTimeout(done, 800));
-    const marked = await shot(`${livePane} .lv-frame`, shots, 'saved-places');
+    await settled(`${livePane} .lv-frame`);
     // 会話パネルを開いた分だけ枠が縮んでいるので、ボタンの周りの範囲も同じ倍率で縮める。
     const scale = await stageScale();
     const around = [0, 195, 305, 305].map((value) => Math.round(value * scale));
+    const marked = await shotUntil(`${livePane} .lv-frame`, shots, 'saved-places', (shown) => countPixels(shown, around, isPlaceInk) > 0);
     assert.ok(countPixels(marked, around, isPlaceInk) > 0, `the place of the open thread is drawn on the page: ${join(shots, 'saved-places.png')}`);
     console.log('PASS スレッドを開いたコメントの場所が、そのコメントの URL と表示幅で見ているときにページの上に出る');
 
@@ -3608,9 +3677,9 @@ async function placesGlowFromTheListAndTheThread(repository) {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
-    await new Promise((done) => setTimeout(done, 500));
-    await wheel(6000);
-    await new Promise((done) => setTimeout(done, 500));
+    await settled(`${livePane} .lv-frame`);
+    // 押す場所はページのスクロールの位置から決まるので、スクロールしたことをページが知らせるのを待つ。
+    await nextPageMessage('scroll', () => wheel(6000));
     // 帯 8 を場所にする（帯は幅いっぱいなので、描き込みと光の上下の辺が右側に写る）。
     await clickInPane(livePane, 600, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
