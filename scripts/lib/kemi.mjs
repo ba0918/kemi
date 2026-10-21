@@ -4,25 +4,43 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
-import { onExit } from './exit.mjs';
+import { onExit, onSignal } from './exit.mjs';
 import { withTimeout } from './wait.mjs';
 
 /** kemi が起動の行を出し終えるまで待つ上限。 */
 const START_TIMEOUT = 30000;
 /** 止める合図の後、終わるまで待つ上限。過ぎたら SIGKILL で止める。 */
 const STOP_TIMEOUT = 10000;
+/**
+ * 検査が合図で止められたとき、kemi に止める合図を送ってから終わるのを待つ上限。過ぎたものは 'exit' の段で
+ * SIGKILL で止める。人が Ctrl+C を押してから長く待たせないよう、ふだんの止め方より短くする。
+ */
+const SIGNAL_STOP_TIMEOUT = 3000;
 
 /**
- * 起動した kemi（レビューとサブコマンド）のうち、まだ終わっていないもの。検査がどこで落ちても、プロセスが終わる
- * ときに止める（検査の後に kemi が残り続けていたことがある）。
- * @type {Set<import('node:child_process').ChildProcess>}
+ * 起動した kemi（レビューとサブコマンド）のうち、まだ終わっていないものと、それぞれが終わると解決する Promise。
+ * 検査がどこで落ちても、プロセスが終わるときに止める（検査の後に kemi が残り続けていたことがある）。
+ * @type {Map<import('node:child_process').ChildProcess, Promise<void>>}
  */
-const running = new Set();
+const running = new Map();
 onExit('processes', () => {
-  for (const child of running) {
+  for (const child of running.keys()) {
     console.error(`stopping kemi (pid ${child.pid}) left running`);
     child.kill('SIGKILL');
   }
+});
+// 合図で止められたときは、すぐに SIGKILL せず、まず止める合図を送る。端末の Ctrl+C を受けた kemi は、
+// セッションの保留（状態の保存と resume の行）を始めていて、その途中で殺すと保存しかけの状態が残る。
+// 送るのは SIGINT（kemi は SIGINT と SIGTERM を同じ保留として受ける）。受けた合図をそのまま送らないのは、
+// kemi が SIGHUP を受けず、保留せずにすぐ終わるため。
+onSignal(async () => {
+  const ended = [...running].map(([child, exited]) => {
+    child.kill('SIGINT');
+    return exited;
+  });
+  await withTimeout(Promise.all(ended), SIGNAL_STOP_TIMEOUT, () => 'kemi did not stop').catch(() => {
+    console.error(`kemi did not stop within ${SIGNAL_STOP_TIMEOUT} ms after SIGINT`);
+  });
 });
 
 /**
@@ -33,9 +51,17 @@ onExit('processes', () => {
  */
 function spawnKemi(binary, args, options) {
   const child = spawn(binary, args, options);
-  running.add(child);
-  child.on('exit', () => running.delete(child));
-  child.on('error', () => running.delete(child));
+  running.set(
+    child,
+    new Promise((done) => {
+      const ended = () => {
+        running.delete(child);
+        done();
+      };
+      child.on('exit', ended);
+      child.on('error', ended);
+    }),
+  );
   return child;
 }
 

@@ -7,7 +7,10 @@ const PHASES = /** @type {const} */ (['processes', 'browser', 'files']);
 
 /** @type {Record<typeof PHASES[number], ((code: number) => void)[]>} */
 const hooks = { processes: [], browser: [], files: [] };
+/** @type {(() => Promise<void>)[]} */
+const signalHooks = [];
 let installed = false;
+let stopping = false;
 
 /**
  * プロセスが終わるときに呼ぶ処理を足す。'exit' の中なので同期で終わる処理だけを書く。
@@ -15,23 +18,50 @@ let installed = false;
  * @param {(code: number) => void} hook code はプロセスの終了コード
  */
 export function onExit(phase, hook) {
-  if (!installed) {
-    installed = true;
-    process.on('exit', (code) => {
-      for (const name of PHASES) {
-        for (const each of hooks[name]) {
-          try {
-            each(code);
-          } catch (error) {
-            console.error(error);
-          }
+  install();
+  hooks[phase].push(hook);
+}
+
+/**
+ * 合図で止められたとき、終わる前に待つ処理を足す。'exit' の中ではできない、待つ後始末（kemi に止める合図を
+ * 送って終わるのを待つなど）を書く。期限のある処理だけを書く（終わるまで、重ねて来た合図では止まらない）。
+ * @param {() => Promise<void>} hook
+ */
+export function onSignal(hook) {
+  install();
+  signalHooks.push(hook);
+}
+
+function install() {
+  if (installed) {
+    return;
+  }
+  installed = true;
+  process.on('exit', (code) => {
+    for (const name of PHASES) {
+      for (const each of hooks[name]) {
+        try {
+          each(code);
+        } catch (error) {
+          console.error(error);
         }
       }
-    });
-    // 合図で止められたときは、既定の動き（すぐに終わる）では 'exit' が来ないので、終了コードを付けて終わらせる。
-    for (const [signal, number] of /** @type {const} */ ([['SIGINT', 2], ['SIGTERM', 15], ['SIGHUP', 1]])) {
-      process.on(signal, () => process.exit(128 + number));
     }
+  });
+  // 合図で止められたときは、既定の動き（すぐに終わる）では 'exit' が来ないので、待つ処理を終えてから終了コードを
+  // 付けて終わらせる。
+  for (const [signal, number] of /** @type {const} */ ([['SIGINT', 2], ['SIGTERM', 15], ['SIGHUP', 1]])) {
+    process.on(signal, () => {
+      // Ctrl+C の連打で、始めた後始末を二重に走らせない。2 回目ですぐに終わらせないのは、止まる途中の kemi を
+      // 殺すことになるため（待つ処理には期限があるので、無視しても止まらなくなることはない）。
+      if (stopping) {
+        return;
+      }
+      stopping = true;
+      // 端末の合図は同じプロセスグループの agent-browser にも届き、検査の本筋がその失敗で落ちる。そこで終わると、
+      // 止まる途中の kemi を 'exit' の段で殺すので、待つ間の例外は出すだけにする。
+      process.on('uncaughtException', (error) => console.error(error));
+      Promise.allSettled(signalHooks.map(async (hook) => hook())).then(() => process.exit(128 + number));
+    });
   }
-  hooks[phase].push(hook);
 }
