@@ -194,7 +194,8 @@ async function finishStroke() {
     return;
   }
   const points = kind === "element" ? [] : strokePoints(Array.isArray(answer.points) ? answer.points : []);
-  // 間引くと最後の 2 点が重なる矢印とペンは、押しただけと同じく場所にしない（R-PAGE-COMMENT）。
+  // 間引くと点が 2 つ未満になるか、最後の 2 点が重なる矢印とペンは、押しただけと同じく場所にしない
+  // （R-PAGE-COMMENT）。
   if (points === null) {
     return;
   }
