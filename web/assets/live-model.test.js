@@ -637,6 +637,11 @@ test("the same point repeated after rounding is kept once", () => {
   assert.deepEqual(strokePoints(line([0, 0], [0.3, 0.2], [10, 0], [10.4, 0.1], [10, 10])), line([0, 0], [10, 0], [10, 10]));
 });
 
+test("a point that is not an object in the page's answer is read as 0, like a coordinate that is not a number", () => {
+  // ページの答えは別のオリジンから届く。壊れた点で止まらず、page.js が描き込みで読む点と同じく 0 にする。
+  assert.deepEqual(strokePoints(/** @type {any} */ ([null, { x: 10, y: "a" }, { x: 10, y: 10 }, undefined])), line([0, 0], [10, 0], [10, 10], [0, 0]));
+});
+
 test("a line whose last two points become the same, or that keeps fewer than two points, is not a place", () => {
   // 矢印は先の三角の向きが決まらず、ペンは 1 つの点に重なって線が出ないので、どちらも場所にしない（R-PAGE-COMMENT）。
   // 両端が同じ点なので (1, 0) は (0, 0) からの距離 1 で比べられて落ち、(0, 0) (0, 0) が残る。

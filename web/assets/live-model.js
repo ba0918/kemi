@@ -610,7 +610,8 @@ export function strokePoints(points) {
   /** @type {{ x: number, y: number }[]} */
   const rounded = [];
   for (const point of points) {
-    const next = { x: roundCoordinate(point.x), y: roundCoordinate(point.y) };
+    // 点はページの答えで別のオリジンから届くので、点そのものが null などの壊れた形でも止まらずに 0 と読む。
+    const next = { x: roundCoordinate(point?.x), y: roundCoordinate(point?.y) };
     const last = rounded.at(-1);
     if (!last || last.x !== next.x || last.y !== next.y) {
       rounded.push(next);
