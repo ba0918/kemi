@@ -570,17 +570,18 @@ export async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     await dragInPane(livePane, [[20, 40], [220, 40], [220, 260], [20, 260], [20, 42]]);
     await waitFor(`${draftNumbers} === '[1]' && window.__boundsPlace?.kind === 'pen'`);
     const pen = await evaluate('window.__boundsPlace');
-    const width = Math.max(...pen.points.map((point) => point.x)) - Math.min(...pen.points.map((point) => point.x));
-    const height = Math.max(...pen.points.map((point) => point.y)) - Math.min(...pen.points.map((point) => point.y));
+    const { w: width } = pointsBounds(pen.points);
     assert.ok(pen.elements.some(({ rect }) => rect.w > width), 'the selected metadata reaches outside the drawn pen area');
     await browser('click', '#live-compose .lv-place-show');
     await waitFor('window.__boundsGlow !== undefined');
     const glow = await evaluate('window.__boundsGlow');
-    assert.ok(Math.abs(glow.w - width) < 0.05, `the pen glow follows the drawn width (${glow.w} vs ${width}), not selected elements`);
-    assert.ok(Math.abs(glow.h - height) < 0.05, `the pen glow follows the drawn height (${glow.h} vs ${height})`);
     const scale = await stageScale();
     await waitForPixels(frame, shots, 'pen-outline', [Math.round((width + 20) * scale), 50, Math.round((width + 30) * scale), 150], isGlow);
     await savePageCommentInThePage('the drawn pen area');
+    // 光の枠は描線（保存した、丸めて間引いた点を結んだ線）の範囲で、ページが答えた間引く前の点の範囲とは 1.5 まで違う。
+    const drawn = pointsBounds((await reviewJson(kemi)).comments.at(-1).page.places[0].points);
+    assert.ok(Math.abs(glow.w - drawn.w) < 0.05, `the pen glow follows the drawn width (${glow.w} vs ${drawn.w}), not selected elements`);
+    assert.ok(Math.abs(glow.h - drawn.h) < 0.05, `the pen glow follows the drawn height (${glow.h} vs ${drawn.h})`);
     const image = decodePng(Buffer.from(await evaluate('window.__kemiSavedImage'), 'base64'));
     assert.ok(image.width < 1280, 'the pen image is cropped around the drawing instead of spanning the page');
     console.log('PASS 大きな要素を拾ったペンでも、光の枠と画像は描いた範囲に収まる');
@@ -601,15 +602,26 @@ export async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     await chooseTool('arrow');
     await dragInPane(livePane, [[320, 220], [250, 160], [110, 100]]);
     await waitFor(`${draftNumbers} === '[1]' && window.__boundsPlace?.kind === 'arrow'`);
-    const arrow = await evaluate('window.__boundsPlace');
     await browser('click', '#live-compose .lv-place-show');
     await waitFor('window.__boundsGlow !== undefined');
     const arrowGlow = await evaluate('window.__boundsGlow');
+    await savePageCommentInThePage('the arrow');
+    const arrow = (await reviewJson(kemi)).comments.at(-1).page.places[0];
     const target = arrow.elements[0].rect;
     assert.ok(Math.abs(arrowGlow.w - (Math.max(arrow.points[0].x, target.x + target.w) - Math.min(arrow.points.at(-1).x, target.x))) < 0.05);
     assert.ok(Math.abs(arrowGlow.h - (Math.max(arrow.points[0].y, target.y + target.h) - Math.min(arrow.points.at(-1).y, target.y))) < 0.05);
     console.log('PASS 要素の枠は要素の箱、矢印の枠は線と先端の要素の範囲を維持する');
   });
+}
+
+/**
+ * 点の外接矩形。
+ * @param {{ x: number, y: number }[]} points
+ */
+function pointsBounds(points) {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
 
 /** 保存の要求に載せた画像を `window.__kemiSavedImage` に控える。 */

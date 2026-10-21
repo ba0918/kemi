@@ -35,6 +35,7 @@ import {
   snapshotLabel,
   startSnapshotDue,
   snapshotOptions,
+  strokePoints,
   unsavedSnapshotNotice,
 } from "./live-model.js";
 
@@ -590,6 +591,58 @@ test("saved places are drawn only at their URL and width, numbered only while th
     { places: [{ n: 1, id: "c3" }], look: "saved", comment: "c3" },
   ]);
   assert.deepEqual(placeSets({ comments: [], draft: emptyDraft("/", 390), page: "/", width: 390, thread: null }), []);
+});
+
+/**
+ * 文書の座標の点の列。
+ * @param {[number, number][]} pairs
+ */
+const line = (...pairs) => pairs.map(([x, y]) => ({ x, y }));
+
+test("a pen line is rounded to integers and thinned within 1 CSS pixel, and keeps its corner", () => {
+  // (20, 21) と (30, 21) は線分 (10, 20)–(40, 20) から、(41, 30) は線分 (40, 20)–(40, 40) からちょうど 1（R-PAGE-COMMENT）。
+  assert.deepEqual(
+    strokePoints("pen", line([10.2, 20.4], [20.4, 20.6], [30.1, 21.3], [40.3, 20.2], [40.6, 30.4], [40.2, 40.4])),
+    line([10, 20], [40, 20], [40, 40]),
+  );
+});
+
+test("a point exactly 1 from a slanted segment is dropped, where a floating distance would come out just over 1", () => {
+  assert.deepEqual(strokePoints("pen", line([0, 0], [4, 7], [6, 8])), line([0, 0], [6, 8]));
+});
+
+test("the distance is measured to the segment, not to the line through it, and to the point when both ends are the same", () => {
+  // 行って戻る線の折り返しと、始点より手前へ戻ってから描いた線の戻った点は、直線までなら 0 で落ちてしまう。
+  assert.deepEqual(strokePoints("pen", line([0, 0], [100, 0], [50, 0])), line([0, 0], [100, 0], [50, 0]));
+  assert.deepEqual(strokePoints("pen", line([0, 0], [-10, 0], [10, 0])), line([0, 0], [-10, 0], [10, 0]));
+  // 閉じた四角は、始点から最も遠い (10, 10) で最初に分ける。
+  assert.deepEqual(strokePoints("pen", line([0, 0], [10, 0], [10, 10], [0, 10], [0, 0])), line([0, 0], [10, 0], [10, 10], [0, 10], [0, 0]));
+  // 先端を少し行き過ぎた点は、射影が先端より先なので先端からの距離（1）で比べる。
+  assert.deepEqual(strokePoints("arrow", line([0, 0], [11, 0], [10, 0])), line([0, 0], [10, 0]));
+});
+
+test("of two points equally the farthest, the earlier one splits the line", () => {
+  // (2, -2) と (4, 0) はどちらも線分 (0, 0)–(6, 6) から同じ距離。(2, -2) で分けると、(4, 0) は線分 (2, -2)–(6, 6) から
+  // 1 以内で落ちる。(4, 0) で分けると、(2, -2) は線分 (0, 0)–(4, 0) から 2 離れて残ってしまう。
+  assert.deepEqual(strokePoints("pen", line([0, 0], [2, -2], [4, 0], [6, 6])), line([0, 0], [2, -2], [6, 6]));
+});
+
+test("an arrow keeps the points along its bend instead of only its start and head, and .5 rounds up", () => {
+  assert.deepEqual(strokePoints("arrow", line([10.2, 20.4], [30.7, 25.1], [55.5, 40.49])), line([10, 20], [31, 25], [56, 40]));
+  // ちょうど .5 は負の座標でも大きい方へ。-0 は 0 にする（比べると別の値になる）。
+  assert.deepEqual(strokePoints("pen", line([-1.5, -0.4], [10.5, 0.5])), line([-1, 0], [11, 1]));
+});
+
+test("the same point repeated after rounding is kept once", () => {
+  assert.deepEqual(strokePoints("pen", line([0.1, 0.1], [0.3, 0.2], [0.4, 0.4])), line([0, 0]));
+  assert.deepEqual(strokePoints("pen", line([0, 0], [0.3, 0.2], [10, 0], [10.4, 0.1], [10, 10])), line([0, 0], [10, 0], [10, 10]));
+});
+
+test("an arrow whose last two points become the same, or that keeps fewer than two points, is not a place", () => {
+  // 両端が同じ点なので (1, 0) は (0, 0) からの距離 1 で比べられて落ち、(0, 0) (0, 0) が残る（R-PAGE-COMMENT）。
+  assert.equal(strokePoints("arrow", line([0, 0], [1, 0], [0, 0])), null);
+  assert.equal(strokePoints("arrow", line([0.2, 0.3], [0.4, 0.1])), null);
+  assert.equal(strokePoints("arrow", []), null);
 });
 
 test("the start snapshot waits until the saved snapshots are known, and is not taken again after resuming", () => {

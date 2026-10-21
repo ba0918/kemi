@@ -607,8 +607,9 @@
 
   /**
    * 置いた場所を決める。点は画面の座標で届き、文書の座標にして返す。要素は 1 つ、矢印は先端の要素、ペンは
-   * 囲んだ範囲と重なる要素。要素の場所の点は空にする（R-SUBMIT の `points`）。文書の根（html と body）は場所の要素に
-   * しない: 要素の道具では場所を作らず、矢印の先が文書の根なら要素を付けない（R-PAGE-COMMENT）。
+   * 囲んだ範囲と重なる要素で、どれも丸めと間引きの前のこの点で選ぶ。要素の場所の点は空にする（R-SUBMIT の
+   * `points`）。文書の根（html と body）は場所の要素にしない: 要素の道具では場所を作らず、矢印の先が文書の根なら
+   * 要素を付けない（R-PAGE-COMMENT）。
    * @param {string} kind
    * @param {unknown[]} requested
    */
@@ -618,7 +619,9 @@
       return { x: finite(x), y: finite(y) };
     });
     if (points.length === 0) return { error: 'no point' };
-    const toDocument = (/** @type {{ x: number, y: number }} */ point) => ({ x: round(point.x + scrollX), y: round(point.y + scrollY) });
+    // 点は丸めずに返す。整数への丸めと間引きは、レビュー画面が保存する点を決めるときにする（R-PAGE-COMMENT）。
+    // ここで小数 2 桁に丸めると、整数に丸めるときに二重の丸めになる（10.495 が 10.5 を経て 11 になる）。
+    const toDocument = (/** @type {{ x: number, y: number }} */ point) => ({ x: point.x + scrollX, y: point.y + scrollY });
     if (kind === 'pen') {
       return { kind, points: points.map(toDocument), elements: enclosedElements(points) };
     }

@@ -599,6 +599,124 @@ export function placeSummary(place) {
 }
 
 /**
+ * 矢印とペンの、保存する点（R-PAGE-COMMENT の「矢印とペンの点」）。描いている間の点（文書の座標）を最も近い整数に
+ * 丸め、続けて並んだ同じ点を 1 つにまとめ、許容 1 CSS ピクセルで間引く。間引いた後の点が 2 つ未満か、最後の 2 点が
+ * 同じ点になる矢印は、先の三角の向きが決まらないので場所にせず、null を返す。
+ * @param {"arrow" | "pen"} kind
+ * @param {{ x: number, y: number }[]} points 描いている間の点（文書の座標）
+ * @returns {{ x: number, y: number }[] | null}
+ */
+export function strokePoints(kind, points) {
+  /** @type {{ x: number, y: number }[]} */
+  const rounded = [];
+  for (const point of points) {
+    const next = { x: roundCoordinate(point.x), y: roundCoordinate(point.y) };
+    const last = rounded.at(-1);
+    if (!last || last.x !== next.x || last.y !== next.y) {
+      rounded.push(next);
+    }
+  }
+  const kept = thinPoints(rounded);
+  if (kind === "arrow") {
+    const [from, to] = kept.slice(-2);
+    if (!from || !to || (from.x === to.x && from.y === to.y)) {
+      return null;
+    }
+  }
+  return kept;
+}
+
+/**
+ * 最も近い整数。ちょうど .5 は大きい方へ（Math.round と同じ）。-0 は 0 にする（JSON では同じだが、比べると別の値に
+ * なる）。ページの答えは別のオリジンから届くので、数でない値は 0 にする（page.js の finite と同じ）。
+ * @param {number} value
+ * @returns {number}
+ */
+function roundCoordinate(value) {
+  const rounded = Number.isFinite(value) ? Math.round(value) : 0;
+  return rounded === 0 ? 0 : rounded;
+}
+
+/**
+ * Ramer–Douglas–Peucker で、許容 1 を超えてずれる点だけを残す。両端は残し、順は変えない。
+ * 座標は整数で、比べる値は BigInt で計算する（倍精度の数では、線の広がりが大きいと比べる値が 2^53 を超えて丸まり、
+ * どの点を残すかが変わりうる）。
+ * @param {{ x: number, y: number }[]} points 整数の座標
+ * @returns {{ x: number, y: number }[]}
+ */
+function thinPoints(points) {
+  if (points.length < 3) {
+    return points;
+  }
+  const exact = points.map(({ x, y }) => ({ x: BigInt(x), y: BigInt(y) }));
+  const keep = points.map((_, index) => index === 0 || index === points.length - 1);
+  // 再帰せずに分けた区間を積む（点の多い線で呼び出しが深くならないように）。
+  /** @type {[number, number][]} */
+  const ranges = [[0, points.length - 1]];
+  for (let range = ranges.pop(); range; range = ranges.pop()) {
+    const [first, last] = range;
+    const farthest = farthestBeyondOne(exact, first, last);
+    if (farthest !== null) {
+      keep[farthest] = true;
+      ranges.push([first, farthest], [farthest, last]);
+    }
+  }
+  return points.filter((_, index) => keep[index]);
+}
+
+/**
+ * 区間の両端の間の点のうち、両端を結ぶ線分（両端が同じ点ならその点）から最も遠く、1 を超えて離れた点の位置。
+ * 無ければ null。最も遠い点が 2 つ以上あれば前の点。距離の 2 乗に L（両端の距離の 2 乗）を掛けた整数で比べる。
+ * @param {{ x: bigint, y: bigint }[]} points
+ * @param {number} first
+ * @param {number} last
+ * @returns {number | null}
+ */
+function farthestBeyondOne(points, first, last) {
+  const a = points[first];
+  const b = points[last];
+  const ab = { x: b.x - a.x, y: b.y - a.y };
+  const length = ab.x * ab.x + ab.y * ab.y;
+  let farthest = null;
+  let most = -1n;
+  for (let index = first + 1; index < last; index += 1) {
+    const scaled = scaledDistance(points[index], a, b, length);
+    if (scaled > most) {
+      most = scaled;
+      farthest = index;
+    }
+  }
+  // 両端が同じ点なら L を掛けていないので、1 と比べる。
+  return most > (length === 0n ? 1n : length) ? farthest : null;
+}
+
+/**
+ * 点 p から線分 ab までの距離の 2 乗に L = |ab|² を掛けた整数。a と b が同じ点なら、L を掛けずに |ap|²。
+ * @param {{ x: bigint, y: bigint }} p
+ * @param {{ x: bigint, y: bigint }} a
+ * @param {{ x: bigint, y: bigint }} b
+ * @param {bigint} length L
+ * @returns {bigint}
+ */
+function scaledDistance(p, a, b, length) {
+  const ap = { x: p.x - a.x, y: p.y - a.y };
+  if (length === 0n) {
+    return ap.x * ap.x + ap.y * ap.y;
+  }
+  const ab = { x: b.x - a.x, y: b.y - a.y };
+  const t = ap.x * ab.x + ap.y * ab.y;
+  if (t < 0n) {
+    return (ap.x * ap.x + ap.y * ap.y) * length;
+  }
+  if (t > length) {
+    const bp = { x: p.x - b.x, y: p.y - b.y };
+    return (bp.x * bp.x + bp.y * bp.y) * length;
+  }
+  const cross = ab.x * ap.y - ab.y * ap.x;
+  return cross * cross;
+}
+
+/**
  * 場所を足す。同じ要素をもう一度選んだら、その要素の場所を外す。場所は最初の場所の URL と表示幅のものだけなので、
  * 別の URL か表示幅では足さない。場所が 1 つも無ければ、足す場所の URL と表示幅に移る。
  * @param {PlaceDraft} draft

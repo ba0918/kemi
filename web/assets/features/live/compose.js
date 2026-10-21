@@ -2,6 +2,8 @@
 // `--live` のページへのコメントを書く（live.md の R-PAGE-COMMENT）。
 // 道具を選んでいる間は、動いているページの枠の上に重ねた層で押す・描く操作を受け、枠の中の座標をページに送る。
 // どの要素を指すかと文書の座標はページの中（page.js）が決める（別のオリジンで、レビュー画面からは読めない）。
+// 矢印とペンの保存する点（丸めて間引いた点）は、ページが返した文書の座標からここで決める。ページの上の描き込みと
+// コメントの画像は、書きかけの場所として送り返すこの点で描く。
 // 重ねた層は動いているページの枠の上にだけあるので、比べる相手の側では場所を置けない。重ねて透かしている間は
 // 比べる相手が操作を受けないので、下の層が受け、見る対象の要素が場所になる（live-compare.md の R-PAGE-REF）。
 
@@ -19,6 +21,7 @@ import {
   placeSets,
   removePlace,
   strayRefs,
+  strokePoints,
   undoPlace,
 } from "../../live-model.js";
 import { state } from "../../state.js";
@@ -190,8 +193,13 @@ async function finishStroke() {
     renderCompose();
     return;
   }
+  const points = kind === "element" ? [] : strokePoints(kind, Array.isArray(answer.points) ? answer.points : []);
+  // 間引くと最後の 2 点が重なる矢印は、押しただけと同じく場所にしない（R-PAGE-COMMENT）。
+  if (points === null) {
+    return;
+  }
   live.composeError = "";
-  const place = { kind, points: answer.points ?? [], elements: answer.elements ?? [] };
+  const place = { kind, points, elements: answer.elements ?? [] };
   setDraft(addPlace(live.draft, place, page, width));
 }
 
