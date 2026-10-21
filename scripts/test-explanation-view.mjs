@@ -44,8 +44,10 @@ const lateA = bodyA.replace('A ends', 'A ends late');
 const lateReplyA = bodyA.replace('A ends', 'A ends in the reply');
 /** 本文 body の text パーツが描けず、元の文のまま失敗の知らせと並んでいる所（無ければ undefined）を読む式。 */
 const failedPart = body => `Array.from(document.querySelectorAll('pre')).find(e=>e.textContent===${JSON.stringify(body)} && e.previousElementSibling?.getAttribute('role')==='status' && e.previousElementSibling.textContent.includes('Network connection lost'))`;
-/** text パーツの本文が bodies のどれかなら、描く頼みを通信の失敗にする。 */
-const failRendering = bodies => `const original=window.fetch; window.fetch=(input,init)=> { let part; try {part=JSON.parse(init?.body)} catch {} if(part?.type==='text' && ${JSON.stringify(bodies)}.includes(part.body)) return Promise.reject(new TypeError('Network connection lost')); return original(input,init); }; true`;
+/** text パーツの本文が bodies のどれかなら、描く頼みを通信の失敗にする（前に包んだものは外してから包む）。 */
+const failRendering = bodies => `window.unwrappedFetch??=window.fetch; window.fetch=(input,init)=> { let part; try {part=JSON.parse(init?.body)} catch {} if(part?.type==='text' && ${JSON.stringify(bodies)}.includes(part.body)) return Promise.reject(new TypeError('Network connection lost')); return unwrappedFetch(input,init); }; true`;
+/** 通信の失敗を外し、それから描く頼み（POST api/parts）の text パーツの本文を、頼んだ順に window.renderRequests に控える。 */
+const countRendering = `window.unwrappedFetch??=window.fetch; window.renderRequests=[]; window.fetch=(input,init)=> { let part; try {part=JSON.parse(init?.body)} catch {} if(String(input).includes('api/parts') && part?.type==='text') renderRequests.push(part.body); return unwrappedFetch(input,init); }; true`;
 const sequence = { type: 'sequence', title: 'Sequence operations', role: 'example', participants: [{ id: 'a', label: 'Reader' }, { id: 'b', label: 'Server' }], events: [{ type: 'message', from: 'a', to: 'b', label: 'Request', kind: 'call' }, { type: 'message', from: 'b', to: 'a', label: 'Response', kind: 'return' }, { type: 'message', from: 'a', to: 'a', label: 'Self', kind: 'call' }] };
 const grid = { type: 'diagram', title: 'Grid example', role: 'example', source: `a = ${'長いラベル'.repeat(30)}\nb = ? Pending\n| a | b |\na -> b : next` };
 const flow = { type: 'flow', title: 'Flow operations', role: 'proposal', nodes: [{id:'a',kind:'process',label:'First'},{id:'b',kind:'process',label:'Second'}], edges:[{from:'a',to:'b'}] };
@@ -96,13 +98,21 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.equal(traffic.log.entries.filter(e => /example\.invalid|\/a\.png|\/html\.png|\/api\/image\//.test(e.request.url)).length, 0);
   console.log('PASS: restored plain/Markdown/code order and no image requests');
   // 失敗を仕込んでから、エージェントが新しい発言を書く。届いた発言は通常のパーツの描画の経路で描く。
-  await evaluate(failRendering([lateA, lateReplyA]));
+  await evaluate(failRendering([lateA]));
   const reply = writes => kemiOutput(binary, ['reply', id], { cwd: root, env: isolatedEnvironment(root), input: JSON.stringify({ writes }) });
   await reply([{ type: 'message', parts: [{ type: 'text', body: lateA }, codeB, { type: 'text', body: '**C survives**' }] }]);
   await wait(`${failedPart(lateA)} !== undefined`);
   // 隣のパーツは同じ発言の中で描ける。
   assert.equal(await evaluate(`(()=>{const post=${failedPart(lateA)}.closest('section').parentElement;return post.textContent.includes('literal B') && Array.from(post.querySelectorAll('strong')).some(e=>e.textContent==='C survives')})()`), true);
   console.log('PASS: ordinary fetch failure preserves the complete original A and adjacent B/C');
+  // 描けなかった本文は、通信が戻れば描ける。会話を閉じて開き直すと、並びを全部作り直す。描けなかった本文だけを
+  // 頼み直して Markdown で描き、描けた本文（ほかの発言とパーツ）は頼み直さない。
+  await evaluate(countRendering);
+  await browser('find', 'role', 'button', 'click', '--name', 'Close', '--exact');
+  await browser('find', 'role', 'button', 'click', '--name', 'Open the conversation');
+  await wait(`${failedPart(lateA)} === undefined && Array.from(document.querySelectorAll('p')).some(p=>p.textContent==='A ends late' && Array.from(p.parentElement.querySelectorAll('strong')).some(e=>e.textContent==='A begins'))`);
+  assert.deepEqual(await evaluate(`window.renderRequests`), [lateA], 'reopening asks again only for the body that could not be drawn');
+  console.log('PASS: reopening draws the failed A as Markdown and asks again for nothing already drawn');
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations')`);
    await evaluate(`document.body.style.zoom='1.5';true`);
   console.log('PASS: the sequence diagram is drawn');
@@ -147,6 +157,7 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.deepEqual(await evaluate(`${failedTitles}.filter(title=>${JSON.stringify(tallTitles)}.includes(title))`), [], 'long Start/End labels fit with a font whose line box is taller than the line step');
   await evaluate(`document.querySelector('#tall-font').remove();true`);
   console.log('PASS: grid full labels, real layout rejection, keyboard zoom/pan/fit, separate view return, font/zoom revalidation');
+  await evaluate(failRendering([lateReplyA]));
   await reply([{ type: 'reply', comment_id: comment.id, parts: [{ type: 'text', body: lateReplyA }, codeB, { type: 'text', body: '**C survives**' }] }]);
   await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Comment stays')).click();true`);
   await wait(`${failedPart(lateReplyA)} !== undefined`);
