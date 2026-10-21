@@ -6,7 +6,6 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { crc32, deflateSync } from 'node:zlib';
 
 import { onExit } from './exit.mjs';
 
@@ -58,31 +57,4 @@ export function gitIn(dir) {
       GIT_COMMITTER_EMAIL: 'kemi@example.com',
     },
   });
-}
-
-/**
- * 1×1 の PNG。色ごとに違うバイト列になる。
- * @param {number} r
- * @param {number} g
- * @param {number} b
- */
-export function png(r, g, b) {
-  const chunk = (type, data) => {
-    const body = Buffer.concat([Buffer.from(type), data]);
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(crc32(body));
-    return Buffer.concat([length, body, crc]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(1, 0);
-  header.writeUInt32BE(1, 4);
-  header.set([8, 2, 0, 0, 0], 8);
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.from([0, r, g, b]))),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
 }

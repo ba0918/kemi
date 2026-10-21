@@ -17,8 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { browserSession } from './lib/browser.mjs';
-import { png, temporaryDirectory } from './lib/fixture.mjs';
+import { temporaryDirectory } from './lib/fixture.mjs';
 import { launchKemi, stopKemi } from './lib/kemi.mjs';
+import { png } from './lib/png.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {

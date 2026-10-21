@@ -10,7 +10,6 @@
 // 確かめることは、場面ごとの関数のドキュメントコメントに書く。
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -20,6 +19,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { browserSession, visible } from './lib/browser.mjs';
 import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
 import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
+import { comparePixels, countPixels, crop, decodePng, encodePng, pixelAt } from './lib/png.mjs';
 import { until } from './lib/wait.mjs';
 import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer as startDevServerIn, tablePage } from './live-dev-server.mjs';
 
@@ -438,112 +438,11 @@ async function otherReviewsLoadNoPageFiles(repository) {
 
 // ---- 画素の比較（スナップショットの見た目） ----
 
-/** PNG を読む（8 ビットの RGB か RGBA、インターレース無し）。 */
-function decodePng(bytes) {
-  let offset = 8;
-  let width = 0;
-  let height = 0;
-  let channels = 4;
-  const data = [];
-  while (offset < bytes.length) {
-    const length = bytes.readUInt32BE(offset);
-    const type = bytes.toString('latin1', offset + 4, offset + 8);
-    const body = bytes.subarray(offset + 8, offset + 8 + length);
-    if (type === 'IHDR') {
-      width = body.readUInt32BE(0);
-      height = body.readUInt32BE(4);
-      assert.equal(body[8], 8, 'only 8-bit PNG');
-      channels = body[9] === 6 ? 4 : body[9] === 2 ? 3 : assert.fail(`color type ${body[9]}`);
-    } else if (type === 'IDAT') {
-      data.push(body);
-    }
-    offset += 12 + length;
-  }
-  const raw = inflateSync(Buffer.concat(data));
-  const stride = width * channels;
-  const pixels = Buffer.alloc(width * height * 4);
-  let previous = Buffer.alloc(stride);
-  for (let y = 0; y < height; y++) {
-    const filter = raw[y * (stride + 1)];
-    const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
-    for (let x = 0; x < stride; x++) {
-      const left = x >= channels ? line[x - channels] : 0;
-      const up = previous[x];
-      const corner = x >= channels ? previous[x - channels] : 0;
-      const paeth = () => {
-        const p = left + up - corner;
-        const pa = Math.abs(p - left);
-        const pb = Math.abs(p - up);
-        const pc = Math.abs(p - corner);
-        return pa <= pb && pa <= pc ? left : pb <= pc ? up : corner;
-      };
-      const add = [0, left, up, (left + up) >> 1, paeth()][filter];
-      line[x] = (line[x] + add) & 0xff;
-    }
-    for (let x = 0; x < width; x++) {
-      for (let c = 0; c < 4; c++) {
-        pixels[(y * width + x) * 4 + c] = c < channels ? line[x * channels + c] : 255;
-      }
-    }
-    previous = line;
-  }
-  return { width, height, pixels };
-}
-
-/** RGBA の画素を PNG にする（差の画像を残すため）。 */
-function encodePng(width, height, pixels) {
-  const chunk = (type, body) => {
-    const header = Buffer.alloc(8);
-    header.writeUInt32BE(body.length, 0);
-    header.write(type, 4, 'latin1');
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'latin1'), body])), 0);
-    return Buffer.concat([header, body, crc]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  const raw = Buffer.alloc(height * (width * 4 + 1));
-  for (let y = 0; y < height; y++) {
-    pixels.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
-  }
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
-}
-
 /** 要素のスクリーンショット。 */
 async function shot(selector, dir, name) {
   const path = join(dir, `${name}.png`);
   await browser('screenshot', selector, path);
   return decodePng(await readFile(path));
-}
-
-/** 2 枚の重なる範囲を比べ、違う画素の数と割合を返す。違えば差の画像を書く。 */
-async function comparePixels(left, right, diffPath) {
-  const width = Math.min(left.width, right.width);
-  const height = Math.min(left.height, right.height);
-  const diff = Buffer.alloc(width * height * 4);
-  let different = 0;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const a = (y * left.width + x) * 4;
-      const b = (y * right.width + x) * 4;
-      const same = [0, 1, 2].every((c) => left.pixels[a + c] === right.pixels[b + c]);
-      const d = (y * width + x) * 4;
-      if (same) {
-        diff[d] = diff[d + 1] = diff[d + 2] = Math.round(left.pixels[a] * 0.3 + 178);
-      } else {
-        different += 1;
-        diff[d] = 255;
-      }
-      diff[d + 3] = 255;
-    }
-  }
-  if (different > 0) {
-    await writeFile(diffPath, encodePng(width, height, diff));
-  }
-  return { different, total: width * height, ratio: different / (width * height) };
 }
 
 const refPane = '#live-stage .lv-pane[data-side="ref"]';
@@ -821,12 +720,6 @@ async function snapshotsCarryTheirResources(repository) {
     assert.deepEqual(colors(snapshot), seen, `the snapshot draws every box as the running page does: ${join(shots, 'resources-snapshot.png')}`);
     console.log('PASS 別のオリジンの CSS・@import・style 属性の url()・<picture> の <source>・video の poster・SVG の <image>・<input type=image> が、スナップショットでも動いているページと同じに出る');
   });
-}
-
-/** 画像の (x, y) の色。 */
-function pixelAt(image, x, y) {
-  const at = (y * image.width + x) * 4;
-  return [image.pixels[at], image.pixels[at + 1], image.pixels[at + 2]];
 }
 
 /** モックのパネル（R-PAGE-MOCK）。 */
@@ -2214,17 +2107,6 @@ async function changeListFollowsThePage(repository) {
   });
 }
 
-/** 画像の範囲 [左, 上, 右, 下) の中で、条件に合う画素の数。 */
-function countPixels(image, [left, top, right, bottom], test) {
-  let count = 0;
-  for (let y = top; y < Math.min(bottom, image.height); y++) {
-    for (let x = left; x < Math.min(right, image.width); x++) {
-      if (test(pixelAt(image, x, y))) count += 1;
-    }
-  }
-  return count;
-}
-
 const isRed = ([r, g, b]) => r > 180 && g < 120 && b < 120;
 const isGreen = ([r, g, b]) => r < 80 && g > 120 && b < 120;
 const isBlue = ([r, g, b]) => r < 90 && g < 130 && b > 180;
@@ -2699,13 +2581,6 @@ async function askImage(rect, places) {
   // 返事が来なかったことを、作れなかった理由（error）と取り違えない。
   assert.notEqual(answer.unanswered, true, `the page did not answer the image request within ${IMAGE_TIMEOUT} ms`);
   return answer;
-}
-
-/** 画像の左上から width × height を切り出す。 */
-function crop(image, width, height) {
-  const pixels = Buffer.alloc(width * height * 4);
-  for (let y = 0; y < height; y++) image.pixels.copy(pixels, y * width * 4, y * image.width * 4, (y * image.width + width) * 4);
-  return { width, height, pixels };
 }
 
 /**
