@@ -812,13 +812,13 @@ async function snapshotsAreTakenShownAndChosen(repository) {
     }
 
     await chooseTool('interact');
+    // スナップショットを押してから動いているページを押し、後に押した方の onclick（ページの背景を黄色にする）が
+    // 描かれるのを、ボタンの下の余白で待つ。先に押したスナップショットで onclick が動くなら、もう描かれている。
     await clickInPane(refPane, 150, 250);
-    await new Promise((done) => setTimeout(done, 300));
+    await clickInPane(livePane, 150, 250);
+    const liveClicked = await shotUntil(`${livePane} .lv-frame`, shots, 'live-clicked', (image) => countPixels(image, [0, 320, 390, 400], isYellow) > 0);
     const afterClick = await shot(`${refPane} .lv-frame`, shots, 'snapshot-clicked');
     assert.equal((await comparePixels(before, afterClick, join(shots, 'clicked-diff.png'))).different, 0, 'the snapshot must not run onclick');
-    await clickInPane(livePane, 150, 250);
-    // 押した onclick がページの背景を黄色にするのを、ボタンの下の余白で見る。
-    const liveClicked = await shotUntil(`${livePane} .lv-frame`, shots, 'live-clicked', (image) => countPixels(image, [0, 320, 390, 400], isYellow) > 0);
     assert.ok((await comparePixels(now, liveClicked, join(shots, 'live-clicked-diff.png'))).different > 0, 'the running page runs onclick (control)');
     console.log('PASS onclick を持つ要素を押しても、スナップショットではスクリプトが動かない（動いているページでは動く）');
 
@@ -1257,7 +1257,8 @@ async function recordingNowSwitchesTheReference(repository) {
 
     await postJson(kemi.url, 'api/message', { body: 'please look' });
     await handInThePage(kemi, repository, state);
-    await new Promise((done) => setTimeout(done, 1000));
+    // 渡したときに取ったスナップショットが選択に出てから（比べる相手を選び直す描き直しの後に）、比べる相手を見る。
+    await waitForOption(kemi, handedSnapshot(1));
     assert.equal(await evaluate(showsSnapshot(await snapshotTaken(kemi, recordedSnapshot(1)))), true, 'handing does not move the reference away from the recorded snapshot');
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -1559,8 +1560,8 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
     await browser('click', `${compose} .lv-compose-cancel`);
     await waitFor(`!${visible(compose)}`);
     for (const tool of ['arrow', 'pen', 'interact', 'element']) {
+      // 書く欄は道具を押された状態にする描き直しで一緒に描く（chooseTool がその状態を待つ）。
       await chooseTool(tool);
-      await new Promise((done) => setTimeout(done, 200));
       assert.equal(await evaluate(visible(compose)), false, `choosing ${tool} opens no comment box`);
     }
     await clickInPane(livePane, 150, 250);
@@ -1572,8 +1573,8 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
     const [saved] = (await reviewJson(kemi)).comments;
     await postJson(kemi.url, 'api/comment', { op: 'delete', id: saved.id });
     await browser('open', kemi.url);
-    await waitFor(`${visible('.lv-tools')} && document.querySelector('#comment-count').textContent === '0'`);
-    await new Promise((done) => setTimeout(done, 500));
+    // 案内を出すかは画面を開いたときに決まり、操作の帯を描くとき（舞台の見比べ方を入れるのと同じ描き直し）に描く。
+    await waitFor(`${visible('.lv-tools')} && document.querySelector('#comment-count').textContent === '0' && document.querySelector('#live-stage').dataset.compare !== undefined`);
     assert.equal(await evaluate(visible('.lv-hint')), false, 'the hint does not come back after the comment is deleted');
     console.log('PASS 案内はページへのコメントを保存すると消え、そのコメントを消して開き直しても出ない');
   });
@@ -2187,7 +2188,9 @@ async function changeListFollowsThePage(repository) {
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     const shown = await evaluate(counts);
     assert.equal(shown, '1/0');
-    await evaluate(`(() => {
+    // 比べ直すきっかけはページの変化の知らせなので、知らせが届いてから数を見る。隠すとページの大きさが変わり、
+    // ページはまずそれを知らせる。
+    await nextPageMessage('changed', () => evaluate(`(() => {
       window.__kemiCounts = [];
       new MutationObserver(() => {
         const list = ${changeList};
@@ -2195,12 +2198,10 @@ async function changeListFollowsThePage(repository) {
       }).observe(document.querySelector('#page-tree'), { childList: true, subtree: true, attributes: true });
       document.querySelector('.lv-side button[data-side="ref"]').click();
       return true;
-    })()`);
+    })()`));
     await waitFor(`!${visible(`${livePane} .lv-frame`)}`);
-    await new Promise((done) => setTimeout(done, 1500));
     // 最後に渡した時点の色に戻す。比べ直せば変化は 0 になる。
-    await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)'));
-    await new Promise((done) => setTimeout(done, 1500));
+    await nextPageMessage('changed', () => writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)')));
     const seen = JSON.parse(await evaluate(`JSON.stringify(window.__kemiCounts)`));
     assert.ok(seen.every((value) => value === shown), `the counts do not change while the live page is hidden: ${shown} -> ${JSON.stringify(seen)}`);
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
@@ -2218,6 +2219,7 @@ async function changeListFollowsThePage(repository) {
     await chooseReference(kemi, recordedSnapshot(2));
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);
     await waitFor(`${visible(`${livePane} .lv-frame`)} && ${changeList} !== null`);
+    // 選び直した後に比べ直すかは記述が古いかで決まり、比べ直さないときは知らせが無いので、間を置いてから数を見る。
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(counts), '0/0', 'a snapshot recorded while the live page is hidden shows no change against the unchanged page');
     console.log('PASS 幅 390px で比べる相手の側を見ている間に取ったスナップショットと、変えていないページを比べると変化が 0');
@@ -2231,6 +2233,7 @@ async function changeListFollowsThePage(repository) {
     await waitForOption(kemi, handedSnapshot(2));
     await browser('click', '.lv-view button[data-view="page"]');
     await chooseReference(kemi, handedSnapshot(2));
+    // 選び直した後に比べ直すかは記述が古いかで決まり、比べ直さないときは知らせが無いので、間を置いてから数を見る。
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken when handing from the code view shows no change against the unchanged page');
     console.log('PASS コードの見方から渡したときのスナップショットと、変えていないページを比べると変化が 0');
@@ -2337,6 +2340,7 @@ async function marksFollowTheChanges(repository) {
 
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     const marked = await evaluate(counts);
+    // 印が変化に数えられるなら、ページが間を置いて変化を知らせて比べ直される。知らせが来ないことには合図が無い。
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(counts), marked, 'marking adds no change');
     await browser('click', '.lv-band .lv-record-now');
@@ -2362,8 +2366,8 @@ async function marksFollowTheChanges(repository) {
 
     await assignMockByPath('mocks/diff-mock.html');
     await waitFor(`document.querySelector('${refPane}').dataset.reference === 'mock'`);
-    await new Promise((done) => setTimeout(done, 400));
-    image = await shot(liveFrame, shots, 'marks-mock');
+    // 足した要素に付いていた印が外れるのを待つ。
+    image = await waitForPixels(liveFrame, shots, 'marks-mock', regions.item(2), isGreen, false);
     assert.equal(countPixels(image, regions.item(2), isGreen), 0, 'no mark while comparing with a mock');
     await chooseFromMockMenu('lv-mock-remove');
     await chooseReference(kemi, recordedSnapshot(1));
@@ -2402,6 +2406,7 @@ async function marksFollowTheChanges(repository) {
     await waitForPixels(refView, shots, 'scroll-scrolled', button, isBlue, false);
     await writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(250, 200, 0)'));
     await waitFor(`${changeList}?.dataset.main === '2'`);
+    // 比べる相手の枠が作り直されると、読み込まれて先頭が描かれるまで間がある。作り直されないことには合図が無い。
     await new Promise((done) => setTimeout(done, 500));
     image = await shot(refView, shots, 'scroll-kept');
     assert.equal(countPixels(image, button, isBlue), 0, `the reference keeps its scroll: ${join(shots, 'scroll-kept.png')}`);
@@ -2581,6 +2586,7 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
     await waitFor(`${lastScrollY} > ${badge.top}`);
     await writeFile(join(dev.dir, 'scrolling.css'), scrollingCss({ badge: 'rgb(40, 160, 220)', row: 'rgb(250, 200, 0)' }));
     await waitFor(`${changeList}?.dataset.main === '2'`);
+    // ページは変化を間を置いてまとめて知らせ、続けて知らせることもある。もう比べ直さないことには合図が無い。
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(`${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`), '2/0', 'scrolling alone shifts nothing');
     console.log('PASS ページと中の箱をスクロールしただけでは、張り付く見出し・固定した札・箱の中の要素が変化に入らない');
@@ -2929,6 +2935,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
 
     await chooseTool('element');
     await clickInPane(refPane, 150, 250);
+    // 比べる相手の側を押しても場所の頼みは送られず、何も起きないことには合図が無い。
     await new Promise((done) => setTimeout(done, 500));
     assert.equal(await evaluate(draftNumbers), '[]', 'a click on the reference adds no place');
     await clickInPane(livePane, 150, 250);
@@ -2994,6 +3001,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
 
     await clickUncovered('#cv-rail');
     await waitFor(`document.querySelector('#conversation').dataset.open === 'true'`);
+    // 例外は描いた後の非同期の処理からも出る。出ないことには合図が無いので、その間を待つ。
     await new Promise((done) => setTimeout(done, 300));
     assert.deepEqual(JSON.parse(await evaluate('JSON.stringify(window.__kemiErrors)')), [], 'the review page raises no error with a page comment');
     console.log('PASS ページへのコメントを保存した後も、会話パネルを開いて例外が出ない');
@@ -3131,8 +3139,8 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
     await keepSavedImage();
     // ボタン（下端 300）と 2 段の並びより下は、どの要素も描かれていない余白。
     await chooseTool('element');
-    await clickInPane(livePane, 350, 450);
-    await new Promise((done) => setTimeout(done, 800));
+    // 押した所の場所をページに頼み、ページの答えが届いてから、場所が増えていないことを見る。
+    await nextPageMessage('placed', () => clickInPane(livePane, 350, 450));
     assert.equal(await evaluate(draftNumbers), '[]', 'a click on the background adds no place');
     console.log('PASS 要素の道具でページの余白を押しても場所が増えない');
 
@@ -3237,6 +3245,7 @@ async function draftPlacesStayAtTheirWidth(repository) {
     await settled(`${livePane} .lv-frame`);
     // 1280 では入力欄（左上の 2 段目）を押す。
     await clickInPane(livePane, 40, 100);
+    // 別の表示幅では場所をページに頼まないので、何も起きないことには合図が無い。
     await new Promise((done) => setTimeout(done, 800));
     assert.equal(await evaluate(`${draftNumbers} + ' ' + ${firstSelector}`), '[1] #button', 'no place is added at another width');
     assert.equal(await evaluate(`document.querySelector('#live-compose .lv-compose-save').disabled`), true, 'the comment is not saved at another width');
@@ -3346,6 +3355,7 @@ async function draftsStayWhileSaving(repository) {
     const locked = `JSON.stringify(['.lv-compose-undo', '.lv-compose-cancel', '.lv-place-remove'].map((selector) => document.querySelector('#live-compose ' + selector).disabled).concat(document.querySelector('#live-compose .lv-compose-body').readOnly))`;
     assert.equal(await evaluate(locked), '[true,true,true,true]', 'undo, discard, remove and the body are locked while saving');
     await clickInPane(livePane, 40, 100);
+    // 保存している間は場所をページに頼まないので、何も起きないことには合図が無い。
     await new Promise((done) => setTimeout(done, 800));
     assert.equal(await evaluate(draftNumbers), '[1]', 'no place is added while saving');
     // 画像は場所のあるページとその表示幅で作るので、保存している間は表示幅もページも変えさせない。
@@ -3360,6 +3370,7 @@ async function draftsStayWhileSaving(repository) {
     })()`);
     await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-width-tag[data-width="1280"]');
     await browser('click', '#page-tree .lv-page[data-page="/rich.html"] .lv-page-open');
+    // 保存している間は表示幅もページも切り替えないので、何も起きないことには合図が無い。
     await new Promise((done) => setTimeout(done, 1500));
     assert.equal(await evaluate(`document.querySelector('${livePane} .lv-frame').style.width`), '390px', 'the width is not changed from the page tree while saving');
     assert.equal(await evaluate(`window.__kemiPageLoads`), 0, 'the page is not opened again while saving');
@@ -3506,6 +3517,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
     await browser('click', '.lv-view button[data-view="page"]');
     await chooseReference(kemi, handedSnapshot(2));
     await waitFor(`${changeList} !== null`);
+    // 選び直した後に比べ直すかは記述が古いかで決まり、比べ直さないときは知らせが無いので、間を置いてから数を見る。
     await new Promise((done) => setTimeout(done, 1500));
     const counts = `${changeList}.dataset.main + '/' + ${changeList}.dataset.shifted`;
     assert.equal(await evaluate(counts), '0/0', 'a snapshot taken while a save ends shows no change against the unchanged page');
@@ -3560,11 +3572,13 @@ async function placesMakeNoChange(repository) {
     await chooseTool('pen');
     await dragInPane(livePane, [[5, 5], [150, 5], [150, 100], [5, 100]]);
     await waitFor(`${draftNumbers} === '[1,2]'`);
+    // 描き込みが変化に数えられるなら、ページが間を置いて変化を知らせて比べ直される。知らせが来ないことには合図が無い。
     await new Promise((done) => setTimeout(done, 1200));
     assert.equal(await evaluate(`${changeList}?.dataset.main + ',' + ${changeList}?.dataset.shifted`), '0,0', 'drawing places changes nothing');
     await browser('fill', '#live-compose .lv-compose-body', 'no change');
     await browser('click', '#live-compose .lv-compose-save');
     await waitFor(`${draftNumbers} === '[]'`);
+    // 描き込みが変化に数えられるなら、ページが間を置いて変化を知らせて比べ直される。知らせが来ないことには合図が無い。
     await new Promise((done) => setTimeout(done, 1200));
     assert.equal(await evaluate(`${changeList}?.dataset.main + ',' + ${changeList}?.dataset.shifted`), '0,0', 'saving a page comment changes nothing');
     console.log('PASS 場所を描いている間と保存した後で、変化の一覧の数が変わらない');
@@ -3683,8 +3697,9 @@ async function placesGlowFromTheListAndTheThread(repository) {
     // 帯 8 を場所にする（帯は幅いっぱいなので、描き込みと光の上下の辺が右側に写る）。
     await clickInPane(livePane, 600, 250);
     await waitFor(`${draftNumbers} === '[1]'`);
-    await new Promise((done) => setTimeout(done, 500));
     const right = await rightOf(300);
+    // ページが場所を描いてから、光が出ていないことを見る。
+    await waitForPixels(frame, shots, 'draft-drawn', right, isPlaceInk);
     await waitForPixels(frame, shots, 'draft-before', right, isGlow, false);
     const row = '#live-compose .lv-place[data-n="1"]';
     await pointAt(row);
@@ -3873,7 +3888,9 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
     await chooseCompare('side');
     await waitForSnapshot(kemi, startSnapshot, listedOption(await snapshotTaken(kemi, recordedSnapshot(1))));
     await waitFor(`document.querySelector('#page-tree .lv-page[data-page="/rich.html"] .lv-comment-count')?.textContent === '1'`);
-    // 動いているページが読み込まれた後も、開始時のものを取り直さない。
+    // 動いているページが読み込まれた後も、開始時のものを取り直さない。取り直すなら、ページの読み込みの知らせの後に
+    // 写しを頼んで預ける。預けないことには合図が無いので、読み込まれてからその間を待つ。
+    await waitFor(`document.querySelector('${livePane} .lv-notice').hidden`);
     await new Promise((done) => setTimeout(done, 1500));
     const starts = (await getJson(kemi.url, 'api/snapshots')).snapshots.filter((snapshot) => snapshot.kind === 'start');
     assert.equal(starts.length, 1, JSON.stringify(starts));
