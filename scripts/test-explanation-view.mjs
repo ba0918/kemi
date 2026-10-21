@@ -1,4 +1,4 @@
-// 形式4の復元会話を実バイナリと実フォントで読む。
+// 保留して復元した会話（エージェントが parts で書いた返信と発言）と説明の見方を、実バイナリと実フォントで読む。
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
@@ -55,24 +55,14 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   const post = (path, value) => postJson(running.url, path, value);
   const review = await getJson(running.url, 'api/review');
   const comment = await post('api/comment', {op:'add',file_id:review.groups[0].files[0].id,side:'new',body:'Comment stays'});
-  await post('api/comment', {op:'reply',id:comment.id,body:'reply fixture'});
   await post('api/message', { body: '**old plain stays**' });
-  await post('api/message', { body: 'parts fixture' });
-  await stopKemi(running);
-  const dir = join(root, 'kemi', 'sessions');
-  const name = (await readdir(dir)).find(name => name.endsWith('.session'));
-  assert.ok(name);
-  const file = join(dir, name);
-  const raw = await readFile(file);
-  assert.equal(raw[13], 4);
-  const saved = JSON.parse(raw.subarray(18).toString());
-  saved.state.messages[1].body = null;
-  saved.state.messages[1].parts = [...parts, sequence, grid, flow, outside, collision, intrusion, framed, decision, touching, longEnd, tallStart];
-  saved.state.comments[0].replies[0].body = null; saved.state.comments[0].replies[0].parts = parts;
-  const json = Buffer.from(JSON.stringify(saved));
-  const header = Buffer.from(raw.subarray(0, 18)); header.writeUInt32LE(json.length, 14);
-  await writeFile(file, Buffer.concat([header, json]));
-  running = await start(['--resume', name.slice(0, -8)]);
+  // parts の返信と発言はエージェントが kemi reply で書く（人間の発言と返信は body だけ）。保留して、復元した会話を読む。
+  const id = (await readdir(join(root, 'kemi', 'sessions'))).find(name => name.endsWith('.endpoint')).slice(0, -9);
+  const writes = [{ type: 'reply', comment_id: comment.id, parts }, { type: 'message', parts: [...parts, sequence, grid, flow, outside, collision, intrusion, framed, decision, touching, longEnd, tallStart] }];
+  await kemiOutput(binary, ['reply', id], { cwd: root, env: isolatedEnvironment(root), input: JSON.stringify({ writes }) });
+  const paused = await stopKemi(running);
+  assert.equal(paused.code, 130, paused.stderr);
+  running = await start(['--resume', id]);
   await browser('open', running.url);
   await browser('network', 'har', 'start');
   await browser('find', 'role', 'button', 'click', '--name', 'Open the conversation');
