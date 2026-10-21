@@ -1,47 +1,34 @@
 // 形式4の復元会話を実バイナリと実フォントで読む。
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { createServer } from 'node:http';
 
+import { browserSession } from './lib/browser.mjs';
+import { getJson, isolatedEnvironment, launchKemi, postJson, stopKemi } from './lib/kemi.mjs';
+
 const run = promisify(execFile);
 const binary = resolve(process.argv[2]);
 let root = await mkdtemp(join(tmpdir(), 'kemi-parts-'));
 const session = `kemi-parts-${process.pid}`;
-const browser = async (...args) => {
-  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 8 * 1024 * 1024 });
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, JSON.stringify(result));
-  return result.data;
-};
+const { browser, evaluate: evaluateCode, waitFor: wait, close } = browserSession(session);
 const evaluate = async code => {
   if (code.includes('await import')) {
     code=`(async()=>{${/;\s*true\s*$/.test(code) ? code.replace(/;\s*true\s*$/, ';return true;') : `return (${code});`}})()`;
   }
-  return (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
+  return evaluateCode(code);
 };
-const wait = code => browser('wait', '--fn', code);
 const frames = () => evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
 /** 文字のノード（式の文字列）の [start, end) を選ぶ。 */
 async function selectText(node, start, end) {
   await evaluate(`(()=>{const n=${node};n.parentElement.scrollIntoView({block:'center'});const r=document.createRange();r.setStart(n,${start});r.setEnd(n,${end});const s=getSelection();s.removeAllRanges();s.addRange(r)})()`);
   await frames();
 }
-async function start(args) {
-  const child = spawn(binary, [...args, '--port', '0', '--no-open'], {
-    cwd: root, env: { ...process.env, XDG_STATE_HOME: root, HOME: join(root, 'home') }, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stderr = '';
-  const exited = new Promise(resolve => child.on('exit', resolve));
-  const url = await new Promise((resolve, reject) => {
-    child.stderr.on('data', chunk => { stderr += chunk; const match = stderr.match(/^kemi: (http:\/\/\S+)/m); if (match) resolve(match[1]); });
-    child.on('error', reject);
-    child.on('exit', code => reject(new Error(`exit ${code}: ${stderr}`)));
-  });
-  return { child, url, exited };
+function start(args) {
+  return launchKemi(binary, { cwd: root, state: root, args });
 }
 const bodyA = '**A begins**\n\n![external](https://example.invalid/a.png) ![relative](a.png) ![data](data:image/png;base64,AA) ![reference][r]\n\n[r]: https://example.invalid/ref.png\n\n<img src="html.png">\n\nA ends\n';
 const codeB = { type: 'code', body: '<script>literal B</script>\n', language: 'pseudocode', role: 'example', title: 'Code B' };
@@ -65,16 +52,13 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await run('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']);
   await writeFile(join(root, 'a.txt'), 'new\n');
   running = await start(['--worktree']);
-  const post = async (path, value) => {
-    const response = await fetch(`${running.url}${path}`, { method: 'POST', headers: { Origin: new URL(running.url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
-    assert.equal(response.status, 200); return response.json();
-  };
-  const review = await (await fetch(`${running.url}api/review`)).json();
+  const post = (path, value) => postJson(running.url, path, value);
+  const review = await getJson(running.url, 'api/review');
   const comment = await post('api/comment', {op:'add',file_id:review.groups[0].files[0].id,side:'new',body:'Comment stays'});
   await post('api/comment', {op:'reply',id:comment.id,body:'reply fixture'});
   await post('api/message', { body: '**old plain stays**' });
   await post('api/message', { body: 'parts fixture' });
-  running.child.kill('SIGINT'); await running.exited;
+  await stopKemi(running);
   const dir = join(root, 'kemi', 'sessions');
   const name = (await readdir(dir)).find(name => name.endsWith('.session'));
   assert.ok(name);
@@ -175,8 +159,8 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   assert.equal(await evaluate(`!document.querySelector('dialog') && document.activeElement===window.diagramSource && document.activeElement.getClientRects().length>0`), true);
   console.log('PASS: Escape closes the separate diagram and returns to its source at 390px');
 } finally {
-  await browser('close').catch(() => {});
-  if (running && running.child.exitCode === null) { running.child.kill('SIGINT'); await running.exited; }
+  await close();
+  if (running) await stopKemi(running);
 }
 
 if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-navigation') && !process.argv.includes('--range-navigation')) try {
@@ -266,9 +250,9 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.ok(await evaluate(`(()=>{const h=Array.from(document.querySelectorAll('h3')).find(e=>e.textContent==='Sub heading two');return Math.abs(h.getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60})()`), 'a sub heading item moves to the heading');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Sub heading two', 'the item at the reading position is shown');
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
-  const review = await (await fetch(`${running.url}api/review`)).json();
+  const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
-  const cli = async (...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
+  const cli = async (...args)=>(await run(binary,args,{cwd:root,env:isolatedEnvironment(root)})).stdout;
   const context=async()=>JSON.parse(await cli('explain',id,'--context'));
   const update=async(sections,base=review.diff_display_version)=>{
     const current=await context();
@@ -292,12 +276,12 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','placeholder','Reply (Cmd/Ctrl+Enter to send)','fill','Existing reply stays');
   await browser('find','role','button','click','--name','Reply','--exact');
   await wait(`document.body.textContent.includes('Existing reply stays')`);
-  const beforeEdit=(await (await fetch(`${running.url}api/review`)).json()).comments[0];
+  const beforeEdit=(await getJson(running.url, 'api/review')).comments[0];
   await browser('find','role','button','click','--name','Edit','--exact');
   await browser('find','label','Comment','fill','Question remains','--exact');
   await browser('find','role','button','click','--name','Save','--exact');
   await wait(`!Array.from(document.querySelectorAll('textarea')).some(e=>e.getAttribute('aria-label')==='Comment') && document.body.textContent.includes('Question remains')`);
-  const afterEdit=(await (await fetch(`${running.url}api/review`)).json()).comments[0];
+  const afterEdit=(await getJson(running.url, 'api/review')).comments[0];
   assert.equal(afterEdit.body,'Question remains');
   assert.deepEqual(afterEdit,{...beforeEdit,body:'Question remains'});
   assert.equal(await evaluate(`document.body.textContent.includes('Existing reply stays')`),true);
@@ -380,7 +364,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Close','--exact');
   await browser('find','role','button','click','--name','Back to explanation');
   await unlink(join(root,'explanation.json'));
-  running.child.kill('SIGINT');await running.exited;
+  await stopKemi(running);
   running=await start(['--resume',id]);await browser('open',running.url);
   await wait(`document.querySelector('[aria-label="Explanation"][role="region"]')?.checkVisibility()`);
   const frozen=await context();
@@ -409,8 +393,8 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   console.log('PASS: initial Explanation, base details, old reading position, unchanged comments, isolated Part fallback, two-screen Code tokens, missed notification recovery and 390px reference return');
   console.log('PASS: non-live process resume without the explanation input restores frozen Code, unchanged full quote and explanation base; unavailable/unknown/out-of-range references stay on the explanation with a reason');
 } finally {
-  await browser('close').catch(()=>{});
-  if (running && running.child.exitCode===null) {running.child.kill('SIGINT');await running.exited;}
+  await close();
+  if (running) await stopKemi(running);
 }
 
 if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigation') && !process.argv.includes('--range-navigation')) {
@@ -428,7 +412,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     await wait(`document.querySelector('#live-stage')?.checkVisibility()`);
     assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
     const id=(await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
-    const cli=async(...args)=>(await run(binary,args,{cwd:root,env:{...process.env,XDG_STATE_HOME:root,HOME:join(root,'home')}})).stdout;
+    const cli=async(...args)=>(await run(binary,args,{cwd:root,env:isolatedEnvironment(root)})).stdout;
     const context=async()=>JSON.parse(await cli('explain',id,'--context'));
     const initial=await context();
     // 通常のPage操作で辿ったページを登録し、Code世代は変えない。
@@ -453,7 +437,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     await browser('find','role','button','click','--name','Back to explanation');
     assert.equal(await evaluate(`document.querySelector('[aria-label="Explanation"][role="region"]').checkVisibility()`),true);
     console.log('PASS: live starts on Page without explanation, mid-review addition does not steal the view, Page registration keeps the Code generation and reference return works at 1280/390px');
-    running.child.kill('SIGINT');await running.exited;
+    await stopKemi(running);
     // liveの保留は説明だけでも残り、新しいscan後も旧基点を保持する。
     running=await start(['--resume',id]);await browser('open',running.url);
     await wait(`document.querySelector('[aria-label="Explanation"][role="region"]')?.checkVisibility()`);
@@ -463,7 +447,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     await wait(`document.body.textContent.includes('Explanation for a different display version')`);
     console.log('PASS: actual live process suspend/resume keeps explanation revision/base and displays the new scan mismatch');
     // 説明の初期表示と Page/Code 往復でも、会話を閉じたまま一つの手渡し操作を使える。
-    running.child.kill('SIGINT');await running.exited;
+    await stopKemi(running);
     const handSections=[{id:'handoff',title:'Handoff explanation',blocks:[{id:'question',part:{type:'text',body:'Explain before handing'},references:[]}]}];
     await writeFile(join(root,'initial-explanation.json'),JSON.stringify({sections:handSections}));
     running=await start(['--live',url,'--explanation',join(root,'initial-explanation.json')]);
@@ -490,8 +474,8 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     assert.equal(handed[0].body,'A question to hand from Explanation');
     console.log('PASS: 390px initial live Explanation and Page/Code switches keep one Hand with Conversation closed; real wait receives the explanation comment');
   } finally {
-    await browser('close').catch(()=>{});
-    if(running && running.child.exitCode===null){running.child.kill('SIGINT');await running.exited;}
+    await close();
+    if (running) await stopKemi(running);
     await new Promise(resolve=>dev.close(resolve));
   }
 }
@@ -509,7 +493,7 @@ if (process.argv.includes('--range-navigation') || process.argv.length===3) {
     running=await start(['--from',base,'--group-by',unit]);await browser('set','viewport','1280','900');await browser('open',running.url);
     await wait(`document.querySelector('[aria-label="Review view"]')?.querySelector('[aria-pressed="true"]')?.textContent==='Code'`);
     assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
-    running.child.kill('SIGINT');await running.exited;
+    await stopKemi(running);
     running=await start(['--from',base,'--group-by',unit,'--explanation',join(root,'explanation.json')]);await browser('open',running.url);
     await wait(`document.body.textContent.includes('Both group units')`);
     assert.equal(await evaluate(`document.querySelector('[aria-label="Group unit"]').checkVisibility()`),false);
@@ -528,7 +512,7 @@ if (process.argv.includes('--range-navigation') || process.argv.length===3) {
     assert.equal(await evaluate(`document.querySelector('[aria-label="Group unit"]').checkVisibility()`),false);
     console.log(`PASS: range ${unit} starts on Code without explanation and Explanation with one, distinguishes reference group units, refuses an unloaded unit and returns without changing the reading revision`);
   } finally {
-    await browser('close').catch(()=>{});
-    if(running && running.child.exitCode===null){running.child.kill('SIGINT');await running.exited;}
+    await close();
+    if (running) await stopKemi(running);
   }
 }
