@@ -1014,7 +1014,8 @@ async function overlayFollowsTheScrollAndTheOpacity(repository) {
 
     // 見る対象を変えると、透かし具合で見え方が変わる。
     await writeFile(join(dev.dir, 'tall.html'), (await readFile(join(dev.dir, 'tall.html'), 'utf8')).replaceAll('hsl(', 'hsl(180deg + '));
-    await evaluate(`document.querySelector('${livePane} .lv-frame').src = document.querySelector('${livePane} .lv-frame').src; true`);
+    // 目印へ移した後の URL（# の付いた今の URL）を入れ直しても、同じ文書の中を移るだけで読み込み直されない。
+    await evaluate(`(() => { const frame = document.querySelector('${livePane} .lv-frame'); frame.src = frame.src.split('#')[0]; return true; })()`);
     await new Promise((done) => setTimeout(done, 1500));
     await opacity(0);
     const live0 = await shot(`${livePane} .lv-viewport`, shots, 'changed-0');
