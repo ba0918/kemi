@@ -382,7 +382,8 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await update([sections[1]],d2);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 5'))`);
   await wait(`document.body.textContent.includes('Outdated explanation block')`);
-  assert.equal(await evaluate(`Array.from(document.querySelectorAll('textarea')).some(e=>e.value==='Draft across views') && document.querySelector('#progress-text').textContent.startsWith('Seen 0 /')`),true);
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('textarea')).some(e=>e.value==='Draft across views')`),true);
+  assert.deepEqual((await getJson(running.url,'api/review')).groups.flatMap(g=>g.files).filter(f=>f.seen).map(f=>f.path),[],'no file is marked seen');
   assert.equal((await comments())[0].explanation.revision,1);
   await browser('find','role','button','click','--name','Close','--exact');
   await browser('find','role','button','click','--name','Open explanation revision 5');
