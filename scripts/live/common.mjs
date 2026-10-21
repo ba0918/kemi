@@ -120,7 +120,8 @@ export async function clickUncovered(selector) {
   const center = `(() => { const r = ${element}.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`;
   const layout = `JSON.stringify((() => { const c = ${center}; const top = document.elementFromPoint(c.x, c.y); const box = (e) => e && Object.fromEntries(['x', 'y', 'width', 'height'].map((k) => [k, Math.round(e.getBoundingClientRect()[k])])); return { center: c, element: box(${element}), top: top && top.outerHTML.slice(0, 120), topBox: box(top), scroll: [scrollX, scrollY] }; })())`;
   const uncovered = `(() => { const e = ${element}; if (!e) return false; const c = ${center}; const top = document.elementFromPoint(c.x, c.y); return top !== null && e.contains(top); })()`;
-  const covered = await evaluate(`${element} !== null && !${uncovered}`) ? await evaluate(layout) : null;
+  // 覆われているかと配置は 1 回で読む（2 回に分けると、その間に要素が作り直されて無いときに配置が読めない）。
+  const covered = await evaluate(`${element} !== null && !${uncovered} ? ${layout} : null`);
   const started = performance.now();
   try {
     await waitFor(uncovered);
