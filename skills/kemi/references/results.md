@@ -49,8 +49,10 @@
   prints a stored result as it was saved, version included. A version `3` result has the same
   shape, except that `explanation.versions` always holds the retained versions and no page
   points were rounded or thinned. Version `1` results (written by kemi before replies and
-  messages existed) have `replies` as plain strings and no `page` or `messages`. Resuming an
-  old session and submitting it creates a new version `4` result.
+  messages existed) have `replies` as plain strings and no `page` or `messages`. Version `1`
+  and `2` results also have none of the keys version `3` added: `target_type`, `explanation`,
+  `diff_display_version`, and `parts`. Resuming an old session and submitting it creates a new
+  version `4` result.
 - `verdict` is `approved` or `changes_requested`, and agrees with the exit code.
 - On `approved` the person accepts the bytes named in `approval`. Before acting on the approval,
   compute each `identity` again and compare. If a file changed after the review began, say so
