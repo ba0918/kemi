@@ -87,9 +87,12 @@ one short final block.
 | One rule across many situations | Markdown table in `text` |
 | An output, message, file, or screen layout | `code` with `language: "text"` |
 
-Put prose next to every diagram, snippet, and table that says what to notice in it. Use the
-author's `role` honestly: `proposal` for what the change introduces, `example` for an
-illustration, `confirmed` only for what matches the reviewed bytes.
+Put prose next to every diagram, snippet, and table that says what to notice in it. Set `role`
+by what the person may rely on: `confirmed` only for a verbatim excerpt of the reviewed bytes;
+`proposal` for what the change introduces in any other form, including pseudocode or a diagram
+of code already written, since the person has not accepted it yet; `example` for anything
+else, such as a synthetic input, a hypothetical caller, or a paraphrase of how things worked
+before.
 
 ## Contrasts
 
