@@ -70,11 +70,20 @@ paths. A tool yielding while the process runs is not the process ending; empty s
 no result yet. If the environment cannot preserve the process and collect its result, report
 that limitation rather than inventing a verdict.
 
+Read stderr through its contract lines, not in full; the other lines, such as one
+`kemi: comment …` per comment, are for a person watching the terminal. When kemi exits `2`,
+also read the last lines, which carry the error. For example:
+
+```text
+grep -E '^kemi: (http|review |live |resume with:)' <stderr-file>
+tail -n 5 <stderr-file>
+```
+
 Read `kemi: <url>` from stderr. Share it in a progress message only after successful startup
 with `--explanation`, or after an explanation update printed success JSON and exited `0`.
 Fix or report failures before handoff. Tell the person what needs judgment and that **Approve**
-or **Request changes** submits the review. stderr also reports the result storage directory
-and, when conversation is available, `kemi: review <id>`.
+or **Request changes** submits the review. When conversation is available, stderr also prints
+`kemi: review <id>`.
 
 Keep waiting for that same main process through the environment's normal wait/output
 mechanisms; do not terminate or replace it to check status, or check rapidly. Keep the turn

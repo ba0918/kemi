@@ -112,8 +112,8 @@ An accepted submit attempts to save the same JSON to a result file. If saving fa
 and the completion screen warn, but the main process's stdout JSON and verdict exit code
 remain unchanged. Keep that stdout as the authoritative result; the `result` of a `submitted`
 event from `kemi wait` is the same document, so it serves equally. Before relying on `--result`
-for recovery, inspect persistence warnings: a failed save may leave no result or an older
-stored result, not this submit.
+for recovery, look in stderr for `kemi: could not save the result file`: a failed save may
+leave no result or an older stored result, not this submit.
 
 ```text
 kemi --result                     # the latest result for the repository you are in
