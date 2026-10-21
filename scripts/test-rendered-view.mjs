@@ -10,13 +10,16 @@
 // 最後の起動: 新側と消したブロックから付けたコメントが submit の JSON に行コメントとして入る。描き直しを
 // 重ねても、離れたときに + を隠すリスナーが溜まらない。
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
-import { deflateSync, crc32 } from 'node:zlib';
+import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, appendFile, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { browserSession } from './lib/browser.mjs';
+import { png } from './lib/fixture.mjs';
+import { launchKemi, stopKemi } from './lib/kemi.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -26,19 +29,9 @@ if (!process.argv[2]) {
 const binary = resolve(process.argv[2]);
 const scripts = dirname(fileURLToPath(import.meta.url));
 const session = `kemi-render-${process.pid}`;
-const browser = async (...args) => {
-  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 8 * 1024 * 1024 });
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, JSON.stringify(result));
-  return result.data;
-};
-const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
-/** 待ちが尽きたら、ページの状態を添えて失敗にする。 */
-const waitFor = async (code) => {
-  try {
-    await browser('wait', '--fn', code);
-  } catch (error) {
-    const snapshot = await evaluate(`JSON.stringify({
+// 待ちが尽きたら、ページの状態を添えて失敗にする。
+const { browser, evaluate, waitFor, close } = browserSession(session, {
+  describe: `JSON.stringify({
       path: document.querySelector('#file-header .path')?.textContent,
       notice: document.querySelector('#notice')?.textContent,
       renderedHidden: document.querySelector('#rendered-doc')?.hidden,
@@ -48,10 +41,8 @@ const waitFor = async (code) => {
       overlay: document.querySelector('#overlay')?.hidden ? null : document.querySelector('#overlay-card')?.textContent,
       tail: document.querySelector('#rendered-doc .rendered-body')?.textContent.trim().slice(-120),
       values: Array.from(document.querySelectorAll('#rendered-doc [data-kemi-block]')).map(e => e.dataset.kemiBlock),
-    })`).catch(() => 'no snapshot');
-    throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
-  }
-};
+    })`,
+});
 
 const OLD_GUIDE = `---
 title: Guide
@@ -90,28 +81,6 @@ const EXPECTED_BLOCKS = [
   'new:13-13', 'new:15-15', 'old:16-16', 'new:16-16', 'new:18-20', 'new:22-22',
   'new:24-24', 'old:26-26', 'new:26-26',
 ];
-
-/** 1×1 の PNG。色ごとに違うバイト列になる。 */
-function png(r, g, b) {
-  const chunk = (type, data) => {
-    const body = Buffer.concat([Buffer.from(type), data]);
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(crc32(body));
-    return Buffer.concat([length, body, crc]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(1, 0);
-  header.writeUInt32BE(1, 4);
-  header.set([8, 2, 0, 0, 0], 8);
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.from([0, r, g, b]))),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 const svg = (fill) => `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="8" fill="${fill}"/></svg>\n`;
 const IMAGES_MD = '# Images\n\n![shot](img/shot.png)\n\n![linked](img/link.png)\n\n![nowhere](img/missing.png)\n\n![base](img/base.png)\n';
@@ -154,26 +123,8 @@ async function makeFixture() {
   return dir;
 }
 
-async function startKemi(dir, state, args = ['--worktree']) {
-  const child = spawn(binary, [...args, '--port', '0', '--no-open'], {
-    cwd: dir,
-    env: { ...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home') },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const url = await new Promise((resolve, reject) => {
-    child.stderr.on('data', () => {
-      const match = stderr.match(/^kemi: (http:\/\/\S+)/m);
-      if (match) resolve(match[1]);
-    });
-    child.on('error', reject);
-    child.on('exit', (code) => reject(new Error(`kemi exited before serving (${code}): ${stderr}`)));
-  });
-  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal, stdout, stderr: () => stderr })));
-  return { child, url, exited };
+function startKemi(dir, state, args = ['--worktree']) {
+  return launchKemi(binary, { cwd: dir, state, args });
 }
 
 /** 入れ子のスクロール領域の中の要素は、見える位置へ送ってから押す（画面の外への click は届かない）。 */
@@ -214,6 +165,7 @@ async function openGuideRendered(url) {
 const fixture = await makeFixture();
 const state = await mkdtemp(join(tmpdir(), 'kemi-render-state-'));
 let kemi = await startKemi(fixture, state);
+let paused;
 try {
   await openGuideRendered(kemi.url);
   // (1) 文書全体のブロックが仮想化も折りたたみも無しに載る。
@@ -331,12 +283,11 @@ try {
   assert.equal(await evaluate(`document.querySelectorAll('#rendered-doc table > :not(thead, tbody), #rendered-doc tbody > :not(tr), #rendered-doc thead > :not(tr)').length`), 0);
   console.log('PASS 表の途中で消えた段落が表の中に入らず、ブロックの並びが一致する');
 } finally {
-  kemi.child.kill('SIGTERM');
+  paused = await stopKemi(kemi, 'SIGTERM');
 }
-const paused = await kemi.exited;
-assert.equal(paused.code, 130, paused.stderr());
-const resumeId = paused.stderr().match(/kemi: resume with: kemi --resume (\S+)/)?.[1];
-assert.ok(resumeId, paused.stderr());
+assert.equal(paused.code, 130, paused.stderr);
+const resumeId = paused.stderr.match(/kemi: resume with: kemi --resume (\S+)/)?.[1];
+assert.ok(resumeId, paused.stderr);
 
 // (11) 保留したセッションを復元すると Markdown を描画表示にでき、相対パス画像はレビュー対象の
 // ものだけ出て他は枠になり、切り替えはソース表示から始まる。
@@ -357,8 +308,7 @@ try {
   assert.deepEqual(await blocks(), EXPECTED_BLOCKS);
   console.log('PASS 復元した Markdown を描画表示にでき、相対パス画像はレビュー対象のものだけ出る');
 } finally {
-  kemi.child.kill('SIGTERM');
-  await kemi.exited;
+  await stopKemi(kemi, 'SIGTERM');
 }
 
 // (5) 別の起動で、新側のブロックと消したブロックからコメントを付けて submit する。
@@ -423,4 +373,4 @@ assert.equal(second.end_line, 16);
 assert.deepEqual(second.quote, ['| 3 | 4 |']);
 assert.equal(second.suggestion, null);
 console.log('PASS 描画表示から付けたコメントが submit の JSON に行コメントとして入る');
-await run('agent-browser', ['--session', session, 'close']);
+await close();
