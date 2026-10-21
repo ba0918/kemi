@@ -102,9 +102,9 @@
   its text is then what you wrote (your explanation file, or the last complete replacement you
   sent). With at least one explanation comment, `versions` holds every retained version in
   ascending revision order; read the retained original when a comment targets an old version.
-- `diff_display_version` is the review's display version at submit (see
-  [explanation updates](explanation-update.md#updating-the-explanation)); it is not an approval
-  target.
+- `diff_display_version` is the review's display version at submit: a generation of the
+  review's metadata, not a guarantee of file bytes or of the explanation's correctness. It is
+  not an approval target.
 
 ## Fetching a result you missed
 
