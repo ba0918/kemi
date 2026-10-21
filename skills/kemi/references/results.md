@@ -4,7 +4,7 @@
 
 ```json
 {
-  "kemi": 3,
+  "kemi": 4,
   "title": "Review",
   "verdict": "approved",
   "approval": [{"path": "src/a.rs", "identity": "sha256:..."}],
@@ -44,12 +44,13 @@
 }
 ```
 
-- `kemi` is the version of this contract, `3` for new result and wait output. Read it before trusting the shape, and do
-  not read a version you do not know by guessing. Version `1` results (written by kemi before
-  replies and messages existed) have `replies` as plain strings and no `page` or `messages`;
-  `kemi --result` prints such a stored result unchanged.
-  Stored version `2` results are also printed as originally saved. Resuming an old session
-  and submitting it creates a new version `3` result instead.
+- `kemi` is the version of this contract, `4` for new result and wait output. Read it before
+  trusting the shape, and do not read a version you do not know by guessing. `kemi --result`
+  prints a stored result as it was saved, version included. A version `3` result has the same
+  shape, except that `explanation.versions` always holds the retained versions and no page
+  points were rounded or thinned. Version `1` results (written by kemi before replies and
+  messages existed) have `replies` as plain strings and no `page` or `messages`. Resuming an
+  old session and submitting it creates a new version `4` result.
 - `verdict` is `approved` or `changes_requested`, and agrees with the exit code.
 - On `approved` the person accepts the bytes named in `approval`. Before acting on the approval,
   compute each `identity` again and compare. If a file changed after the review began, say so
@@ -87,6 +88,12 @@
         "kind": "element",
         "points": [],
         "elements": [{"selector": "#buy", "text": "Buy", "rect": {"x": 0, "y": 120, "w": 200, "h": 60}}]
+      },
+      {
+        "n": 2,
+        "kind": "arrow",
+        "points": [{"x": 12, "y": 340}, {"x": 60, "y": 352}, {"x": 96, "y": 380}],
+        "elements": [{"selector": "#total", "text": "$12", "rect": {"x": 80, "y": 370, "w": 60, "h": 24}}]
       }
     ],
     "image": null
@@ -103,7 +110,11 @@
   page, are left out, and a line drawn inside one element names that innermost element). `html` and
   `body` are never named: an arrow pointing at the empty background, or a line around nothing but
   background, has `elements` `[]` and only its `points` (an area only); look at the comment's
-  `image` to see what it points at. There is one image per comment, not per place. Each element carries a `selector`, its `text`, and its `rect`; all
+  `image` to see what it points at. Arrow and pen `points` are whole numbers, rounded and thinned
+  so that every dropped point lies within 1 CSS pixel of the line through the kept ones; the
+  first and last points are where the line began and ended (an arrow's head is at the last).
+  Points saved by a kemi before contract version `4` keep their saved values,
+  which may be fractional. There is one image per comment, not per place. Each element carries a `selector`, its `text`, and its `rect`; all
   coordinates are CSS pixels of the page, independent of scrolling. For an element inside an
   open shadow root, `selector` joins the host's selector and the selector inside the shadow root
   with ` >>> ` (for example `#host >>> p:nth-of-type(2)`), which is not CSS: query the host in the
@@ -133,8 +144,11 @@
   Those original values never move to a new revision. `outdated` compares part and references
   with the current block of the same id; moving it or changing its section title does not
   make it outdated. Identical content returning under the same id makes it current again.
-- Top-level `explanation` is null or `{current_revision, versions}`, with retained versions
-  in ascending revision order. Read the retained original when a comment targets an old version.
+- Top-level `explanation` is null when the review had no explanation, otherwise
+  `{current_revision, versions}`. `versions` is `[]` when no comment targets the explanation;
+  its text is then what you wrote (your explanation file, or the last complete replacement you
+  sent). With at least one explanation comment, `versions` holds every retained version in
+  ascending revision order; read the retained original when a comment targets an old version.
 - `diff_display_version` identifies the server's accepted metadata generation at submit.
   It is separate from authentication tokens, does not freeze `api/file` bytes, and does not
   prove an explanation correct or that all screens imported that generation.

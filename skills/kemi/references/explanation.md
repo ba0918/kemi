@@ -152,7 +152,8 @@ kemi explain <id> < update.json
 
 Context reads no stdin and exits `0` with one version-3 JSON object: `review`,
 `diff_display_version`, `explanation_revision`, current saved `explanation` or null, and
-`references:{code,pages}`. Check `kemi: 3`; do not guess an unknown contract version.
+`references:{code,pages}`. Check `kemi: 3`, the context contract's version, counted apart
+from the result's `4`; do not guess an unknown contract version.
 Code entries have `unit`, `group_id`, `path`, `old_present`/`new_present` booleans, and nullable
 `old_lines`/`new_lines` totals. Pages are registered `{url}` values. Use this map for updated
 references. It is a consistent server metadata read, not file contents or the reader's Code

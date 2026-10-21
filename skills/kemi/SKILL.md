@@ -119,8 +119,8 @@ startup diff; `--live` is the exception and rereads the working tree and reconne
 
 After the main process exits, collect its exit code and stdout and read
 [results](references/results.md) for field interpretation or `kemi --result` recovery.
-Check the contract version (`kemi: 3` for new result/wait output) and that `verdict` matches
-the exit code. Do not guess unknown versions; stored version 1 or 2 results are returned
+Check the contract version (`kemi: 4` for new result/wait output) and that `verdict` matches
+the exit code. Do not guess unknown versions; stored version 1 to 3 results are returned
 unchanged. Recovery retrieves a stored result, not the current review's eventual submit.
 
 Read comments on approvals as well as change requests. Compare approval identities with
