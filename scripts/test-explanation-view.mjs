@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 
 import { browserSession } from './lib/browser.mjs';
 import { temporaryDirectory } from './lib/fixture.mjs';
-import { getJson, isolatedEnvironment, launchKemi, postJson, stopKemi } from './lib/kemi.mjs';
+import { getJson, isolatedEnvironment, kemiOutput, launchKemi, postJson, stopKemi } from './lib/kemi.mjs';
 
 const run = promisify(execFile);
 const binary = resolve(process.argv[2]);
@@ -252,7 +252,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
-  const cli = async (...args)=>(await run(binary,args,{cwd:root,env:isolatedEnvironment(root)})).stdout;
+  const cli = (...args)=>kemiOutput(binary,args,{cwd:root,env:isolatedEnvironment(root)});
   const context=async()=>JSON.parse(await cli('explain',id,'--context'));
   const update=async(sections,base=review.diff_display_version)=>{
     const current=await context();
@@ -412,7 +412,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
     await wait(`document.querySelector('#live-stage')?.checkVisibility()`);
     assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
     const id=(await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
-    const cli=async(...args)=>(await run(binary,args,{cwd:root,env:isolatedEnvironment(root)})).stdout;
+    const cli=(...args)=>kemiOutput(binary,args,{cwd:root,env:isolatedEnvironment(root)});
     const context=async()=>JSON.parse(await cli('explain',id,'--context'));
     const initial=await context();
     // 通常のPage操作で辿ったページを登録し、Code世代は変えない。

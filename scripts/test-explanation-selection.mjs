@@ -7,7 +7,7 @@ import {promisify} from 'node:util';
 
 import {attachToPage,browserSession,isVisible as visible} from './lib/browser.mjs';
 import {temporaryDirectory} from './lib/fixture.mjs';
-import {getJson,isolatedEnvironment,launchKemi,postJson,stopKemi} from './lib/kemi.mjs';
+import {getJson,isolatedEnvironment,kemiOutput,launchKemi,postJson,stopKemi} from './lib/kemi.mjs';
 
 const run=promisify(execFile), binary=resolve(process.argv[2]);
 const root=await temporaryDirectory('kemi-selection-'), session=`kemi-selection-${process.pid}`;
@@ -213,10 +213,10 @@ try {
 
   // 旧版を読んでいる間の選択は旧版のブロックを対象にする。
   const id=(await readdir(join(root,'kemi','sessions'))).find(n=>n.endsWith('.endpoint')).slice(0,-9);
-  const context=JSON.parse((await run(binary,['explain',id,'--context'],{cwd:root,env})).stdout);
+  const context=JSON.parse(await kemiOutput(binary,['explain',id,'--context'],{cwd:root,env}));
   const updated=[{...sections[0],blocks:[{...first,part:{type:'text',body:'New revision text'}},second,code,diagram,grid]},sections[1]];
   await writeFile(join(root,'update.json'),JSON.stringify({expected_revision:1,base_display_version:context.diff_display_version,sections:updated}));
-  await run(binary,['explain',id,'--file',join(root,'update.json')],{cwd:root,env});
+  await kemiOutput(binary,['explain',id,'--file',join(root,'update.json')],{cwd:root,env});
   await wait(`document.body.textContent.includes('Open explanation revision 2')`);
   await selectText(`${firstParagraph}.firstChild`,0,9);await browser('press','c');
   await browser('find','label','Comment on Selection review','fill','Old reading still targets old block');await browser('find','role','button','click','--name','Add comment','--exact');

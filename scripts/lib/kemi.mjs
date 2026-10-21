@@ -149,6 +149,18 @@ export function runKemi(binary, args, { cwd, env, input = '' }) {
 }
 
 /**
+ * kemi のサブコマンドを走らせ、終了コードが 0 であることを確かめて stdout を返す。
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {{ cwd: string, env: NodeJS.ProcessEnv, input?: string }} options
+ */
+export async function kemiOutput(binary, args, options) {
+  const { code, stdout, stderr } = await runKemi(binary, args, options);
+  assert.equal(code, 0, `kemi ${args.join(' ')} exited with ${code}: ${stderr}`);
+  return stdout;
+}
+
+/**
  * ページと同じオリジンから API に POST し、200 であることを確かめて JSON を返す。
  * @param {string} url レビューの URL
  * @param {string} path
