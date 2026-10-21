@@ -40,6 +40,7 @@ import {
   countPageMessages,
   lastScrollY,
   nextPageMessage,
+  seenMessages,
   wheelOn,
   assignMockByPath,
   chooseFromMockMenu,
@@ -355,7 +356,8 @@ export async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(reposi
  * 同じ URL の中身を変えると、読み込み直さずに変化の一覧が変わる。兄弟の途中に足した要素だけが増えたになり、ボタンの
  * 背景色の変化が前後の色の見本つきで主な変化に入る。モックと比べる間は一覧が出ず、外すと出る。変化の数は表示中のページに
  * だけ出て、別のページへ移ると前のページの一覧を新しいページの下に出さない。幅 390px では引き出しの中にある。幅 390px で
- * 比べる相手の側を見ている（動いているページの枠が隠れる）間は変化の数が変わらず、動いているページの側に戻すと比べ直す。
+ * 比べる相手の側を見ている（動いているページの枠が隠れる）間はページに記述を頼まず、変化の数が変わらず、動いているページの側に
+ * 戻すと比べ直す。
  * 枠が隠れている間に取ったスナップショットも、コードの見方から渡したときのスナップショットも、変えていないページとは変化 0。
  */
 export async function changeListFollowsThePage(repository) {
@@ -456,8 +458,13 @@ export async function changeListFollowsThePage(repository) {
       return true;
     })()`));
     await waitFor(`!${visible(`${livePane} .lv-frame`)}`);
+    const described = await evaluate(seenMessages('described'));
     // 最後に渡した時点の色に戻す。比べ直せば変化は 0 になる。
     await nextPageMessage('changed', () => writeFile(join(dev.dir, 'changing.css'), changingCss('rgb(214, 69, 69)')));
+    // 届いた知らせは比べ直すきっかけでしかなく、比べ直したら記述を頼む往復を挟んでから数が変わる。比べ直さないことには
+    // 合図が無いので、間を置いてから見る。
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.equal(await evaluate(seenMessages('described')), described, 'the review page asks the hidden live page for no description');
     const seen = JSON.parse(await evaluate(`JSON.stringify(window.__kemiCounts)`));
     assert.ok(seen.every((value) => value === shown), `the counts do not change while the live page is hidden: ${shown} -> ${JSON.stringify(seen)}`);
     await evaluate(`document.querySelector('.lv-side button[data-side="live"]').click(); true`);

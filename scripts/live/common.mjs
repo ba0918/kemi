@@ -280,7 +280,7 @@ export async function countPageMessages() {
 }
 
 /** 数え始めてから届いた、その種類の知らせの数を読む式。 */
-const seenMessages = (type) => `(window.__kemiSeen?.[${JSON.stringify(type)}] ?? 0)`;
+export const seenMessages = (type) => `(window.__kemiSeen?.[${JSON.stringify(type)}] ?? 0)`;
 
 /** 数え始めてから最後に届いたスクロールの知らせの、ページの縦の位置を読む式。まだ無ければ undefined。 */
 export const lastScrollY = 'window.__kemiScrollY';
