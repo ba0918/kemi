@@ -27,7 +27,9 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | `crates/kemi-webview/` | 資産の埋め込み |
 | `web/` | ESM と CSS のソース。`tsc --checkJs` は型検査のみ（層は下の節） |
 | `skills/kemi/SKILL.md` | エージェント向けの kemi の使い方。仕様から派生した配布物で、契約の正典ではない |
-| `scripts/` | フィクスチャ生成、起動時間の計測、ブラウザ自動化 |
+| `scripts/` | フィクスチャ生成、起動時間の計測、ブラウザ自動化（`test-*.mjs`）、`--live` の検査に使う試験用の開発サーバ（`live-dev-server.mjs`） |
+| `scripts/lib/` | ブラウザ検査の共通の部品（agent-browser の呼び出し、kemi の起動と止め方と API、検査が落ちたときの後始末、待ち、フィクスチャ、PNG） |
+| `scripts/live/` | `scripts/test-live.mjs` の場面。領域ごとのファイルと、2 つ以上の領域の場面が使う補助（`common.mjs`） |
 
 ### `web/assets/` の層
 
@@ -100,6 +102,8 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>` / `node scripts/test-agent-channel.mjs <target/release/kemi>`（agent-browser をローカルに入れて実行） |
 | Browser（コメント札のレイアウト） | `node scripts/test-comment-chip-layout.mjs <target/release/kemi>`（agent-browser が要る） |
 | Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（agent-browser が要る。`web/` は自前の HTTP サーバから配るので引数は無い） |
+| Browser（`--live`） | `node scripts/test-live.mjs <target/release/kemi> [<場面>...]`（agent-browser が要る。場面は `scripts/live/` の場面の関数の名前で、並べた順に走る。省くと全部。`<場面>:<値>` は値を受け取る場面にだけ渡せる） |
+| Browser（説明の見方） | `node scripts/test-explanation-view.mjs <target/release/kemi> [--parts-only \| --navigation \| --live-navigation \| --range-navigation]`（どれか 1 つで、その節だけ: 復元した会話の parts、説明の見方、`--live` の説明、コミット範囲の参照） / `node scripts/test-explanation-selection.mjs <target/release/kemi>`（agent-browser が要る） |
 | Release plan | `dist plan`（cargo-dist をローカルに入れて実行） |
 
 ## Conventions specific to this project

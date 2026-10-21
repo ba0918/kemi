@@ -1,4 +1,10 @@
 // 保留して復元した会話（エージェントが parts で書いた返信と発言）と説明の見方を、実バイナリと実フォントで読む。
+//
+//   node scripts/test-explanation-view.mjs <kemi-bin>                     全部の節
+//   node scripts/test-explanation-view.mjs <kemi-bin> --parts-only        復元した会話の parts（Markdown・コード・図・描けない表示）だけ
+//   node scripts/test-explanation-view.mjs <kemi-bin> --navigation        説明の見方（目次・幅・版の更新・2 つの画面・保留と復元・参照）だけ
+//   node scripts/test-explanation-view.mjs <kemi-bin> --live-navigation   --live の説明（ページの参照・保留と復元・渡す）だけ
+//   node scripts/test-explanation-view.mjs <kemi-bin> --range-navigation  コミット範囲のグループ単位の参照だけ
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
