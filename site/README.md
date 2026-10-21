@@ -23,7 +23,7 @@ JavaScript無効時は英語を表示します。file URLでの保存可否は�
 実際の `kemi wait`、Hand to agent、`kemi reply` で質問と返答を表示しています。
 デスクトップは差分とConversation、モバイルはConversationのシートを示します。
 製品の動作確認全般を代替するものではありません。
-JSONは形式3の説明用の抜粋です。省略された必須フィールドもあるため、完全な結果を
+JSONは形式4の説明用の抜粋です。省略された必須フィールドもあるため、完全な結果を
 処理する際は[結果の参照資料](../skills/kemi/references/results.md)を参照してください。
 
 確認元: リポジトリの README.md / README-ja.md / PROJECT.md / web/、
