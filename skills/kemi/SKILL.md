@@ -70,13 +70,15 @@ paths. A tool yielding while the process runs is not the process ending; empty s
 no result yet. If the environment cannot preserve the process and collect its result, report
 that limitation rather than inventing a verdict.
 
-Read stderr through its contract lines, not in full; the other lines, such as one
-`kemi: comment …` per comment, are for a person watching the terminal. When kemi exits `2`,
-also read the last lines, which carry the error. For example:
+Read stderr without the `kemi: comment …` lines, one per comment, which are for a person
+watching the terminal. Every other line is for you: the contract lines (`kemi: <url>`,
+`kemi: review <id>`, `kemi: live <url>`, `kemi: resume with: …`), warnings such as a failed
+save or exposure on the LAN, and, when kemi exits `2`, the error. Any filter that drops the
+lines starting with `kemi: comment ` works. For example, in a POSIX shell (in PowerShell,
+`Select-String -NotMatch` does the same):
 
 ```text
-grep -E '^kemi: (http|review |live |resume with:)' <stderr-file>
-tail -n 5 <stderr-file>
+grep -v '^kemi: comment ' <stderr-file>
 ```
 
 Read `kemi: <url>` from stderr. Share it in a progress message only after successful startup
