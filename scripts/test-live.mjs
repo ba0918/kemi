@@ -1813,6 +1813,12 @@ async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
 /** 表示中のページの変化の一覧。無ければ null。 */
 const changeList = `document.querySelector('#page-tree .lv-page[data-current="true"] .lv-changes')`;
 
+/**
+ * 表示中のページの変化の一覧の、消えた要素の最初の行。無ければ null（`?.` だけだと一覧がまだ無いときに undefined に
+ * なり、`!== null` の待ちが一覧の描かれる前に通って、押しても何も起きない）。
+ */
+const removedRow = `(${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]') ?? null)`;
+
 /** 変化の一覧の主な変化（種類と、出ている文字）。 */
 async function mainChanges() {
   return JSON.parse(await evaluate(`JSON.stringify(Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).map((item) => ({ kind: item.dataset.kind, text: item.textContent })))`));
@@ -1916,8 +1922,7 @@ async function removedRowsLeadToTheSnapshot(repository) {
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const refView = `${refPane} .lv-viewport`;
-  const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
-  const endRow = `Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).find((item) => item.textContent.includes('End element'))`;
+  const endRow = `(Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).find((item) => item.textContent.includes('End element')) ?? null)`;
   // 枠の上の方（ページの先頭にある青いボタンが写る所）を除いた範囲。ボタンの青は光の色に近い。
   const belowTheButton = [0, 250, 100000, 100000];
   const pressRemovedRow = () => evaluate(`${removedRow}.querySelector('button').click(); true`);
@@ -2018,7 +2023,6 @@ async function wideTargetsAreRevealedSideways(repository) {
   const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const liveView = `document.querySelector('${livePane} .lv-viewport')`;
   const refView = `document.querySelector('${refPane} .lv-viewport')`;
-  const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
   const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
   try {
     const far = await postJson(kemi.url, 'api/comment', {
@@ -2080,7 +2084,6 @@ async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
   await writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(true));
   const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const refView = `document.querySelector('${refPane} .lv-viewport')`;
-  const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
   const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
   const glowInside = `(() => { const v = ${refView}.getBoundingClientRect(); const g = document.querySelector('${refPane} .lv-ref-glow'); if (!g || g.hidden) return false; const r = g.getBoundingClientRect(); return r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom; })()`;
   try {
