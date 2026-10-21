@@ -14,13 +14,16 @@
 // 2 回目の起動: 狭い画面でタップで付けた範囲コメントが submit の JSON に行コメントとして入る。clipboard の
 // 無い接続でも、完了画面の Copy JSON が写せなかったことを示す。
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
-import { deflateSync, crc32 } from 'node:zlib';
+import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { browserSession, visible } from './lib/browser.mjs';
+import { png } from './lib/fixture.mjs';
+import { launchKemi, stopKemi } from './lib/kemi.mjs';
 
 const run = promisify(execFile);
 if (!process.argv[2]) {
@@ -30,19 +33,9 @@ if (!process.argv[2]) {
 const binary = resolve(process.argv[2]);
 const scripts = dirname(fileURLToPath(import.meta.url));
 const session = `kemi-narrow-${process.pid}`;
-const browser = async (...args) => {
-  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 8 * 1024 * 1024 });
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, JSON.stringify(result));
-  return result.data;
-};
-const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
-/** 待ちが尽きたら、ページの状態を添えて失敗にする。 */
-const waitFor = async (code) => {
-  try {
-    await browser('wait', '--fn', code);
-  } catch (error) {
-    const snapshot = await evaluate(`JSON.stringify({
+// 待ちが尽きたら、ページの状態を添えて失敗にする。
+const { browser, evaluate, waitFor, close } = browserSession(session, {
+  describe: `JSON.stringify({
       width: window.innerWidth,
       path: document.querySelector('#file-header .path')?.textContent,
       notice: document.querySelector('#notice')?.textContent,
@@ -50,32 +43,8 @@ const waitFor = async (code) => {
       drawer: document.querySelector('#tree')?.dataset.drawer,
       wrap: document.querySelector('#diff-content')?.dataset.wrap,
       treePosition: getComputedStyle(document.querySelector('#tree')).position,
-    })`).catch(() => 'no snapshot');
-    throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
-  }
-};
-
-/** 1×1 の PNG。色ごとに違うバイト列になる。 */
-function png(r, g, b) {
-  const chunk = (type, data) => {
-    const body = Buffer.concat([Buffer.from(type), data]);
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(crc32(body));
-    return Buffer.concat([length, body, crc]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(1, 0);
-  header.writeUInt32BE(1, 4);
-  header.set([8, 2, 0, 0, 0], 8);
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.from([0, r, g, b]))),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
+    })`,
+});
 
 const LONG_PATH = '.github/workflows/deeply/nested/directory/with/a/long/name/ci.yml';
 const LINES = (count, prefix) => Array.from({ length: count }, (_, i) => `${prefix} line ${i + 1}\n`).join('');
@@ -111,26 +80,8 @@ async function makeFixture() {
   return { dir, from };
 }
 
-async function startKemi(dir, state, args) {
-  const child = spawn(binary, [...args, '--port', '0', '--no-open'], {
-    cwd: dir,
-    env: { ...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home') },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const url = await new Promise((resolve, reject) => {
-    child.stderr.on('data', () => {
-      const match = stderr.match(/^kemi: (http:\/\/\S+)/m);
-      if (match) resolve(match[1]);
-    });
-    child.on('error', reject);
-    child.on('exit', (code) => reject(new Error(`kemi exited before serving (${code}): ${stderr}`)));
-  });
-  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal, stdout, stderr: () => stderr })));
-  return { child, url, exited };
+function startKemi(dir, state, args) {
+  return launchKemi(binary, { cwd: dir, state, args });
 }
 
 const NARROW = ['390', '844'];
@@ -143,7 +94,7 @@ const at = (path) => `document.querySelector('#file-header .path')?.textContent 
 const drawerOpen = `document.querySelector('#tree').dataset.drawer === 'open'`;
 const drawerClosed = `document.querySelector('#tree').dataset.drawer !== 'open'`;
 const rect = (selector) => evaluate(`JSON.stringify(document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect())`).then(JSON.parse);
-const isShown = (selector) => evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e !== null && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; })()`);
+const isShown = (selector) => evaluate(visible(selector));
 const storageSnapshot = () => evaluate(`JSON.stringify(Object.entries(localStorage).sort())`);
 /** 表示領域の上端に見えている行の、旧・新の行番号。 */
 const topRow = () => evaluate(`(() => {
@@ -620,8 +571,7 @@ try {
   await waitFor(`document.querySelector('#rendered-doc .editor textarea[data-editor-field="body"]') !== null`);
   console.log('PASS 390px の描画表示ではブロックのタップで + が出る');
 } finally {
-  kemi.child.kill('SIGTERM');
-  await kemi.exited;
+  await stopKemi(kemi, 'SIGTERM');
 }
 
 // (17) 別の起動で、390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
@@ -677,4 +627,4 @@ await evaluate(`Object.defineProperty(navigator, 'clipboard', { value: undefined
 await evaluate(`${copyJson}.click(); true`);
 await waitFor(`${copyJson}.textContent.startsWith('Could not copy: ')`);
 console.log('PASS clipboard の無い接続で完了画面の Copy JSON を押すと、写せなかったことをボタンに出す');
-await run('agent-browser', ['--session', session, 'close']);
+await close();
