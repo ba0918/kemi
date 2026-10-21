@@ -339,3 +339,42 @@ test("no list of changes is the same as no list, and not the same as a list", ()
   assert.equal(sameChanges(null, []), false);
   assert.equal(sameChanges([], null), false);
 });
+
+test("among siblings too many to compare in a table, an element inserted in the middle is the only one added", () => {
+  // 両側の数の積が LCS_LIMIT（400 万）を超える兄弟の並びは、表を作らず前から順に組む。全部の背景色を変えると、
+  // 見た目まで含めた中身ではどれも組めず、見た目を除いた中身で組むことになる。先頭と末尾の文字も変えるのは、
+  // 前後の一致を除く段だけで並びが片付いてしまわないため（片付くと、順に組む処理を通らない）。
+  const count = 2100;
+  /** @param {string[]} texts @param {string} color */
+  const cards = (texts, color) =>
+    page(
+      texts.map((text, index) => ({
+        tag: "button",
+        cls: "card",
+        text,
+        box: [0, index * 40, 200, 40],
+        style: { "background-color": color },
+      })),
+    );
+  const texts = Array.from({ length: count }, (_, index) => `Card ${index + 1}`);
+  const before = cards(["First", ...texts.slice(1, -1), "Last"], "rgb(49, 89, 214)");
+  const middle = count / 2;
+  const now = cards(
+    ["First edited", ...texts.slice(1, middle), "Inserted", ...texts.slice(middle, -1), "Last edited"],
+    "rgb(214, 69, 69)",
+  );
+  const changes = diffDescriptions(before, now);
+  assert.deepEqual(
+    ofKind(changes, "added").map((change) => change.now),
+    [indexOfText(now, "Inserted")],
+  );
+  assert.deepEqual(ofKind(changes, "removed"), []);
+  assert.deepEqual(
+    ofKind(changes, "text").map(({ was, is }) => [was, is]),
+    [
+      ["First", "First edited"],
+      ["Last", "Last edited"],
+    ],
+  );
+  assert.equal(ofKind(changes, "visual").length, count, "every card that was there before changed its background");
+});
