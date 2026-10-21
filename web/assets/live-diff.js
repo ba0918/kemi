@@ -117,7 +117,11 @@ const EXCERPT_VISITS = 200;
  */
 const NEVER_SHIFTED = new Set(["html", "body"]);
 
-/** 兄弟の並びを最長共通部分列で比べる上限（両側の数の積）。超えたら前から順に組む。 */
+/**
+ * 兄弟の並びを最長共通部分列で比べる上限（両側の数の積）。超えたら前から順に組む。live-diff.test.js の
+ * "among siblings too many to compare in a table" のテストは、この上限を超える数で前から順に組む処理を通す。上げるときは
+ * そのテストの数も上限を超えるように直す（直さないと、そのテストは黙って表で比べる処理だけを確かめるようになる）。
+ */
 const LCS_LIMIT = 4_000_000;
 
 /**
