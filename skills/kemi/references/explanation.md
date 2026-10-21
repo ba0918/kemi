@@ -15,8 +15,8 @@ Do not use `--context` at this stage: there is no running review id yet.
    the content; references are needed only where they help the person inspect evidence.
 3. Attach typed Code references where inspecting a particular reviewed file helps judgment.
    Use known input group/path/side values; leave both line bounds null when counts are unknown.
-   Keep approval hashes in the approval record, not long identity lists in the explanation:
-   byte identity and navigation have different purposes.
+   Keep approval hashes in the message that shares the URL (and a manifest's `approval`), not
+   long identity lists in the explanation: byte identity and navigation have different purposes.
 4. Save the file outside the reviewed working tree when it is only handoff material, otherwise
    `--worktree` includes it as an untracked file. Start, for example,
    `kemi --worktree --explanation explanation.json`.

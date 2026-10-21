@@ -54,10 +54,14 @@
   `diff_display_version`, and `parts`. Resuming an old session and submitting it creates a new
   version `4` result.
 - `verdict` is `approved` or `changes_requested`, and agrees with the exit code.
-- On `approved` the person accepts the bytes named in `approval`. Before acting on the approval,
-  compute each `identity` again and compare. If a file changed after the review began, say so
-  instead of proceeding on an approval of bytes that no longer exist. Comments may still be
-  present on an approval; read them and address or report them.
+- On `approved` the person accepts the bytes in your latest record: what you named in the
+  message that shared the URL (a manifest's `approval` holds the same; git inputs return `[]`),
+  or the identities you named in a reply after changing reviewed files. Before acting on the
+  approval, take the same identities with the same commands from what you are about to act on
+  (for a commit range, the head commit of what you merge or push) and compare. If anything
+  changed after your latest record, say so instead of proceeding on an approval of bytes that no
+  longer exist. Comments may still be present on an approval; read them and address or report
+  them.
 - On `changes_requested`, address every comment, then offer a new review of the result.
 - Line numbers are 1-based and inclusive. `side` is `new` or `old`, and `old` means the old
   file's own numbering. A comment on a whole file has `start_line` and `end_line` `null`,

@@ -28,8 +28,11 @@ Read [inputs](references/inputs.md) for manifests, commit grouping, focus marks,
 optional flags, and [live review](references/live.md) for `--live` and its page comments. Use
 `--no-open` when a browser should not appear on the person's machine. The default bind is
 `127.0.0.1`; use `--bind` only for intended network exposure (the URL and API are plain HTTP).
-For approval, identify the exact bytes; a manifest's `approval` is returned unchanged, not
-checked by kemi.
+For approval, name the exact bytes in the progress message that shares the URL; that message
+is your record. A manifest also carries them in `approval`, returned unchanged and not checked
+by kemi. Git inputs return `approval: []`: name the full base and head SHAs of a commit range,
+or each reviewed file's `git hash-object <path>` (`git rev-parse :<path>` when staged; a
+deleted file as deleted).
 
 ## Prepare the explanation before handing off
 
@@ -128,5 +131,5 @@ startup diff; `--live` is the exception and rereads the working tree and reconne
 After the main process exits, collect its exit code and the result (its stdout, or the
 `submitted` result from `kemi wait`), and read [results](references/results.md) before acting
 on it: it covers the contract version, every field, and `kemi --result` recovery. Check that
-`verdict` agrees with the exit code, and before using an approval, compute each `identity`
-again from the current bytes and compare.
+`verdict` agrees with the exit code, and before using an approval, compare your latest record
+with what you are about to act on, taken with the same commands.

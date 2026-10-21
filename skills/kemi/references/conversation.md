@@ -136,7 +136,12 @@ open a comment or resolve one; only the person does that.
 2. Start `kemi wait <id>` in the background and tell the person they can hand you comments
    before they submit.
 3. When it returns with `handed`, address the comments within the scope the person asked for,
-   then answer with `kemi reply <id>`: say what you changed, or why you did not.
+   then answer with `kemi reply <id>`: say what you changed, or why you did not. If you changed
+   reviewed files, say so and name their new identities in the reply as the approval target.
+   The person sees the change by pressing the update badge in a `--worktree` or `--live` review,
+   in a commit range whose `--to` is a branch or `HEAD` once you commit it, and for manifest
+   files given by path. Otherwise the page keeps its startup diff, as in a `--staged` review or a
+   resumed one other than `--live`: offer a new review.
 4. Start `kemi wait <id>` again. Repeat until an event of type `submitted` arrives, or until
    `kemi wait` exits `2` because the review is no longer running (the person submitted while
    you were working, or the main `kemi` process exited). A `submitted` event's `result` is the

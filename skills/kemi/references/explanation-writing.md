@@ -44,9 +44,9 @@ A reading order, not a fixed set of chapters. Leave a part out only when it has 
 6. **Risks and unverified points.** What was not checked, what could break, and what would
    reveal it.
 
-Keep process records out of the body. Hashes and the approval target belong in the approval
-record and the handoff message; test counts and command logs fit in at most one short final
-block.
+Keep process records out of the body. Hashes and the approval target belong in the message
+that shares the URL (and a manifest's `approval`); test counts and command logs fit in at most
+one short final block.
 
 ## What each kind of change needs
 
