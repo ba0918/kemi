@@ -1,17 +1,17 @@
 // コメント札が本文だけを省略し、場所と印を 1 行で表示することを実バイナリで確かめる（R-VIEW）。
 // node scripts/test-comment-chip-layout.mjs <kemi-bin>
 import assert from 'node:assert/strict';
-import {mkdtemp, writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {writeFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 
 import {browserSession} from './lib/browser.mjs';
+import {temporaryDirectory} from './lib/fixture.mjs';
 import {getJson, launchKemi, postJson, stopKemi} from './lib/kemi.mjs';
 
 assert.ok(process.argv[2], 'pass the kemi binary');
 const binary = resolve(process.argv[2]);
-const fixture = await mkdtemp(join(tmpdir(), 'kemi-chip-layout-'));
-const state = await mkdtemp(join(tmpdir(), 'kemi-chip-layout-state-'));
+const fixture = await temporaryDirectory('kemi-chip-layout-');
+const state = await temporaryDirectory('kemi-chip-layout-state-');
 const session = `kemi-chip-layout-${process.pid}`;
 const {browser, evaluate, waitFor: wait, close} = browserSession(session);
 const lines = Array.from({length: 20}, (_, i) => `const value${i + 1} = ${i + 1};\n`).join('');

@@ -1,16 +1,16 @@
 // 説明本文の文字を選んでその場でコメントし、選んだ文字が引用として result まで届くことを実バイナリで確かめる。
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
-import {mkdtemp,writeFile,readdir} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {writeFile,readdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {promisify} from 'node:util';
 
 import {attachToPage,browserSession,isVisible as visible} from './lib/browser.mjs';
+import {temporaryDirectory} from './lib/fixture.mjs';
 import {getJson,isolatedEnvironment,launchKemi,postJson,stopKemi} from './lib/kemi.mjs';
 
 const run=promisify(execFile), binary=resolve(process.argv[2]);
-const root=await mkdtemp(join(tmpdir(),'kemi-selection-')), session=`kemi-selection-${process.pid}`;
+const root=await temporaryDirectory('kemi-selection-'), session=`kemi-selection-${process.pid}`;
 const env=isolatedEnvironment(root);
 const {browser,evaluate,waitFor:wait,close}=browserSession(session);
 const frames=()=>evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);

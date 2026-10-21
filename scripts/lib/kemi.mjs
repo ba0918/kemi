@@ -4,12 +4,40 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
+import { onExit } from './exit.mjs';
 import { withTimeout } from './wait.mjs';
 
 /** kemi が起動の行を出し終えるまで待つ上限。 */
 const START_TIMEOUT = 30000;
 /** 止める合図の後、終わるまで待つ上限。過ぎたら SIGKILL で止める。 */
 const STOP_TIMEOUT = 10000;
+
+/**
+ * 起動した kemi（レビューとサブコマンド）のうち、まだ終わっていないもの。検査がどこで落ちても、プロセスが終わる
+ * ときに止める（検査の後に kemi が残り続けていたことがある）。
+ * @type {Set<import('node:child_process').ChildProcess>}
+ */
+const running = new Set();
+onExit('processes', () => {
+  for (const child of running) {
+    console.error(`stopping kemi (pid ${child.pid}) left running`);
+    child.kill('SIGKILL');
+  }
+});
+
+/**
+ * kemi を起動し、終わるまで running に入れておく。
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {import('node:child_process').SpawnOptions} options
+ */
+function spawnKemi(binary, args, options) {
+  const child = spawn(binary, args, options);
+  running.add(child);
+  child.on('exit', () => running.delete(child));
+  child.on('error', () => running.delete(child));
+  return child;
+}
 
 /**
  * 状態の置き場所を state の下に向けた環境変数。利用者の本物のセッションと結果の置き場所に書かないよう、起動ごとに
@@ -43,7 +71,7 @@ export function isolatedEnvironment(state) {
  * @returns {Promise<Kemi>}
  */
 export async function launchKemi(binary, { cwd, args, state, env, review = false, live = false }) {
-  const child = spawn(binary, [...args, '--port', '0', '--no-open'], {
+  const child = spawnKemi(binary, [...args, '--port', '0', '--no-open'], {
     cwd,
     env: env ?? isolatedEnvironment(/** @type {string} */ (state)),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -109,7 +137,7 @@ export async function stopKemi(kemi, signal = 'SIGINT') {
  */
 export function runKemi(binary, args, { cwd, env, input = '' }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawnKemi(binary, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });

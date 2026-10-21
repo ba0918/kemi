@@ -84,9 +84,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { browserSession, visible } from './lib/browser.mjs';
-import { gitIn } from './lib/fixture.mjs';
+import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
 import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
-import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer, tablePage } from './live-dev-server.mjs';
+import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer as startDevServerIn, tablePage } from './live-dev-server.mjs';
 
 if (!process.argv[2]) {
   console.error('usage: node scripts/test-live.mjs <kemi-bin>');
@@ -100,9 +100,17 @@ const { browser, evaluate, waitFor, close } = browserSession(session, {
   describe: `JSON.stringify({ url: location.href, view: document.body?.dataset.liveView, side: document.querySelector('#live-stage')?.dataset.side, compare: document.querySelector('#live-stage')?.dataset.compare, notice: document.querySelector('.lv-band-notice')?.textContent, text: document.body?.innerText.slice(0, 400) })`,
 });
 
+/**
+ * 試験用の開発サーバ。ページを置くディレクトリを渡さなければ、検査が通ったら消す一時ディレクトリに置く。
+ * @param {{ port?: number, dir?: string }} [options]
+ */
+async function startDevServer(options = {}) {
+  return startDevServerIn({ ...options, dir: options.dir ?? await temporaryDirectory('kemi-dev-') });
+}
+
 /** 変更のある作業ツリー。 */
 async function makeRepository() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-live-repo-'));
+  const dir = await temporaryDirectory('kemi-live-repo-');
   const git = gitIn(dir);
   await git('init', '-q');
   await writeFile(join(dir, 'a.txt'), 'one\ntwo\n');
@@ -156,7 +164,7 @@ function stop(kemi) {
 /** 中継（R-PAGE-PROXY）: HMR が中継越しに効き、中継用の cookie がページから読めない。 */
 async function relayCarriesHmrAndHidesTheCookie(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', dev.url]);
   try {
     await browser('open', kemi.url);
@@ -177,7 +185,7 @@ async function relayCarriesHmrAndHidesTheCookie(repository) {
 /** 開発サーバにつながらないときは出して待ち、起動したらつながる（R-PAGE-MODE、R-PAGE-SESSION）。 */
 async function waitsForTheDevServer(repository) {
   const port = await freePort();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const url = `http://127.0.0.1:${port}/`;
   const unreachable = `document.querySelector('#kemi-unreachable') !== null`;
   const loaded = `document.querySelector('#title')?.textContent === 'Dev server'`;
@@ -219,7 +227,7 @@ async function fileReloadsWhenItsCssIsSaved(repository) {
   await mkdir(join(repository, 'site'), { recursive: true });
   await writeFile(join(repository, 'site', 'page.html'), '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><p class="box">file page</p></body></html>\n');
   await writeFile(join(repository, 'site', 'style.css'), '.box { color: rgb(255, 0, 0); }\n');
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', 'site/page.html']);
   try {
     assert.match(kemi.live, /\/site\/page\.html$/);
@@ -248,7 +256,7 @@ async function clickInLiveFrame(x, y) {
 /** ページの見方（R-PAGE-VIEW、R-PAGE-PROXY）: 枠を拒むページが出て書き換えの表示が出る、表示幅の範囲、狭い画面。 */
 async function pageViewShowsFramedPagesWidthsAndNarrowScreens(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}framed.html`]);
   try {
     await browser('set', 'viewport', '1280', '800');
@@ -312,7 +320,7 @@ const codeTopbarShown = (shown) => CODE_TOPBAR.map((selector) => `${shown ? '' :
  */
 async function modeTabsSwitchTheTopbar(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -358,10 +366,10 @@ async function modeTabsSwitchTheTopbar(repository) {
 
 /** git の外（R-PAGE-MODE）: コードの見方の代わりに理由が出る。範囲の別の HTML へのリンクで見る対象が移り、ツリーに出る。 */
 async function outsideGitFilePages() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-live-nogit-'));
+  const dir = await temporaryDirectory('kemi-live-nogit-');
   await writeFile(join(dir, 'index.html'), '<!doctype html><html><head><style>body{margin:0} a{display:block;width:400px;height:200px;background:#ddd}</style></head><body><a id="next" href="other.html">Other</a></body></html>\n');
   await writeFile(join(dir, 'other.html'), '<!doctype html><html><head></head><body><h1>Other</h1></body></html>\n');
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(dir, state, ['--live', 'index.html']);
   try {
     await browser('open', kemi.url);
@@ -387,9 +395,9 @@ async function outsideGitFilePages() {
  * それと比べた変化は 0。
  */
 async function handingFromTheCodeViewOutsideGit() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-live-nogit-'));
+  const dir = await temporaryDirectory('kemi-live-nogit-');
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(dir, state, ['--live', `${dev.url}changing.html`]);
   try {
     await browser('set', 'viewport', '1280', '800');
@@ -419,7 +427,7 @@ async function handingFromTheCodeViewOutsideGit() {
  */
 async function handingFromTheExplanationView(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   // 説明のファイルは作業ツリーの外に置く（ほかの場面の差分を変えない）。
   const explanation = join(state, 'explanation.json');
   await writeFile(explanation, JSON.stringify({ sections: [{ id: 'overview', title: 'Overview', blocks: [{ id: 'note', part: { type: 'text', body: 'Read the page before handing.' }, references: [] }] }] }));
@@ -454,7 +462,7 @@ async function handingFromTheExplanationView(repository) {
 
 /** `--live` でないレビューは、ページ用のファイルを読み込まない（R-VERIFY）。 */
 async function otherReviewsLoadNoPageFiles(repository) {
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--worktree']);
   try {
     await browser('open', kemi.url);
@@ -604,7 +612,7 @@ async function clickInPane(pane, x, y) {
 /** スナップショット（R-PAGE-SNAPSHOT、R-PAGE-VIEW、R-PAGE-REF）。 */
 async function snapshotsAreTakenShownAndChosen(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
@@ -685,7 +693,7 @@ async function snapshotsAreTakenShownAndChosen(repository) {
  */
 async function snapshotsCarryTheirResources(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}resources.html`]);
   try {
@@ -761,7 +769,7 @@ async function mocksAreAssignedShownAndKeptApart(repository) {
   await writeFile(outside, '<p>outside</p>\n');
 
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', dev.url]);
   const token = new URL(kemi.url).pathname.split('/')[2];
@@ -861,7 +869,7 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
   // localhost と 127.0.0.1 は別のオリジンなので、中継のページから見て外部の画像になる。
   const image = `http://localhost:${typeof address === 'object' && address ? address.port : 0}/image.png`;
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}referrer.html?image=${encodeURIComponent(image)}`]);
   const token = new URL(kemi.url).pathname.split('/')[2];
   const relay = new URL(kemi.live).origin;
@@ -888,7 +896,7 @@ async function snapshotsSendNoTokenToExternalImages(repository) {
 /** 重ねて透かす（R-PAGE-REF、DC2、R-PAGE-VIEW の狭い画面）。 */
 async function overlayFollowsTheScrollAndTheOpacity(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   const opacity = async (value) => {
@@ -990,7 +998,7 @@ const isLastBand = ([r, g, b]) => r > 215 && g > 105 && g < 145 && b > 170 && b 
  */
 async function compareModesScaleAndReload(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   try {
@@ -1066,7 +1074,7 @@ async function compareModesScaleAndReload(repository) {
  */
 async function referenceNamesHeadingsAndNotices(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   const opacity = async (value) => {
     await evaluate(`(() => { const range = document.querySelector('.lv-opacity'); range.value = '${value}'; range.dispatchEvent(new Event('input')); return true; })()`);
@@ -1129,7 +1137,7 @@ const bandNoticeAction = `${bandNotice} .lv-notice-action`;
  */
 async function recordingNowSwitchesTheReference(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -1169,7 +1177,7 @@ async function recordingNowSwitchesTheReference(repository) {
 
 async function changesFromStartExplainHowToCompareFromNow(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   const guide = '#page-tree .lv-start-comparison';
   const useCurrent = `${guide} button`;
@@ -1247,7 +1255,7 @@ async function changesFromStartExplainHowToCompareFromNow(repository) {
 
 /** 空のディレクトリ（git の外）に HTML を書く。 */
 async function plainDirectory(files) {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-live-plain-'));
+  const dir = await temporaryDirectory('kemi-live-plain-');
   for (const file of files) {
     await mkdir(join(dir, file, '..'), { recursive: true });
     await writeFile(join(dir, file), '<!doctype html><p>plain</p>\n');
@@ -1276,7 +1284,7 @@ async function mockPanelListsTheFilesToChoose() {
   await writeFile(join(repository, '.git', 'inside.html'), '<!doctype html><p>inside</p>\n');
   await symlink(join(outside, 'secret.html'), join(repository, 'pages', 'link.html'));
   const dev = await startDevServer();
-  let kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}other.html`]);
+  let kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}other.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
     await browser('open', kemi.url);
@@ -1301,7 +1309,7 @@ async function mockPanelListsTheFilesToChoose() {
   }
 
   const plain = await plainDirectory(['index.html', 'sub/Other.HTML', 'notes.txt']);
-  kemi = await startKemi(plain, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}other.html`]);
+  kemi = await startKemi(plain, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}other.html`]);
   try {
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -1313,7 +1321,7 @@ async function mockPanelListsTheFilesToChoose() {
   }
 
   const many = await plainDirectory(Array.from({ length: 201 }, (_, index) => `m${String(index).padStart(3, '0')}.html`));
-  kemi = await startKemi(many, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}other.html`]);
+  kemi = await startKemi(many, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}other.html`]);
   try {
     await browser('open', kemi.url);
     await chooseCompare('side');
@@ -1339,7 +1347,7 @@ async function mockMenuRemovesAndUndoes(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'menu-mock.html'), '<!doctype html><p>menu mock</p>\n');
   const dev = await startDevServer();
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}rich.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}rich.html`]);
   const mockShown = `document.querySelector('${refPane}').dataset.reference === 'mock' && document.querySelector('${refPane} .lv-bar-label').textContent.includes('mocks/menu-mock.html')`;
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -1404,7 +1412,7 @@ async function sideBySidePagesShareTheirTop(repository) {
   assert.equal(path.length, 200);
   await writeFile(join(repository, path), '<!doctype html><html><body style="margin:0"><p>mock</p></body></html>\n');
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}other.html`]);
   try {
     await browser('set', 'viewport', '900', '800');
@@ -1426,7 +1434,7 @@ async function sideBySidePagesShareTheirTop(repository) {
 /** 見る対象だけの見比べ方でも、変化の一覧と見る対象の側の印が出る（R-PAGE-VIEW、R-PAGE-REF）。 */
 async function changesShowWithThePageAlone(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   try {
@@ -1455,7 +1463,7 @@ async function changesShowWithThePageAlone(repository) {
  */
 async function toolsAndTheHintStartTheFirstComment(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const compose = '#live-compose';
@@ -1495,7 +1503,7 @@ async function toolsAndTheHintStartTheFirstComment(repository) {
   }
 
   const tallDev = await startDevServer();
-  const tall = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${tallDev.url}tall.html`]);
+  const tall = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${tallDev.url}tall.html`]);
   try {
     await browser('open', tall.url);
     await waitFor(`document.querySelector('${livePane} .lv-notice').hidden && ${visible('.lv-tools')}`);
@@ -1531,7 +1539,7 @@ const liveRoomHeight = `(document.querySelector('${livePane} .lv-viewport').clie
  */
 async function closingTheComposeBoxRestoresTheFrame(repository) {
   const dev = await startDevServer();
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}rich.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}rich.html`]);
   const compose = '#live-compose';
   const sameHeight = (expected) => `Math.abs(${liveFrameHeight} - ${expected}) <= 1`;
   try {
@@ -1575,7 +1583,7 @@ async function closingTheComposeBoxRestoresTheFrame(repository) {
 
 async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -1609,7 +1617,7 @@ async function foldedHandNoteLeavesTheComposeControlsClickable(repository) {
 
 async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
@@ -1645,7 +1653,7 @@ async function pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository
  */
 async function narrowToolsFloatWithHand(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '844');
@@ -1690,7 +1698,7 @@ async function narrowToolsFloatWithHand(repository) {
  */
 async function narrowPageViewFitsOneRow(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const band = '#live-band';
   try {
@@ -1739,7 +1747,7 @@ async function narrowPageViewFitsOneRow(repository) {
  */
 async function crossingTheNarrowWidthFollowsTheShownPage(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   const heading = `document.querySelector('.lv-stage-name').textContent`;
   const refViewport = `document.querySelector('${refPane} .lv-viewport')`;
@@ -1809,7 +1817,7 @@ const backgroundsIn = (row) => `Array.from(${row}.querySelectorAll('*')).map((el
 async function changeRowsAreElementsThatLeadToThePage(repository) {
   const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const frame = `${livePane} .lv-frame`;
   const wheel = (y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
   try {
@@ -1890,7 +1898,7 @@ const changingWithEnd = () => changingPage().replace('<div class="tail"></div>',
 async function removedRowsLeadToTheSnapshot(repository) {
   const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const refView = `${refPane} .lv-viewport`;
   const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
   const endRow = `Array.from(${changeList}?.querySelectorAll('.lv-change-main .lv-change') ?? []).find((item) => item.textContent.includes('End element'))`;
@@ -1991,7 +1999,7 @@ ${far ? '<div id="far" style="position:absolute;left:1100px;top:900px;width:120p
 async function wideTargetsAreRevealedSideways(repository) {
   const dev = await startDevServer();
   await writeFile(join(dev.dir, 'tall.html'), farPage(true));
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}tall.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const liveView = `document.querySelector('${livePane} .lv-viewport')`;
   const refView = `document.querySelector('${refPane} .lv-viewport')`;
   const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
@@ -2054,7 +2062,7 @@ ${near ? '<div id="near" style="position:absolute;left:600px;top:300px;width:120
 async function overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository) {
   const dev = await startDevServer();
   await writeFile(join(dev.dir, 'tall.html'), scrollingWidePage(true));
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}tall.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const refView = `document.querySelector('${refPane} .lv-viewport')`;
   const removedRow = `${changeList}?.querySelector('.lv-change-main .lv-change[data-kind="removed"]')`;
   const refFrameNow = `document.querySelector('${refPane} .lv-frame:not([hidden])')`;
@@ -2086,7 +2094,7 @@ async function changeListFollowsThePage(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -2293,7 +2301,7 @@ async function marksFollowTheChanges(repository) {
   await mkdir(join(repository, 'mocks'), { recursive: true });
   await writeFile(join(repository, 'mocks', 'diff-mock.html'), '<!doctype html><html><body><p>mock</p></body></html>\n');
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   const liveShot = async (name) => {
@@ -2416,7 +2424,7 @@ async function marksFollowTheChanges(repository) {
 async function marksCanBeHidden(repository) {
   const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}changing.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}changing.html`]);
   const liveFrame = `${livePane} .lv-frame`;
   const refFrame = `${refPane} .lv-frame:not([hidden])`;
   const marksButton = `document.querySelector('.lv-marks')`;
@@ -2468,7 +2476,7 @@ async function marksCanBeHidden(repository) {
  */
 async function marksAreDrawnUnderAStrictStylePolicy(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?csp=1`]);
   try {
@@ -2498,7 +2506,7 @@ async function marksAreDrawnUnderAStrictStylePolicy(repository) {
  */
 async function snapshotsAreTakenUnderTrustedTypes(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?tt=1`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -2531,7 +2539,7 @@ async function snapshotsAreTakenUnderTrustedTypes(repository) {
  */
 async function removedMarksSurviveReparsing(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}table.html`]);
   const { row, item } = TABLE_GEOMETRY;
@@ -2560,7 +2568,7 @@ async function removedMarksSurviveReparsing(repository) {
  */
 async function scrollingMakesNoChangeAndMarksStay(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}scrolling.html`]);
   // 別のオリジンの枠の中は、ページ内の目印へ移して（同じ文書のままスクロールさせて）動かす。
@@ -2623,7 +2631,7 @@ async function scrollingMakesNoChangeAndMarksStay(repository) {
  */
 async function cssomChangesAreFollowed(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}adopted.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -2652,7 +2660,7 @@ async function cssomChangesAreFollowed(repository) {
  */
 async function widthSwitchesWithoutResizingTheDocument(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}wide.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -2686,7 +2694,7 @@ async function widthSwitchesWithoutResizingTheDocument(repository) {
 async function manyElementsAreRecordedAndCompared(repository) {
   const cards = 18000;
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const page = `${dev.url}many.html?cards=${cards}`;
   const html = await (await fetch(page)).text();
   assert.ok(new Blob([html]).size < 2 * 1024 * 1024, 'the page is under 2 MB');
@@ -2762,7 +2770,7 @@ async function commentImagesLookLikeThePage(repository) {
   ];
   for (const { page, rect, places } of pages) {
     const dev = await startDevServer();
-    const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+    const state = await temporaryDirectory('kemi-live-state-');
     const kemi = await startKemi(repository, state, ['--live', `${dev.url}${page}`]);
     try {
       await browser('set', 'viewport', '1280', '900');
@@ -2795,7 +2803,7 @@ async function commentImagesLookLikeThePage(repository) {
 
   for (const query of ['csp=1', 'tt=1']) {
     const dev = await startDevServer();
-    const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+    const state = await temporaryDirectory('kemi-live-state-');
     const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html?${query}`]);
     try {
       await browser('set', 'viewport', '1280', '900');
@@ -2841,7 +2849,7 @@ async function unembeddedResourceMakesNoImage(repository, resource) {
   if (resource !== 'resources') {
     await writeFile(join(dev.dir, page), `<!doctype html><html><head><style>body{margin:0}.box{width:80px;height:80px}</style>${sources[resource]}</head><body><div class="box cross cross-imported">Target</div></body></html>`);
   }
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}${page}`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -2886,7 +2894,7 @@ async function unembeddedResourceMakesNoImage(repository, resource) {
  */
 async function commentImagesKeepTheLayoutOfTheViewport(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-images-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}responsive.html`]);
   try {
@@ -2955,7 +2963,7 @@ const isPlaceInk = ([r, g, b]) => r > 95 && r < 160 && g > 50 && g < 120 && b > 
  */
 async function pageCommentPlacesArePutAndSaved(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
@@ -3054,7 +3062,7 @@ async function pageCommentPlacesArePutAndSaved(repository) {
  */
 async function penPlacesLeaveOutWhatContainsTheLine(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3096,7 +3104,7 @@ async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     main { flex:1; }
     button { display:block; width:180px; height:40px; margin:0 0 20px; }
   </style></head><body><header>Header</header><div id="layout"><nav><button>First</button><button>Second</button></nav><main>Content</main></div></body></html>`);
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const frame = `${livePane} .lv-frame`;
@@ -3180,7 +3188,7 @@ async function keepSavedImage() {
  */
 async function placesOnTheBackgroundAreAreasOnly(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3241,7 +3249,7 @@ async function placesOnTheBackgroundAreAreasOnly(repository) {
  */
 async function savedCommentsAreQuietMarks(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   // ボタン（左上 (0, 200) の 300×100）の左上の番号の札の辺りと、2 段目の入力欄（左上 (12, 96) 付近）の辺り。
@@ -3293,7 +3301,7 @@ async function savedCommentsAreQuietMarks(repository) {
  */
 async function draftPlacesStayAtTheirWidth(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   const firstSelector = `document.querySelector('#live-compose .lv-place[data-n="1"]')?.dataset.selector`;
   try {
@@ -3373,7 +3381,7 @@ async function releaseRequests(type) {
  */
 async function latePlacesKeepTheirWidth(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3406,7 +3414,7 @@ async function latePlacesKeepTheirWidth(repository) {
  */
 async function draftsStayWhileSaving(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3471,7 +3479,7 @@ async function draftsStayWhileSaving(repository) {
  */
 async function narrowReferenceSideSavesTheImage(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3522,7 +3530,7 @@ async function narrowReferenceSideSavesTheImage(repository) {
  */
 async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}tall.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3583,7 +3591,7 @@ async function switchingWhileSavingKeepsTheImageAroundThePlace(repository) {
  */
 async function savingAndHandingKeepThePageLaidOut(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3632,7 +3640,7 @@ async function savingAndHandingKeepThePageLaidOut(repository) {
  */
 async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3666,7 +3674,7 @@ async function movingWhileSavingMakesNoImageOfAnotherPage(repository) {
 /** kemi の描き込みは変化の一覧に入らない（② の印の層の決まりに倣う）。 */
 async function placesMakeNoChange(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const kemi = await startKemi(repository, state, ['--live', `${dev.url}changing.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3712,7 +3720,7 @@ async function addPageComment(kemi, url, width, body) {
  */
 async function savedPageCommentsAreListedShownAndSwitched(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
   let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
@@ -3793,7 +3801,7 @@ async function pointAt(selector) {
 async function placesGlowFromTheListAndTheThread(repository) {
   const dev = await startDevServer();
   const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
-  const kemi = await startKemi(repository, await mkdtemp(join(tmpdir(), 'kemi-live-state-')), ['--live', `${dev.url}tall.html`]);
+  const kemi = await startKemi(repository, await temporaryDirectory('kemi-live-state-'), ['--live', `${dev.url}tall.html`]);
   const frame = `${livePane} .lv-frame`;
   const wheel = (y) => evaluate(`(() => { const layer = document.querySelector('${livePane} .lv-capture'); const r = layer.getBoundingClientRect(); return layer.dispatchEvent(new WheelEvent('wheel', { deltaY: ${y}, clientX: r.x + 100, clientY: r.y + 100, bubbles: true, cancelable: true })); })()`);
   // 下の方（文書の y 2500 付近、帯 9 の中）を指す、帯の文字から離れた矢印。保存したコメントの場所に使う。
@@ -3923,7 +3931,7 @@ async function savePageCommentInThePage(body) {
  */
 async function handedPageCommentsReachWaitAndSubmit(repository) {
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   try {
     await browser('set', 'viewport', '1280', '900');
@@ -3970,7 +3978,7 @@ async function handedPageCommentsReachWaitAndSubmit(repository) {
 
   for (const query of ['csp=1', 'tt=1']) {
     const strict = await startDevServer();
-    const strictState = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+    const strictState = await temporaryDirectory('kemi-live-state-');
     kemi = await startKemi(repository, strictState, ['--live', `${strict.url}changing.html?${query}`]);
     try {
       await browser('set', 'viewport', '1280', '900');
@@ -4003,7 +4011,7 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   const mockFile = join(repository, 'mocks', 'resumed.html');
   await writeFile(mockFile, '<!doctype html><p>mock to be deleted</p>\n');
   const dev = await startDevServer();
-  const state = await mkdtemp(join(tmpdir(), 'kemi-live-state-'));
+  const state = await temporaryDirectory('kemi-live-state-');
   const options = `Array.from(document.querySelectorAll('.lv-compare-select option')).map((option) => option.textContent)`;
   let kemi = await startKemi(repository, state, ['--live', `${dev.url}rich.html`]);
   let start;

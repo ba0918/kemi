@@ -24,12 +24,11 @@
 // 知らせを押すとそのスレッドが開く、n で読んで飛ばしたファイルを後で開いても差分の札がその間の解決を映す、
 // 開く前にディスクで書き換わったファイルを開くと、札と会話パネルのスレッドの両方が古いコメントと示す。
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { browserSession, visible } from './lib/browser.mjs';
-import { gitIn } from './lib/fixture.mjs';
+import { gitIn, temporaryDirectory } from './lib/fixture.mjs';
 import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
 
 if (!process.argv[2]) {
@@ -54,7 +53,7 @@ const markdownMessage = 'Looking at it now.\n\n**変更点**\n\n- `example()` �
 
 /** worktree の変更。a.txt の 3 行目・60 行目・100 行目と、コメントの無い b.txt の 1 行目を書き換える。 */
 async function makeFixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-'));
+  const dir = await temporaryDirectory('kemi-agent-');
   const git = gitIn(dir);
   await git('init', '-q');
   const lines = LINES(120);
@@ -72,7 +71,7 @@ async function makeFixture() {
 
 /** コミット範囲。base の後に、c.txt を変える first と、d.txt を変える second の 2 コミット。 */
 async function makeRangeFixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-agent-range-'));
+  const dir = await temporaryDirectory('kemi-agent-range-');
   const git = gitIn(dir);
   await git('init', '-q');
   await writeFile(join(dir, 'c.txt'), LINES(5).join(''));
@@ -111,7 +110,7 @@ async function selectFile(name) {
 }
 
 const fixture = await makeFixture();
-const state = await mkdtemp(join(tmpdir(), 'kemi-agent-state-'));
+const state = await temporaryDirectory('kemi-agent-state-');
 const kemi = await startKemi(fixture, state);
 try {
   const review = await getJson(kemi.url, 'api/review');
@@ -386,7 +385,7 @@ try {
 // (7) 履歴の書き換えで消えたコミットのスレッドは、会話パネルを開いたまま更新バッジで読み直しても、
 // 開いたまま読み込み直しても「消えたコミット」と示され、その行へ移る操作が出ない（R-VIEW、R-LIVE）。
 const range = await makeRangeFixture();
-const rangeState = await mkdtemp(join(tmpdir(), 'kemi-agent-range-state-'));
+const rangeState = await temporaryDirectory('kemi-agent-range-state-');
 const rangeKemi = await startKemi(range.dir, rangeState, ['--from', range.from]);
 try {
   // コミットごとの単位は、最初の api/review の後に裏で作られる。
@@ -425,7 +424,7 @@ try {
 // いないので、届いたことを示す印は出ない（R-AGENT-HAND）。前のファイルのスレッドより後に付いた
 // スレッドが、選んだファイルにある場合。
 const fileFixture = await makeFixture();
-const fileState = await mkdtemp(join(tmpdir(), 'kemi-agent-file-state-'));
+const fileState = await temporaryDirectory('kemi-agent-file-state-');
 const fileKemi = await startKemi(fileFixture, fileState);
 try {
   const files = (await getJson(fileKemi.url, 'api/review')).groups[0].files;
@@ -510,7 +509,7 @@ try {
 // 行だけが消えて作業中のまま、c3 にも返信すると返事済み。返事済みの間に渡すと返事済みのまま受け取り
 // 待ちの行が出る。発言だけを渡すと並びの末尾に行が出て、エージェントの発言で消える。
 const handFixture = await makeFixture();
-const handState = await mkdtemp(join(tmpdir(), 'kemi-agent-hand-state-'));
+const handState = await temporaryDirectory('kemi-agent-hand-state-');
 const handKemi = await startKemi(handFixture, handState);
 try {
   const handFile = (await getJson(handKemi.url, 'api/review')).groups[0].files[0].id;
@@ -611,7 +610,7 @@ try {
 // (12) kemi wait を一度も呼ばずに起動したレビュー（R-AGENT-FLOW）: 「Hand to agent」は出ていて押せず、
 // submit すると今どおり stdout に JSON が出て終わる。未渡しのコメントがあっても、確認に未渡しの件数は出ない（R-SUBMIT）。
 const quietFixture = await makeFixture();
-const quietState = await mkdtemp(join(tmpdir(), 'kemi-agent-quiet-state-'));
+const quietState = await temporaryDirectory('kemi-agent-quiet-state-');
 const quietKemi = await startKemi(quietFixture, quietState);
 try {
   const quietFile = (await getJson(quietKemi.url, 'api/review')).groups[0].files[0].id;
@@ -658,7 +657,7 @@ try {
 // (14) 別のスレッドの新着（R-AGENT-HAND）: c1 を開いている間に kemi reply で c2 に返信を書くと、開いている
 // スレッドの上に c2 に届いた知らせと、会話パネルの見出しに新着の数が出る。知らせを押すと c2 が開く。
 const newsFixture = await makeFixture();
-const newsState = await mkdtemp(join(tmpdir(), 'kemi-agent-news-state-'));
+const newsState = await temporaryDirectory('kemi-agent-news-state-');
 const newsKemi = await startKemi(newsFixture, newsState);
 try {
   const newsFile = (await getJson(newsKemi.url, 'api/review')).groups[0].files[0].id;
@@ -690,7 +689,7 @@ try {
 // (15) 狭い画面の浮かぶ「Hand to agent」（R-AGENT-STATE、R-NARROW）: 幅 390px の worktree のレビューで、会話パネルの
 // シートを閉じたまま、画面の下に浮かぶ「Hand to agent」で渡せ、kemi wait がその 1 回分を返す。
 const floatFixture = await makeFixture();
-const floatState = await mkdtemp(join(tmpdir(), 'kemi-agent-float-state-'));
+const floatState = await temporaryDirectory('kemi-agent-float-state-');
 const floatKemi = await startKemi(floatFixture, floatState);
 try {
   const floatFile = (await getJson(floatKemi.url, 'api/review')).groups[0].files[0].id;
@@ -722,7 +721,7 @@ try {
 
 // (16) n で中身を読んで飛ばしたファイル（改行コードだけの変更で、止まる場所が無い）を、その後で開いても、
 // 差分の札は、その間に会話パネルで解決した後の形で出る（札と会話パネルは同じコメントを示す。R-VIEW）。
-const skipFixture = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-'));
+const skipFixture = await temporaryDirectory('kemi-agent-skip-');
 {
   const git = gitIn(skipFixture);
   await git('init', '-q');
@@ -735,7 +734,7 @@ const skipFixture = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-'));
   await writeFile(join(skipFixture, 'b.txt'), LINES(10).map((line) => line.replace('\n', '\r\n')).join(''));
   await writeFile(join(skipFixture, 'c.txt'), ['changed c\n', ...LINES(10).slice(1)].join(''));
 }
-const skipState = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-state-'));
+const skipState = await temporaryDirectory('kemi-agent-skip-state-');
 const skipKemi = await startKemi(skipFixture, skipState);
 try {
   const skipFiles = (await getJson(skipKemi.url, 'api/review')).groups[0].files;
@@ -767,7 +766,7 @@ try {
 // 更新バッジを押さずにそのファイルを開くと、読んだ内容でサーバがコメントを古いと決め直すので、差分の札と
 // 会話パネルのスレッドの両方が古いコメントとして示す（R-COMMENT）。
 const staleFixture = await makeFixture();
-const staleState = await mkdtemp(join(tmpdir(), 'kemi-agent-stale-state-'));
+const staleState = await temporaryDirectory('kemi-agent-stale-state-');
 const staleKemi = await startKemi(staleFixture, staleState);
 try {
   const staleFiles = (await getJson(staleKemi.url, 'api/review')).groups[0].files;

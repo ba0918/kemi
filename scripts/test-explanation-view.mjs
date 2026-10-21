@@ -1,18 +1,18 @@
 // 形式4の復元会話を実バイナリと実フォントで読む。
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { createServer } from 'node:http';
 
 import { browserSession } from './lib/browser.mjs';
+import { temporaryDirectory } from './lib/fixture.mjs';
 import { getJson, isolatedEnvironment, launchKemi, postJson, stopKemi } from './lib/kemi.mjs';
 
 const run = promisify(execFile);
 const binary = resolve(process.argv[2]);
-let root = await mkdtemp(join(tmpdir(), 'kemi-parts-'));
+let root = await temporaryDirectory('kemi-parts-');
 const session = `kemi-parts-${process.pid}`;
 const { browser, evaluate: evaluateCode, waitFor: wait, close } = browserSession(session);
 const evaluate = async code => {
@@ -164,7 +164,7 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
 }
 
 if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-navigation') && !process.argv.includes('--range-navigation')) try {
-  root = await mkdtemp(join(tmpdir(), 'kemi-explanation-'));
+  root = await temporaryDirectory('kemi-explanation-');
   await writeFile(join(root, 'a.txt'), 'old\n');
   await run('git', ['init', '-q', root]);
   await run('git', ['-C', root, 'add', 'a.txt']);
@@ -398,7 +398,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
 }
 
 if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigation') && !process.argv.includes('--range-navigation')) {
-  root=await mkdtemp(join(tmpdir(),'kemi-explanation-live-'));
+  root=await temporaryDirectory('kemi-explanation-live-');
   const dev=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(`<html><body><h1>${req.url}</h1><a href="/other?one=1">Other page</a></body></html>`)});
   await new Promise(resolve=>dev.listen(0,'127.0.0.1',resolve));
   const url=`http://127.0.0.1:${dev.address().port}/`;
@@ -481,7 +481,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--navigati
 }
 
 if (process.argv.includes('--range-navigation') || process.argv.length===3) {
-  root=await mkdtemp(join(tmpdir(),'kemi-explanation-range-'));
+  root=await temporaryDirectory('kemi-explanation-range-');
   await writeFile(join(root,'a.txt'),'old\n');await run('git',['init','-q',root]);await run('git',['-C',root,'add','a.txt']);
   const commit=()=>run('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qam','fixture']);
   await commit();const base=(await run('git',['-C',root,'rev-parse','HEAD'])).stdout.trim();

@@ -15,14 +15,13 @@
 // 無い接続でも、完了画面の Copy JSON が写せなかったことを示す。
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { browserSession, visible } from './lib/browser.mjs';
-import { png } from './lib/fixture.mjs';
+import { png, temporaryDirectory } from './lib/fixture.mjs';
 import { launchKemi, stopKemi } from './lib/kemi.mjs';
 
 const run = promisify(execFile);
@@ -54,7 +53,7 @@ const LINES = (count, prefix) => Array.from({ length: count }, (_, i) => `${pref
  * 変更、長いパスの追加、行の削除と書き換え）を積む。範囲は画像を足したコミットから HEAD。
  */
 async function makeFixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-narrow-'));
+  const dir = await temporaryDirectory('kemi-narrow-');
   await run('bash', [join(scripts, 'gen-fixture.sh'), dir, '--files', '4', '--lines', '40', '--commits', '2']);
   const git = (...args) => run('git', ['-C', dir, ...args], {
     env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00+00:00', GIT_COMMITTER_DATE: '2026-01-01T00:00:00+00:00' },
@@ -170,7 +169,7 @@ async function dragSelect(fromNumber, toNumber) {
 }
 
 const { dir: fixture, from } = await makeFixture();
-const state = await mkdtemp(join(tmpdir(), 'kemi-narrow-state-'));
+const state = await temporaryDirectory('kemi-narrow-state-');
 let kemi = await startKemi(fixture, state, ['--from', from]);
 try {
   await browser('set', 'viewport', ...WIDE);
@@ -575,56 +574,60 @@ try {
 }
 
 // (17) 別の起動で、390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る。
-const state2 = await mkdtemp(join(tmpdir(), 'kemi-narrow-state-'));
+const state2 = await temporaryDirectory('kemi-narrow-state-');
 kemi = await startKemi(fixture, state2, ['--from', from]);
-await browser('set', 'viewport', ...NARROW);
-await browser('open', kemi.url);
-await waitFor(`document.querySelectorAll('#tree button').length > 0 && ${narrowApplied}`);
-await browser('click', '#btn-tree');
-await waitFor(drawerOpen);
-await selectFile('src/dir0/file0.txt');
-await waitFor(`${drawerClosed} && document.querySelectorAll('[data-kemi-row]').length > 0`);
-// 差分の終わりまで送ると、最後の行は画面の下に浮かぶ「Hand to agent」とその案内の上に見える。
-await evaluate(`(() => { const v = document.querySelector('#diff-viewport'); v.scrollTop = v.scrollHeight; return true; })()`);
-await waitFor(`(() => { const v = document.querySelector('#diff-viewport'); return Math.ceil(v.scrollTop + v.clientHeight) >= v.scrollHeight; })()`);
-const lastRowBottom = await evaluate(`Math.max(...Array.from(document.querySelectorAll('#diff-content [data-kemi-row]')).map(r => r.getBoundingClientRect().bottom))`);
-assert.equal(await isShown('#hand-float-bar'), true);
-const handStack = await rect('#hand-float-bar');
-assert.ok(lastRowBottom <= handStack.top, `the last row (bottom ${lastRowBottom}) should be above the floating hand (top ${handStack.top})`);
-await evaluate(`document.querySelector('#diff-viewport').scrollTop = 0; true`);
-await waitFor(`${newNumber(2)} !== undefined`);
-console.log('PASS 390px で差分の終わりまで送ると、最後の行が浮かぶ「Hand to agent」の上に見える');
-await tap(newNumber(2));
-await tap(newNumber(3));
-assert.deepEqual(await selectedNumbers(), ['2', '3']);
-assert.deepEqual(await plusRows(), ['3']);
-await tap(`${shownPlus}[0]`);
-await waitFor(editorOpen);
-await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'tapped range comment');
-await evaluate(`document.querySelector('#diff-content .editor button[type="submit"]').click(); true`);
-await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
-assert.deepEqual(await selectedNumbers(), []);
-await browser('click', '#btn-approve');
-await waitFor(`!document.querySelector('#modal').hidden`);
-await browser('click', '#modal-ok');
-const { code, stdout } = await kemi.exited;
-assert.equal(code, 0);
-const result = JSON.parse(stdout);
-assert.equal(result.verdict, 'approved');
-assert.equal(result.comments.length, 1);
-const [comment] = result.comments;
-assert.equal(comment.side, 'new');
-assert.equal(comment.start_line, 2);
-assert.equal(comment.end_line, 3);
-assert.deepEqual(comment.quote, ['file 0 line 2', 'file 0 line 3']);
-assert.equal(comment.body, 'tapped range comment');
-console.log('PASS 390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る');
-// スマホから --bind で LAN のアドレスに http で開いた（安全でない接続）ページには navigator.clipboard が無い。
-// 完了画面の Copy JSON を押すと、何も示さないままにせず、写せなかったことをボタンに出す。
-const copyJson = `Array.from(document.querySelectorAll('#overlay-card .finish-row button'))[0]`;
-await waitFor(`${copyJson}?.textContent === 'Copy JSON'`);
-await evaluate(`Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }); true`);
-await evaluate(`${copyJson}.click(); true`);
-await waitFor(`${copyJson}.textContent.startsWith('Could not copy: ')`);
-console.log('PASS clipboard の無い接続で完了画面の Copy JSON を押すと、写せなかったことをボタンに出す');
-await close();
+try {
+  await browser('set', 'viewport', ...NARROW);
+  await browser('open', kemi.url);
+  await waitFor(`document.querySelectorAll('#tree button').length > 0 && ${narrowApplied}`);
+  await browser('click', '#btn-tree');
+  await waitFor(drawerOpen);
+  await selectFile('src/dir0/file0.txt');
+  await waitFor(`${drawerClosed} && document.querySelectorAll('[data-kemi-row]').length > 0`);
+  // 差分の終わりまで送ると、最後の行は画面の下に浮かぶ「Hand to agent」とその案内の上に見える。
+  await evaluate(`(() => { const v = document.querySelector('#diff-viewport'); v.scrollTop = v.scrollHeight; return true; })()`);
+  await waitFor(`(() => { const v = document.querySelector('#diff-viewport'); return Math.ceil(v.scrollTop + v.clientHeight) >= v.scrollHeight; })()`);
+  const lastRowBottom = await evaluate(`Math.max(...Array.from(document.querySelectorAll('#diff-content [data-kemi-row]')).map(r => r.getBoundingClientRect().bottom))`);
+  assert.equal(await isShown('#hand-float-bar'), true);
+  const handStack = await rect('#hand-float-bar');
+  assert.ok(lastRowBottom <= handStack.top, `the last row (bottom ${lastRowBottom}) should be above the floating hand (top ${handStack.top})`);
+  await evaluate(`document.querySelector('#diff-viewport').scrollTop = 0; true`);
+  await waitFor(`${newNumber(2)} !== undefined`);
+  console.log('PASS 390px で差分の終わりまで送ると、最後の行が浮かぶ「Hand to agent」の上に見える');
+  await tap(newNumber(2));
+  await tap(newNumber(3));
+  assert.deepEqual(await selectedNumbers(), ['2', '3']);
+  assert.deepEqual(await plusRows(), ['3']);
+  await tap(`${shownPlus}[0]`);
+  await waitFor(editorOpen);
+  await browser('fill', '#diff-content .editor textarea[data-editor-field="body"]', 'tapped range comment');
+  await evaluate(`document.querySelector('#diff-content .editor button[type="submit"]').click(); true`);
+  await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+  assert.deepEqual(await selectedNumbers(), []);
+  await browser('click', '#btn-approve');
+  await waitFor(`!document.querySelector('#modal').hidden`);
+  await browser('click', '#modal-ok');
+  const { code, stdout } = await kemi.exited;
+  assert.equal(code, 0);
+  const result = JSON.parse(stdout);
+  assert.equal(result.verdict, 'approved');
+  assert.equal(result.comments.length, 1);
+  const [comment] = result.comments;
+  assert.equal(comment.side, 'new');
+  assert.equal(comment.start_line, 2);
+  assert.equal(comment.end_line, 3);
+  assert.deepEqual(comment.quote, ['file 0 line 2', 'file 0 line 3']);
+  assert.equal(comment.body, 'tapped range comment');
+  console.log('PASS 390px のタップで付けた範囲コメントが submit の JSON に行コメントとして入る');
+  // スマホから --bind で LAN のアドレスに http で開いた（安全でない接続）ページには navigator.clipboard が無い。
+  // 完了画面の Copy JSON を押すと、何も示さないままにせず、写せなかったことをボタンに出す。
+  const copyJson = `Array.from(document.querySelectorAll('#overlay-card .finish-row button'))[0]`;
+  await waitFor(`${copyJson}?.textContent === 'Copy JSON'`);
+  await evaluate(`Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }); true`);
+  await evaluate(`${copyJson}.click(); true`);
+  await waitFor(`${copyJson}.textContent.startsWith('Could not copy: ')`);
+  console.log('PASS clipboard の無い接続で完了画面の Copy JSON を押すと、写せなかったことをボタンに出す');
+} finally {
+  await stopKemi(kemi, 'SIGTERM');
+  await close();
+}

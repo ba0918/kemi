@@ -11,14 +11,13 @@
 // 重ねても、離れたときに + を隠すリスナーが溜まらない。
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile, appendFile, mkdir, symlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, appendFile, mkdir, symlink } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { browserSession } from './lib/browser.mjs';
-import { png } from './lib/fixture.mjs';
+import { png, temporaryDirectory } from './lib/fixture.mjs';
 import { launchKemi, stopKemi } from './lib/kemi.mjs';
 
 const run = promisify(execFile);
@@ -89,7 +88,7 @@ const OLD_TABLE_MD = '| a | b |\n|---|---|\n| 1 | 2 |\n\nBetween.\n\n| a | b |\n
 const NEW_TABLE_MD = '| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n';
 
 async function makeFixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'kemi-render-'));
+  const dir = await temporaryDirectory('kemi-render-');
   await run('bash', [join(scripts, 'gen-fixture.sh'), dir, '--files', '2', '--lines', '3']);
   const git = (...args) => run('git', ['-C', dir, ...args], {
     env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00+00:00', GIT_COMMITTER_DATE: '2026-01-01T00:00:00+00:00' },
@@ -163,7 +162,7 @@ async function openGuideRendered(url) {
 }
 
 const fixture = await makeFixture();
-const state = await mkdtemp(join(tmpdir(), 'kemi-render-state-'));
+const state = await temporaryDirectory('kemi-render-state-');
 let kemi = await startKemi(fixture, state);
 let paused;
 try {
@@ -312,65 +311,69 @@ try {
 }
 
 // (5) 別の起動で、新側のブロックと消したブロックからコメントを付けて submit する。
-const state2 = await mkdtemp(join(tmpdir(), 'kemi-render-state-'));
+const state2 = await temporaryDirectory('kemi-render-state-');
 kemi = await startKemi(fixture, state2);
-await openGuideRendered(kemi.url);
-// 描き直しのたびに #rendered-doc へ mouseleave のリスナーが足されて残らないことを数える（足した数 −
-// 外した数）。ここから先の入力欄の開閉とコメントの追加で、描画表示は何度も描き直される。
-await evaluate(`(() => {
-  window.__kemiLeaveListeners = 0;
-  const add = EventTarget.prototype.addEventListener;
-  const remove = EventTarget.prototype.removeEventListener;
-  const counted = (target, type) => target instanceof Element && target.id === 'rendered-doc' && type === 'mouseleave';
-  EventTarget.prototype.addEventListener = function (type, listener, options) {
-    if (counted(this, type)) {
-      window.__kemiLeaveListeners += 1;
-      const signal = options && typeof options === 'object' ? options.signal : undefined;
-      signal?.addEventListener('abort', () => { window.__kemiLeaveListeners -= 1; }, { once: true });
-    }
-    return add.call(this, type, listener, options);
-  };
-  EventTarget.prototype.removeEventListener = function (type, listener, options) {
-    if (counted(this, type)) window.__kemiLeaveListeners -= 1;
-    return remove.call(this, type, listener, options);
-  };
-  return true;
-})()`);
-await openBlockEditor('new:7-7');
-assert.equal(
-  await evaluate(`document.querySelector('#rendered-doc .kb-quote').textContent`),
-  'Intro paragraph with *emphasis* and a [link](https://example.com) now.',
-);
-await browser('fill', '#rendered-doc .editor textarea[data-editor-field="body"]', 'from the new block');
-await clickVisible('#rendered-doc .editor button[type="submit"]');
-await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
-await openBlockEditor('old:16-16');
-assert.equal(await evaluate(`document.querySelector('#rendered-doc .editor .suggestion-row')`), null);
-await browser('fill', '#rendered-doc .editor textarea[data-editor-field="body"]', 'from the deleted row');
-await clickVisible('#rendered-doc .editor button[type="submit"]');
-await waitFor(`document.querySelector('#comment-count').textContent === '2'`);
-assert.ok(
-  await evaluate('window.__kemiLeaveListeners') <= 1,
-  `re-rendering keeps at most one mouseleave listener on #rendered-doc: ${await evaluate('window.__kemiLeaveListeners')}`,
-);
-console.log('PASS 描画表示を描き直しても、離れたときに + を隠すリスナーは溜まらない');
-await browser('click', '#btn-approve');
-await waitFor(`!document.querySelector('#modal').hidden`);
-await browser('click', '#modal-ok');
-const { code, stdout } = await kemi.exited;
-assert.equal(code, 0);
-const result = JSON.parse(stdout);
-assert.equal(result.verdict, 'approved');
-const [first, second] = result.comments;
-assert.equal(first.side, 'new');
-assert.equal(first.start_line, 7);
-assert.equal(first.end_line, 7);
-assert.deepEqual(first.quote, ['Intro paragraph with *emphasis* and a [link](https://example.com) now.']);
-assert.equal(first.body, 'from the new block');
-assert.equal(second.side, 'old');
-assert.equal(second.start_line, 16);
-assert.equal(second.end_line, 16);
-assert.deepEqual(second.quote, ['| 3 | 4 |']);
-assert.equal(second.suggestion, null);
-console.log('PASS 描画表示から付けたコメントが submit の JSON に行コメントとして入る');
-await close();
+try {
+  await openGuideRendered(kemi.url);
+  // 描き直しのたびに #rendered-doc へ mouseleave のリスナーが足されて残らないことを数える（足した数 −
+  // 外した数）。ここから先の入力欄の開閉とコメントの追加で、描画表示は何度も描き直される。
+  await evaluate(`(() => {
+    window.__kemiLeaveListeners = 0;
+    const add = EventTarget.prototype.addEventListener;
+    const remove = EventTarget.prototype.removeEventListener;
+    const counted = (target, type) => target instanceof Element && target.id === 'rendered-doc' && type === 'mouseleave';
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (counted(this, type)) {
+        window.__kemiLeaveListeners += 1;
+        const signal = options && typeof options === 'object' ? options.signal : undefined;
+        signal?.addEventListener('abort', () => { window.__kemiLeaveListeners -= 1; }, { once: true });
+      }
+      return add.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      if (counted(this, type)) window.__kemiLeaveListeners -= 1;
+      return remove.call(this, type, listener, options);
+    };
+    return true;
+  })()`);
+  await openBlockEditor('new:7-7');
+  assert.equal(
+    await evaluate(`document.querySelector('#rendered-doc .kb-quote').textContent`),
+    'Intro paragraph with *emphasis* and a [link](https://example.com) now.',
+  );
+  await browser('fill', '#rendered-doc .editor textarea[data-editor-field="body"]', 'from the new block');
+  await clickVisible('#rendered-doc .editor button[type="submit"]');
+  await waitFor(`document.querySelector('#comment-count').textContent === '1'`);
+  await openBlockEditor('old:16-16');
+  assert.equal(await evaluate(`document.querySelector('#rendered-doc .editor .suggestion-row')`), null);
+  await browser('fill', '#rendered-doc .editor textarea[data-editor-field="body"]', 'from the deleted row');
+  await clickVisible('#rendered-doc .editor button[type="submit"]');
+  await waitFor(`document.querySelector('#comment-count').textContent === '2'`);
+  assert.ok(
+    await evaluate('window.__kemiLeaveListeners') <= 1,
+    `re-rendering keeps at most one mouseleave listener on #rendered-doc: ${await evaluate('window.__kemiLeaveListeners')}`,
+  );
+  console.log('PASS 描画表示を描き直しても、離れたときに + を隠すリスナーは溜まらない');
+  await browser('click', '#btn-approve');
+  await waitFor(`!document.querySelector('#modal').hidden`);
+  await browser('click', '#modal-ok');
+  const { code, stdout } = await kemi.exited;
+  assert.equal(code, 0);
+  const result = JSON.parse(stdout);
+  assert.equal(result.verdict, 'approved');
+  const [first, second] = result.comments;
+  assert.equal(first.side, 'new');
+  assert.equal(first.start_line, 7);
+  assert.equal(first.end_line, 7);
+  assert.deepEqual(first.quote, ['Intro paragraph with *emphasis* and a [link](https://example.com) now.']);
+  assert.equal(first.body, 'from the new block');
+  assert.equal(second.side, 'old');
+  assert.equal(second.start_line, 16);
+  assert.equal(second.end_line, 16);
+  assert.deepEqual(second.quote, ['| 3 | 4 |']);
+  assert.equal(second.suggestion, null);
+  console.log('PASS 描画表示から付けたコメントが submit の JSON に行コメントとして入る');
+} finally {
+  await stopKemi(kemi, 'SIGTERM');
+  await close();
+}

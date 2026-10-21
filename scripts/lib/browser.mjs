@@ -1,10 +1,20 @@
 // ブラウザ検査の agent-browser の呼び出しと、ページの中で読む式。
 
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { onExit } from './exit.mjs';
+
 const run = promisify(execFile);
+
+/** 使ってから閉じていないセッション。検査がどこで落ちても、プロセスが終わるときに閉じる（ブラウザも止まる）。 */
+const opened = new Set();
+onExit('browser', () => {
+  for (const session of opened) {
+    spawnSync('agent-browser', ['--session', session, 'close'], { stdio: 'ignore', timeout: 15000 });
+  }
+});
 
 /**
  * agent-browser のセッション 1 つの呼び出し。
@@ -15,6 +25,7 @@ const run = promisify(execFile);
 export function browserSession(session, { timeout, describe } = {}) {
   /** agent-browser を 1 回呼び、data を返す。失敗したら、agent-browser の出力を添える。 */
   const browser = async (...args) => {
+    opened.add(session);
     const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 16 * 1024 * 1024 })
       .catch((error) => { throw new Error(`agent-browser ${args.join(' ')}: ${error.stdout ?? ''}`, { cause: error }); });
     const result = JSON.parse(stdout);
@@ -36,7 +47,10 @@ export function browserSession(session, { timeout, describe } = {}) {
     }
   };
   /** セッションを閉じる（ブラウザも止まる）。閉じられなくても検査は落とさない。 */
-  const close = () => run('agent-browser', ['--session', session, 'close']).then(() => undefined, () => undefined);
+  const close = async () => {
+    await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+    opened.delete(session);
+  };
   return { browser, evaluate, waitFor, close };
 }
 
