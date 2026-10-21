@@ -5,6 +5,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 ### 破壊的変更
 
 - **結果 JSON の契約の版が 4 になった**（`"kemi": 4`。`kemi wait` の出力も同じ）。
@@ -504,7 +506,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ba0918/kemi/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/ba0918/kemi/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/ba0918/kemi/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/ba0918/kemi/compare/v0.3.3...v0.3.4
