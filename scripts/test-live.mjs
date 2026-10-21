@@ -1,15 +1,11 @@
 // `--live`（docs/spec/live.md、live-compare.md）のブラウザ自動化。実際の kemi バイナリを、
 // scripts/live-dev-server.mjs の試験用の開発サーバを相手に起動し、画面を agent-browser で確かめる。
 //
-//   node scripts/test-live.mjs <kemi-bin>
-//   node scripts/test-live.mjs <kemi-bin> --places-glow
-//   node scripts/test-live.mjs <kemi-bin> --pen-places
-//   node scripts/test-live.mjs <kemi-bin> --compose-layout
-//   node scripts/test-live.mjs <kemi-bin> --page-surrounding
-//   node scripts/test-live.mjs <kemi-bin> --baseline-guide
-//   node scripts/test-live.mjs <kemi-bin> --outside-git
-//   node scripts/test-live.mjs <kemi-bin> --explanation-view
-//   node scripts/test-live.mjs <kemi-bin> --comment-images
+//   node scripts/test-live.mjs <kemi-bin>               全部の場面を決まった順に
+//   node scripts/test-live.mjs <kemi-bin> <場面>...      並べた場面だけを並べた順に
+//
+// 場面は場面の関数の名前で選ぶ（例 `placesGlowFromTheListAndTheThread`）。`unreadableResourcesMakeNoPartialCommentImage:canvas`
+// のように `:` の後ろを渡すと、その場面は渡したものだけを確かめる。
 //
 // 確かめること:
 // - 中継: HMR が中継越しに効く。中継用の cookie が document.cookie に出ない。開発サーバを止めた
@@ -89,7 +85,7 @@ import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi }
 import { CHANGING_GEOMETRY, RESOURCE_BOXES, SCROLLING_GEOMETRY, TABLE_GEOMETRY, adoptedCss, changingCss, changingPage, manyCss, scrollingCss, startDevServer as startDevServerIn, tablePage } from './live-dev-server.mjs';
 
 if (!process.argv[2]) {
-  console.error('usage: node scripts/test-live.mjs <kemi-bin>');
+  console.error('usage: node scripts/test-live.mjs <kemi-bin> [<scene>...]');
   process.exit(2);
 }
 const binary = resolve(process.argv[2]);
@@ -3772,99 +3768,101 @@ async function snapshotsAndMocksComeBackAfterResuming(repository) {
   }
 }
 
-async function verifyLiveReview(repository) {
-  await relayCarriesHmrAndHidesTheCookie(repository);
-  await waitsForTheDevServer(repository);
-  await fileReloadsWhenItsCssIsSaved(repository);
-  await pageViewShowsFramedPagesWidthsAndNarrowScreens(repository);
-  await modeTabsSwitchTheTopbar(repository);
-  await outsideGitFilePages();
-  await handingFromTheCodeViewOutsideGit();
-  await handingFromTheExplanationView(repository);
-  await otherReviewsLoadNoPageFiles(repository);
-  await snapshotsAreTakenShownAndChosen(repository);
-  await snapshotsCarryTheirResources(repository);
-  await commentImagesLookLikeThePage(repository);
-  await unreadableResourcesMakeNoPartialCommentImage(repository);
-  await commentImagesKeepTheLayoutOfTheViewport(repository);
-  await mocksAreAssignedShownAndKeptApart(repository);
-  await mockPanelListsTheFilesToChoose();
-  await mockMenuRemovesAndUndoes(repository);
-  await snapshotsSendNoTokenToExternalImages(repository);
-  await overlayFollowsTheScrollAndTheOpacity(repository);
-  await compareModesScaleAndReload(repository);
-  await referenceNamesHeadingsAndNotices(repository);
-  await recordingNowSwitchesTheReference(repository);
-  await changesFromStartExplainHowToCompareFromNow(repository);
-  await sideBySidePagesShareTheirTop(repository);
-  await changesShowWithThePageAlone(repository);
-  await toolsAndTheHintStartTheFirstComment(repository);
-  await closingTheComposeBoxRestoresTheFrame(repository);
-  await foldedHandNoteLeavesTheComposeControlsClickable(repository);
-  await pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository);
-  await narrowPageViewFitsOneRow(repository);
-  await narrowToolsFloatWithHand(repository);
-  await crossingTheNarrowWidthFollowsTheShownPage(repository);
-  await changeListFollowsThePage(repository);
-  await changeRowsAreElementsThatLeadToThePage(repository);
-  await removedRowsLeadToTheSnapshot(repository);
-  await wideTargetsAreRevealedSideways(repository);
-  await overlaidRemovedElementsAreRevealedWhereTheyAreDrawn(repository);
-  await marksFollowTheChanges(repository);
-  await marksCanBeHidden(repository);
-  await marksAreDrawnUnderAStrictStylePolicy(repository);
-  await snapshotsAreTakenUnderTrustedTypes(repository);
-  await removedMarksSurviveReparsing(repository);
-  await scrollingMakesNoChangeAndMarksStay(repository);
-  await cssomChangesAreFollowed(repository);
-  await widthSwitchesWithoutResizingTheDocument(repository);
-  await manyElementsAreRecordedAndCompared(repository);
-  await pageCommentPlacesArePutAndSaved(repository);
-  await penPlacesLeaveOutWhatContainsTheLine(repository);
-  await penGlowAndImageStayAroundTheDrawnArea(repository);
-  await placesOnTheBackgroundAreAreasOnly(repository);
-  await savedCommentsAreQuietMarks(repository);
-  await draftPlacesStayAtTheirWidth(repository);
-  await latePlacesKeepTheirWidth(repository);
-  await draftsStayWhileSaving(repository);
-  await narrowReferenceSideSavesTheImage(repository);
-  await switchingWhileSavingKeepsTheImageAroundThePlace(repository);
-  await savingAndHandingKeepThePageLaidOut(repository);
-  await movingWhileSavingMakesNoImageOfAnotherPage(repository);
-  await placesMakeNoChange(repository);
-  await savedPageCommentsAreListedShownAndSwitched(repository);
-  await placesGlowFromTheListAndTheThread(repository);
-  await handedPageCommentsReachWaitAndSubmit(repository);
-  await snapshotsAndMocksComeBackAfterResuming(repository);
+/** 全部を走らせるときの場面の順。 */
+const SCENES = [
+  relayCarriesHmrAndHidesTheCookie,
+  waitsForTheDevServer,
+  fileReloadsWhenItsCssIsSaved,
+  pageViewShowsFramedPagesWidthsAndNarrowScreens,
+  modeTabsSwitchTheTopbar,
+  outsideGitFilePages,
+  handingFromTheCodeViewOutsideGit,
+  handingFromTheExplanationView,
+  otherReviewsLoadNoPageFiles,
+  snapshotsAreTakenShownAndChosen,
+  snapshotsCarryTheirResources,
+  commentImagesLookLikeThePage,
+  unreadableResourcesMakeNoPartialCommentImage,
+  commentImagesKeepTheLayoutOfTheViewport,
+  mocksAreAssignedShownAndKeptApart,
+  mockPanelListsTheFilesToChoose,
+  mockMenuRemovesAndUndoes,
+  snapshotsSendNoTokenToExternalImages,
+  overlayFollowsTheScrollAndTheOpacity,
+  compareModesScaleAndReload,
+  referenceNamesHeadingsAndNotices,
+  recordingNowSwitchesTheReference,
+  changesFromStartExplainHowToCompareFromNow,
+  sideBySidePagesShareTheirTop,
+  changesShowWithThePageAlone,
+  toolsAndTheHintStartTheFirstComment,
+  closingTheComposeBoxRestoresTheFrame,
+  foldedHandNoteLeavesTheComposeControlsClickable,
+  pageSurroundingsMatchTheReviewWithoutRepaintingThePage,
+  narrowPageViewFitsOneRow,
+  narrowToolsFloatWithHand,
+  crossingTheNarrowWidthFollowsTheShownPage,
+  changeListFollowsThePage,
+  changeRowsAreElementsThatLeadToThePage,
+  removedRowsLeadToTheSnapshot,
+  wideTargetsAreRevealedSideways,
+  overlaidRemovedElementsAreRevealedWhereTheyAreDrawn,
+  marksFollowTheChanges,
+  marksCanBeHidden,
+  marksAreDrawnUnderAStrictStylePolicy,
+  snapshotsAreTakenUnderTrustedTypes,
+  removedMarksSurviveReparsing,
+  scrollingMakesNoChangeAndMarksStay,
+  cssomChangesAreFollowed,
+  widthSwitchesWithoutResizingTheDocument,
+  manyElementsAreRecordedAndCompared,
+  pageCommentPlacesArePutAndSaved,
+  penPlacesLeaveOutWhatContainsTheLine,
+  penGlowAndImageStayAroundTheDrawnArea,
+  placesOnTheBackgroundAreAreasOnly,
+  savedCommentsAreQuietMarks,
+  draftPlacesStayAtTheirWidth,
+  latePlacesKeepTheirWidth,
+  draftsStayWhileSaving,
+  narrowReferenceSideSavesTheImage,
+  switchingWhileSavingKeepsTheImageAroundThePlace,
+  savingAndHandingKeepThePageLaidOut,
+  movingWhileSavingMakesNoImageOfAnotherPage,
+  placesMakeNoChange,
+  savedPageCommentsAreListedShownAndSwitched,
+  placesGlowFromTheListAndTheThread,
+  handedPageCommentsReachWaitAndSubmit,
+  snapshotsAndMocksComeBackAfterResuming,
+];
+
+/** `:` の後ろを受け取る場面。 */
+const TAKES_ARGUMENT = new Set([unreadableResourcesMakeNoPartialCommentImage]);
+
+/** 引数に並んだ場面（無ければ全部）。知らない名前と、`:` の後ろを受け取らない場面に渡したものは断る。 */
+function chosenScenes(args) {
+  if (args.length === 0) {
+    return SCENES.map((scene) => ({ scene, argument: undefined }));
+  }
+  return args.map((arg) => {
+    const [name, argument] = arg.split(/:(.*)/s);
+    const scene = SCENES.find((each) => each.name === name);
+    if (scene === undefined) {
+      console.error(`unknown scene: ${name}\nscenes:\n${SCENES.map((each) => `  ${each.name}`).join('\n')}`);
+      process.exit(2);
+    }
+    if (argument !== undefined && !TAKES_ARGUMENT.has(scene)) {
+      console.error(`${name} takes no argument: ${arg}`);
+      process.exit(2);
+    }
+    return { scene, argument };
+  });
 }
 
+const chosen = chosenScenes(process.argv.slice(3));
 const repository = await makeRepository();
 try {
-  if (process.argv[3] === '--places-glow') {
-    await placesGlowFromTheListAndTheThread(repository);
-  } else if (process.argv[3] === '--pen-places') {
-    await penGlowAndImageStayAroundTheDrawnArea(repository);
-    await penPlacesLeaveOutWhatContainsTheLine(repository);
-    await placesOnTheBackgroundAreAreasOnly(repository);
-  } else if (process.argv[3] === '--compose-layout') {
-    await foldedHandNoteLeavesTheComposeControlsClickable(repository);
-    await closingTheComposeBoxRestoresTheFrame(repository);
-  } else if (process.argv[3] === '--page-surrounding') {
-    await pageSurroundingsMatchTheReviewWithoutRepaintingThePage(repository);
-  } else if (process.argv[3] === '--outside-git') {
-    await outsideGitFilePages();
-    await handingFromTheCodeViewOutsideGit();
-  } else if (process.argv[3] === '--explanation-view') {
-    await handingFromTheExplanationView(repository);
-  } else if (process.argv[3] === '--baseline-guide') {
-    await changesFromStartExplainHowToCompareFromNow(repository);
-    await recordingNowSwitchesTheReference(repository);
-  } else if (process.argv[3] === '--comment-images') {
-    await unreadableResourcesMakeNoPartialCommentImage(repository, process.argv[4] ?? null);
-    await commentImagesLookLikeThePage(repository);
-    await commentImagesKeepTheLayoutOfTheViewport(repository);
-  } else {
-    await verifyLiveReview(repository);
+  for (const { scene, argument } of chosen) {
+    await scene(repository, argument);
   }
 } finally {
   await close();
