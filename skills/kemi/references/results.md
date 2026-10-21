@@ -122,10 +122,11 @@ kemi --result --workspace ../app  # the latest result for another place
 ```
 
 `kemi --result` prints that JSON to stdout and exits with the verdict's own code (`0` approved,
-`1` changes requested). It reads what is already stored and never waits for a review still open. With no matching result it prints nothing and exits `2`. A result
-belongs to the top of the git repository kemi was started in. Only the newest twenty results
-are kept across all repositories, so read a result soon after the review rather than assuming
-it will still be there. No result is written for an interrupted or failed run; the review
+`1` changes requested). It reads what is already stored and never waits for a review still
+open. With no matching result it prints nothing and exits `2`. A result belongs to the top of
+the git repository kemi was started in. Only the newest twenty results are kept across all
+repositories, so read a result soon after the review rather than assuming it will still be
+there. No result is written for an interrupted or failed run; the review
 itself is kept as a session instead when it has state or a copy to keep; see the
 [resume reference](resume.md) for eligibility and continuation.
 

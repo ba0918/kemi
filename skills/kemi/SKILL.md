@@ -125,6 +125,6 @@ startup diff; `--live` is the exception and rereads the working tree and reconne
 
 After the main process exits, collect its exit code and the result (its stdout, or the
 `submitted` result from `kemi wait`), and read [results](references/results.md) before acting
-on it: it covers the contract version, every field, and `kemi --result` recovery. Before
-acting, check that `verdict` agrees with the exit code, and before using an approval, compute
-each `identity` again from the current bytes and compare.
+on it: it covers the contract version, every field, and `kemi --result` recovery. Check that
+`verdict` agrees with the exit code, and before using an approval, compute each `identity`
+again from the current bytes and compare.

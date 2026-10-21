@@ -22,10 +22,10 @@ Context reads no stdin and exits `0` with one version-3 JSON object: `review`,
 from the result's `4`; do not guess an unknown contract version.
 Code entries have `unit`, `group_id`, `path`, `old_present`/`new_present` booleans, and nullable
 `old_lines`/`new_lines` totals. Pages are registered `{url}` values. Use this map for updated
-references; it describes the server's metadata, not file contents. It is refused with a reason while a required
-grouping is unavailable. In a commit range the other grouping starts building on first page
-open; if this prevents adding a missing explanation, ask the person to open the page, then
-retry context and save before the explanation handoff.
+references; it describes the server's metadata, not file contents. It is refused with a reason
+while a required grouping is unavailable. In a commit range the other grouping starts building
+on first page open; if this prevents adding a missing explanation, ask the person to open the
+page, then retry context and save before the explanation handoff.
 
 Update JSON has exactly `expected_revision`, `base_display_version`, and the **complete**
 replacement `sections`, not a block patch. Use context's `explanation_revision` (0 when absent)
@@ -50,10 +50,10 @@ conflict rather than blindly overwriting; only one same-revision concurrent upda
 After submit claims the review, updates are refused. The first argument `explain` selects the
 subcommand; a manifest of that name is `./explain`.
 
-Explain/context use the same local same-user endpoint protection as wait/reply. They do not
-answer a hand-over, clear its working line, reset the response clock, generate wait events,
-or resolve threads. Send a separate `kemi reply` when an answer is needed; only the person
-resolves. Explanation comments retain their original revision and complete block quote.
+Explain/context use the same local same-user endpoint protection as wait/reply. An update is
+not an answer: it does not count as a reply to a hand-over or a thread, generates no wait
+events, and resolves nothing. Send a separate `kemi reply` when an answer is needed; only the
+person resolves. Explanation comments retain their original revision and complete block quote.
 
 A display version is a generation of the review's metadata, not a guarantee of file bytes or of
 the explanation's correctness, and the person's Code view does not change automatically with an
