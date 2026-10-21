@@ -111,6 +111,8 @@
   digest/manifestの契約の版と、`kemi explain --context` のcontextの契約の版（3。[R-EXPLANATION-CLI](#r-explanation-cli-初期投入と全体更新)）はこの変更で進めない。
   過去resultを `--result` で読む場合は保存時の契約版と元文字列のまま出す（版1・2・3の結果も）。再シリアライズして版4にしない。
 - 版3から版4で変わるのは、下の `versions` を空にする条件と、ページへのコメントの矢印とペンの `points` の点の減らし方（丸めと間引き。[R-PAGE-COMMENT](live.md#r-page-comment-コメントの場所)）と、版4のkemiで置いた点の座標の書き方（小数部の無い整数で `12` と書き、`12.0` と書かない）だけ。ほかのキー・形・null規則は版3と同じ。
+  それでも、版3だけを知る読み手（版3のスキル）は、知らない契約の版を推測で読まない約束（[R-SUBMIT](output.md#r-submit-送信と契約)）なので、版4の結果を読まずに止まる。
+  スキルは本体と別の経路で入れる（[R-DIST](distribution.md#r-dist-名称と配布)）ので、片方だけが新しい状態は起こりうる。版4を出すリリースのCHANGELOGで、スキルと本体を一緒に更新するよう案内する。
 - resultの従来top-levelキーを残し、`diff_display_version` と `explanation` を必ず追加する。
   explanationなしはnull。ありは `{current_revision,versions}` で、どちらのキーも必ず出す。
   resultの `comments` に `target_type` が `explanation` のコメントが一つもなければ、versionsは `[]`（キーを省略せず空配列にする。返信のvariantsなどを省略せず `[]` / `null` にする既存規則と同じ）。
