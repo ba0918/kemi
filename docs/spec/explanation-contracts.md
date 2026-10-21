@@ -1,7 +1,7 @@
 # EXPLANATIONに伴う既存契約の改訂
 
 - Status: 承認済み。承認対象は `55ba772` の三文書の契約本文と、その後に加えた説明コメントの `selection`（[説明](explanation.md#r-explanation-comment-対象と更新後の会話)）。
-  resultとwaitの契約の版4（説明へのコメントがないresultの `versions` を空にする）は、2026-10-20の利用者の判断で加えた（[R-EXPLANATION-RESULT](#r-explanation-result-resultとwaitの版4)）。
+  resultとwaitの契約の版4（説明へのコメントがないresultの `versions` を空にする。ページへのコメントの点を丸めて間引く）は、2026-10-20の利用者の判断で加えた（[R-EXPLANATION-RESULT](#r-explanation-result-resultとwaitの版4)）。
 - 承認対象: [説明](explanation.md)、[共通パーツ](content-parts.md)、この文書。
 - この文書は変更する契約だけを持つ。対応する正典節からこの文書へリンクし、改訂部分の正典を一箇所に保つ。
 
@@ -110,7 +110,7 @@
   結果JSONの契約の版はセッション形式の版（[R-EXPLANATION-SESSION](#r-explanation-session-保存と復元)）とは別に数え、この変更でセッション形式は変えない。
   digest/manifestの契約の版と、`kemi explain --context` のcontextの契約の版（3。[R-EXPLANATION-CLI](#r-explanation-cli-初期投入と全体更新)）はこの変更で進めない。
   過去resultを `--result` で読む場合は保存時の契約版と元文字列のまま出す（版1・2・3の結果も）。再シリアライズして版4にしない。
-- 版3から版4で変わるのは、下の `versions` を空にする条件だけ。ほかのキー・形・null規則は版3と同じ。
+- 版3から版4で変わるのは、下の `versions` を空にする条件と、ページへのコメントの矢印とペンの `points` の点の減らし方（丸めと間引き。[R-PAGE-COMMENT](live.md#r-page-comment-コメントの場所)）だけ。ほかのキー・形・null規則は版3と同じ。
 - resultの従来top-levelキーを残し、`diff_display_version` と `explanation` を必ず追加する。
   explanationなしはnull。ありは `{current_revision,versions}` で、どちらのキーも必ず出す。
   resultの `comments` に `target_type` が `explanation` のコメントが一つもなければ、versionsは `[]`（キーを省略せず空配列にする。返信のvariantsなどを省略せず `[]` / `null` にする既存規則と同じ）。
