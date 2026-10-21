@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { changesByElement, diffDescriptions, markedPositions, marksOf } from "./live-diff.js";
+import { changesByElement, diffDescriptions, markedPositions, marksOf, sameChanges } from "./live-diff.js";
 
 /**
  * @typedef {{ tag: string, id?: string, cls?: string, text?: string, box: number[], style?: Record<string, string>, children?: Spec[] }} Spec
@@ -302,4 +302,40 @@ test("a number outside every run of the element map, or with no map at all, gets
   assert.deepEqual([...markedPositions("0,0,3 7,4,1", [4, 5])], [7]);
   assert.deepEqual([...markedPositions("", [0, 1])], []);
   assert.deepEqual([...markedPositions("0,0,3", [])], []);
+});
+
+test("a list of changes compared again is the same only when every field of every change is the same", () => {
+  const before = page([
+    { tag: "p", cls: "price", text: "$89", box: [0, 0, 100, 20], style: { color: "rgb(200, 0, 0)" } },
+    { tag: "p", text: "gone", box: [0, 20, 100, 20] },
+  ]);
+  const now = page([{ tag: "p", cls: "price", text: "$79", box: [0, 0, 100, 20], style: { color: "rgb(0, 0, 200)" } }]);
+  const changes = diffDescriptions(before, now);
+  assert.equal(changes[0].kind, "visual");
+  assert.equal(sameChanges(changes, structuredClone(changes)), true);
+  assert.equal(sameChanges(changes, structuredClone(changes).slice(1)), false);
+  /** @type {Partial<import("./live-diff.js").Change>} */
+  const others = {
+    kind: "text",
+    before: null,
+    now: null,
+    tag: "div",
+    excerpt: "$99",
+    label: "p.other",
+    property: "background-color",
+    was: "rgb(1, 1, 1)",
+    is: "rgb(2, 2, 2)",
+  };
+  for (const [field, value] of Object.entries(others)) {
+    const other = structuredClone(changes);
+    other[0] = { ...other[0], [field]: value };
+    assert.notEqual(changes[0][/** @type {keyof import("./live-diff.js").Change} */ (field)], value, field);
+    assert.equal(sameChanges(changes, other), false, field);
+  }
+});
+
+test("no list of changes is the same as no list, and not the same as a list", () => {
+  assert.equal(sameChanges(null, null), true);
+  assert.equal(sameChanges(null, []), false);
+  assert.equal(sameChanges([], null), false);
 });
