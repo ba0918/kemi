@@ -58,11 +58,16 @@ import {
  * 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が返した JSON を読む。
  */
 async function handAndWait(kemi, dir, state) {
+  return JSON.parse(await handAndWaitText(kemi, dir, state));
+}
+
+/** 画面の「Hand to agent」で渡し、別のプロセスの `kemi wait` が stdout に書いた文字列を返す（数の書き方を見るため）。 */
+async function handAndWaitText(kemi, dir, state) {
   const waiting = startWaiting(kemi, dir, state);
   await pressHand();
   const { code, stdout } = await waiting;
   assert.equal(code, 0, 'kemi wait returns what was handed');
-  return JSON.parse(stdout);
+  return stdout;
 }
 
 /** 式が真になるのを待つ。期限までに真にならなければ、message（何を確かめていたかと、そのときの値）で落とす。 */
@@ -611,6 +616,163 @@ export async function penGlowAndImageStayAroundTheDrawnArea(repository) {
     assert.ok(Math.abs(arrowGlow.w - (Math.max(arrow.points[0].x, target.x + target.w) - Math.min(arrow.points.at(-1).x, target.x))) < 0.05);
     assert.ok(Math.abs(arrowGlow.h - (Math.max(arrow.points[0].y, target.y + target.h) - Math.min(arrow.points.at(-1).y, target.y))) < 0.05);
     console.log('PASS 要素の枠は要素の箱、矢印の枠は線と先端の要素の範囲を維持する');
+  });
+}
+
+/** 矢印とペンの点を確かめるページの、上端を小数の CSS の位置に置いた要素（このページの要素はこれ 1 つ）。 */
+const STROKE_EDGE = { left: 40, top: 100.25, width: 200, height: 40 };
+
+/** 白い余白に STROKE_EDGE を 1 つだけ置いたページ。高さは枠に収まり、スクロールしない。 */
+const STROKES_PAGE = `<!doctype html><html><head><style>
+  html, body { margin: 0; background: #fff; }
+  #edge { position: absolute; left: ${STROKE_EDGE.left}px; top: ${STROKE_EDGE.top}px; width: ${STROKE_EDGE.width}px; height: ${STROKE_EDGE.height}px; background: #dde3ea; }
+</style></head><body><div id="edge"></div></body></html>`;
+
+/**
+ * 文書の座標の点を順にたどって描く（押して、動かして、離す）。等倍で、ページがスクロールしていないときに使う。
+ * 画面の座標は整数なので、枠の位置に小数があっても、文書の座標を丸めると渡した整数になる画素を押す。
+ * @param {[number, number][]} points
+ */
+async function drawStroke(points) {
+  const box = await evaluate(`(() => { const r = document.querySelector('${livePane} .lv-frame').getBoundingClientRect(); return { x: r.x, y: r.y }; })()`);
+  const at = ([x, y]) => [String(Math.ceil(box.x + x - 0.5)), String(Math.ceil(box.y + y - 0.5))];
+  await browser('mouse', 'move', ...at(points[0]));
+  await browser('mouse', 'down');
+  for (const point of points.slice(1)) await browser('mouse', 'move', ...at(point));
+  await browser('mouse', 'up');
+}
+
+/**
+ * 円の弧をたどる n + 1 個の点（文書の座標）。角度は x 軸から、画面の下向きへ回る向き。
+ * @param {{ x: number, y: number, r: number }} circle
+ * @returns {[number, number][]}
+ */
+function arcPoints({ x, y, r }, from, to, n) {
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const angle = from + ((to - from) * i) / n;
+    return [x + r * Math.cos(angle), y + r * Math.sin(angle)];
+  });
+}
+
+/**
+ * 矢印とペンの点（R-PAGE-COMMENT の「矢印とペンの点」、R-SUBMIT の `points`）: 描き始めから 3 だけ動かして離しても場所は
+ * 増えず、ちょうど 4 で 1 つ増える。小さな動きを多く重ねたペンの曲線と曲げて描いた矢印は、`kemi wait` の JSON で座標が
+ * 整数の、描いたときより少ない点になり（ペンの最初と最後は描き始めと描き終わりを丸めたもの、矢印は 3 点以上）、stdout
+ * では `"x":12` の形で書かれる。光の枠は保存した点の外接矩形で、矢印の先の三角は保存した点の最後の 2 点の向きを指す。
+ * 間引く前の点の外接矩形とは重なり、間引いた後の外接矩形とは重ならない要素は、ペンの場所の要素に入る。
+ */
+export async function strokePointsAreRoundedAndThinned(repository) {
+  const shots = await mkdtemp(join(tmpdir(), 'kemi-live-shots-'));
+  // 試験用の開発サーバは決まった名前のページだけを配るので、rich.html を書き換える。
+  const prepare = (dev) => writeFile(join(dev.dir, 'rich.html'), STROKES_PAGE);
+  await withLiveReview({ repository, page: 'rich.html', prepare }, async ({ kemi, state }) => {
+    await browser('set', 'viewport', '1280', '900');
+    await browser('open', kemi.url);
+    await waitForSnapshot(kemi, startSnapshot);
+    await browser('click', '.lv-widths button[data-width="390"]');
+    await waitFor(`document.querySelector('${livePane} .lv-frame').style.width === '390px'`);
+    await settled(`${livePane} .lv-frame`);
+    // 押す画素から文書の座標を決めるので、等倍で見る。
+    assert.equal(await stageScale(), 1, 'the page is shown at its own size');
+    // 「Hand to agent」は kemi wait が一度呼ばれたレビューでだけ押せるので、先に一度渡しておく。
+    await postJson(kemi.url, 'api/message', { body: 'let me show you' });
+    await handInThePage(kemi, repository, state);
+    // ページが答えた場所（間引く前の点）と、光らせた箱を控える。
+    await evaluate(`window.__kemiPlaced = []; addEventListener('message', (event) => {
+      if (event.data?.kemi !== 'live') return;
+      if (event.data.type === 'placed') window.__kemiPlaced.push(event.data);
+      if (event.data.type === 'glowed') window.__kemiGlowed = event.data.rect;
+    }); true`);
+
+    // 3 の線が場所になるなら、その答えは続けて描いた 4 の線の答えより先に届く（ページは頼まれた順に答える）ので、
+    // 4 の線の答えが届いてから場所の数を見る。
+    const placedFour = `window.__kemiPlaced.filter((answer) => Math.round(answer.points.at(-1).x - answer.points[0].x) === 4).length`;
+    for (const [tool, n] of [['arrow', 1], ['pen', 2]]) {
+      await chooseTool(tool);
+      await drawStroke([[300, 300], [303, 300]]);
+      await drawStroke([[300, 340], [304, 340]]);
+      await waitFor(`${placedFour} === ${n}`);
+      assert.equal(await evaluate(draftNumbers), JSON.stringify(Array.from({ length: n }, (_, i) => i + 1)), `a ${tool} moved 3 adds no place and one moved 4 adds one`);
+    }
+    console.log('PASS 矢印とペンで、描き始めから 3 だけ動かして離しても場所は増えず、ちょうど 4 動かすと 1 つ増える');
+    await browser('click', '#live-compose .lv-compose-cancel');
+    await waitFor(`${draftNumbers} === '[]'`);
+    await evaluate('window.__kemiPlaced = []; true');
+
+    await chooseTool('pen');
+    await drawStroke(arcPoints({ x: 120, y: 240, r: 50 }, 0, 1.8 * Math.PI, 100));
+    await waitFor(`${draftNumbers} === '[1]'`);
+    await chooseTool('arrow');
+    // 弧で右下へ曲げてまっすぐ下ろし、最後に 1 だけ右へ動かして離す。その 1 の動きは間引かれるので、保存した点の
+    // 最後の 2 点は下を向き、描いたときの最後の 2 点（右向き）とは違う向きになる。
+    const tail = Array.from({ length: 7 }, (_, i) => [310, 270 + i * 10]);
+    await drawStroke([...arcPoints({ x: 220, y: 260, r: 90 }, -Math.PI / 2, 0, 30), ...tail, [311, 330]]);
+    await waitFor(`${draftNumbers} === '[1,2]'`);
+    await chooseTool('pen');
+    // 下の辺の真ん中で 1 だけ下へふくらませる。ふくらみは線分から 1 なので間引かれ、間引く前の外接矩形の下端（100.5
+    // 以上）は要素の上端より下、間引いた後の下端（100）は上になる。
+    await drawStroke([[20, 40], [300, 40], [300, 100], [160, 101], [20, 100], [20, 42]]);
+    await waitFor(`${draftNumbers} === '[1,2,3]' && window.__kemiPlaced.length === 3`);
+    const [curveDrawn, arrowDrawn, edgeDrawn] = await evaluate('window.__kemiPlaced.map((answer) => answer.points)');
+    const drawnPage = await shot(`${livePane} .lv-frame`, shots, 'stroke-places');
+    /** @type {Record<number, { w: number, h: number }>} */
+    const glows = {};
+    for (const n of [1, 2, 3]) {
+      await evaluate('window.__kemiGlowed = undefined; true');
+      await browser('click', `#live-compose .lv-place[data-n="${n}"] .lv-place-show`);
+      await waitFor('window.__kemiGlowed !== undefined');
+      glows[n] = await evaluate('window.__kemiGlowed');
+    }
+
+    await savePageCommentInThePage('a curve, a bent arrow, and a line around the edge');
+    const stdout = await handAndWaitText(kemi, repository, state);
+    const comment = JSON.parse(stdout).events.flatMap((event) => event.comments ?? []).find((change) => change.comment.page)?.comment;
+    assert.ok(comment, `a page comment is handed: ${stdout}`);
+    const [curve, arrow, edge] = comment.page.places;
+    assert.deepEqual([curve.kind, arrow.kind, edge.kind], ['pen', 'arrow', 'pen']);
+    for (const place of [curve, arrow, edge]) {
+      assert.ok(place.points.every(({ x, y }) => Number.isInteger(x) && Number.isInteger(y)), `place ${place.n} has integer points: ${JSON.stringify(place.points)}`);
+    }
+    const rounded = ({ x, y }) => ({ x: Math.round(x), y: Math.round(y) });
+    assert.ok(curveDrawn.length >= 50, `the curve was drawn with many points: ${curveDrawn.length}`);
+    assert.ok(curve.points.length < curveDrawn.length, `the curve keeps fewer points (${curve.points.length}) than drawn (${curveDrawn.length})`);
+    assert.deepEqual([curve.points[0], curve.points.at(-1)], [rounded(curveDrawn[0]), rounded(curveDrawn.at(-1))], 'the curve starts and ends where it was drawn, rounded');
+    assert.ok(arrow.points.length >= 3 && arrow.points.length < arrowDrawn.length, `the bent arrow keeps 3 or more points (${arrow.points.length}), fewer than drawn (${arrowDrawn.length})`);
+    console.log(`PASS 小さな動きを多く重ねたペンの曲線（${curveDrawn.length} 点）と曲げた矢印（${arrowDrawn.length} 点）は、kemi wait の JSON で整数の座標の ${curve.points.length} 点と ${arrow.points.length} 点になり、ペンの最初と最後は描き始めと描き終わりを丸めたもの`);
+
+    const writtenPoints = [...stdout.matchAll(/"points":(\[[^\]]*\])/g)].map((match) => match[1]).filter((text) => text !== '[]');
+    assert.equal(writtenPoints.length, 3, `the three lines are written in the stdout: ${writtenPoints}`);
+    for (const text of writtenPoints) {
+      assert.match(text, /^\[\{"x":-?\d+,"y":-?\d+\}(,\{"x":-?\d+,"y":-?\d+\})*\]$/, `the points are written as integers without .0: ${text}`);
+    }
+    console.log('PASS kemi wait の stdout で、矢印とペンの点の座標は "x":12 の形で書かれ、.0 が付かない');
+
+    // 囲む線は、ふくらみを間引いた分だけ、間引く前の点の外接矩形より低い。
+    for (const [n, place] of [[1, curve], [2, arrow], [3, edge]]) {
+      const box = pointsBounds(place.points);
+      assert.ok(Math.abs(glows[n].w - box.w) < 0.05 && Math.abs(glows[n].h - box.h) < 0.05, `the glow of place ${n} (${JSON.stringify(glows[n])}) is around its saved points (${JSON.stringify(box)})`);
+    }
+    // 三角の向き: 保存した点の最後の 2 点の向き u で、先端から 10 戻った所の両脇（u に垂直に 3.5。三角の半分の幅は
+    // 約 4.8 で、線からは 2 以上離れる）に三角がある。描いたときの最後の 2 点（右向き）で三角を描くと、そこには来ない。
+    const direction = (from, to) => {
+      const length = Math.hypot(to.x - from.x, to.y - from.y);
+      return { x: (to.x - from.x) / length, y: (to.y - from.y) / length };
+    };
+    const u = direction(arrow.points.at(-2), arrow.points.at(-1));
+    const drawnU = direction(arrowDrawn.at(-2), arrowDrawn.at(-1));
+    assert.ok(u.x * drawnU.x + u.y * drawnU.y < Math.SQRT1_2, `the saved head (${JSON.stringify(u)}) turns away from the drawn one (${JSON.stringify(drawnU)})`);
+    const tip = arrow.points.at(-1);
+    for (const side of [-3.5, 3.5]) {
+      const x = Math.round(tip.x - 10 * u.x - side * u.y);
+      const y = Math.round(tip.y - 10 * u.y + side * u.x);
+      assert.ok(isPlaceInk(pixelAt(drawnPage, x, y)), `the arrow head points along the last two saved points, at (${x}, ${y}): ${join(shots, 'stroke-places.png')}`);
+    }
+    console.log('PASS 光の枠は保存した点の外接矩形で、矢印の先の三角は保存した点の最後の 2 点の向きを指す');
+
+    const overlaps = (box) => box.x < STROKE_EDGE.left + STROKE_EDGE.width && box.x + box.w > STROKE_EDGE.left && box.y < STROKE_EDGE.top + STROKE_EDGE.height && box.y + box.h > STROKE_EDGE.top;
+    assert.ok(overlaps(pointsBounds(edgeDrawn)) && !overlaps(pointsBounds(edge.points)), `the edge touches the drawn line (${JSON.stringify(pointsBounds(edgeDrawn))}) but not the thinned one (${JSON.stringify(pointsBounds(edge.points))})`);
+    assert.deepEqual(edge.elements.map((element) => element.selector), ['#edge'], 'the pen names the element its drawn points overlap');
+    console.log('PASS 間引く前の点の外接矩形とは重なり、間引いた後とは重ならない要素が、ペンの場所の要素に入る');
   });
 }
 
