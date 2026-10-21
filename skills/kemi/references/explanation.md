@@ -108,12 +108,6 @@ not the review URL or an arbitrary external URL. It must already be registered i
 non-live or unregistered Page references are rejected. If registration is not yet known, omit
 that link at startup and add it later using context's registered `references.pages`.
 
-Current-base references are validated against exact group/path/unit, side presence, and known
-line totals. Known older bases accept Code reference shapes without certifying historical
-existence; Page registration is still required. Navigation resolves against the reader's
-imported Code list or registered live Page. Missing targets show a reason rather than guessing
-a replacement, importing a newer list, or silently shortening a line range.
-
 ### Diagram parts
 
 Give each diagram its own block id. Which part to use for what is in

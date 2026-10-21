@@ -146,14 +146,7 @@ open a comment or resolve one; only the person does that.
 
 ## Hand-over status
 
-The page shows one of five states: not connected (`kemi wait` never called), waiting (`kemi wait`
-is waiting, so the person can hand), working (`kemi wait` returned and the person waits for your
-answer), replied (you have answered every thread the last returned `kemi wait` carried — a
-message answers a hand-over of messages only; a thread the person deletes no longer needs an
-answer, so once the remaining threads are answered and you have written at least once since that
-return, the state is replied), and not responding (working for 10 minutes with
-neither `kemi wait` nor `kemi reply`; replied never turns into it). Reply to each thread you were
-handed, so the person can see which ones you have answered: each thread you were handed shows a
-"working" line until you reply in it (a hand-over of messages only waits for a message). **Hand to agent** is always shown but cannot be pressed until `kemi wait` has been called in that
-review; until then the page tells the person that you can be handed comments once you run
-`kemi wait <id>`, with that command to copy. A review where you never call it stays submit-only.
+Reply in each thread you were handed (a hand-over of messages only waits for a message): until
+you do, the person's page shows that thread as being worked on. The person can hand you
+comments only after you run `kemi wait <id>` in that review; a review where you never call it
+stays submit-only.

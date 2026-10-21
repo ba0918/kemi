@@ -22,8 +22,7 @@ Context reads no stdin and exits `0` with one version-3 JSON object: `review`,
 from the result's `4`; do not guess an unknown contract version.
 Code entries have `unit`, `group_id`, `path`, `old_present`/`new_present` booleans, and nullable
 `old_lines`/`new_lines` totals. Pages are registered `{url}` values. Use this map for updated
-references. It is a consistent server metadata read, not file contents or the reader's Code
-display, and does not update that display. It is refused with a reason while a required
+references; it describes the server's metadata, not file contents. It is refused with a reason while a required
 grouping is unavailable. In a commit range the other grouping starts building on first page
 open; if this prevents adding a missing explanation, ask the person to open the page, then
 retry context and save before the explanation handoff.
@@ -56,12 +55,9 @@ answer a hand-over, clear its working line, reset the response clock, generate w
 or resolve threads. Send a separate `kemi reply` when an answer is needed; only the person
 resolves. Explanation comments retain their original revision and complete block quote.
 
-Updates send a notice: readers keep their open revision and position until opening it.
-Code lists do not refresh automatically. References use the reader's existing list; returning
-keeps the original explanation revision/position. The open revision's freshness and the new
-notice's freshness are compared separately with that screen's Code version. Matching bases
-do not guarantee fixed file bytes or explanation correctness; context describes the server,
-not what every reader has imported.
+A display version is a generation of the review's metadata, not a guarantee of file bytes or of
+the explanation's correctness, and the person's Code view does not change automatically with an
+explanation update.
 
 ## Reading a large context
 

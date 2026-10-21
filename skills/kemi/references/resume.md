@@ -44,8 +44,5 @@ Sessions write format 4 and read formats 2, 3, and 4. Old body strings stay plai
 typed parts, complete original explanation quotes, retained versions, and undelivered events
 keep their content. The original explanation input file is not needed.
 
-A non-live resume uses the frozen startup display version, retains the highest issued
-generation, and leaves the explanation's original base intact rather than attaching it to
-a different base. A live rescan publishes a new display version only after success and save;
-after failure Code is unavailable until a retry succeeds. Do not guess unknown session
-contract versions or treat unsaved state as guaranteed restored.
+A `--live` resume rescans the working tree; until a rescan succeeds, Code is unavailable. Do
+not guess unknown session versions or treat unsaved state as guaranteed restored.

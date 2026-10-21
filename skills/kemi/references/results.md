@@ -102,9 +102,9 @@
   its text is then what you wrote (your explanation file, or the last complete replacement you
   sent). With at least one explanation comment, `versions` holds every retained version in
   ascending revision order; read the retained original when a comment targets an old version.
-- `diff_display_version` identifies the server's accepted metadata generation at submit.
-  It is separate from authentication tokens, does not freeze `api/file` bytes, and does not
-  prove an explanation correct or that all screens imported that generation.
+- `diff_display_version` is the review's display version at submit (see
+  [explanation updates](explanation-update.md#updating-the-explanation)); it is not an approval
+  target.
 
 ## Fetching a result you missed
 
