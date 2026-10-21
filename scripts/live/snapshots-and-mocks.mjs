@@ -380,8 +380,7 @@ export async function overlayFollowsTheScrollAndTheOpacity(repository) {
     // 狭い画面では重ねて透かさず、1 枚ずつ切り替えて見る（R-PAGE-VIEW）。
     await browser('set', 'viewport', '390', '800');
     await waitFor(`${visible('.lv-side')} && ${visible(livePane)} && !${visible(refPane)}`);
-    // 幅をまたいだ直後は帯の並びが動くので、落ち着いてから押す。
-    await new Promise((done) => setTimeout(done, 500));
+    await settled('.lv-side button[data-side="ref"]');
     await browser('click', '.lv-side button[data-side="ref"]');
     await waitFor(`${visible(`${refPane} .lv-frame:not([hidden])`)} && !${visible(livePane)} && getComputedStyle(document.querySelector('${refPane} .lv-box')).opacity === '1'`);
     await browser('click', '.lv-side button[data-side="live"]');
