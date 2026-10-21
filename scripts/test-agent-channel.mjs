@@ -24,59 +24,33 @@
 // 知らせを押すとそのスレッドが開く、n で読んで飛ばしたファイルを後で開いても差分の札がその間の解決を映す、
 // 開く前にディスクで書き換わったファイルを開くと、札と会話パネルのスレッドの両方が古いコメントと示す。
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 
-const run = promisify(execFile);
+import { browserSession, visible } from './lib/browser.mjs';
+import { gitIn } from './lib/fixture.mjs';
+import { getJson, isolatedEnvironment, launchKemi, postJson, runKemi, stopKemi } from './lib/kemi.mjs';
+
 if (!process.argv[2]) {
   console.error('usage: node scripts/test-agent-channel.mjs <kemi-bin>');
   process.exit(2);
 }
 const binary = resolve(process.argv[2]);
 const session = `kemi-agent-${process.pid}`;
-const browser = async (...args) => {
-  const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { maxBuffer: 8 * 1024 * 1024 });
-  const result = JSON.parse(stdout);
-  assert.equal(result.success, true, JSON.stringify(result));
-  return result.data;
-};
-const evaluate = async (code) => (await browser('eval', '-b', Buffer.from(code).toString('base64'))).result;
-/** 待ちが尽きたら、ページの状態を添えて失敗にする。 */
-const waitFor = async (code) => {
-  try {
-    await browser('wait', '--fn', code);
-  } catch (error) {
-    const snapshot = await evaluate(`JSON.stringify({
+// 待ちが尽きたら、ページの状態を添えて失敗にする。
+const { browser, evaluate, waitFor, close } = browserSession(session, {
+  describe: `JSON.stringify({
       status: document.querySelector('#agent-status')?.dataset.kemiAgentState,
       conversation: document.querySelector('#conversation')?.dataset.open,
       thread: !document.querySelector('#cv-thread')?.hidden,
       replies: document.querySelectorAll('#cv-thread-body .cv-post').length,
       modal: document.querySelector('#modal-body')?.textContent,
-    })`).catch(() => 'no snapshot');
-    throw new Error(`wait failed for: ${code}\npage: ${snapshot}`, { cause: error });
-  }
-};
+    })`,
+});
 
 const LINES = (count) => Array.from({ length: count }, (_, i) => `line ${i + 1}\n`);
 const markdownMessage = 'Looking at it now.\n\n**変更点**\n\n- `example()` を更新\n- 安全に表示\n\n```js\nconst value = 1;\n```\n\n<script>window.__markdownExecuted = true</script>\n\n![sample](https://example.invalid/chat.png)\n\n[unsafe](javascript:alert(1))';
-
-/** 利用者の git の設定に左右されない git。 */
-function gitIn(dir) {
-  return (...args) => run('git', ['-C', dir, ...args], {
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: join(dir, '.git-test-global'),
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_AUTHOR_NAME: 'kemi',
-      GIT_AUTHOR_EMAIL: 'kemi@example.com',
-      GIT_COMMITTER_NAME: 'kemi',
-      GIT_COMMITTER_EMAIL: 'kemi@example.com',
-    },
-  });
-}
 
 /** worktree の変更。a.txt の 3 行目・60 行目・100 行目と、コメントの無い b.txt の 1 行目を書き換える。 */
 async function makeFixture() {
@@ -113,61 +87,16 @@ async function makeRangeFixture() {
   return { dir, from, git };
 }
 
-function environment(state) {
-  return { ...process.env, XDG_STATE_HOME: state, HOME: join(state, 'home'), LOCALAPPDATA: join(state, 'localappdata') };
-}
-
-async function startKemi(dir, state, source = ['--worktree']) {
-  const child = spawn(binary, [...source, '--port', '0', '--no-open'], {
-    cwd: dir,
-    env: environment(state),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const started = await new Promise((resolve, reject) => {
-    child.stderr.on('data', () => {
-      const url = stderr.match(/^kemi: (http:\/\/\S+)/m);
-      const review = stderr.match(/^kemi: review (\S+)/m);
-      if (url && review) resolve({ url: url[1], id: review[1] });
-    });
-    child.on('error', reject);
-    child.on('exit', (code) => reject(new Error(`kemi exited before serving (${code}): ${stderr}`)));
-  });
-  const exited = new Promise((resolve) => child.on('exit', (code) => resolve({ code, stdout })));
-  return { child, ...started, exited };
+/** kemi を起動し、URL と review の id がそろうのを待つ。 */
+function startKemi(dir, state, source = ['--worktree']) {
+  return launchKemi(binary, { cwd: dir, state, args: source, review: true });
 }
 
 /** `kemi wait` / `kemi reply` を走らせ、(終了コード, stdout, stderr) を返す。 */
 function agentCommand(dir, state, args, input = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { cwd: dir, env: environment(state), stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('exit', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input);
-  });
+  return runKemi(binary, args, { cwd: dir, env: isolatedEnvironment(state), input });
 }
 
-/** ページと同じオリジンから API を呼ぶ（画面を開く前のコメント）。 */
-async function post(url, path, body) {
-  const origin = new URL(url).origin;
-  const response = await fetch(new URL(path, url), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: origin },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  assert.equal(response.status, 200, `${path}: ${text}`);
-  return JSON.parse(text);
-}
-
-const shown = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e !== null && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none'; })()`;
 const statusIs = (status) => `document.querySelector('#agent-status').dataset.kemiAgentState === ${JSON.stringify(status)}`;
 const panelOpen = `document.querySelector('#conversation').dataset.open === 'true'`;
 const panelClosed = `document.querySelector('#conversation').dataset.open === 'false'`;
@@ -185,11 +114,11 @@ const fixture = await makeFixture();
 const state = await mkdtemp(join(tmpdir(), 'kemi-agent-state-'));
 const kemi = await startKemi(fixture, state);
 try {
-  const review = await (await fetch(new URL('api/review', kemi.url))).json();
+  const review = await getJson(kemi.url, 'api/review');
   const fileId = review.groups[0].files[0].id;
   // 3 行目と 100 行目にコメントを付けておく。どちらも渡さないまま submit まで残す。
-  await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 3, end_line: 3, body: '**rename this line**' });
-  await post(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 100, end_line: 100, body: 'and this one' });
+  await postJson(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 3, end_line: 3, body: '**rename this line**' });
+  await postJson(kemi.url, 'api/comment', { op: 'add', file_id: fileId, side: 'new', start_line: 100, end_line: 100, body: 'and this one' });
 
   // (1b) で使う、起動の api/review の応答を止める仕掛け。sessionStorage に印があるときの
   // 読み込みでだけ、最初の 1 回を、サーバが返した後にページへ渡すのを止める。
@@ -217,9 +146,9 @@ try {
   // 写す操作が出る（畳んだ帯でも）。会話パネルは畳んだ帯で始まり、差分の中の札を押すと開いてそのスレッドになる。
   await evaluate(`window.__kemiCopied = []; navigator.clipboard.writeText = async (text) => { window.__kemiCopied.push(text); }; true`);
   assert.equal(await evaluate(panelClosed), true);
-  assert.equal(await evaluate(`${shown('#rail-hand')} && document.querySelector('#rail-hand').disabled`), true, 'the folded rail shows Hand to agent, not pressable');
+  assert.equal(await evaluate(`${visible('#rail-hand')} && document.querySelector('#rail-hand').disabled`), true, 'the folded rail shows Hand to agent, not pressable');
   // 畳んだ帯でも、案内と写す操作はボタンのそばに出たまま（ポインタを乗せなくても）。
-  await waitFor(`${shown('#rail-hand-note')} && document.querySelector('#rail-hand-note .hand-command')?.textContent === ${JSON.stringify(`kemi wait ${kemi.id}`)}`);
+  await waitFor(`${visible('#rail-hand-note')} && document.querySelector('#rail-hand-note .hand-command')?.textContent === ${JSON.stringify(`kemi wait ${kemi.id}`)}`);
   await browser('click', '#rail-hand-note .hand-copy');
   await waitFor(`window.__kemiCopied.length === 1`);
   assert.deepEqual(JSON.parse(await evaluate(`JSON.stringify(window.__kemiCopied)`)), [`kemi wait ${kemi.id}`]);
@@ -227,12 +156,12 @@ try {
   await evaluate(`${chipC1}.click(); true`);
   await waitFor(`${panelOpen} && ${threadOpen('rename this line')}`);
   await waitFor(`document.querySelector('#cv-thread-body .cv-comment strong')?.textContent === 'rename this line'`);
-  assert.equal(await evaluate(shown('#agent-status')), true);
+  assert.equal(await evaluate(visible('#agent-status')), true);
   assert.equal(await evaluate(statusIs('not-connected')), true);
-  assert.equal(await evaluate(`${shown('#btn-hand')} && document.querySelector('#btn-hand').disabled`), true);
-  assert.equal(await evaluate(`${shown('#hand-note .hand-command')} && document.querySelector('#hand-note .hand-command').textContent`), `kemi wait ${kemi.id}`);
-  assert.equal(await evaluate(shown('#cv-reply-text')), true);
-  assert.equal(await evaluate(shown('#cv-thread-head .cv-resolve')), true);
+  assert.equal(await evaluate(`${visible('#btn-hand')} && document.querySelector('#btn-hand').disabled`), true);
+  assert.equal(await evaluate(`${visible('#hand-note .hand-command')} && document.querySelector('#hand-note .hand-command').textContent`), `kemi wait ${kemi.id}`);
+  assert.equal(await evaluate(visible('#cv-reply-text')), true);
+  assert.equal(await evaluate(visible('#cv-thread-head .cv-resolve')), true);
   // 解決すると札は解決済みの印つきで 1 行に縮み、取り消すと戻る。
   await browser('click', '#cv-thread-head .cv-resolve');
   await waitFor(`${chipC1}?.classList.contains('folded') && ${chipC1}.querySelector('.t-resolved-mark') !== null`);
@@ -240,7 +169,7 @@ try {
   await waitFor(`${chipC1} !== null && !${chipC1}.classList.contains('folded') && ${chipC1}.querySelector('.t-resolved-mark') === null`);
   await browser('click', '#cv-thread-head .cv-back');
   await waitFor(`!document.querySelector('#cv-list').hidden`);
-  assert.equal(await evaluate(shown('#cv-message')), true);
+  assert.equal(await evaluate(visible('#cv-message')), true);
   console.log('PASS kemi wait を呼ぶ前から返信・解決・会話パネルと未接続の状態が出て、「Hand to agent」は押せないまま案内とコマンドが出る。札を押すとパネルでスレッドが開き、解決できる');
 
   // (1a) 会話パネルの幅は左の縁を掴んで変えられ、開閉と幅は読み込み直しても残る。
@@ -274,7 +203,7 @@ try {
   await waitFor(`window.__kemiHeld === true`);
   const loadingWait = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '10']);
   for (;;) {
-    const current = await (await fetch(new URL('api/review', kemi.url))).json();
+    const current = await getJson(kemi.url, 'api/review');
     if (current.agent?.status === 'waiting') break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -286,7 +215,7 @@ try {
   await evaluate(`window.__kemiRelease(); true`);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
   await waitFor(statusIs('waiting'));
-  assert.equal(await evaluate(shown('#btn-hand')), true);
+  assert.equal(await evaluate(visible('#btn-hand')), true);
   await waitFor(`!document.querySelector('#btn-hand').disabled && document.querySelector('#hand-note').hidden`);
   await waitFor(`${panelOpen} && ${agentMessage('Looking at it now.')}`);
   await waitFor(`document.querySelector('#cv-items .cv-msg .part-markdown strong')?.textContent === '変更点'`);
@@ -327,11 +256,11 @@ try {
   // (2) kemi wait を待たせると待機中になり、渡すが出る。返った後は作業中。
   const waiting = agentCommand(fixture, state, ['wait', kemi.id, '--timeout', '2']);
   await waitFor(statusIs('waiting'));
-  assert.equal(await evaluate(shown('#btn-hand')), true);
+  assert.equal(await evaluate(visible('#btn-hand')), true);
   const waited = await waiting;
   assert.equal(waited.code, 3, `the wait should time out: ${JSON.stringify(waited)}`);
   await waitFor(statusIs('working'));
-  assert.equal(await evaluate(shown('#btn-hand')), true);
+  assert.equal(await evaluate(visible('#btn-hand')), true);
   console.log('PASS kemi wait を待たせると待機中、返った後は作業中に変わり、渡すが出る');
 
   // (3) 新着と追従。差分のスクロール位置はどの場合も変わらない（R-LIVE）。
@@ -355,9 +284,9 @@ try {
   await waitFor(`${chipC1}?.querySelector('.unread-mark') !== null && document.querySelector('#cv-unread').textContent === '2' && !document.querySelector('#cv-unread').hidden`);
   assert.equal(await evaluate(panelClosed), true, 'the panel must not open by itself');
   // 畳んだ帯からも、未渡しの件数つきで「Hand to agent」を押せる。
-  const { unhanded } = (await (await fetch(new URL('api/review', kemi.url))).json()).agent;
+  const { unhanded } = (await getJson(kemi.url, 'api/review')).agent;
   assert.ok(unhanded > 0);
-  assert.equal(await evaluate(shown('#rail-hand')), true);
+  assert.equal(await evaluate(visible('#rail-hand')), true);
   assert.equal(await evaluate(`document.querySelector('#rail-hand-count').textContent.trim()`), String(unhanded));
   assert.equal(await evaluate(`document.querySelector('#rail-hand').disabled`), false);
   await diffUnmoved();
@@ -450,9 +379,8 @@ try {
   assert.deepEqual(result.messages.map((message) => message.body), [markdownMessage, 'Both comments are addressed.', ...fillers, 'One more thing.']);
   console.log('PASS 未渡しを残して submit を押すと確認に件数が出て、submit の JSON にそのコメントが入る');
 } finally {
-  kemi.child.kill('SIGTERM');
-  await kemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(kemi, 'SIGTERM');
+  await close();
 }
 
 // (7) 履歴の書き換えで消えたコミットのスレッドは、会話パネルを開いたまま更新バッジで読み直しても、
@@ -463,13 +391,13 @@ const rangeKemi = await startKemi(range.dir, rangeState, ['--from', range.from])
 try {
   // コミットごとの単位は、最初の api/review の後に裏で作られる。
   for (;;) {
-    const current = await (await fetch(new URL('api/review', rangeKemi.url))).json();
+    const current = await getJson(rangeKemi.url, 'api/review');
     if (current.units?.find((unit) => unit.unit === 'commit')?.state === 'ready') break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  const commitReview = await (await fetch(new URL('api/review?unit=commit', rangeKemi.url))).json();
+  const commitReview = await getJson(rangeKemi.url, 'api/review?unit=commit');
   const second = commitReview.groups.find((group) => group.title === 'second');
-  await post(rangeKemi.url, 'api/comment', { op: 'add', file_id: second.files[0].id, side: 'new', start_line: 1, end_line: 1, body: 'about the second commit' });
+  await postJson(rangeKemi.url, 'api/comment', { op: 'add', file_id: second.files[0].id, side: 'new', start_line: 1, end_line: 1, body: 'about the second commit' });
   const card = `document.querySelector('#cv-items .cv-card[data-id="c1"]')`;
   const vanished = `${card}?.querySelector('.cv-unit.vanished') !== null`;
   await browser('open', rangeKemi.url);
@@ -489,9 +417,8 @@ try {
   assert.equal(await evaluate(`document.querySelector('#cv-thread-head .cv-go') === null`), true);
   console.log('PASS 消えたコミットのスレッドは、開いたまま読み直しても読み込み直しても「消えたコミット」と示される');
 } finally {
-  rangeKemi.child.kill('SIGTERM');
-  await rangeKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(rangeKemi, 'SIGTERM');
+  await close();
 }
 
 // (8) 「This file」で絞り込んだ一覧の上のほうを見ているまま別のファイルを選んでも、何も届いて
@@ -501,12 +428,12 @@ const fileFixture = await makeFixture();
 const fileState = await mkdtemp(join(tmpdir(), 'kemi-agent-file-state-'));
 const fileKemi = await startKemi(fileFixture, fileState);
 try {
-  const files = (await (await fetch(new URL('api/review', fileKemi.url))).json()).groups[0].files;
+  const files = (await getJson(fileKemi.url, 'api/review')).groups[0].files;
   const fileIdOf = (path) => files.find((file) => file.path === path).id;
   for (let index = 0; index < 20; index += 1) {
-    await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('a.txt'), side: 'new', start_line: 3, end_line: 3, body: `note ${index + 1}` });
+    await postJson(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('a.txt'), side: 'new', start_line: 3, end_line: 3, body: `note ${index + 1}` });
   }
-  await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 1, end_line: 1, body: 'about b' });
+  await postJson(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 1, end_line: 1, body: 'about b' });
   await browser('set', 'viewport', '1280', '800');
   await browser('open', fileKemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
@@ -525,7 +452,7 @@ try {
 
   // (9) まだ読んでいないファイルのスレッドを開いても、対象の行の前後が見える（R-VIEW）。
   // b.txt の 3 行目にスレッドを足して読み込み直し、a.txt を表示したまま一覧から開く。
-  await post(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 3, end_line: 3, body: 'about line 3 of b' });
+  await postJson(fileKemi.url, 'api/comment', { op: 'add', file_id: fileIdOf('b.txt'), side: 'new', start_line: 3, end_line: 3, body: 'about line 3 of b' });
   await browser('reload');
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelOpen}`);
   await selectFile('a.txt');
@@ -573,9 +500,8 @@ try {
   assert.equal(failedWaited.code, 3, `the wait should time out: ${JSON.stringify(failedWaited)}`);
   console.log('PASS 別のファイルを読めなかった後に描き直しても、届いた印は出ない');
 } finally {
-  fileKemi.child.kill('SIGTERM');
-  await fileKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(fileKemi, 'SIGTERM');
+  await close();
 }
 
 // (11) 渡した 1 回分の行と状態（R-AGENT-HAND、R-AGENT-STATE）。kemi wait が待っていない間に c1 を渡すと
@@ -587,10 +513,10 @@ const handFixture = await makeFixture();
 const handState = await mkdtemp(join(tmpdir(), 'kemi-agent-hand-state-'));
 const handKemi = await startKemi(handFixture, handState);
 try {
-  const handFile = (await (await fetch(new URL('api/review', handKemi.url))).json()).groups[0].files[0].id;
+  const handFile = (await getJson(handKemi.url, 'api/review')).groups[0].files[0].id;
   // API で足したコメントは開いている画面には届かない（コメントの増減は更新バッジに任せる）ので、読み込み直す。
   const addComment = async (line, body) => {
-    const comment = await post(handKemi.url, 'api/comment', { op: 'add', file_id: handFile, side: 'new', start_line: line, end_line: line, body });
+    const comment = await postJson(handKemi.url, 'api/comment', { op: 'add', file_id: handFile, side: 'new', start_line: line, end_line: line, body });
     await browser('reload');
     await waitFor(`${panelOpen} && document.querySelector('#cv-items .cv-card[data-id="${comment.id}"]') !== null`);
     return comment;
@@ -600,7 +526,7 @@ try {
   const lineOf = (id) => `(document.querySelector('#cv-items .cv-card[data-id="${id}"] [data-kemi-hand-line]')?.dataset.kemiHandLine ?? null)`;
   const endLine = `(() => { const last = document.querySelector('#cv-items > li:last-child'); return last && !last.querySelector('.cv-card, .cv-msg') ? last.querySelector('[data-kemi-hand-line]')?.dataset.kemiHandLine ?? null : null; })()`;
   const pressHand = async () => {
-    const button = `(${shown('#btn-hand')} ? document.querySelector('#btn-hand') : ${shown('#rail-hand')} ? document.querySelector('#rail-hand') : null)`;
+    const button = `(${visible('#btn-hand')} ? document.querySelector('#btn-hand') : ${visible('#rail-hand')} ? document.querySelector('#rail-hand') : null)`;
     await waitFor(`${button} !== null && !${button}.disabled`);
     await evaluate(`${button}.click(); true`);
   };
@@ -611,7 +537,7 @@ try {
   await waitFor(`${panelOpen} && ${statusIs('not-connected')}`);
   const first = waitOnce(30);
   await waitFor(statusIs('waiting'));
-  await post(handKemi.url, 'api/message', { body: 'starting' });
+  await postJson(handKemi.url, 'api/message', { body: 'starting' });
   await pressHand();
   assert.equal((await first).code, 0);
   await waitFor(statusIs('working'));
@@ -623,7 +549,7 @@ try {
   await pressHand();
   await waitFor(`${lineOf('c1')} === 'pending'`);
   await waitFor(`document.querySelector('#btn-hand').disabled && !document.querySelector('#hand-note').hidden`);
-  await post(handKemi.url, 'api/comment', { op: 'reply', id: 'c1', body: 'also the caller' });
+  await postJson(handKemi.url, 'api/comment', { op: 'reply', id: 'c1', body: 'also the caller' });
   await waitFor(`!document.querySelector('#btn-hand').disabled && document.querySelector('#hand-note').hidden`);
   console.log('PASS 渡した直後は「Hand to agent」が押せず渡すものが無いと出て、返信を 1 つ書くと押せる');
   await pressHand();
@@ -668,7 +594,7 @@ try {
   await reply([{ type: 'reply', comment_id: 'c4', body: 'done' }]);
   await waitFor(`${lineOf('c4')} === null`);
 
-  await post(handKemi.url, 'api/message', { body: 'one more thing' });
+  await postJson(handKemi.url, 'api/message', { body: 'one more thing' });
   await pressHand();
   await waitFor(`${endLine} === 'pending'`);
   const messages = waitOnce(30);
@@ -678,9 +604,8 @@ try {
   await waitFor(`${endLine} === null && ${agentMessage('noted')}`);
   console.log('PASS 発言だけを渡すと並びの末尾に行が出て、エージェントの発言で消える');
 } finally {
-  handKemi.child.kill('SIGTERM');
-  await handKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(handKemi, 'SIGTERM');
+  await close();
 }
 
 // (12) kemi wait を一度も呼ばずに起動したレビュー（R-AGENT-FLOW）: 「Hand to agent」は出ていて押せず、
@@ -689,13 +614,13 @@ const quietFixture = await makeFixture();
 const quietState = await mkdtemp(join(tmpdir(), 'kemi-agent-quiet-state-'));
 const quietKemi = await startKemi(quietFixture, quietState);
 try {
-  const quietFile = (await (await fetch(new URL('api/review', quietKemi.url))).json()).groups[0].files[0].id;
-  await post(quietKemi.url, 'api/comment', { op: 'add', file_id: quietFile, side: 'new', start_line: 3, end_line: 3, body: 'never handed' });
+  const quietFile = (await getJson(quietKemi.url, 'api/review')).groups[0].files[0].id;
+  await postJson(quietKemi.url, 'api/comment', { op: 'add', file_id: quietFile, side: 'new', start_line: 3, end_line: 3, body: 'never handed' });
   await browser('set', 'viewport', '1280', '800');
   await browser('open', quietKemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${statusIs('not-connected')}`);
-  const pressable = `(${shown('#rail-hand')} && !document.querySelector('#rail-hand').disabled) || (${shown('#btn-hand')} && !document.querySelector('#btn-hand').disabled)`;
-  assert.equal(await evaluate(`${shown('#rail-hand')} || ${shown('#btn-hand')}`), true, 'Hand to agent is shown');
+  const pressable = `(${visible('#rail-hand')} && !document.querySelector('#rail-hand').disabled) || (${visible('#btn-hand')} && !document.querySelector('#btn-hand').disabled)`;
+  assert.equal(await evaluate(`${visible('#rail-hand')} || ${visible('#btn-hand')}`), true, 'Hand to agent is shown');
   assert.equal(await evaluate(pressable), false, 'Hand to agent cannot be pressed');
   await browser('click', '#btn-approve');
   await waitFor(`!document.querySelector('#modal').hidden`);
@@ -706,9 +631,8 @@ try {
   assert.equal(JSON.parse(stdout).comments[0].body, 'never handed');
   console.log('PASS kemi wait を一度も呼ばないレビューでは「Hand to agent」が出ていて押せず、submit すると stdout に JSON が出て終わる');
 } finally {
-  quietKemi.child.kill('SIGTERM');
-  await quietKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(quietKemi, 'SIGTERM');
+  await close();
 }
 
 // (13) エージェントがつながれないレビュー（状態の置き場所が決まらず、review の行もエンドポイントも無い）でも、
@@ -716,31 +640,19 @@ try {
 const aloneFixture = await makeFixture();
 const aloneEnv = { ...process.env };
 for (const name of ['XDG_STATE_HOME', 'HOME', 'LOCALAPPDATA']) delete aloneEnv[name];
-const alone = spawn(binary, ['--worktree', '--port', '0', '--no-open'], { cwd: aloneFixture, env: aloneEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-let aloneStderr = '';
-alone.stdout.resume();
-const aloneUrl = await new Promise((resolve, reject) => {
-  alone.stderr.on('data', (chunk) => {
-    aloneStderr += chunk;
-    const url = aloneStderr.match(/^kemi: (http:\/\/\S+)/m);
-    if (url) resolve(url[1]);
-  });
-  alone.on('exit', (code) => reject(new Error(`kemi exited before serving (${code}): ${aloneStderr}`)));
-});
-const aloneExited = new Promise((resolve) => alone.on('exit', resolve));
+const alone = await launchKemi(binary, { cwd: aloneFixture, args: ['--worktree'], env: aloneEnv });
 try {
-  assert.equal(/^kemi: review /m.test(aloneStderr), false, 'no review line without a state location');
+  assert.equal(/^kemi: review /m.test(alone.stderr()), false, 'no review line without a state location');
   await browser('set', 'viewport', '1280', '800');
-  await browser('open', aloneUrl);
+  await browser('open', alone.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
-  await waitFor(`${shown('#rail-hand')} && document.querySelector('#rail-hand').disabled`);
-  await waitFor(shown('#rail-hand-note'));
+  await waitFor(`${visible('#rail-hand')} && document.querySelector('#rail-hand').disabled`);
+  await waitFor(visible('#rail-hand-note'));
   assert.equal(await evaluate(`document.querySelector('#rail-hand-note .hand-command') === null`), true, 'no command to copy');
   console.log('PASS エージェントがつながれないレビューでも「Hand to agent」は押せないまま出て、写すコマンドは無く、つながれないことを言う');
 } finally {
-  alone.kill('SIGTERM');
-  await aloneExited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(alone, 'SIGTERM');
+  await close();
 }
 
 // (14) 別のスレッドの新着（R-AGENT-HAND）: c1 を開いている間に kemi reply で c2 に返信を書くと、開いている
@@ -749,9 +661,9 @@ const newsFixture = await makeFixture();
 const newsState = await mkdtemp(join(tmpdir(), 'kemi-agent-news-state-'));
 const newsKemi = await startKemi(newsFixture, newsState);
 try {
-  const newsFile = (await (await fetch(new URL('api/review', newsKemi.url))).json()).groups[0].files[0].id;
-  await post(newsKemi.url, 'api/comment', { op: 'add', file_id: newsFile, side: 'new', start_line: 3, end_line: 3, body: 'first thread' });
-  await post(newsKemi.url, 'api/comment', { op: 'add', file_id: newsFile, side: 'new', start_line: 60, end_line: 60, body: 'second thread' });
+  const newsFile = (await getJson(newsKemi.url, 'api/review')).groups[0].files[0].id;
+  await postJson(newsKemi.url, 'api/comment', { op: 'add', file_id: newsFile, side: 'new', start_line: 3, end_line: 3, body: 'first thread' });
+  await postJson(newsKemi.url, 'api/comment', { op: 'add', file_id: newsFile, side: 'new', start_line: 60, end_line: 60, body: 'second thread' });
   await browser('set', 'viewport', '1280', '800');
   await browser('open', newsKemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0`);
@@ -759,21 +671,20 @@ try {
   await waitFor(`${panelOpen} && document.querySelector('#cv-items .cv-card[data-id="c1"]') !== null`);
   await browser('click', '#cv-items .cv-card[data-id="c1"]');
   await waitFor(threadOpen('first thread'));
-  assert.equal(await evaluate(shown('#cv-other-new')), false);
-  assert.equal(await evaluate(shown('#cv-head-unread')), false);
+  assert.equal(await evaluate(visible('#cv-other-new')), false);
+  assert.equal(await evaluate(visible('#cv-head-unread')), false);
   const written = await agentCommand(newsFixture, newsState, ['reply', newsKemi.id], JSON.stringify({ writes: [{ type: 'reply', comment_id: 'c2', body: 'about the second' }] }));
   assert.equal(written.code, 0, written.stderr);
-  await waitFor(`${shown('#cv-other-new')} && document.querySelector('#cv-other-new').dataset.id === 'c2' && document.querySelector('#cv-other-new').textContent.includes('second thread')`);
-  await waitFor(shown('#cv-head-unread'));
+  await waitFor(`${visible('#cv-other-new')} && document.querySelector('#cv-other-new').dataset.id === 'c2' && document.querySelector('#cv-other-new').textContent.includes('second thread')`);
+  await waitFor(visible('#cv-head-unread'));
   assert.equal(await evaluate(threadOpen('first thread')), true, 'the open thread stays open');
   console.log('PASS c1 を開いている間に c2 に返信が届くと、開いているスレッドの上に c2 の知らせと、パネルの見出しに新着の数が出る');
   await browser('click', '#cv-other-new');
-  await waitFor(`${threadOpen('second thread')} && !${shown('#cv-other-new')} && !${shown('#cv-head-unread')}`);
+  await waitFor(`${threadOpen('second thread')} && !${visible('#cv-other-new')} && !${visible('#cv-head-unread')}`);
   console.log('PASS 知らせを押すと c2 のスレッドが開く');
 } finally {
-  newsKemi.child.kill('SIGTERM');
-  await newsKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(newsKemi, 'SIGTERM');
+  await close();
 }
 
 // (15) 狭い画面の浮かぶ「Hand to agent」（R-AGENT-STATE、R-NARROW）: 幅 390px の worktree のレビューで、会話パネルの
@@ -782,16 +693,16 @@ const floatFixture = await makeFixture();
 const floatState = await mkdtemp(join(tmpdir(), 'kemi-agent-float-state-'));
 const floatKemi = await startKemi(floatFixture, floatState);
 try {
-  const floatFile = (await (await fetch(new URL('api/review', floatKemi.url))).json()).groups[0].files[0].id;
-  await post(floatKemi.url, 'api/comment', { op: 'add', file_id: floatFile, side: 'new', start_line: 3, end_line: 3, body: 'from the phone' });
+  const floatFile = (await getJson(floatKemi.url, 'api/review')).groups[0].files[0].id;
+  await postJson(floatKemi.url, 'api/comment', { op: 'add', file_id: floatFile, side: 'new', start_line: 3, end_line: 3, body: 'from the phone' });
   // 開く前に決めた幅は効かず、既定の幅（1280px 前後）で開くことがある。広い画面で開くと会話パネルが開いた
-  // ままになり、`shown` は CSS で隠れた祖先（浮かぶ帯）を見ないので、隠れたボタンを見えていると取り違える。そこで一度開いて
-  // 幅を決めてから開き直し、狭い画面で読み込んだ状態から始める。
+  // ままになり、狭い画面で読み込んだ状態にならない。そこで一度開いて幅を決めてから開き直し、狭い画面で読み込んだ
+  // 状態から始める。
   await browser('open', floatKemi.url);
   await browser('set', 'viewport', '390', '844');
   await browser('open', floatKemi.url);
   await waitFor(`document.querySelectorAll('[data-kemi-row]').length > 0 && ${panelClosed}`);
-  await waitFor(`matchMedia('(max-width: 719.98px)').matches && ${shown('#hand-float-bar')} && ${shown('#hand-float')} && document.querySelector('#hand-float').disabled`);
+  await waitFor(`matchMedia('(max-width: 719.98px)').matches && ${visible('#hand-float-bar')} && ${visible('#hand-float')} && document.querySelector('#hand-float').disabled`);
   const waiting = agentCommand(floatFixture, floatState, ['wait', floatKemi.id, '--timeout', '30']);
   await waitFor(`${statusIs('waiting')} && !document.querySelector('#hand-float').disabled`);
   const rect = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('#hand-float').getBoundingClientRect())`));
@@ -805,9 +716,8 @@ try {
   console.log('PASS 幅 390px で会話パネルのシートを閉じたまま、画面の下に浮かぶ「Hand to agent」で渡すと kemi wait がその 1 回分を返す');
 } finally {
   await browser('set', 'viewport', '1280', '800').catch(() => {});
-  floatKemi.child.kill('SIGTERM');
-  await floatKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(floatKemi, 'SIGTERM');
+  await close();
 }
 
 // (16) n で中身を読んで飛ばしたファイル（改行コードだけの変更で、止まる場所が無い）を、その後で開いても、
@@ -828,10 +738,10 @@ const skipFixture = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-'));
 const skipState = await mkdtemp(join(tmpdir(), 'kemi-agent-skip-state-'));
 const skipKemi = await startKemi(skipFixture, skipState);
 try {
-  const skipFiles = (await (await fetch(new URL('api/review', skipKemi.url))).json()).groups[0].files;
+  const skipFiles = (await getJson(skipKemi.url, 'api/review')).groups[0].files;
   const lineEndings = skipFiles.find((file) => file.path === 'b.txt');
   assert.ok(lineEndings.add + lineEndings.del > 0, 'b.txt counts as changed, so n reads it');
-  await post(skipKemi.url, 'api/comment', { op: 'add', file_id: lineEndings.id, side: 'new', start_line: null, end_line: null, body: 'whole b' });
+  await postJson(skipKemi.url, 'api/comment', { op: 'add', file_id: lineEndings.id, side: 'new', start_line: null, end_line: null, body: 'whole b' });
   await browser('set', 'viewport', '1280', '800');
   await browser('open', skipKemi.url);
   await waitFor(`document.querySelector('#file-header .path')?.textContent === 'a.txt' && document.querySelectorAll('[data-kemi-row]').length > 0`);
@@ -849,9 +759,8 @@ try {
   assert.equal(await evaluate(`${wholeChip}.querySelector('.t-resolved-mark') !== null`), true, `the chip shows the resolution: ${await evaluate(`${wholeChip}.textContent`)}`);
   console.log('PASS n で読んで飛ばしたファイルを後で開いても、差分の札はその間に解決した後の形で出る');
 } finally {
-  skipKemi.child.kill('SIGTERM');
-  await skipKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(skipKemi, 'SIGTERM');
+  await close();
 }
 
 // (17) まだ開いていないファイルが、ページを開いた後にディスクで書き換わり、コメントの側の内容が変わった。
@@ -861,14 +770,14 @@ const staleFixture = await makeFixture();
 const staleState = await mkdtemp(join(tmpdir(), 'kemi-agent-stale-state-'));
 const staleKemi = await startKemi(staleFixture, staleState);
 try {
-  const staleFiles = (await (await fetch(new URL('api/review', staleKemi.url))).json()).groups[0].files;
+  const staleFiles = (await getJson(staleKemi.url, 'api/review')).groups[0].files;
   const other = staleFiles.find((file) => file.path === 'b.txt');
-  await post(staleKemi.url, 'api/comment', { op: 'add', file_id: other.id, side: 'new', start_line: 1, end_line: 1, body: 'on the first line of b' });
+  await postJson(staleKemi.url, 'api/comment', { op: 'add', file_id: other.id, side: 'new', start_line: 1, end_line: 1, body: 'on the first line of b' });
   await browser('set', 'viewport', '1280', '800');
   await browser('open', staleKemi.url);
   await waitFor(`document.querySelector('#file-header .path')?.textContent === 'a.txt' && document.querySelectorAll('[data-kemi-row]').length > 0`);
   await writeFile(join(staleFixture, 'b.txt'), ['rewritten\n', ...LINES(5).slice(1)].join(''));
-  await waitFor(shown('#update-badge'));
+  await waitFor(visible('#update-badge'));
   await selectFile('b.txt');
   const staleChip = `document.querySelector('#diff-content .cchip[data-id="c1"]')`;
   await waitFor(`${staleChip} !== null`);
@@ -878,7 +787,6 @@ try {
   assert.equal(await evaluate(`document.querySelector('#cv-thread .t-outdated-mark') !== null`), true, 'the thread shows the comment as outdated');
   console.log('PASS 開く前にディスクで書き換わったファイルを開くと、札と会話パネルのスレッドの両方が古いコメントと示す');
 } finally {
-  staleKemi.child.kill('SIGTERM');
-  await staleKemi.exited;
-  await run('agent-browser', ['--session', session, 'close']).catch(() => {});
+  await stopKemi(staleKemi, 'SIGTERM');
+  await close();
 }
