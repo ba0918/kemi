@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kemi_core::domain::comment;
-use kemi_core::domain::submit::{RESULT_CONTRACT_VERSION, Verdict};
+use kemi_core::domain::submit::{RESULT_CONTRACT_VERSION, Verdict, result_explanation_versions};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -137,7 +137,10 @@ async fn build_submit_document(state: &Arc<AppState>, verdict: Verdict) -> Resul
     Ok(json!({
         "kemi": RESULT_CONTRACT_VERSION,
         "diff_display_version":session.state.display.as_ref().map(|d|&d.current),
-        "explanation":session.state.explanation,
+        "explanation": session.state.explanation.as_ref().map(|history| json!({
+            "current_revision": history.current_revision,
+            "versions": result_explanation_versions(history, &session.state.comments),
+        })),
         "title": review.title,
         "verdict": verdict.as_str(),
         "approval": review.approval.iter().map(|approval| json!({

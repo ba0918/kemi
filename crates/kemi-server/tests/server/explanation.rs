@@ -1103,3 +1103,109 @@ async fn old_code_bases_still_require_the_reference_unit_shape_of_this_review() 
     sections[0]["blocks"][0]["references"] = json!([{"type":"code","unit":"file","group_id":"all","path":"old.txt","side":"new","start_line":null,"end_line":null}]);
     assert_eq!(server.agent_post("explain",json!({"expected_revision":0,"base_display_version":old["diff_display_version"],"sections":sections})).await.status(),400);
 }
+
+/// 説明を版 `revision` に差し替える。本文はブロックの文字だけを変え、その節の並びを返す。
+async fn explain_revision(server: &AgentServer, revision: u64, body: &str) -> Value {
+    let context: Value = server
+        .agent_post("context", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let mut sections = explanation_sections();
+    sections[0]["blocks"][0]["part"]["body"] = json!(body);
+    let update = json!({"expected_revision":revision - 1,"base_display_version":context["diff_display_version"],"sections":sections});
+    assert_eq!(server.agent_post("explain", update).await.status(), 200);
+    sections
+}
+
+/// 説明（今の版 2）があっても、説明へのコメントが無い結果は説明の版を載せない。submit の結果と
+/// `kemi wait` の `submitted.result` は同じ文書（R-EXPLANATION-RESULT）。
+#[tokio::test]
+async fn a_result_without_explanation_comments_carries_the_current_revision_but_no_versions() {
+    let server = AgentServer::start().await;
+    explain_revision(&server, 1, "first").await;
+    explain_revision(&server, 2, "second").await;
+    server.page.add_comment_with_body(11, "question").await;
+    let waiting = {
+        let url = server.agent_url(&server.agent_token, "wait");
+        tokio::spawn(async move {
+            http()
+                .post(url)
+                .json(&json!({ "timeout_ms": null }))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        })
+    };
+    server.wait_until_status("waiting").await;
+
+    let response = server
+        .page
+        .post("api/submit", json!({"verdict": "changes_requested"}))
+        .await;
+
+    assert_eq!(response.status(), 200);
+    let answer = tokio::time::timeout(WAIT_LIMIT, waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    let submitted = answer["events"].as_array().unwrap().last().unwrap().clone();
+    let expected = json!({"current_revision": 2, "versions": []});
+    assert_eq!(submitted["type"], "submitted");
+    assert_eq!(submitted["result"]["kemi"], 4);
+    assert_eq!(submitted["result"]["explanation"], expected);
+    let result = server.page.finish().await;
+    assert_eq!(result["comments"][0]["target_type"], "file");
+    assert_eq!(result["explanation"], expected);
+}
+
+/// 版 1 のブロックへの説明コメントがあれば、保持中の版を昇順で全部載せる。submit の前に
+/// そのコメントを消せば、説明へのコメントが無い結果として版を載せない。
+#[tokio::test]
+async fn an_explanation_comment_carries_every_retained_version_until_it_is_deleted() {
+    for delete in [false, true] {
+        let server = AgentServer::start().await;
+        let first = explain_revision(&server, 1, "first").await;
+        let comment: Value = server
+            .page
+            .post(
+                "api/comment",
+                json!({"op":"add_explanation","explanation_revision":1,"block_id":"intent","body":"question"}),
+            )
+            .await
+            .json()
+            .await
+            .unwrap();
+        let second = explain_revision(&server, 2, "second").await;
+        if delete {
+            let deleted = server
+                .page
+                .post("api/comment", json!({"op":"delete","id":comment["id"]}))
+                .await;
+            assert_eq!(deleted.status(), 200);
+        }
+
+        let response = server
+            .page
+            .post("api/submit", json!({"verdict": "changes_requested"}))
+            .await;
+
+        assert_eq!(response.status(), 200);
+        let result = server.page.finish().await;
+        assert_eq!(result["explanation"]["current_revision"], 2, "{delete}");
+        let versions = result["explanation"]["versions"].as_array().unwrap();
+        if delete {
+            assert!(versions.is_empty(), "{versions:?}");
+        } else {
+            assert_eq!(versions.len(), 2);
+            assert_eq!(versions[0]["revision"], 1);
+            assert_eq!(versions[0]["sections"], first);
+            assert_eq!(versions[1]["revision"], 2);
+            assert_eq!(versions[1]["sections"], second);
+        }
+    }
+}

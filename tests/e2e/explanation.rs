@@ -1090,3 +1090,216 @@ fn initial_opposite_unit_references_refuse_wrong_group_path_side_and_unknown_lin
         }
     }
 }
+
+/// `kemi explain <id> --file` で、説明を `expected_revision` の次の版に差し替える。
+fn explain_with_cli(
+    workspace: &TempDir,
+    state: &TempDir,
+    id: &str,
+    expected_revision: u64,
+    sections: &serde_json::Value,
+) {
+    let context = run_with_state(&workspace.path, &["explain", id, "--context"], &state.path);
+    let context: serde_json::Value = serde_json::from_slice(&context.stdout).unwrap();
+    workspace.write(
+        "update.json",
+        &update(
+            expected_revision,
+            &context["diff_display_version"],
+            sections,
+        ),
+    );
+    let answer = run_with_state(
+        &workspace.path,
+        &["explain", id, "--file", "update.json"],
+        &state.path,
+    );
+    assert_eq!(
+        answer.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&answer.stderr)
+    );
+}
+
+/// 説明（今の版 2）とファイルへのコメントだけのレビューは、submit の結果にも `kemi wait` の
+/// `submitted.result` にも説明の版を載せない（R-EXPLANATION-RESULT）。
+#[tokio::test]
+async fn a_result_and_its_wait_without_explanation_comments_carry_no_explanation_versions() {
+    let workspace = TempDir::new();
+    let state = TempDir::new();
+    workspace.write("manifest.json", MANIFEST);
+    workspace.write("explanation.json", &one_block_explanation());
+    let kemi = Kemi::spawn_with_state(
+        &workspace.path,
+        &[
+            "manifest.json",
+            "--explanation",
+            "explanation.json",
+            "--no-open",
+            "--port",
+            "0",
+        ],
+        &state.path,
+    );
+    let review = kemi.review_json().await;
+    let id = review["agent"]["review"].as_str().unwrap().to_string();
+    let second = one_section("Explanation", "second", serde_json::json!([]));
+    explain_with_cli(&workspace, &state, &id, 1, &second);
+    kemi.add_comment(2, "File question").await;
+    let waiting = spawn_wait(&workspace.path, &state.path, &["wait", &id]);
+    kemi.wait_agent_status("waiting").await;
+
+    kemi.submit("changes_requested").await;
+
+    let (code, waited, stderr) = finish_agent(waiting).await;
+    assert_eq!(code, Some(1), "{stderr}");
+    let (status, result) = kemi.wait();
+    assert_eq!(status.code(), Some(1));
+    let waited: serde_json::Value = serde_json::from_str(&waited).unwrap();
+    let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let expected = serde_json::json!({"current_revision": 2, "versions": []});
+    assert_eq!(waited["kemi"], 4);
+    let submitted = waited["events"].as_array().unwrap().last().unwrap();
+    assert_eq!(submitted["type"], "submitted");
+    assert_eq!(submitted["result"]["kemi"], 4);
+    assert_eq!(submitted["result"]["explanation"], expected);
+    assert_eq!(result["kemi"], 4);
+    assert_eq!(result["explanation"], expected);
+    assert_eq!(result["comments"][0]["target_type"], "file");
+}
+
+/// 版 1 のブロックへの説明コメントを付けてから版 2 にすると、結果は版 1 と版 2 を載せる。
+/// 別のレビューで、submit の前にそのコメントを消すと、説明の版を載せない。
+#[tokio::test]
+async fn an_explanation_comment_carries_both_versions_and_deleting_it_carries_none() {
+    for delete in [false, true] {
+        let workspace = TempDir::new();
+        let state = TempDir::new();
+        workspace.write("manifest.json", MANIFEST);
+        let first = one_section("Explanation", "first", serde_json::json!([]));
+        workspace.write("explanation.json", &document(&first));
+        let kemi = Kemi::spawn_with_state(
+            &workspace.path,
+            &[
+                "manifest.json",
+                "--explanation",
+                "explanation.json",
+                "--no-open",
+                "--port",
+                "0",
+            ],
+            &state.path,
+        );
+        let review = kemi.review_json().await;
+        let id = review["agent"]["review"].as_str().unwrap().to_string();
+        let comment: serde_json::Value = kemi
+            .post(
+                "api/comment",
+                serde_json::json!({"op":"add_explanation","explanation_revision":1,"block_id":"b","body":"question"}),
+            )
+            .await
+            .json()
+            .await
+            .unwrap();
+        let second = one_section("Explanation", "second", serde_json::json!([]));
+        explain_with_cli(&workspace, &state, &id, 1, &second);
+        if delete {
+            let deleted = kemi
+                .post(
+                    "api/comment",
+                    serde_json::json!({"op":"delete","id":comment["id"]}),
+                )
+                .await;
+            assert_eq!(deleted.status(), 200);
+        }
+
+        kemi.submit("approved").await;
+
+        let (status, result) = kemi.wait();
+        assert_eq!(status.code(), Some(0));
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(result["kemi"], 4);
+        assert_eq!(result["explanation"]["current_revision"], 2, "{delete}");
+        let versions = result["explanation"]["versions"].as_array().unwrap();
+        if delete {
+            assert!(versions.is_empty(), "{versions:?}");
+        } else {
+            assert_eq!(versions.len(), 2);
+            assert_eq!(versions[0]["revision"], 1);
+            assert_eq!(versions[0]["sections"], first);
+            assert_eq!(versions[1]["revision"], 2);
+            assert_eq!(versions[1]["sections"], second);
+        }
+    }
+}
+
+/// 結果 JSON の契約の版 3 の kemi が保存したセッションを復元して submit すると、結果は版 4 で、
+/// 説明へのコメントが無ければ説明の版を載せない。版 3 の kemi が書くセッションは、今の kemi と
+/// 同じセッション形式の版 4 で、ファイルに結果の契約の版を持たないので、今の保存で作る。
+#[cfg(unix)]
+#[tokio::test]
+async fn a_session_saved_by_a_version_three_kemi_submits_version_four_without_explanation_versions()
+{
+    use kemi_core::domain::display_version::DisplayVersions;
+    use kemi_core::domain::explanation::{ExplanationHistory, ExplanationVersion};
+    let workspace = TempDir::new();
+    let state = TempDir::new();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let version = |revision: u64, body: &str| ExplanationVersion {
+        revision,
+        base_display_version: format!("{id}:1"),
+        sections: serde_json::from_value(one_section("Explanation", body, serde_json::json!([])))
+            .unwrap(),
+    };
+    let saved = SessionState {
+        display: Some(DisplayVersions {
+            current: format!("{id}:1"),
+            frozen: Some(format!("{id}:1")),
+            issued: 1,
+        }),
+        explanation: Some(ExplanationHistory {
+            current_revision: 2,
+            versions: vec![version(1, "first"), version(2, "second")],
+        }),
+        comments: vec![session_comment()],
+        last_comment: 1,
+        ..SessionState::default()
+    };
+    let store = SessionStore::new(sessions_dir(&state.path));
+    let mut open = store
+        .create(session_info(
+            id,
+            SessionMode::Worktree,
+            "Working tree changes",
+            &workspace.path,
+        ))
+        .unwrap();
+    open.save_frozen_copy(
+        kemi_core::session::prepare_copy(session_copy()).unwrap(),
+        saved,
+    )
+    .unwrap();
+    drop(open);
+    let kemi = Kemi::spawn_with_state(
+        &workspace.path,
+        &["--resume", id, "--no-open", "--port", "0"],
+        &state.path,
+    );
+    assert_eq!(
+        kemi.review_json().await["explanation"]["current_revision"],
+        2
+    );
+
+    kemi.submit("approved").await;
+
+    let (status, result) = kemi.wait();
+    assert_eq!(status.code(), Some(0));
+    let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(result["kemi"], 4);
+    assert_eq!(
+        result["explanation"],
+        serde_json::json!({"current_revision": 2, "versions": []})
+    );
+    assert_eq!(result["comments"][0]["target_type"], "file");
+}
