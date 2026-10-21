@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { visible } from '../lib/browser.mjs';
+import { isVisible, visible } from '../lib/browser.mjs';
 import { temporaryDirectory } from '../lib/fixture.mjs';
 import { postJson } from '../lib/kemi.mjs';
 import { pixelAt } from '../lib/png.mjs';
@@ -18,6 +18,7 @@ import {
   startKemi,
   withLiveReview,
   handInThePage,
+  startWaiting,
   stop,
   shot,
   refPane,
@@ -28,6 +29,7 @@ import {
   waitForSnapshot,
   listedOption,
   waitForOption,
+  settled,
   clickInPane,
   chooseCompare,
   liveScale,
@@ -301,6 +303,60 @@ export async function handingFromTheExplanationView(repository) {
     }
     assert.deepEqual(against, { 'Handed 1': '0/0', Start: '0/0' }, 'snapshots taken in the explanation view show no change against the unchanged page');
     console.log('PASS 説明の見方で始めて取った開始時のスナップショットも、説明の見方から渡したときのスナップショットも、変えていないページと比べると変化が 0');
+  });
+}
+
+/**
+ * 隠したまま並べる間の舞台（R-PAGE-SNAPSHOT、R-NARROW）: 狭い画面で、重ねて透かすを選んだまま比べる相手の側を見ているとき、
+ * 説明の見方からもコードの見方からも、渡してスナップショットを取るために舞台を並べている間、舞台の中は何も見えない
+ * （比べる相手の見出しの帯も、説明やコードの上に出ない）。
+ */
+export async function measuringInTheNarrowReferenceSideShowsNothing(repository) {
+  // 説明のファイルは作業ツリーの外に置く（レビューの差分に入れない）。
+  const explanation = join(await temporaryDirectory('kemi-live-explanation-'), 'explanation.json');
+  await writeFile(explanation, JSON.stringify({ sections: [{ id: 'overview', title: 'Overview', blocks: [{ id: 'note', part: { type: 'text', body: 'Read the page before handing.' }, references: [] }] }] }));
+  await withLiveReview({ repository, page: 'changing.html', args: ['--explanation', explanation], viewportAfter: ['1280', '800'] }, async ({ kemi, state }) => {
+    await browser('set', 'viewport', '1280', '800');
+    await browser('open', kemi.url);
+    await snapshotTaken(kemi, startSnapshot);
+    await waitFor(`document.body.dataset.reviewView === 'explanation'`);
+    await browser('click', '.lv-view button[data-view="page"]');
+    await waitFor(`document.body.dataset.reviewView === 'page' && ${visible('#live-stage')}`);
+    // 見比べ方の切り替えは広い画面にしか無い。重ねて透かすを選んでから狭くし、比べる相手の側に切り替える。
+    await chooseCompare('overlay');
+    await browser('set', 'viewport', '390', '800');
+    await waitFor(`${visible('.lv-side')} && ${visible(livePane)} && !${visible(refPane)}`);
+    await settled('.lv-side button[data-side="ref"]');
+    await browser('click', '.lv-side button[data-side="ref"]');
+    await waitFor(`${visible(`${refPane} .lv-bar`)} && !${visible(livePane)}`);
+    // 並べ始めた時点で、舞台とその中の要素のうち、箱があって見えるものを書き留める。
+    await evaluate(`(() => {
+      window.__kemiShownWhileMeasuring = [];
+      const stage = document.querySelector('#live-stage');
+      new MutationObserver(() => {
+        if (stage.dataset.measuring === undefined) return;
+        const shown = [stage, ...stage.querySelectorAll('*')]
+          .filter((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible')
+          .map((element) => element.tagName.toLowerCase() + Array.from(element.classList, (name) => '.' + name).join(''));
+        window.__kemiShownWhileMeasuring.push({ view: document.body.dataset.reviewView, shown });
+      }).observe(stage, { attributes: true, attributeFilter: ['data-measuring'] });
+      return true;
+    })()`);
+    const hand = `['#hand-float', '#rail-hand', '#btn-hand'].map((id) => document.querySelector(id)).find((button) => ${isVisible('button')})`;
+    for (const [view, n] of [['explanation', 1], ['code', 2]]) {
+      await browser('click', `.lv-view button[data-review-view="${view}"]`);
+      await waitFor(`document.body.dataset.reviewView === '${view}' && !${visible('#live-stage')}`);
+      await postJson(kemi.url, 'api/message', { body: `please look from the ${view} view` });
+      const waiting = startWaiting(kemi, repository, state);
+      await waitFor(`${hand} !== undefined && !${hand}.disabled`);
+      await evaluate(`${hand}.click(); true`);
+      assert.equal((await waiting).code, 0, 'kemi wait returns what was handed');
+      await waitForOption(kemi, handedSnapshot(n));
+    }
+    const records = JSON.parse(await evaluate(`JSON.stringify(window.__kemiShownWhileMeasuring)`));
+    assert.deepEqual([...new Set(records.map((record) => record.view))], ['explanation', 'code'], `the stage is laid out while handing from each view: ${JSON.stringify(records)}`);
+    assert.deepEqual(records.filter((record) => record.shown.length > 0), [], 'nothing in the stage shows while it is laid out hidden');
+    console.log('PASS 狭い画面で重ねて透かすを選んだまま比べる相手の側を見ているとき、説明の見方やコードの見方から渡しても、並べている間の舞台の中は何も見えない');
   });
 }
 

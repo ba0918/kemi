@@ -106,6 +106,13 @@ body[data-review-view="explanation"] #main > #live-stage.lv-stage[data-measuring
   pointer-events: none;
 }
 
+/* 見えなさは継ぐだけでは足りない。中の要素が visible を明示すると（狭い画面で重ねて透かす比べる相手の見出しの帯）、
+   その要素だけが説明やコードの上に出る。 */
+body[data-live-view="code"] #main > #live-stage.lv-stage[data-measuring] *,
+body[data-review-view="explanation"] #main > #live-stage.lv-stage[data-measuring] * {
+  visibility: hidden !important;
+}
+
 body[data-live-view="page"] #tree,
 body:not([data-live-view="page"]) #page-tree {
   display: none;
