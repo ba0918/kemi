@@ -137,10 +137,10 @@ ${Array.from({ length: 10 }, (_, index) => `<div class="band" id="band-${index +
 };
 
 /** /changing.html の兄弟の並び。 */
-export const CHANGING_ITEMS = ['one', 'two', 'three', 'four'];
+const CHANGING_ITEMS = ['one', 'two', 'three', 'four'];
 
 /** /changing.html のボタンの背景色。 */
-export const CHANGING_BUTTON = 'rgb(49, 89, 214)';
+const CHANGING_BUTTON = 'rgb(49, 89, 214)';
 
 /**
  * /changing.html の要素の高さ（左上は 0, 0 から縦に並ぶ）。兄弟 1 つ、ボタン（幅も）、文、末尾の余白。
