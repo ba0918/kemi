@@ -12,7 +12,6 @@
 //   /framed.html  `X-Frame-Options: DENY` と `frame-ancestors 'none'` を返す
 //   /rich.html    shadow DOM・canvas・SVG・入力欄・onclick（押すと背景が黄色になる、左上 (0, 200) の
 //                 300×100 のボタン）を持つ
-//   /siblings.html  兄弟の並び。`?extra=1` で途中に 1 つ足す
 //   /resources.html  CSS・@import・style 属性の url()・<picture> の <source>・video の poster・SVG の
 //                 <image>・<input type=image> で、1 つずつ色の違う 80×80 の箱を描く。別のオリジンの
 //                 CSS は同じサーバを localhost で指す（中継から見て別のオリジン）。箱の位置と色は
@@ -41,7 +40,6 @@
 //   /many.html    要素の多いページ（差分の計算の時間を測るのに使う）。`?cards=<n>`（既定 1250）枚のカードを並べ、
 //                 1 枚は 4 要素（カード・見出し・文・ボタン）。many.css を書き換えると HMR の知らせで差し替える
 //   /big.html     HTML が 2.5 MB のページ（スナップショットの 2 MB の上限を超える）
-//   /__cookies    受け取った Cookie ヘッダを JSON で返す（中継が cookie を外すかの確かめ）
 //
 // startDevServer の返す `loads(path)` は、そのパスの HTML を返した回数（ページを読み込み直したかの確かめ）。
 import { createServer } from 'node:http';
@@ -383,14 +381,6 @@ function resourcesPage(cross) {
 `;
 }
 
-function siblingsPage(extra) {
-  const items = ['one', 'two', ...(extra ? ['inserted'] : []), 'three', 'four'];
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Siblings</title></head>
-<body><ul id="list">${items.map((item) => `<li class="item">${item}</li>`).join('')}</ul></body></html>
-`;
-}
-
 function referrerPage(image) {
   const src = image.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
   return `<!doctype html>
@@ -447,16 +437,6 @@ export async function startDevServer({ port = 0, dir } = {}) {
     if (url.pathname === '/__hmr.js') {
       response.writeHead(200, { 'Content-Type': 'text/javascript' });
       response.end(HMR_CLIENT);
-      return;
-    }
-    if (url.pathname === '/__cookies') {
-      response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ cookie: request.headers.cookie ?? null }));
-      return;
-    }
-    if (url.pathname === '/siblings.html') {
-      response.writeHead(200, { 'Content-Type': TYPES['.html'] });
-      response.end(siblingsPage(url.searchParams.get('extra') === '1'));
       return;
     }
     if (url.pathname === '/many.html') {
