@@ -1237,7 +1237,6 @@ async fn an_explanation_comment_carries_both_versions_and_deleting_it_carries_no
 /// 結果 JSON の契約の版 3 の kemi が保存したセッションを復元して submit すると、結果は版 4 で、
 /// 説明へのコメントが無ければ説明の版を載せない。版 3 の kemi が書くセッションは、今の kemi と
 /// 同じセッション形式の版 4 で、ファイルに結果の契約の版を持たないので、今の保存で作る。
-#[cfg(unix)]
 #[tokio::test]
 async fn a_session_saved_by_a_version_three_kemi_submits_version_four_without_explanation_versions()
 {
