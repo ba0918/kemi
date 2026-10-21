@@ -105,6 +105,9 @@ export async function launchKemi(binary, { cwd, args, state, env, review = false
   });
   let stdout = '';
   let stderr = '';
+  // 文字列で受ける。塊のまま文字列につなぐと、塊の境目で割れた多バイト文字が壊れる。
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   // 'close' は標準出力を読み終えてから来る（'exit' の時点では submit の JSON がまだ途中のことがある）。
@@ -167,6 +170,9 @@ export function runKemi(binary, args, { cwd, env, input = '' }) {
     const child = spawnKemi(binary, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    // 文字列で受ける（launchKemi と同じ理由）。
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
