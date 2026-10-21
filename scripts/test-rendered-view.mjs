@@ -174,6 +174,9 @@ try {
   // (1) 文書全体のブロックが仮想化も折りたたみも無しに載る。
   assert.deepEqual(await blocks(), EXPECTED_BLOCKS);
   assert.equal(await evaluate(`document.querySelectorAll('[data-kemi-row]').length`), 0);
+  // 消した段落（old:26-26）と足した段落（new:26-26）の背景。表の書き換えた行の色は、この Markdown の色と比べる。
+  const blockColor = (block) => evaluate(`getComputedStyle(document.querySelector('#rendered-doc [data-kemi-block="${block}"]')).backgroundColor`);
+  const markdownColors = { removed: await blockColor('old:26-26'), added: await blockColor('new:26-26') };
   console.log('PASS ブロックの数と値が文書全体と一致する');
 
   // (2) 10,001 行の Markdown では切り替えが無効で、理由がツールチップに出る。
@@ -225,9 +228,11 @@ try {
     ['old:3-3', 'TD:y|TD:two'],
     ['new:3-3', 'TD:y|TD:three'],
   ]);
-  // 書き換えた行の旧は削除色、新は追加色で、変わらない行の色とも違う（色そのものはテーマが決める）。
+  // 書き換えた行の旧は削除色、新は追加色（Markdown の消した段落・足した段落と同じ色）で、変わらない行の色とも違う
+  // （色そのものはテーマが決める）。
   const cellColor = (block) => evaluate(`getComputedStyle(document.querySelector('#rendered-doc tr[data-kemi-block="${block}"] > td')).backgroundColor`);
   const [kept, removed, added] = [await cellColor('new:2-2'), await cellColor('old:3-3'), await cellColor('new:3-3')];
+  assert.deepEqual({ removed, added }, markdownColors, 'the old row has the color of a deleted Markdown block and the new row that of an added one');
   assert.equal(new Set([kept, removed, added]).size, 3, `the old row, the new row and an unchanged row have different backgrounds: ${[kept, removed, added]}`);
   console.log('PASS 表は見出し行が <th> で、書き換えの行が上下に並ぶ');
 
