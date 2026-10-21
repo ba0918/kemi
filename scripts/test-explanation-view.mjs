@@ -292,6 +292,9 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.ok(await evaluate('originalTop>0'));
   await browser('find','role','button','click','--name','Code a.txt (new)','--exact');
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent==='Code' && e.getAttribute('aria-pressed')==='true')`);
+  // 説明へのコメントはファイルに属さない（第三の対象）ので、コードの見方のファイルの札にも行の札にも出ない。
+  await wait(`document.querySelector('#file-header')?.textContent.includes('a.txt') && Array.from(document.querySelectorAll('[data-kemi-row]')).some(e=>e.textContent.includes('new'))`);
+  assert.deepEqual(await evaluate(`['#floating-threads','#diff-area'].filter(s=>document.querySelector(s).textContent.includes('Question remains'))`),[],'a comment on the explanation is not shown on the file in Code');
   await update([{...sections[0],title:'Renamed heading'},sections[1]]);
   await wait(`Array.from(document.querySelectorAll('button')).some(e=>e.textContent.includes('Open explanation revision 2'))`);
    assert.equal(await evaluate(`(${moduleState}).explanation.reading.revision===1 && (${moduleState}).codeToken===window.originalCode`),true);
@@ -390,7 +393,7 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('find','role','button','click','--name','Code a.txt:2–3 (new)','--exact');
   await wait(`document.body.textContent.includes('requested lines are no longer present')`);
   assert.equal(await evaluate(`(${moduleState}).view==='explanation' && (${moduleState}).codeToken===${JSON.stringify(review.diff_display_version)}`),true);
-  console.log('PASS: initial Explanation, base details, old reading position, unchanged comments, isolated Part fallback, two-screen Code tokens, missed notification recovery and 390px reference return');
+  console.log('PASS: initial Explanation, base details, old reading position, unchanged comments, no explanation comment on the Code file, isolated Part fallback, two-screen Code tokens, missed notification recovery and 390px reference return');
   console.log('PASS: non-live process resume without the explanation input restores frozen Code, unchanged full quote and explanation base; unavailable/unknown/out-of-range references stay on the explanation with a reason');
 } finally {
   await close();
