@@ -59,15 +59,16 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
             locks.push((id.to_string(), modified));
         }
     }
-    // 動いていないレビューのつなぎ先は、強制終了で残ったもの。消したセッションのものも
-    // 含め、ロックの生死だけで片付ける（R-AGENT-LINK）。
-    for id in endpoints.iter().filter(|id| !is_locked(dir, id)) {
-        let _ = std::fs::remove_file(super::endpoint_path(dir, id));
+    // 動いていないレビューのつなぎ先と起動中の記録は、強制終了で残ったもの。消したセッションの
+    // ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。確かめてから消すまでの
+    // 間に同じ id の `--resume` がロックを取ると、書き直したばかりのものを消してしまうので、
+    // ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。残ったロックのファイルは、
+    // セッションの無いものを孤児のロックとして後で片付ける。
+    for id in &endpoints {
+        with_free_lock(dir, id, || {
+            let _ = std::fs::remove_file(super::endpoint_path(dir, id));
+        });
     }
-    // 起動中の記録も同じく、ロックの外れたものはセッションの有無に関わらず消す（R-PS-RECORD）。
-    // 確かめてから消すまでの間に同じ id の `--resume` がロックを取ると、書き直したばかりの
-    // 記録を消してしまうので、ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。
-    // 残ったロックのファイルは、セッションの無いものを孤児のロックとして後で片付ける。
     for id in &running {
         with_free_lock(dir, id, || {
             let _ = std::fs::remove_file(super::running_path(dir, id));
