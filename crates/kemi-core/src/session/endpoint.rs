@@ -60,15 +60,7 @@ mod tests {
 
         assert_eq!(read_endpoint(&scratch.dir(), id).unwrap(), Some(endpoint));
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(crate::session::endpoint_path(&scratch.dir(), id))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777;
-            assert_eq!(mode, 0o600);
-        }
+        crate::testutil::assert_owner_only(&crate::session::endpoint_path(&scratch.dir(), id));
         assert_eq!(
             read_endpoint(&scratch.dir(), "01HF7YAT00BBBBBBBBBBBBBBBB").unwrap(),
             None

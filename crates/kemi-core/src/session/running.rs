@@ -140,15 +140,7 @@ mod tests {
             Some(running_record())
         );
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(running_path(&scratch.dir(), ID))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777;
-            assert_eq!(mode, 0o600);
-        }
+        crate::testutil::assert_owner_only(&running_path(&scratch.dir(), ID));
     }
 
     #[test]
