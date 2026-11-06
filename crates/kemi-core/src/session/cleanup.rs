@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use super::is_valid_id;
 use super::lock::{SessionLock, is_locked, with_free_lock};
 use super::storage_io::list_files;
 use super::store::{files_path, payload_path, read_meta, session_path};
@@ -35,28 +36,36 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
     let mut locks: Vec<(String, Option<SystemTime>)> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let Some(name) = name.to_str() else {
+        let Some((id, kind)) = name.to_str().and_then(|name| name.rsplit_once('.')) else {
             continue;
         };
+        // id でない名前は kemi のファイルではないので、数えも消しもしない。
+        if !is_valid_id(id) {
+            continue;
+        }
         let metadata = entry.metadata().ok();
         let size = metadata.as_ref().map_or(0, std::fs::Metadata::len);
-        if let Some(id) = name.strip_suffix(".files") {
-            // `<id>.files/` は 1 段なので、中の一覧と大きさだけを読む。
-            let size = list_files(&entry.path())
-                .map(|listed| listed.iter().map(|(_, size)| size).sum())
-                .unwrap_or(0);
-            files.insert(id.to_string(), size);
-        } else if let Some(id) = name.strip_suffix(".session") {
-            sessions.insert(id.to_string(), size);
-        } else if let Some(id) = name.strip_suffix(".payload") {
-            payloads.insert(id.to_string(), size);
-        } else if let Some(id) = name.strip_suffix(".endpoint") {
-            endpoints.push(id.to_string());
-        } else if let Some(id) = name.strip_suffix(".running") {
-            running.push(id.to_string());
-        } else if let Some(id) = name.strip_suffix(".lock") {
-            let modified = metadata.and_then(|meta| meta.modified().ok());
-            locks.push((id.to_string(), modified));
+        match kind {
+            "files" => {
+                // `<id>.files/` は 1 段なので、中の一覧と大きさだけを読む。
+                let size = list_files(&entry.path())
+                    .map(|listed| listed.iter().map(|(_, size)| size).sum())
+                    .unwrap_or(0);
+                files.insert(id.to_string(), size);
+            }
+            "session" => {
+                sessions.insert(id.to_string(), size);
+            }
+            "payload" => {
+                payloads.insert(id.to_string(), size);
+            }
+            "endpoint" => endpoints.push(id.to_string()),
+            "running" => running.push(id.to_string()),
+            "lock" => {
+                let modified = metadata.and_then(|meta| meta.modified().ok());
+                locks.push((id.to_string(), modified));
+            }
+            _ => {}
         }
     }
     // 動いていないレビューのつなぎ先と起動中の記録は、強制終了で残ったもの。消したセッションの
