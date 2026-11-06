@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::listing::{Listing, Row};
 use crate::local_time;
-use crate::session::column;
+use crate::session::{align_columns, column};
 
 /// 1 行 1 要素の配列。記録が無い・読めないレビューは `id` 以外が `null`。
 pub(crate) fn json(rows: &[Row]) -> serde_json::Value {
@@ -65,26 +65,9 @@ fn table(rows: &[Row], any: bool, home: Option<&Path>) -> String {
         rows.iter()
             .map(|row| cells(row, header.len(), live, any, home)),
     );
-    let columns = lines[0].len();
-    let widths: Vec<usize> = (0..columns)
-        .map(|index| {
-            lines
-                .iter()
-                .map(|line| line[index].chars().count())
-                .max()
-                .unwrap_or(0)
-        })
-        .collect();
-    lines
-        .iter()
-        .map(|line| {
-            let padded: Vec<String> = line
-                .iter()
-                .zip(&widths)
-                .map(|(cell, width)| format!("{cell:<width$}"))
-                .collect();
-            format!("{}\n", padded.join("  ").trim_end())
-        })
+    align_columns(&lines)
+        .into_iter()
+        .map(|line| format!("{line}\n"))
         .collect()
 }
 

@@ -31,23 +31,7 @@ pub fn select_labels(sessions: &[SessionSummary]) -> Vec<String> {
             ]
         })
         .collect();
-    let widths: [usize; 5] = rows.iter().fold([0; 5], |mut widths, row| {
-        for (index, value) in row.iter().enumerate() {
-            widths[index] = widths[index].max(value.chars().count());
-        }
-        widths
-    });
-    rows.iter()
-        .map(|row| {
-            row.iter()
-                .enumerate()
-                .map(|(index, value)| format!("{:<width$}", value, width = widths[index]))
-                .collect::<Vec<_>>()
-                .join("  ")
-                .trim_end()
-                .to_string()
-        })
-        .collect()
+    align_columns(&rows)
 }
 
 /// 選択画面の列を画面に収めるための短縮。末尾に `...` を付ける。
@@ -58,6 +42,33 @@ fn shorten(value: &str, max: usize) -> String {
     let mut shortened: String = value.chars().take(max.saturating_sub(3)).collect();
     shortened.push_str("...");
     shortened
+}
+
+/// 列をそろえた行。各列を最も長い値の文字数まで空白で埋めて 2 つの空白でつなぎ、行末の
+/// 空白を落とす。選択画面の行と `kemi ps` の表が使う。
+pub(crate) fn align_columns<Row: AsRef<[String]>>(rows: &[Row]) -> Vec<String> {
+    let mut widths: Vec<usize> = Vec::new();
+    for row in rows {
+        for (index, value) in row.as_ref().iter().enumerate() {
+            let width = value.chars().count();
+            match widths.get_mut(index) {
+                Some(widest) => *widest = (*widest).max(width),
+                None => widths.push(width),
+            }
+        }
+    }
+    rows.iter()
+        .map(|row| {
+            row.as_ref()
+                .iter()
+                .zip(&widths)
+                .map(|(value, width)| format!("{value:<width$}"))
+                .collect::<Vec<_>>()
+                .join("  ")
+                .trim_end()
+                .to_string()
+        })
+        .collect()
 }
 
 /// 一覧の列の値。タブと改行は空白に置き換える（R-SESSION）。`kemi ps` の表も同じく置き換える。
