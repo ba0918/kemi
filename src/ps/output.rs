@@ -10,29 +10,19 @@ use crate::session::column;
 /// 1 行 1 要素の配列。記録が無い・読めないレビューは `id` 以外が `null`。
 pub(crate) fn json(rows: &[Row]) -> serde_json::Value {
     rows.iter()
-        .map(|row| match &row.record {
-            Some(record) => serde_json::json!({
+        .map(|row| {
+            let record = row.record.as_ref();
+            serde_json::json!({
                 "id": row.id,
-                "workspace": record.workspace.to_string_lossy(),
-                "mode": record.mode,
-                "label": record.label,
-                "started_at": local_time::format_utc_rfc3339(record.started_at),
-                "pid": record.pid,
-                "url": record.url,
-                "live_url": record.live_url,
-                "version": record.version,
-            }),
-            None => serde_json::json!({
-                "id": row.id,
-                "workspace": null,
-                "mode": null,
-                "label": null,
-                "started_at": null,
-                "pid": null,
-                "url": null,
-                "live_url": null,
-                "version": null,
-            }),
+                "workspace": record.map(|record| record.workspace.to_string_lossy()),
+                "mode": record.map(|record| record.mode),
+                "label": record.map(|record| &record.label),
+                "started_at": record.map(|record| local_time::format_utc_rfc3339(record.started_at)),
+                "pid": record.map(|record| record.pid),
+                "url": record.map(|record| &record.url),
+                "live_url": record.and_then(|record| record.live_url.as_ref()),
+                "version": record.map(|record| &record.version),
+            })
         })
         .collect()
 }
