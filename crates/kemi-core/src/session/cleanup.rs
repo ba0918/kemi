@@ -1,7 +1,7 @@
 //! セッションのディレクトリの掃除（R-SESSION）。上限を超えたセッションと、強制終了で
 //! 残った孤児のロック・写し・`<id>.files/`・つなぎ先・起動中の記録を片付ける。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -26,15 +26,41 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    // 振り分けは名前の接尾辞だけで行う。どのファイルが孤児かを決めるのに
-    // `<id>.session` の中身は読まない（R-SESSION）。
-    let mut sessions: BTreeMap<String, u64> = BTreeMap::new();
-    let mut payloads: BTreeMap<String, u64> = BTreeMap::new();
-    let mut files: BTreeMap<String, u64> = BTreeMap::new();
-    let mut endpoints: Vec<String> = Vec::new();
-    let mut running: Vec<String> = Vec::new();
-    let mut locks: Vec<(String, Option<SystemTime>)> = Vec::new();
-    for entry in entries.flatten() {
+    let contents = classify(entries.flatten());
+    remove_records_of_stopped_reviews(dir, &contents.records);
+    remove_orphans(dir, &contents, now);
+    remove_beyond_limits(dir, &contents, keep_count, keep_bytes);
+}
+
+/// セッションの置き場所のファイルを、id ごとに種類で振り分けたもの。
+#[derive(Default)]
+struct DirContents {
+    /// id と `<id>.session` の大きさ。
+    sessions: BTreeMap<String, u64>,
+    /// id と `<id>.payload` の大きさ。
+    payloads: BTreeMap<String, u64>,
+    /// id と `<id>.files/` の中のファイルの大きさの合計。
+    files: BTreeMap<String, u64>,
+    /// `<id>.endpoint` か `<id>.running` のある id。
+    records: BTreeSet<String>,
+    /// id と `<id>.lock` の更新時刻。
+    locks: Vec<(String, Option<SystemTime>)>,
+}
+
+impl DirContents {
+    /// 1 セッションの大きさ（R-SESSION）。`session` は `<id>.session` の大きさ。
+    fn size_of(&self, id: &str, session: u64) -> u64 {
+        session
+            + self.payloads.get(id).copied().unwrap_or(0)
+            + self.files.get(id).copied().unwrap_or(0)
+    }
+}
+
+/// 振り分けは名前の接尾辞だけで行う。どのファイルが孤児かを決めるのに `<id>.session` の
+/// 中身は読まない（R-SESSION）。
+fn classify(entries: impl IntoIterator<Item = std::fs::DirEntry>) -> DirContents {
+    let mut contents = DirContents::default();
+    for entry in entries {
         let name = entry.file_name();
         let Some((id, kind)) = name.to_str().and_then(|name| name.rsplit_once('.')) else {
             continue;
@@ -51,44 +77,51 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
                 let size = list_files(&entry.path())
                     .map(|listed| listed.iter().map(|(_, size)| size).sum())
                     .unwrap_or(0);
-                files.insert(id.to_string(), size);
+                contents.files.insert(id.to_string(), size);
             }
             "session" => {
-                sessions.insert(id.to_string(), size);
+                contents.sessions.insert(id.to_string(), size);
             }
             "payload" => {
-                payloads.insert(id.to_string(), size);
+                contents.payloads.insert(id.to_string(), size);
             }
-            "endpoint" => endpoints.push(id.to_string()),
-            "running" => running.push(id.to_string()),
+            "endpoint" | "running" => {
+                contents.records.insert(id.to_string());
+            }
             "lock" => {
                 let modified = metadata.and_then(|meta| meta.modified().ok());
-                locks.push((id.to_string(), modified));
+                contents.locks.push((id.to_string(), modified));
             }
             _ => {}
         }
     }
-    // 動いていないレビューのつなぎ先と起動中の記録は、強制終了で残ったもの。消したセッションの
-    // ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。確かめてから消すまでの
-    // 間に同じ id の `--resume` がロックを取ると、書き直したばかりのものを消してしまうので、
-    // ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。残ったロックのファイルは、
-    // セッションの無いものを孤児のロックとして後で片付ける。
-    for id in &endpoints {
+    contents
+}
+
+/// 動いていないレビューのつなぎ先と起動中の記録は、強制終了で残ったもの。消したセッションの
+/// ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。確かめてから消すまでの
+/// 間に同じ id の `--resume` がロックを取ると、書き直したばかりのものを消してしまうので、
+/// ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。残ったロックのファイルは、
+/// セッションの無いものを孤児のロックとして後で片付ける。
+fn remove_records_of_stopped_reviews(dir: &Path, ids: &BTreeSet<String>) {
+    for id in ids {
         with_free_lock(dir, id, || {
             let _ = std::fs::remove_file(super::endpoint_path(dir, id));
-        });
-    }
-    for id in &running {
-        with_free_lock(dir, id, || {
             let _ = std::fs::remove_file(super::running_path(dir, id));
         });
     }
-    // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
-    let orphan_locks = locks
-        .into_iter()
-        .filter(|(id, _)| !sessions.contains_key(id));
+}
+
+/// 孤児のロックと写しと `<id>.files/` は、セッションを消すかどうかと関係なく毎回片付ける。
+fn remove_orphans(dir: &Path, contents: &DirContents, now: SystemTime) {
+    let without_session = |id: &&String| !contents.sessions.contains_key(*id);
+    let orphan_locks = contents
+        .locks
+        .iter()
+        .filter(|(id, _)| without_session(&id))
+        .map(|(id, modified)| (id.as_str(), *modified));
     prune_orphan_locks(dir, orphan_locks, now, ORPHAN_LOCK_MIN_AGE);
-    for id in payloads.keys().filter(|id| !sessions.contains_key(*id)) {
+    for id in contents.payloads.keys().filter(without_session) {
         // 起動中のレビューは `<id>.payload` を書いてから `<id>.session` を書くので、
         // その間だけこの形になる。ロックを持っているものは消さない（R-SESSION）。
         if is_locked(dir, id) {
@@ -98,25 +131,31 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
     }
     // 強制終了で残った `<id>.files/` も同じ形で回収する。起動中の `--live` のレビューは
     // 会話が無い間も書くが、ロックを持っているので消さない（R-PAGE-SESSION）。
-    for id in files.keys().filter(|id| !sessions.contains_key(*id)) {
+    for id in contents.files.keys().filter(without_session) {
         if is_locked(dir, id) {
             continue;
         }
         let _ = std::fs::remove_dir_all(files_path(dir, id));
     }
-    let size_of = |id: &str, session: u64| {
-        session + payloads.get(id).copied().unwrap_or(0) + files.get(id).copied().unwrap_or(0)
-    };
-    let total: u64 = sessions.iter().map(|(id, size)| size_of(id, *size)).sum();
+}
+
+/// 上限を超えた分のセッションを消す。
+fn remove_beyond_limits(dir: &Path, contents: &DirContents, keep_count: usize, keep_bytes: u64) {
+    let total: u64 = contents
+        .sessions
+        .iter()
+        .map(|(id, size)| contents.size_of(id, *size))
+        .sum();
     // ロックを確かめる前の安い判定。ロック中を含めて上限に収まるなら、除いても収まる。
-    if sessions.len() <= keep_count && total <= keep_bytes {
+    if contents.sessions.len() <= keep_count && total <= keep_bytes {
         return;
     }
-    let entries = sessions
+    let entries = contents
+        .sessions
         .iter()
         .map(|(id, size)| CleanupEntry {
             id: id.clone(),
-            size: size_of(id, *size),
+            size: contents.size_of(id, *size),
             locked: is_locked(dir, id),
         })
         .collect();
@@ -175,9 +214,9 @@ fn sessions_to_remove(
 /// セッションのファイルが無いまま残ったロックファイル（id と更新時刻）を片付ける。始まった
 /// ばかりのセッションと競合しないよう、`min_age` より新しいものは触らない。ロック中のものは
 /// 他プロセスが使っているので残す。
-fn prune_orphan_locks(
+fn prune_orphan_locks<'a>(
     dir: &Path,
-    locks: impl IntoIterator<Item = (String, Option<SystemTime>)>,
+    locks: impl IntoIterator<Item = (&'a str, Option<SystemTime>)>,
     now: SystemTime,
     min_age: Duration,
 ) {
@@ -189,7 +228,7 @@ fn prune_orphan_locks(
             continue;
         }
         // acquire は既にあるファイルを開き直す。取れたら手放し、Drop が名前を外す。
-        if let Ok(lock) = SessionLock::acquire(dir, &id) {
+        if let Ok(lock) = SessionLock::acquire(dir, id) {
             drop(lock);
         }
     }

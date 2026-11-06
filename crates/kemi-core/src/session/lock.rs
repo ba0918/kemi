@@ -46,6 +46,7 @@ impl SessionLock {
     /// 開き直してから取りに行く。持ち主が手放すときは名前を外すので、前に開いたファイルで
     /// 取り直すと、誰も見ない古いファイルのロックを取ってしまう。
     fn try_acquire(dir: &Path, id: &str) -> Result<Option<Self>, SessionError> {
+        create_private_dir(dir)?;
         Ok(try_lock_file(dir, id)?.map(|(file, path)| SessionLock {
             file: Some(file),
             path,
@@ -56,7 +57,8 @@ impl SessionLock {
 /// ロックが外れていれば取り、持ったまま `action` を行ってから閉じる。取られていれば何もしない。
 /// [`SessionLock`] と違い、放すときにロックのファイルの名前を外さない。外してから閉じると、
 /// その前に同じパスを開いた `--resume` が名前の外れた古いファイルのロックを取り、次の
-/// `--resume` も新しいファイルで取れて、二重に復元される（R-SESSION）。
+/// `--resume` も新しいファイルで取れて、二重に復元される（R-SESSION）。掃除が一覧を読めた
+/// `dir` で使うので、ディレクトリは作らない（無ければ取れず、何もしない）。
 pub(super) fn with_free_lock(dir: &Path, id: &str, action: impl FnOnce()) {
     if let Ok(Some((file, _))) = try_lock_file(dir, id) {
         action();
@@ -65,7 +67,6 @@ pub(super) fn with_free_lock(dir: &Path, id: &str, action: impl FnOnce()) {
 }
 
 fn try_lock_file(dir: &Path, id: &str) -> Result<Option<(std::fs::File, PathBuf)>, SessionError> {
-    create_private_dir(dir)?;
     let path = dir.join(format!("{id}.lock"));
     let file = open_lock_file(&path).map_err(|source| SessionError::Io {
         path: path.clone(),
