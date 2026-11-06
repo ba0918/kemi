@@ -17,7 +17,7 @@ use super::cleanup::cleanup;
 use super::encoding;
 use super::files::{self, FILES_LIMIT, PageSnapshot};
 use super::format::MetaDto;
-use super::lock::{SessionLock, is_locked};
+use super::lock::{ACQUIRE_PATIENCE, SessionLock, is_locked};
 use super::storage_io::{
     create_private_dir, list_files, remove_dir_if_present, remove_if_present, write_atomic,
     write_private_file,
@@ -155,10 +155,11 @@ impl SessionStore {
         &self.dir
     }
 
-    /// 新しいセッションを開く。まだ何も書かず、ロックだけを取る。
+    /// 新しいセッションを開く。まだ何も書かず、ロックだけを取る。起動中かを確かめる側が
+    /// 一瞬ロックを持っていても、セッション無しで続けずに済むよう取り直す。
     pub fn create(&self, info: SessionInfo) -> Result<OpenSession, SessionError> {
         checked_id(&info.id)?;
-        let lock = SessionLock::acquire(&self.dir, &info.id)?;
+        let lock = SessionLock::acquire_within(&self.dir, &info.id, ACQUIRE_PATIENCE)?;
         Ok(OpenSession {
             dir: self.dir.clone(),
             info,
@@ -172,10 +173,11 @@ impl SessionStore {
         })
     }
 
-    /// 復元できるセッションを開く。ロックが取れない・読めない・写しが無いときは理由を返す。
+    /// 復元できるセッションを開く。ロックは 1 秒まで取り直し（R-SESSION）、取れない・読めない・
+    /// 写しが無いときは理由を返す。
     pub fn open(&self, id: &str) -> Result<OpenSession, SessionError> {
         checked_id(id)?;
-        let lock = SessionLock::acquire(&self.dir, id)?;
+        let lock = SessionLock::acquire_within(&self.dir, id, ACQUIRE_PATIENCE)?;
         let (info, state, copy) = self.read_parts(id)?;
         let restored = match &copy {
             // `--live` のセッションは写しを持たない（R-PAGE-SESSION）。
