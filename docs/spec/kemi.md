@@ -1,7 +1,8 @@
 # kemi 仕様
 
 - Status: 承認済み（2026-09-10）。UX 改訂 v2 承認済み（2026-09-11）。
-  セッション改訂 承認済み（2026-09-18）。ライブ改訂 承認済み（2026-10-08）
+  セッション改訂 承認済み（2026-09-18）。ライブ改訂 承認済み（2026-10-08）。
+  ps 改訂 承認済み（2026-11-07）
 - 用語の定義: `CONTEXT.md`
 - 関連する仕様: [エージェントとのやりとり](agent-channel.md)、[動いているページのレビュー](live.md)
 - 改訂 v2 を一文で: 差分を「読む・変更間を移る・見終えたと分かる・結果を確実に受け取る」
@@ -36,5 +37,6 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 | [render.md](render.md) | 描画表示 | R-RENDER | P15〜P21、D15 D16、R25〜R27 |
 | [narrow.md](narrow.md) | 狭い画面 | R-NARROW | P22〜P26 |
 | [output.md](output.md) | エージェントに返す出力（submit の契約、結果ファイル、digest） | R-SUBMIT、R-RESULT、R-DIGEST | P13、D4 D9、R14〜R16 R18 R19 |
-| [session.md](session.md) | セッションの保存と復元 | R-SESSION | P14、D12〜D14、R20〜R24 |
+| [session.md](session.md) | セッションの保存と復元 | R-SESSION | P14、D12〜D14、R20〜R24 R47 |
+| [ps.md](ps.md) | 起動中のレビューの一覧（`kemi ps`） | R-PS-RUNNING、R-PS-RECORD、R-PS-OUTPUT、R-PS-STOP | P27〜P30、D17 D18、R28〜R46 |
 | [build.md](build.md) | 構成、依存、検証の出所 | R-WS、R-DEPS、R-VERIFY | D5 D11 |
