@@ -109,28 +109,52 @@ fn deleting_a_session_removes_its_running_record() {
     assert!(!running_path(&scratch.dir(), &id).exists());
 }
 
-/// 復元できるセッションを置き、別のスレッドに `hold` の間だけそのロックを持たせる。持ち始めて
-/// から戻る。起動中かを確かめる側（ps、`--resume` の一覧、掃除）が一瞬ロックを取るのの代わり。
-fn hold_lock_of_a_resumable_session(
-    store: &SessionStore,
-    id: &str,
-    hold: std::time::Duration,
-) -> std::thread::JoinHandle<()> {
-    let mut open = store.create(info(id, 100)).unwrap();
-    open.save_frozen_copy(prepared(copy()), state_with_comment())
-        .unwrap();
-    drop(open);
-    let (held, holding) = std::sync::mpsc::channel();
-    let holder_store = store.clone();
-    let holder_id = id.to_string();
-    let holder = std::thread::spawn(move || {
-        let lock = SessionLock::acquire(holder_store.dir(), &holder_id).unwrap();
-        held.send(()).unwrap();
-        std::thread::sleep(hold);
-        drop(lock);
-    });
-    holding.recv().unwrap();
-    holder
+/// 別のスレッドが持つ、復元できるセッションのロック。起動中かを確かめる側（ps、`--resume` の
+/// 一覧、掃除）が一瞬ロックを取るのの代わり。
+struct HeldLock {
+    release: std::sync::mpsc::Sender<()>,
+    holder: std::thread::JoinHandle<()>,
+}
+
+impl HeldLock {
+    /// 復元できるセッションを置き、別のスレッドにそのロックを持たせる。持ち始めてから戻る。
+    /// スレッドは [`HeldLock::release`] で合図を受けるか、`at_most` が過ぎるまで持つ。
+    fn of_a_resumable_session(
+        store: &SessionStore,
+        id: &str,
+        at_most: Option<std::time::Duration>,
+    ) -> Self {
+        let mut open = store.create(info(id, 100)).unwrap();
+        open.save_frozen_copy(prepared(copy()), state_with_comment())
+            .unwrap();
+        drop(open);
+        let (held, holding) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let holder_store = store.clone();
+        let holder_id = id.to_string();
+        let holder = std::thread::spawn(move || {
+            let lock = SessionLock::acquire(holder_store.dir(), &holder_id).unwrap();
+            held.send(()).unwrap();
+            // テストが合図を送る前に落ちても、送り手が消えて受け取りが終わるので、ロックは残らない。
+            match at_most {
+                Some(hold) => {
+                    let _ = released.recv_timeout(hold);
+                }
+                None => {
+                    let _ = released.recv();
+                }
+            }
+            drop(lock);
+        });
+        holding.recv().unwrap();
+        HeldLock { release, holder }
+    }
+
+    /// 手放す合図を送り、手放し終えるまで待つ。
+    fn release(self) {
+        let _ = self.release.send(());
+        self.holder.join().unwrap();
+    }
 }
 
 #[test]
@@ -138,34 +162,35 @@ fn resume_lock_waits_out_a_brief_hold() {
     let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
-    let holder =
-        hold_lock_of_a_resumable_session(&store, id, std::time::Duration::from_millis(200));
+    let held =
+        HeldLock::of_a_resumable_session(&store, id, Some(std::time::Duration::from_millis(200)));
 
     let opened = store.open(id);
 
     assert!(opened.is_ok(), "{:?}", opened.err());
-    holder.join().unwrap();
+    held.release();
 }
 
 #[test]
 fn resume_lock_gives_up_after_a_second() {
+    use crate::session::lock::ACQUIRE_PATIENCE;
     let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
-    let hold = std::time::Duration::from_secs(2);
+    let held = HeldLock::of_a_resumable_session(&store, id, None);
     let started = std::time::Instant::now();
-    let holder = hold_lock_of_a_resumable_session(&store, id, hold);
 
     let opened = store.open(id);
 
+    // 持ち主は合図を受けるまで手放さないので、取れずに断った。
     assert!(
         matches!(opened, Err(SessionError::Locked { .. })),
         "{:?}",
         opened.err()
     );
-    // 持ち主が手放すまで待って取れたのではなく、手放す前に断った。
-    assert!(started.elapsed() < hold);
-    holder.join().unwrap();
+    // 一度で断ったのではなく、待つ長さの間は取り直した。
+    assert!(started.elapsed() >= ACQUIRE_PATIENCE);
+    held.release();
 }
 
 #[test]
@@ -173,13 +198,13 @@ fn new_session_lock_waits_out_a_brief_hold() {
     let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
-    let holder =
-        hold_lock_of_a_resumable_session(&store, id, std::time::Duration::from_millis(200));
+    let held =
+        HeldLock::of_a_resumable_session(&store, id, Some(std::time::Duration::from_millis(200)));
 
     let created = store.create(info(id, 100));
 
     assert!(created.is_ok(), "{:?}", created.err());
-    holder.join().unwrap();
+    held.release();
 }
 
 #[test]
