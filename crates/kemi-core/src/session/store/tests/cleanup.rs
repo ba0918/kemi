@@ -402,49 +402,40 @@ fn modified(path: &Path) -> SystemTime {
 }
 
 #[test]
-fn cleanup_removes_an_endpoint_left_by_a_review_that_is_gone() {
-    use crate::session::{Endpoint, endpoint_path, write_endpoint};
+fn cleanup_removes_the_endpoints_and_running_records_whose_lock_is_released() {
+    use crate::session::{
+        Endpoint, endpoint_path, running_path, write_endpoint, write_running_record,
+    };
     let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let endpoint = Endpoint {
         port: 1,
         token: "t".to_string(),
     };
-    let stale = "01HF7YAT00BBBBBBBBBBBBBBBB";
-    write_endpoint(&scratch.dir(), stale, &endpoint).unwrap();
-    let mut running = store
-        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
-        .unwrap();
-    write_endpoint(&scratch.dir(), running.id(), &endpoint).unwrap();
-
-    running.save_state_at(state_with_comment(), 200).unwrap();
-
-    assert!(!endpoint_path(&scratch.dir(), stale).exists());
-    assert!(endpoint_path(&scratch.dir(), running.id()).exists());
-}
-
-#[test]
-fn cleanup_removes_running_records_whose_lock_is_released() {
-    use crate::session::{running_path, write_running_record};
-    let scratch = Scratch::new("session");
-    let store = SessionStore::new(scratch.dir());
     let record = running_record();
-    // 強制終了で残った記録。片方はセッションが残り、片方はセッションが無い。
+    let publish = |id: &str| {
+        write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
+        write_running_record(&scratch.dir(), id, &record).unwrap();
+    };
+    // 強制終了で残ったつなぎ先と記録。片方はセッションが残り、片方はセッションが無い。
     let killed_with_session = "01HF7YAT00BBBBBBBBBBBBBBBB";
     let mut suspended = store.create(info(killed_with_session, 100)).unwrap();
     suspended.save_state_at(state_with_comment(), 100).unwrap();
     drop(suspended);
-    write_running_record(&scratch.dir(), killed_with_session, &record).unwrap();
+    publish(killed_with_session);
     let killed_without_session = "01HF7YAT00CCCCCCCCCCCCCCCC";
-    write_running_record(&scratch.dir(), killed_without_session, &record).unwrap();
+    publish(killed_without_session);
     let mut running = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    write_running_record(&scratch.dir(), running.id(), &record).unwrap();
+    publish(running.id());
 
     running.save_state_at(state_with_comment(), 200).unwrap();
 
-    assert!(!running_path(&scratch.dir(), killed_with_session).exists());
-    assert!(!running_path(&scratch.dir(), killed_without_session).exists());
+    for killed in [killed_with_session, killed_without_session] {
+        assert!(!endpoint_path(&scratch.dir(), killed).exists(), "{killed}");
+        assert!(!running_path(&scratch.dir(), killed).exists(), "{killed}");
+    }
+    assert!(endpoint_path(&scratch.dir(), running.id()).exists());
     assert!(running_path(&scratch.dir(), running.id()).exists());
 }

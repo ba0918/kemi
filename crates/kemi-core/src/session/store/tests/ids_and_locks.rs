@@ -56,28 +56,6 @@ fn session_read_rejects_an_id_that_is_not_a_ulid() {
 }
 
 #[test]
-fn endpoint_is_removed_with_the_session() {
-    use crate::session::{Endpoint, endpoint_path, write_endpoint};
-    let scratch = Scratch::new("session");
-    let store = SessionStore::new(scratch.dir());
-    let mut open = store
-        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
-        .unwrap();
-    open.save_frozen_copy(prepared(copy()), SessionState::default())
-        .unwrap();
-    let id = open.id().to_string();
-    let endpoint = Endpoint {
-        port: 1,
-        token: "t".to_string(),
-    };
-    write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
-
-    open.delete().unwrap();
-
-    assert!(!endpoint_path(&scratch.dir(), &id).exists());
-}
-
-#[test]
 fn a_running_session_is_told_apart_from_a_dead_one() {
     let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
@@ -91,8 +69,10 @@ fn a_running_session_is_told_apart_from_a_dead_one() {
 }
 
 #[test]
-fn deleting_a_session_removes_its_running_record() {
-    use crate::session::{running_path, write_running_record};
+fn deleting_a_session_removes_its_endpoint_and_running_record() {
+    use crate::session::{
+        Endpoint, endpoint_path, running_path, write_endpoint, write_running_record,
+    };
     let scratch = Scratch::new("session");
     let store = SessionStore::new(scratch.dir());
     let mut open = store
@@ -101,11 +81,16 @@ fn deleting_a_session_removes_its_running_record() {
     open.save_frozen_copy(prepared(copy()), SessionState::default())
         .unwrap();
     let id = open.id().to_string();
-    let record = running_record();
-    write_running_record(&scratch.dir(), &id, &record).unwrap();
+    let endpoint = Endpoint {
+        port: 1,
+        token: "t".to_string(),
+    };
+    write_endpoint(&scratch.dir(), &id, &endpoint).unwrap();
+    write_running_record(&scratch.dir(), &id, &running_record()).unwrap();
 
     open.delete().unwrap();
 
+    assert!(!endpoint_path(&scratch.dir(), &id).exists());
     assert!(!running_path(&scratch.dir(), &id).exists());
 }
 
