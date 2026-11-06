@@ -512,7 +512,8 @@ impl OpenSession {
         self.lifecycle = Lifecycle::Deleted;
         self.remove_session_and_copy()?;
         remove_dir_if_present(&files_path(&self.dir, &self.info.id))?;
-        remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))
+        remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))?;
+        remove_if_present(&super::running_path(&self.dir, &self.info.id))
     }
 
     /// スナップショットを `<id>.files/` に書く。書く前に 20 MB の規則で場所を空ける

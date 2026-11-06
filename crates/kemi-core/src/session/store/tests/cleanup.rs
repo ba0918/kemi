@@ -422,3 +422,29 @@ fn cleanup_removes_an_endpoint_left_by_a_review_that_is_gone() {
     assert!(!endpoint_path(&scratch.dir(), stale).exists());
     assert!(endpoint_path(&scratch.dir(), running.id()).exists());
 }
+
+#[test]
+fn cleanup_removes_running_records_whose_lock_is_released() {
+    use crate::session::{running_path, write_running_record};
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    let record = running_record();
+    // 強制終了で残った記録。片方はセッションが残り、片方はセッションが無い。
+    let killed_with_session = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    let mut suspended = store.create(info(killed_with_session, 100)).unwrap();
+    suspended.save_state_at(state_with_comment(), 100).unwrap();
+    drop(suspended);
+    write_running_record(&scratch.dir(), killed_with_session, &record).unwrap();
+    let killed_without_session = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    write_running_record(&scratch.dir(), killed_without_session, &record).unwrap();
+    let mut running = store
+        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .unwrap();
+    write_running_record(&scratch.dir(), running.id(), &record).unwrap();
+
+    running.save_state_at(state_with_comment(), 200).unwrap();
+
+    assert!(!running_path(&scratch.dir(), killed_with_session).exists());
+    assert!(!running_path(&scratch.dir(), killed_without_session).exists());
+    assert!(running_path(&scratch.dir(), running.id()).exists());
+}

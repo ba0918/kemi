@@ -89,3 +89,22 @@ fn a_running_session_is_told_apart_from_a_dead_one() {
     assert!(!store.is_running(id));
     assert!(!store.is_running("not-an-id"));
 }
+
+#[test]
+fn deleting_a_session_removes_its_running_record() {
+    use crate::session::{running_path, write_running_record};
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    let mut open = store
+        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
+    let id = open.id().to_string();
+    let record = running_record();
+    write_running_record(&scratch.dir(), &id, &record).unwrap();
+
+    open.delete().unwrap();
+
+    assert!(!running_path(&scratch.dir(), &id).exists());
+}

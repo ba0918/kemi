@@ -1,5 +1,5 @@
 //! セッションのディレクトリの掃除（R-SESSION）。上限を超えたセッションと、強制終了で
-//! 残った孤児のロック・写し・`<id>.files/`・つなぎ先を片付ける。
+//! 残った孤児のロック・写し・`<id>.files/`・つなぎ先・起動中の記録を片付ける。
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -31,6 +31,7 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
     let mut payloads: BTreeMap<String, u64> = BTreeMap::new();
     let mut files: BTreeMap<String, u64> = BTreeMap::new();
     let mut endpoints: Vec<String> = Vec::new();
+    let mut running: Vec<String> = Vec::new();
     let mut locks: Vec<(String, Option<SystemTime>)> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -51,6 +52,8 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
             payloads.insert(id.to_string(), size);
         } else if let Some(id) = name.strip_suffix(".endpoint") {
             endpoints.push(id.to_string());
+        } else if let Some(id) = name.strip_suffix(".running") {
+            running.push(id.to_string());
         } else if let Some(id) = name.strip_suffix(".lock") {
             let modified = metadata.and_then(|meta| meta.modified().ok());
             locks.push((id.to_string(), modified));
@@ -60,6 +63,10 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
     // 含め、ロックの生死だけで片付ける（R-AGENT-LINK）。
     for id in endpoints.iter().filter(|id| !is_locked(dir, id)) {
         let _ = std::fs::remove_file(super::endpoint_path(dir, id));
+    }
+    // 起動中の記録も同じく、ロックの外れたものはセッションの有無に関わらず消す（R-PS-RECORD）。
+    for id in running.iter().filter(|id| !is_locked(dir, id)) {
+        let _ = std::fs::remove_file(super::running_path(dir, id));
     }
     // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
     let orphan_locks = locks
