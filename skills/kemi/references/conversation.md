@@ -26,8 +26,9 @@ kemi ps --format json
 ```
 
 It prints a JSON array, one element per running review of the current repository (`--any` for
-every location; `[]` when none), and exits `0`. Without `--format json` it prints a table for
-people. Take the `id` whose `url` is the URL you shared, then `kemi wait <id>` as before. Keys:
+every location; `[]` when none), and exits `0`. It exits `2` with an empty stdout when kemi cannot
+tell where sessions are stored (no `HOME`, for example). Without `--format json` it prints a table
+for people. Take the `id` whose `url` is the URL you shared, then `kemi wait <id>` as before. Keys:
 
 | Key | Value |
 |---|---|
@@ -41,8 +42,10 @@ people. Take the `id` whose `url` is the URL you shared, then `kemi wait <id>` a
 | `live_url` | The relay URL of a `--live` review, else `null` |
 | `version` | The kemi version that started the server |
 
-Every key but `id` is `null` for a review started by a kemi older than `kemi ps`, or whose
-record could not be read (stderr then says why). A listed review may still have no
+Every key but `id` is `null` when the review has no readable record: it was started by a kemi
+older than `kemi ps`, it could not write the record, it is starting this very moment, or the
+record is broken (stderr then says why). Such a row has no workspace, so it is listed wherever
+`kemi ps` runs; never take it for your review by its position, only by a matching `url`. A listed review may still have no
 conversation; `kemi wait` then exits `2`. A review that could not keep a session is not listed.
 `kemi ps` never contacts the servers and never stops anything.
 
