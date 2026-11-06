@@ -31,6 +31,21 @@ pub(super) fn info(id: &str, updated: u128) -> SessionInfo {
     }
 }
 
+/// 起動中の記録（R-PS-RECORD）。値は読み書きの往復と片付けの確かめにだけ使う。
+pub(in crate::session) fn running_record() -> crate::session::RunningRecord {
+    crate::session::RunningRecord {
+        pid: 4321,
+        url: "http://127.0.0.1:41234/s/0123456789abcdef/".to_string(),
+        live_url: Some("http://127.0.0.1:41235/app".to_string()),
+        started_at: 1_700_000_000_123,
+        version: "0.4.1".to_string(),
+        mode: crate::session::RunningMode::Live,
+        label: "live http://127.0.0.1:5173/app".to_string(),
+        workspace: PathBuf::from("/tmp/workspace"),
+        workspace_key: "00000000000000aa".to_string(),
+    }
+}
+
 pub(in crate::session) fn comment() -> crate::domain::review::Comment {
     crate::domain::review::Comment {
         group_id: "all".to_string(),

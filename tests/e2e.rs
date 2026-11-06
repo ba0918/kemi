@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use kemi_core::domain::review::{Approval, FileEntry, Group, ReviewMeta, Side, Status, Suggestion};
 use kemi_core::session::{
-    FrozenUnit, SessionCopy, SessionInfo, SessionMode, SessionState, SessionStore,
+    FrozenUnit, OpenSession, RunningMode, RunningRecord, SessionCopy, SessionInfo, SessionMode,
+    SessionState, SessionStore,
 };
 use kemi_core::source::FileContent;
 
@@ -535,9 +536,15 @@ fn finish_child(mut child: StopOnDrop) -> (Option<i32>, String, String) {
 
 #[cfg(unix)]
 fn signal(child: &Child, signal: &str) {
+    signal_pid(u64::from(child.id()), signal);
+}
+
+/// `kill <signal> <pid>`。`kemi ps` が出した PID に送るのにも使う。
+#[cfg(unix)]
+fn signal_pid(pid: u64, signal: &str) {
     let status = Command::new("kill")
         .arg(signal)
-        .arg(child.id().to_string())
+        .arg(pid.to_string())
         .status()
         .unwrap();
     assert!(status.success(), "kill {signal} failed");
@@ -1087,6 +1094,66 @@ fn handed_comment(output: &std::process::Output) -> serde_json::Value {
     answer["events"][0]["comments"][0]["comment"].clone()
 }
 
+// ---- 起動中のレビューの一覧（ps.md） ----
+
+/// `kemi ps <args>` を終わるまで走らせる。
+fn run_ps(dir: &Path, state: &Path, args: &[&str]) -> std::process::Output {
+    let mut all = vec!["ps"];
+    all.extend_from_slice(args);
+    run_with_state(dir, &all, state)
+}
+
+/// `kemi ps --format json <extra>` の配列。終了コード 0 も確かめる。
+fn ps_json(dir: &Path, state: &Path, extra: &[&str]) -> Vec<serde_json::Value> {
+    let mut args = vec!["--format", "json"];
+    args.extend_from_slice(extra);
+    let output = run_ps(dir, state, &args);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+/// `workspace` で起動したことにする起動中の記録。識別は ps と同じく、git の外の場所そのもの
+/// （シンボリックリンクを解決したパス）から作る。
+fn crafted_record(workspace: &Path, started_at: u128) -> RunningRecord {
+    let workspace = std::fs::canonicalize(workspace).unwrap();
+    RunningRecord {
+        pid: 4242,
+        url: format!("http://127.0.0.1:1/s/{}/", "0".repeat(32)),
+        live_url: None,
+        started_at,
+        version: "9.9.9".to_string(),
+        mode: RunningMode::Worktree,
+        label: "worktree".to_string(),
+        workspace_key: kemi_core::result::workspace_key(&workspace),
+        workspace,
+    }
+}
+
+/// テストのプロセスがセッションのロックを持ち、起動中に見えるレビュー。`record` があれば
+/// 起動中の記録も書く。返したものを捨てるまで起動中。
+fn hold_running(state: &Path, id: &str, record: Option<&RunningRecord>) -> OpenSession {
+    let workspace = state.join("workspace");
+    let open = SessionStore::new(sessions_dir(state))
+        .create(session_info(id, SessionMode::Worktree, "", &workspace))
+        .unwrap();
+    if let Some(record) = record {
+        kemi_core::session::write_running_record(&endpoint_dir(state), id, record).unwrap();
+    }
+    open
+}
+
+/// `kemi ps --format json` の中の、`id` のレビューの行。
+fn ps_row<'a>(listed: &'a [serde_json::Value], id: &str) -> &'a serde_json::Value {
+    listed
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap_or_else(|| panic!("{id} is not listed: {listed:?}"))
+}
+
+fn running_record_path(state: &Path, id: &str) -> PathBuf {
+    kemi_core::session::running_path(&endpoint_dir(state), id)
+}
+
 // ---- --live とページへのコメント（live.md） ----
 
 /// 開発サーバの居ないループバックの URL。つながらなくても起動して待つ。
@@ -1291,6 +1358,9 @@ mod live_cases;
 
 #[path = "e2e/process.rs"]
 mod process_cases;
+
+#[path = "e2e/ps.rs"]
+mod ps_cases;
 
 #[path = "e2e/repository.rs"]
 mod repository_cases;

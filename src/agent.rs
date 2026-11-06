@@ -22,7 +22,8 @@ kemi: usage:
   kemi reply <id>                        write replies and messages read as JSON from stdin
   kemi explain <id> [--file <file>]     replace the explanation from JSON
   kemi explain <id> --context           print the current reference map without reading stdin
-  (to open a manifest named wait, reply or explain, write it as a path: kemi ./explain)";
+  kemi ps [--any] [--format text|json]  list running reviews (text by default; json for agents)
+  (to open a manifest named wait, reply, explain or ps, write it as a path: kemi ./explain)";
 
 /// 最初の引数で選ぶサブコマンド。
 pub enum Command {

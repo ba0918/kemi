@@ -89,3 +89,115 @@ fn a_running_session_is_told_apart_from_a_dead_one() {
     assert!(!store.is_running(id));
     assert!(!store.is_running("not-an-id"));
 }
+
+#[test]
+fn deleting_a_session_removes_its_running_record() {
+    use crate::session::{running_path, write_running_record};
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    let mut open = store
+        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .unwrap();
+    open.save_frozen_copy(prepared(copy()), SessionState::default())
+        .unwrap();
+    let id = open.id().to_string();
+    let record = running_record();
+    write_running_record(&scratch.dir(), &id, &record).unwrap();
+
+    open.delete().unwrap();
+
+    assert!(!running_path(&scratch.dir(), &id).exists());
+}
+
+/// 復元できるセッションを置き、別のスレッドに `hold` の間だけそのロックを持たせる。持ち始めて
+/// から戻る。起動中かを確かめる側（ps、`--resume` の一覧、掃除）が一瞬ロックを取るのの代わり。
+fn hold_lock_of_a_resumable_session(
+    store: &SessionStore,
+    id: &str,
+    hold: std::time::Duration,
+) -> std::thread::JoinHandle<()> {
+    let mut open = store.create(info(id, 100)).unwrap();
+    open.save_frozen_copy(prepared(copy()), state_with_comment())
+        .unwrap();
+    drop(open);
+    let (held, holding) = std::sync::mpsc::channel();
+    let holder_store = store.clone();
+    let holder_id = id.to_string();
+    let holder = std::thread::spawn(move || {
+        let lock = SessionLock::acquire(holder_store.dir(), &holder_id).unwrap();
+        held.send(()).unwrap();
+        std::thread::sleep(hold);
+        drop(lock);
+    });
+    holding.recv().unwrap();
+    holder
+}
+
+#[test]
+fn resume_lock_waits_out_a_brief_hold() {
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let holder =
+        hold_lock_of_a_resumable_session(&store, id, std::time::Duration::from_millis(200));
+
+    let opened = store.open(id);
+
+    assert!(opened.is_ok(), "{:?}", opened.err());
+    holder.join().unwrap();
+}
+
+#[test]
+fn resume_lock_gives_up_after_a_second() {
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let hold = std::time::Duration::from_secs(2);
+    let started = std::time::Instant::now();
+    let holder = hold_lock_of_a_resumable_session(&store, id, hold);
+
+    let opened = store.open(id);
+
+    assert!(
+        matches!(opened, Err(SessionError::Locked { .. })),
+        "{:?}",
+        opened.err()
+    );
+    // 持ち主が手放すまで待って取れたのではなく、手放す前に断った。
+    assert!(started.elapsed() < hold);
+    holder.join().unwrap();
+}
+
+#[test]
+fn new_session_lock_waits_out_a_brief_hold() {
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let holder =
+        hold_lock_of_a_resumable_session(&store, id, std::time::Duration::from_millis(200));
+
+    let created = store.create(info(id, 100));
+
+    assert!(created.is_ok(), "{:?}", created.err());
+    holder.join().unwrap();
+}
+
+#[test]
+fn running_ids_are_the_sessions_whose_lock_is_held() {
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    assert!(store.running_ids().unwrap().is_empty());
+    let running = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let suspended = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    let killed = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    let held = store.create(info(running, 100)).unwrap();
+    let mut open = store.create(info(suspended, 100)).unwrap();
+    open.save_state_at(state_with_comment(), 100).unwrap();
+    drop(open);
+    // 強制終了で残ったロックのファイルと、id でない名前のロック。
+    std::fs::write(scratch.dir().join(format!("{killed}.lock")), b"").unwrap();
+    std::fs::write(scratch.dir().join("not-an-id.lock"), b"").unwrap();
+
+    assert_eq!(store.running_ids().unwrap(), vec![running.to_string()]);
+    drop(held);
+}

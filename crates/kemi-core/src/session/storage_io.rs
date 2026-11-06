@@ -38,6 +38,46 @@ pub(super) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), 
     })
 }
 
+/// `value` を JSON にして [`write_atomic`] で書く（`<id>.endpoint` と `<id>.running`）。
+pub(super) fn write_json_atomic(
+    dir: &Path,
+    path: &Path,
+    value: &impl serde::Serialize,
+) -> Result<(), SessionError> {
+    let bytes = serde_json::to_vec(value).map_err(|error| SessionError::Encode {
+        reason: error.to_string(),
+    })?;
+    write_atomic(dir, path, &bytes)
+}
+
+/// JSON のファイルを読む。無ければ `None`、読み解けなければ `Corrupt`。
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "std::io::ErrorKind は non_exhaustive で、列挙しきれない"
+)]
+pub(super) fn read_json<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> Result<Option<T>, SessionError> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => match error.kind() {
+            std::io::ErrorKind::NotFound => return Ok(None),
+            _ => {
+                return Err(SessionError::Io {
+                    path: path.to_path_buf(),
+                    source: error,
+                });
+            }
+        },
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| SessionError::Corrupt {
+            path: path.to_path_buf(),
+            reason: error.to_string(),
+        })
+}
+
 pub(super) fn remove_dir_if_present(path: &Path) -> Result<(), SessionError> {
     remove_if_present_with(path, |path| std::fs::remove_dir_all(path))
 }

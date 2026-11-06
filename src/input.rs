@@ -36,10 +36,12 @@ pub(crate) fn live_target(value: &str, place: &LaunchPlace) -> Result<(LivePage,
 }
 
 /// 起動時の入力から、セッションに記録する情報を組み立てる。コミット範囲は完全な sha に
-/// 解決しておく（R-SESSION）。
+/// 解決しておく（R-SESSION）。`manifest_title` は manifest の題で、起動中の記録のモードの文字に
+/// 使う（起動後の最初の読み込みで同じ題に書き直される）。
 fn session_info(
     input: &InputMode<(LivePage, PathBuf)>,
     place: &LaunchPlace,
+    manifest_title: Option<String>,
 ) -> Result<SessionInfo, String> {
     let workspace = place.workspace();
     let mode = match input {
@@ -69,7 +71,7 @@ fn session_info(
         workspace_key: result::workspace_key(&workspace),
         workspace,
         mode,
-        title: String::new(),
+        title: manifest_title.unwrap_or_default(),
         total_files: 0,
     })
 }
@@ -79,6 +81,7 @@ fn session_info(
 pub(crate) fn open_session(
     input: &InputMode<(LivePage, PathBuf)>,
     place: &LaunchPlace,
+    manifest_title: Option<String>,
 ) -> Option<Arc<StoredSession>> {
     let Some(dir) = sessions_dir() else {
         warn(&format!(
@@ -87,7 +90,7 @@ pub(crate) fn open_session(
         ));
         return None;
     };
-    let info = match session_info(input, place) {
+    let info = match session_info(input, place, manifest_title) {
         Ok(info) => info,
         Err(message) => {
             warn(&format!("cannot start a session: {message}"));
@@ -103,18 +106,22 @@ pub(crate) fn open_session(
     }
 }
 
+/// 入力からソースを作る。manifest のときはその題も返す（`-` は標準入力を一度しか読めないので、
+/// 後から読み直さずに済むよう、ここで取る）。
 pub(crate) fn build_source(
     cli: &Cli,
     input: &InputMode<(LivePage, PathBuf)>,
     place: &LaunchPlace,
-) -> Result<Box<dyn ReviewSource>, String> {
+) -> Result<(Box<dyn ReviewSource>, Option<String>), String> {
     let git = |mode| Ok::<_, String>(GitSource::new(place.repo()?.to_path_buf(), mode));
-    Ok(match input {
+    let source: Box<dyn ReviewSource> = match input {
         InputMode::Live((page, root)) => Box::new(LiveSource::new(page, root)),
-        InputMode::Manifest(manifest) => Box::new(
-            ManifestSource::from_path(Path::new(manifest), &cli.base)
-                .map_err(|error| error.to_string())?,
-        ),
+        InputMode::Manifest(manifest) => {
+            let source = ManifestSource::from_path(Path::new(manifest), &cli.base)
+                .map_err(|error| error.to_string())?;
+            let title = source.title();
+            return Ok((Box::new(source), Some(title)));
+        }
         InputMode::Worktree => Box::new(git(GitMode::Worktree)?),
         InputMode::Staged => Box::new(git(GitMode::Staged)?),
         InputMode::Range { from, to, group_by } => Box::new(git(GitMode::Range {
@@ -122,7 +129,8 @@ pub(crate) fn build_source(
             to: to.clone(),
             group_by: *group_by,
         })?),
-    })
+    };
+    Ok((source, None))
 }
 
 pub(crate) fn with_focus(

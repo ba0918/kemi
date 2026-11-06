@@ -3,13 +3,15 @@
 use std::io::IsTerminal;
 use std::sync::Arc;
 
-use kemi_core::session::{PageSnapshot, SessionMode, SessionStore, SessionSummary};
+use kemi_core::session::{
+    PageSnapshot, SessionMode, SessionStore, SessionSummary, remove_running_record,
+};
 use kemi_core::source::{LiveSource, ReviewSource};
 use kemi_server::StoredSession;
 
 use crate::cli::Cli;
 use crate::report::{self, fail, warn};
-use crate::results::{results_unset_reason, sessions_dir};
+use crate::results::{endpoints_dir, results_unset_reason, sessions_dir};
 use crate::review::{LiveRun, run_review};
 use crate::session;
 
@@ -31,6 +33,15 @@ pub(crate) async fn run_resume(cli: &Cli) -> ! {
         Ok(stored) => stored,
         Err(error) => fail(&error.to_string()),
     };
+    // 前のプロセスの記録は、ロックを取った後、書き直す前に消す。書けなかったときに前の PID を
+    // 出さないため（R-PS-RECORD）。
+    if let Some(dir) = endpoints_dir()
+        && let Err(error) = remove_running_record(&dir, &id)
+    {
+        warn(&format!(
+            "cannot remove the previous running record: {error}"
+        ));
+    }
     // `--live` は写しを持たず、今の作業ツリーを読み直し、同じページにつなぎ直す
     // （R-PAGE-SESSION）。
     let info = stored.info();

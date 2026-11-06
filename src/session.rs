@@ -60,8 +60,8 @@ fn shorten(value: &str, max: usize) -> String {
     shortened
 }
 
-/// 一覧の列の値。タブと改行は空白に置き換える（R-SESSION）。
-fn column(value: &str) -> String {
+/// 一覧の列の値。タブと改行は空白に置き換える（R-SESSION）。`kemi ps` の表も同じく置き換える。
+pub(crate) fn column(value: &str) -> String {
     value
         .chars()
         .map(|character| match character {
