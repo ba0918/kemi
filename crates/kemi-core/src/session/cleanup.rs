@@ -65,8 +65,13 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
         let _ = std::fs::remove_file(super::endpoint_path(dir, id));
     }
     // 起動中の記録も同じく、ロックの外れたものはセッションの有無に関わらず消す（R-PS-RECORD）。
-    for id in running.iter().filter(|id| !is_locked(dir, id)) {
-        let _ = std::fs::remove_file(super::running_path(dir, id));
+    // 確かめてから消すまでの間に同じ id の `--resume` がロックを取ると、書き直したばかりの
+    // 記録を消してしまうので、ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。
+    for id in &running {
+        if let Ok(lock) = SessionLock::acquire(dir, id) {
+            let _ = std::fs::remove_file(super::running_path(dir, id));
+            drop(lock);
+        }
     }
     // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
     let orphan_locks = locks
