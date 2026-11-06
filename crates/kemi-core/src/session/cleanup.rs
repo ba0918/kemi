@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use super::lock::{SessionLock, is_locked};
+use super::lock::{SessionLock, is_locked, with_free_lock};
 use super::storage_io::list_files;
 use super::store::{files_path, payload_path, read_meta, session_path};
 
@@ -67,11 +67,11 @@ pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: Sy
     // 起動中の記録も同じく、ロックの外れたものはセッションの有無に関わらず消す（R-PS-RECORD）。
     // 確かめてから消すまでの間に同じ id の `--resume` がロックを取ると、書き直したばかりの
     // 記録を消してしまうので、ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。
+    // 残ったロックのファイルは、セッションの無いものを孤児のロックとして後で片付ける。
     for id in &running {
-        if let Ok(lock) = SessionLock::acquire(dir, id) {
+        with_free_lock(dir, id, || {
             let _ = std::fs::remove_file(super::running_path(dir, id));
-            drop(lock);
-        }
+        });
     }
     // 孤児のロックと写しは、セッションを消すかどうかと関係なく毎回片付ける。
     let orphan_locks = locks
