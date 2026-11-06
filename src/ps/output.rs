@@ -61,7 +61,10 @@ fn table(rows: &[Row], any: bool, home: Option<&Path>) -> String {
         header.push("WORKSPACE");
     }
     let mut lines: Vec<Vec<String>> = vec![header.iter().map(ToString::to_string).collect()];
-    lines.extend(rows.iter().map(|row| cells(row, live, any, home)));
+    lines.extend(
+        rows.iter()
+            .map(|row| cells(row, header.len(), live, any, home)),
+    );
     let columns = lines[0].len();
     let widths: Vec<usize> = (0..columns)
         .map(|index| {
@@ -85,9 +88,9 @@ fn table(rows: &[Row], any: bool, home: Option<&Path>) -> String {
         .collect()
 }
 
-/// 1 行の値。記録が無い・読めないレビューは `id` のほかを `-` にする。
-fn cells(row: &Row, live: bool, any: bool, home: Option<&Path>) -> Vec<String> {
-    let columns = 5 + usize::from(live) + usize::from(any);
+/// 1 行の値。`columns` は見出しの列の数。記録が無い・読めないレビューは `id` のほかを
+/// `-` にする。
+fn cells(row: &Row, columns: usize, live: bool, any: bool, home: Option<&Path>) -> Vec<String> {
     let Some(record) = &row.record else {
         let mut cells = vec![row.id.clone()];
         cells.resize(columns, "-".to_string());
