@@ -507,6 +507,31 @@ fn lines_after_the_url(kemi: &mut Kemi, count: usize) -> Vec<String> {
 
 /// 起動時の説明があっても、契約の行は kemi: <url> → 結果の保存先 → kemi: review →
 /// kemi: live の順に出る（live.md の R-PAGE-MODE）。
+/// 起動時の説明を保存してから URL を出す経路でも、URL を出す前に起動中の記録を書く（R-PS-RECORD）。
+#[test]
+fn initial_explanation_review_is_listed_by_ps_with_its_url() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    worktree_fixture(&dir);
+    dir.write("explanation.json", &one_block_explanation());
+    let mut kemi = Kemi::spawn_with_state(
+        &dir.path,
+        &[
+            "--worktree",
+            "--explanation",
+            "explanation.json",
+            "--no-open",
+        ],
+        &state.path,
+    );
+    let id = kemi.review_id();
+
+    let listed = ps_json(&dir.path, &state.path, &[]);
+
+    assert_eq!(ps_row(&listed, &id)["url"], kemi.url);
+    kemi.kill();
+}
+
 #[tokio::test]
 async fn initial_explanation_keeps_the_url_results_review_and_live_lines_in_order() {
     let dir = TempDir::new();

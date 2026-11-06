@@ -113,7 +113,8 @@ them within scope, answer with `kemi reply <id>` (JSON on stdin), then wait agai
 Keep waiting for the main process too. When `kemi wait` returns `submitted`, its `result` is
 the review result: take only the exit code from the main process, and read its stdout only in
 the cases [the loop](references/conversation.md#the-loop) names. Without the review line or a
-call to wait, the review is submit-only.
+call to wait, the review is submit-only. If you lose the id, `kemi ps --format json` lists the
+running reviews; read [recovering the id](references/conversation.md#recovering-a-lost-id).
 
 When the explanation's account, judgment points, or caveats become stale, read
 [the update procedure](references/explanation-update.md). An update is not a reply: answer the

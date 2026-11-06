@@ -16,6 +16,36 @@ The id is the session id. A review that could not keep a session (no place to st
 prints no such line, and the conversation is not available: the review works through the
 submit alone. A resumed review prints the same id again.
 
+### Recovering a lost id
+
+If the line is gone (the conversation was compacted or the stderr file was lost), list the
+running reviews instead of starting another one:
+
+```text
+kemi ps --format json
+```
+
+It prints a JSON array, one element per running review of the current repository (`--any` for
+every location; `[]` when none), and exits `0`. Without `--format json` it prints a table for
+people. Take the `id` whose `url` is the URL you shared, then `kemi wait <id>` as before. Keys:
+
+| Key | Value |
+|---|---|
+| `id` | The session id, the one `kemi wait`, `kemi reply`, and `kemi --resume` take |
+| `workspace` | The repository the review belongs to |
+| `mode` | `worktree`, `staged`, `range`, `manifest`, or `live` |
+| `label` | The mode as `kemi --resume` lists it (`from..to`, the manifest `title`, `live <URL>`) |
+| `started_at` | When this process started serving, RFC 3339 UTC |
+| `pid` | The serving kemi process |
+| `url` | The review page URL, the same as `kemi: <url>` |
+| `live_url` | The relay URL of a `--live` review, else `null` |
+| `version` | The kemi version that started the server |
+
+Every key but `id` is `null` for a review started by a kemi older than `kemi ps`, or whose
+record could not be read (stderr then says why). A listed review may still have no
+conversation; `kemi wait` then exits `2`. A review that could not keep a session is not listed.
+`kemi ps` never contacts the servers and never stops anything.
+
 ## Waiting for what the person hands over
 
 ```text

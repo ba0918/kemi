@@ -181,3 +181,23 @@ fn new_session_lock_waits_out_a_brief_hold() {
     assert!(created.is_ok(), "{:?}", created.err());
     holder.join().unwrap();
 }
+
+#[test]
+fn running_ids_are_the_sessions_whose_lock_is_held() {
+    let scratch = Scratch::new("session");
+    let store = SessionStore::new(scratch.dir());
+    assert!(store.running_ids().unwrap().is_empty());
+    let running = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let suspended = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    let killed = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    let held = store.create(info(running, 100)).unwrap();
+    let mut open = store.create(info(suspended, 100)).unwrap();
+    open.save_state_at(state_with_comment(), 100).unwrap();
+    drop(open);
+    // 強制終了で残ったロックのファイルと、id でない名前のロック。
+    std::fs::write(scratch.dir().join(format!("{killed}.lock")), b"").unwrap();
+    std::fs::write(scratch.dir().join("not-an-id.lock"), b"").unwrap();
+
+    assert_eq!(store.running_ids().unwrap(), vec![running.to_string()]);
+    drop(held);
+}

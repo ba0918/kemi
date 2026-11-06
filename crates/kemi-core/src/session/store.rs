@@ -299,6 +299,17 @@ impl SessionStore {
         checked_id(id).is_ok() && is_locked(&self.dir, id)
     }
 
+    /// ロックの取られているセッションの id（ps.md の R-PS-RUNNING）。`<id>.session` の有無は
+    /// 見ない（起動したばかりのレビューにはまだ無い）。置き場所がまだ無ければ空。
+    pub fn running_ids(&self) -> Result<Vec<String>, SessionError> {
+        let names = list_files(&self.dir)?;
+        Ok(names
+            .into_iter()
+            .filter_map(|(name, _)| Some(name.strip_suffix(".lock")?.to_string()))
+            .filter(|id| self.is_running(id))
+            .collect())
+    }
+
     fn path(&self, id: &str) -> PathBuf {
         session_path(&self.dir, id)
     }

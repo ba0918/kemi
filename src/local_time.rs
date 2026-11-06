@@ -1,4 +1,5 @@
-//! 一覧と選択画面に出すローカル時刻（R-SESSION）。`YYYY-MM-DD HH:MM`。
+//! 一覧と選択画面に出すローカル時刻（R-SESSION）。`YYYY-MM-DD HH:MM`。`kemi ps --format json` の
+//! 時刻だけは RFC 3339 の UTC（R-PS-OUTPUT）。
 //!
 //! 時刻の整形に新しい依存は足さない。64 bit の unix は `localtime_r`、Windows は
 //! `SystemTimeToTzSpecificLocalTime` を使い、それ以外の対象と、失敗したときは UTC で出す。
@@ -21,6 +22,18 @@ pub fn format_local(millis: u128) -> String {
             format_parts(year, month, day, hour, minute)
         }
     }
+}
+
+/// RFC 3339 の UTC の時刻をミリ秒まで（`2026-11-07T01:12:30.123Z`）。同じ秒に起動した
+/// レビューも見分けられるように、ミリ秒を落とさない。
+pub fn format_utc_rfc3339(millis: u128) -> String {
+    let seconds = (millis / 1000) as i64;
+    let (year, month, day, hour, minute) = utc_parts(seconds);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{:02}.{:03}Z",
+        seconds.rem_euclid(60),
+        millis % 1000
+    )
 }
 
 fn format_parts(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> String {
@@ -180,6 +193,16 @@ mod tests {
     #[test]
     fn time_is_padded_to_the_documented_shape() {
         assert_eq!(format_parts(2026, 1, 2, 3, 4), "2026-01-02 03:04");
+    }
+
+    #[test]
+    fn utc_rfc3339_keeps_the_milliseconds() {
+        // 2000-02-29T23:59:58.007Z
+        assert_eq!(
+            format_utc_rfc3339(951_868_798_007),
+            "2000-02-29T23:59:58.007Z"
+        );
+        assert_eq!(format_utc_rfc3339(0), "1970-01-01T00:00:00.000Z");
     }
 
     #[test]

@@ -169,6 +169,23 @@ the size limit. A live review reads the current working tree again.
 See the [resume reference](skills/kemi/references/resume.md) for storage limits
 and what is restored.
 
+To find a review that is still running, for example after losing its URL:
+
+```sh
+kemi ps                # running reviews of this repository: id, mode, start, PID, URL
+kemi ps --any          # running reviews anywhere
+kemi ps --format json  # the same list as JSON, for agents and tools
+```
+
+`kemi ps` never contacts the servers. To stop a leftover server, send its PID a
+signal. On Unix, `kill <pid>` (SIGTERM) suspends the review like Ctrl+C, and
+`kemi --resume <id>` continues it; `kill -9 <pid>` stops one that does not
+respond, and it can still be resumed from the last state kemi saved. On
+Windows, another process can only force it to stop, with `taskkill /F /PID <pid>`:
+no resume line is printed, but `kemi --resume <id>` works under the same
+conditions as after `kill -9`. A review stopped before its page was ever opened
+leaves nothing to resume.
+
 Submitted results are saved separately. To retrieve the latest result for the
 current repository:
 

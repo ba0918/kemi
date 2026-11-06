@@ -8,6 +8,7 @@ mod input;
 mod local_time;
 mod notice;
 mod place;
+mod ps;
 mod report;
 mod results;
 mod resume;
@@ -41,6 +42,7 @@ kemi: usage:
   kemi wait <id> [--timeout <seconds>]    wait for what the reviewer hands over (agent)
   kemi reply <id>                          write replies and messages from stdin JSON (agent)
   kemi explain <id> [--file <file> | --context]  replace an explanation or print its reference map
+  kemi ps [--any] [--format text|json]     list running reviews (text by default, unlike kemi wait)
 
 common flags:
   --focus <path>     focus layer JSON (relative to --base)
@@ -62,6 +64,22 @@ flags used with --result:
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // 最初の引数が ps ならサブコマンド。その名前の manifest は ./ps と書く（R-PS-OUTPUT）。
+    if args.first().map(String::as_str) == Some("ps") {
+        let parsed = match ps::parse(&args[1..]) {
+            Ok(parsed) => parsed,
+            Err(message) => {
+                warn(&message);
+                eprintln!("{}", agent::USAGE);
+                std::process::exit(report::ERROR);
+            }
+        };
+        let code =
+            tokio::task::spawn_blocking(move || ps::run(&parsed, sessions_dir(), endpoints_dir()))
+                .await
+                .unwrap_or_else(|error| fail(&format!("kemi ps stopped unexpectedly: {error}")));
+        std::process::exit(code);
+    }
     // 最初の引数が wait / reply / explain ならサブコマンド。その名前の manifest は ./explain と書く
     // （R-AGENT-CLI）。
     if let Some(name @ ("wait" | "reply" | "explain")) = args.first().map(String::as_str) {
@@ -131,11 +149,12 @@ async fn main() {
         Ok(input) => input,
         Err(message) => fail(&message),
     };
-    let source =
-        match build_source(&cli, &input, &place).and_then(|source| with_focus(source, &cli)) {
-            Ok(source) => source,
-            Err(message) => fail(&message),
-        };
+    let (source, manifest_title) = match build_source(&cli, &input, &place)
+        .and_then(|(source, title)| Ok((with_focus(source, &cli)?, title)))
+    {
+        Ok(built) => built,
+        Err(message) => fail(&message),
+    };
     let source: Arc<dyn ReviewSource> = Arc::from(source);
 
     if cli.digest {
@@ -154,7 +173,7 @@ async fn main() {
         }
     }
 
-    let stored_session = open_session(&input, &place);
+    let stored_session = open_session(&input, &place, manifest_title);
     let initial_explanation = cli.explanation.as_ref().map(|file| {
         let text = std::fs::read_to_string(file)
             .unwrap_or_else(|error| fail(&format!("cannot read the explanation: {error}")));

@@ -103,10 +103,7 @@ pub(crate) fn build_review(
     }
 
     let review = ReviewMeta {
-        title: manifest
-            .title
-            .clone()
-            .unwrap_or_else(|| "Review of changes".to_string()),
+        title: title_of(manifest),
         subtitle: manifest.subtitle.clone().unwrap_or_default(),
         meta: manifest.meta.clone(),
         groups,
@@ -121,6 +118,14 @@ pub(crate) fn build_review(
     };
 
     Ok((review, plan))
+}
+
+/// ページの題。manifest の `title`、無ければ既定の題。
+fn title_of(manifest: &Manifest) -> String {
+    manifest
+        .title
+        .clone()
+        .unwrap_or_else(|| "Review of changes".to_string())
 }
 
 fn build_diff(
@@ -268,6 +273,11 @@ impl ManifestSource {
         })
     }
 
+    /// ページの題。レビューを組み立てずに分かる（`review()` はファイルを読み、内部の状態も変える）。
+    pub fn title(&self) -> String {
+        title_of(&self.manifest)
+    }
+
     pub fn from_path(path: &Path, base: &Path) -> Result<Self, SourceError> {
         if path == Path::new("-") {
             return Self::from_reader(std::io::stdin().lock(), base);
@@ -401,6 +411,18 @@ mod tests {
             .map(|group| group.id.as_str())
             .collect();
         assert_eq!(ids, vec!["g1", "custom", "g3"]);
+    }
+
+    #[test]
+    fn manifest_title_is_known_without_reading_the_files() {
+        // 読めないファイルを指す diff があっても、題はレビューを組み立てずに分かる。
+        let json =
+            r#"{"title":"T","groups":[{"diffs":[{"path":"a.rs","new_path":"missing.rs"}]}]}"#;
+        let titled = ManifestSource::from_json(json, Path::new("/nonexistent")).unwrap();
+        let untitled = ManifestSource::from_json(r#"{"groups":[]}"#, Path::new(".")).unwrap();
+
+        assert_eq!(titled.title(), "T");
+        assert_eq!(untitled.title(), "Review of changes");
     }
 
     #[test]

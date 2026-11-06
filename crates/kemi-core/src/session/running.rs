@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::SessionError;
+use super::{SessionError, SessionMode};
 
 /// 起動中のレビュー 1 つの値。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +42,18 @@ pub enum RunningMode {
     Range,
     Manifest,
     Live,
+}
+
+impl RunningMode {
+    pub fn of(mode: &SessionMode) -> Self {
+        match mode {
+            SessionMode::Worktree => RunningMode::Worktree,
+            SessionMode::Staged => RunningMode::Staged,
+            SessionMode::Range { .. } => RunningMode::Range,
+            SessionMode::Manifest => RunningMode::Manifest,
+            SessionMode::Live { .. } => RunningMode::Live,
+        }
+    }
 }
 
 pub(crate) fn running_path(dir: &Path, id: &str) -> PathBuf {
@@ -79,6 +91,42 @@ mod tests {
     use crate::testutil::Scratch;
 
     const ID: &str = "01HF7YAT00AAAAAAAAAAAAAAAA";
+
+    #[test]
+    fn running_mode_names_the_kind_of_input() {
+        use crate::domain::live::LivePage;
+        use crate::session::{RunningMode, SessionMode};
+        let range = SessionMode::Range {
+            from: "main".to_string(),
+            to: "HEAD".to_string(),
+            from_sha: "a".repeat(40),
+            to_sha: "b".repeat(40),
+        };
+        let live = SessionMode::Live {
+            page: LivePage::Url("http://127.0.0.1:9/app".to_string()),
+            root: std::path::PathBuf::from("/tmp/workspace"),
+        };
+
+        assert_eq!(
+            [
+                SessionMode::Worktree,
+                SessionMode::Staged,
+                range,
+                SessionMode::Manifest,
+                live
+            ]
+            .iter()
+            .map(RunningMode::of)
+            .collect::<Vec<_>>(),
+            [
+                RunningMode::Worktree,
+                RunningMode::Staged,
+                RunningMode::Range,
+                RunningMode::Manifest,
+                RunningMode::Live
+            ]
+        );
+    }
 
     #[test]
     fn running_record_roundtrips_and_is_owner_only() {

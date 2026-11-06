@@ -1,5 +1,5 @@
 //! レビューの起動・サーブ・終わり方（R-SERVE、R-SUBMIT、R-SESSION、R-AGENT-CLI、
-//! R-PAGE-MODE、R-EXPLANATION-CLI）。
+//! R-PAGE-MODE、R-EXPLANATION-CLI、R-PS-RECORD）。
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -10,7 +10,10 @@ use std::sync::Arc;
 
 use kemi_core::domain::live::LivePage;
 use kemi_core::domain::submit::Verdict;
-use kemi_core::session::PageSnapshot;
+use kemi_core::session::{
+    PageSnapshot, RunningMode, RunningRecord, now_millis, remove_running_record,
+    write_running_record,
+};
 use kemi_core::source::ReviewSource;
 use kemi_server::{
     AgentParams, Asset, Assets, LiveParams, LiveTarget, ResultSink, ServeControl, ServeOutcome,
@@ -42,6 +45,61 @@ impl EndpointFile {
     fn remove(&self) {
         if let Err(error) = kemi_core::session::remove_endpoint(&self.dir, &self.id) {
             warn(&format!("cannot remove the agent endpoint: {error}"));
+        }
+    }
+}
+
+/// 書く `<id>.running`（R-PS-RECORD）。つなぎ先と同じく、どの終わり方でもロックを外す前に
+/// 明示して消す。書けなくても消せなくても、警告だけでレビューは続ける。
+struct RunningFile {
+    dir: PathBuf,
+    id: String,
+    record: RunningRecord,
+}
+
+impl RunningFile {
+    /// セッションのあるレビューの記録を組み立てる。エージェントの待ち受けの有無には
+    /// 結び付けない（待ち受けが立たないレビューも kemi ps に出す）。
+    fn prepare(
+        stored_session: Option<&StoredSession>,
+        url: &str,
+        live_url: Option<&str>,
+    ) -> Option<Self> {
+        let info = stored_session?.info();
+        let Some(dir) = endpoints_dir() else {
+            warn(&format!(
+                "cannot determine where to write the running record ({})",
+                results_unset_reason()
+            ));
+            return None;
+        };
+        let record = RunningRecord {
+            pid: std::process::id(),
+            url: url.to_string(),
+            live_url: live_url.map(str::to_string),
+            started_at: now_millis(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            mode: RunningMode::of(&info.mode),
+            label: info.mode.label(&info.title),
+            workspace: info.workspace,
+            workspace_key: info.workspace_key,
+        };
+        Some(RunningFile {
+            dir,
+            id: info.id,
+            record,
+        })
+    }
+
+    fn publish(&self) {
+        if let Err(error) = write_running_record(&self.dir, &self.id, &self.record) {
+            warn(&format!("cannot write the running record: {error}"));
+        }
+    }
+
+    fn remove(&self) {
+        if let Err(error) = remove_running_record(&self.dir, &self.id) {
+            warn(&format!("cannot remove the running record: {error}"));
         }
     }
 }
@@ -252,6 +310,7 @@ struct ReviewStartup {
     params: ServeParams,
     control: ServeControl,
     endpoint: Option<EndpointFile>,
+    running: Option<RunningFile>,
     announcement: Announcement,
 }
 
@@ -318,6 +377,7 @@ async fn prepare_review(
         },
         None => (None, None),
     };
+    let running = RunningFile::prepare(stored_session.map(Arc::as_ref), &url, live_url.as_deref());
     let announcement = Announcement {
         url,
         warning,
@@ -347,6 +407,7 @@ async fn prepare_review(
         params,
         control,
         endpoint,
+        running,
         announcement,
     }
 }
@@ -368,6 +429,7 @@ pub(crate) async fn run_review(
         params,
         control,
         endpoint,
+        running,
         announcement,
     } = prepare_review(
         cli,
@@ -378,12 +440,24 @@ pub(crate) async fn run_review(
         initial_explanation,
     )
     .await;
+    // 記録は URL を出す前に書く（R-PS-RECORD）。終わるときは、ロックを外す前に消す。
+    let publish_running = || {
+        if let Some(running) = &running {
+            running.publish();
+        }
+    };
+    let remove_running = || {
+        if let Some(running) = &running {
+            running.remove();
+        }
+    };
     let remove_endpoint = || {
         if let Some(endpoint) = &endpoint {
             endpoint.remove();
         }
     };
     if cli.explanation.is_none() {
+        publish_running();
         announcement.announce();
     }
     // 保留のとき待っている kemi wait に理由を返せるよう、serve は別のタスクで回し、
@@ -401,6 +475,7 @@ pub(crate) async fn run_review(
             () = interrupts.recv() => Some(Ending::Interrupted),
             () = control.ready() => match endpoint.as_ref().map(EndpointFile::publish).transpose() {
                 Ok(_) => {
+                    publish_running();
                     announcement.announce();
                     None
                 }
@@ -416,12 +491,16 @@ pub(crate) async fn run_review(
             biased;
             joined = &mut serving => match joined {
                 Ok(outcome) => Ending::Stopped(outcome),
-                Err(error) => fail(&format!("the server stopped unexpectedly: {error}")),
+                Err(error) => {
+                    remove_running();
+                    fail(&format!("the server stopped unexpectedly: {error}"))
+                }
             },
             () = interrupts.recv() => Ending::Interrupted,
         },
     };
     remove_endpoint();
+    remove_running();
 
     finish_review(ending, stored_session, &control, serving).await
 }
