@@ -18,8 +18,9 @@ use crate::place::LaunchPlace;
 use crate::report::{self, warn};
 use crate::results::results_unset_reason;
 
-/// 記録の無いレビューを確かめ直すまでの間。ほかのプロセス（掃除、`--resume` の一覧、別の
-/// ps）がロックを確かめる一瞬に当たると、保留中のセッションが起動中に見えるため。
+/// 起動中に見えたレビューを確かめ直すまでの間。ほかのプロセス（掃除、`--resume` の一覧、別の
+/// ps）がロックを確かめる一瞬に当たると、保留中のセッションや、強制終了で記録の残った
+/// レビューが起動中に見えるため。
 const RECHECK_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,9 +102,9 @@ pub(crate) fn run(args: &Args, sessions: Option<PathBuf>, records: Option<PathBu
 }
 
 /// 起動中のレビューの id と記録。記録の置き場所が決められないときは、どれも記録が無いものとして
-/// 扱う（書く側も書けずに警告して続けるので）。記録の無いものは少し置いて確かめ直し、そのときの
-/// 記録を読む。保留中のセッションは記録を消してからロックを外すので、記録のあるものは確かめ
-/// 直さない。
+/// 扱う（書く側も書けずに警告して続けるので）。ロックが取られていた id は、記録の有無に関わらず
+/// 少し置いて確かめ直し、まだ取られているものだけを、そのときの記録とともに返す。強制終了で
+/// 残った記録は、止まったレビューにもあるため。
 fn read_running(
     store: &SessionStore,
     records: Option<&Path>,
@@ -116,28 +117,16 @@ fn read_running(
     let ids = store
         .running_ids()
         .map_err(|error| format!("cannot list the running reviews: {error}"))?;
-    let first: Vec<(String, RecordRead)> = ids
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    std::thread::sleep(RECHECK_DELAY);
+    Ok(ids
         .into_iter()
+        .filter(|id| store.is_running(id))
         .map(|id| {
             let record = read(&id);
             (id, record)
-        })
-        .collect();
-    if first
-        .iter()
-        .all(|(_, record)| matches!(record, RecordRead::Found(_)))
-    {
-        return Ok(first);
-    }
-    std::thread::sleep(RECHECK_DELAY);
-    Ok(first
-        .into_iter()
-        .filter_map(|(id, record)| match record {
-            RecordRead::Found(_) => Some((id, record)),
-            RecordRead::Missing | RecordRead::Unreadable(_) => store.is_running(&id).then(|| {
-                let record = read(&id);
-                (id, record)
-            }),
         })
         .collect())
 }
