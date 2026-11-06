@@ -419,15 +419,16 @@ mod tests {
         let json =
             r#"{"title":"T","groups":[{"diffs":[{"path":"a.rs","new_path":"missing.rs"}]}]}"#;
         let titled = ManifestSource::from_json(json, Path::new("/nonexistent")).unwrap();
-        let untitled = ManifestSource::from_json(r#"{"groups":[]}"#, Path::new(".")).unwrap();
 
         assert_eq!(titled.title(), "T");
-        assert_eq!(untitled.title(), "Review of changes");
     }
 
     #[test]
     fn manifest_default_title_is_change_review() {
         let source = ManifestSource::from_json(r#"{"groups":[]}"#, Path::new(".")).unwrap();
+
+        // 題だけを引くときと、レビューを組み立てたときで同じ既定の題になる。
+        assert_eq!(source.title(), "Review of changes");
         assert_eq!(source.review().unwrap().title, "Review of changes");
     }
 
