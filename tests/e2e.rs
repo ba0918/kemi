@@ -1151,7 +1151,7 @@ fn ps_row<'a>(listed: &'a [serde_json::Value], id: &str) -> &'a serde_json::Valu
 }
 
 fn running_record_path(state: &Path, id: &str) -> PathBuf {
-    endpoint_dir(state).join(format!("{id}.running"))
+    kemi_core::session::running_path(&endpoint_dir(state), id)
 }
 
 // ---- --live とページへのコメント（live.md） ----

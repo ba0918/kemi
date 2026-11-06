@@ -92,11 +92,7 @@ fn ps_lists_a_review_without_a_record_and_warns_only_for_a_broken_one() {
     let _missing = hold_running(&state.path, RUNNING, None);
     let _broken = hold_running(&state.path, OTHER, None);
     std::fs::create_dir_all(endpoint_dir(&state.path)).unwrap();
-    std::fs::write(
-        endpoint_dir(&state.path).join(format!("{OTHER}.running")),
-        b"{broken",
-    )
-    .unwrap();
+    std::fs::write(running_record_path(&state.path, OTHER), b"{broken").unwrap();
 
     let output = run_ps(&here.path, &state.path, &["--format", "json"]);
 

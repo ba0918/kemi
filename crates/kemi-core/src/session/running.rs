@@ -56,7 +56,8 @@ impl RunningMode {
     }
 }
 
-pub(crate) fn running_path(dir: &Path, id: &str) -> PathBuf {
+/// `dir` の中の、`id` のレビューの起動中の記録の場所。
+pub fn running_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.running"))
 }
 

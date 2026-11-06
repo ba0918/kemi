@@ -27,9 +27,9 @@ pub(crate) use endpoint::endpoint_path;
 pub use endpoint::{Endpoint, read_endpoint, remove_endpoint, write_endpoint};
 pub use files::{FILES_LIMIT, PageSnapshot, SnapshotKind};
 pub use format::additional_saved_size;
-pub(crate) use running::running_path;
 pub use running::{
-    RunningMode, RunningRecord, read_running_record, remove_running_record, write_running_record,
+    RunningMode, RunningRecord, read_running_record, remove_running_record, running_path,
+    write_running_record,
 };
 
 pub use store::{FileWritten, FilesWrite, OpenSession, SavedSession, SessionError, SessionStore};
