@@ -492,6 +492,7 @@ pub(crate) async fn run_review(
             joined = &mut serving => match joined {
                 Ok(outcome) => Ending::Stopped(outcome),
                 Err(error) => {
+                    remove_endpoint();
                     remove_running();
                     fail(&format!("the server stopped unexpectedly: {error}"))
                 }
