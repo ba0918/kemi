@@ -88,8 +88,10 @@ pub(crate) fn run(args: &Args, sessions: Option<PathBuf>, records: Option<PathBu
             return report::ERROR;
         }
     };
-    let here = result::workspace_key(&LaunchPlace::at(PathBuf::from(".")).workspace());
-    let listing = assemble(running, &here, args.any);
+    // ps を打った場所の識別は git を走らせて決めるので、範囲で絞るときだけ求める。
+    let here = (!args.any && !running.is_empty())
+        .then(|| result::workspace_key(&LaunchPlace::at(PathBuf::from(".")).workspace()));
+    let listing = assemble(running, here.as_deref());
     for warning in &listing.warnings {
         warn(warning);
     }
