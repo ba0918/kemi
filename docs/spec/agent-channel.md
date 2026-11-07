@@ -394,7 +394,8 @@ explain/contextにも同じ保護を適用する。[R-EXPLANATION-CLI](explanati
   Windows では `XDG_STATE_HOME` の設定に関わらず `%LOCALAPPDATA%\kemi\sessions\` に置き、
   ユーザーごとのフォルダの既定の権限をもって持ち主だけとする。
 - `<id>.endpoint` は submit・保留・実行時エラーで終わるときに消す。強制終了で残ったものは、
-  そのセッションのロックが生きていなければ無いものとして扱う。
+  そのセッションのロックが生きていなければ無いものとして扱う。掃除が消すときの決まり（Windows で
+  置き場所がセッションと違うときを含む）は [R-SESSION](session.md#r-session-セッションの保存と復元)。
 - エージェント用の API を守るのはトークンの秘密: ページのトークンとは別の値で、
   `<id>.endpoint` にだけ書き、ページにも stderr にも出さない。加えて、接続元がループバックで
   `Origin` を持たない要求だけを受理する（ブラウザの `POST` を確実に断るため）。
