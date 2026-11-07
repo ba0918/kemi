@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use kemi_core::domain::live::{LiveError, LivePage, is_html, parse_live_url, served_path};
 use kemi_core::result;
-use kemi_core::session::{SessionInfo, SessionMode, SessionStore, now_millis};
+use kemi_core::session::{SessionInfo, SessionMode, now_millis};
 use kemi_core::source::git::{GitMode, GitSource};
 use kemi_core::source::manifest::ManifestSource;
 use kemi_core::source::{FocusSource, LiveSource, ReviewSource};
@@ -14,7 +14,7 @@ use kemi_server::StoredSession;
 use crate::cli::{Cli, InputMode};
 use crate::place::LaunchPlace;
 use crate::report::warn;
-use crate::results::{results_unset_reason, sessions_dir};
+use crate::results::{results_unset_reason, sessions_dir, tidying_session_store};
 
 /// `--live` の見る対象と配れる範囲の根を決める（R-PAGE-MODE）。根は起動したディレクトリが
 /// git の作業ツリーの中なら作業ツリーの根、外なら起動したディレクトリ。ファイルは
@@ -97,7 +97,7 @@ pub(crate) fn open_session(
             return None;
         }
     };
-    match StoredSession::start(&SessionStore::new(dir), info) {
+    match StoredSession::start(&tidying_session_store(dir), info) {
         Ok(session) => Some(Arc::new(session)),
         Err(error) => {
             warn(&format!("cannot start a session: {error}"));
