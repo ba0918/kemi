@@ -5,6 +5,15 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+### 修正
+
+- **Windows で `XDG_STATE_HOME` を設定していても、強制終了したレビューのつなぎ先と起動中の記録が片付く。** Windows では
+  この 2 つを `XDG_STATE_HOME` に関わらず `%LOCALAPPDATA%\kemi\sessions\` に置くが、前は掃除とセッションの削除が
+  `XDG_STATE_HOME` 側のセッションの置き場所しか見ておらず、強制終了のたびに `%LOCALAPPDATA%` 側に残り続けていた。
+- **Windows で、`XDG_STATE_HOME` を設定せずに動かした kemi の掃除が、`XDG_STATE_HOME` を設定して動いているレビューの
+  つなぎ先と起動中の記録を消さない。** 前は消すことがあり、そのレビューに `kemi wait` が届かず、`kemi ps` にも id だけで
+  出た。掃除が消すのは、自分のセッションの置き場所にセッションかロックのファイルがあるレビューのものだけになった。
+
 ## [0.4.2] - 2026-11-08
 
 ### 追加

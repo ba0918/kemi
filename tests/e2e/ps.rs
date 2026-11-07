@@ -456,14 +456,14 @@ async fn ps_returns_within_five_seconds_while_the_server_is_stopped() {
     kemi.kill();
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn killed_review_is_not_listed_and_its_record_is_cleaned_later() {
     let dir = TempDir::new();
     let state = TempDir::new();
-    let (killed, killed_id) = start_worktree_review(&dir, &state, &[]);
+    let (mut killed, killed_id) = start_worktree_review(&dir, &state, &[]);
     killed.wait_serving().await;
-    signal(&killed.child, "-KILL");
+    // どの OS でも強制終了になる止め方（unix は SIGKILL、Windows は TerminateProcess）。
+    killed.child.kill().unwrap();
     let _ = killed.wait();
     let record = running_record_path(&state.path, &killed_id);
     assert!(record.exists(), "the record is left by the kill");

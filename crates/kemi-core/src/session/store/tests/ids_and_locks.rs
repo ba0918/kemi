@@ -94,6 +94,33 @@ fn deleting_a_session_removes_its_endpoint_and_running_record() {
     assert!(!running_path(&scratch.dir(), &id).exists());
 }
 
+#[test]
+fn deleting_a_session_removes_its_endpoint_and_running_record_from_their_own_place() {
+    use crate::session::{
+        Endpoint, endpoint_path, running_path, write_endpoint, write_running_record,
+    };
+    let scratch = Scratch::new("session");
+    // Windows では、つなぎ先と起動中の記録をセッションと別の置き場所に置く（R-SESSION）。
+    let endpoints = scratch.0.join("endpoints");
+    let store = SessionStore::new(scratch.dir()).with_endpoint_dir(endpoints.clone());
+    let mut open = store
+        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .unwrap();
+    open.save_state_at(state_with_comment(), 100).unwrap();
+    let id = open.id().to_string();
+    let endpoint = Endpoint {
+        port: 1,
+        token: "t".to_string(),
+    };
+    write_endpoint(&endpoints, &id, &endpoint).unwrap();
+    write_running_record(&endpoints, &id, &running_record()).unwrap();
+
+    open.delete().unwrap();
+
+    assert!(!endpoint_path(&endpoints, &id).exists());
+    assert!(!running_path(&endpoints, &id).exists());
+}
+
 /// 別のスレッドが持つ、復元できるセッションのロック。起動中かを確かめる側（ps、`--resume` の
 /// 一覧、掃除）が一瞬ロックを取るのの代わり。
 struct HeldLock {

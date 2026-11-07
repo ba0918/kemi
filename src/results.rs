@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use kemi_core::domain::submit::Verdict;
 use kemi_core::result;
+use kemi_core::session::SessionStore;
 use kemi_server::{ResultSaveError, ResultSink};
 
 use crate::cli::Cli;
@@ -45,6 +46,16 @@ pub(crate) fn endpoints_dir() -> Option<PathBuf> {
         std::env::var_os("HOME").as_deref(),
         std::env::var_os("LOCALAPPDATA").as_deref(),
     )
+}
+
+/// 掃除とセッションの削除をする `SessionStore`（新しいレビューと復元）。つなぎ先の置き場所が
+/// 決まればそこを片付けさせる。Windows ではセッションの置き場所と違うことがある（R-SESSION）。
+pub(crate) fn tidying_session_store(sessions: PathBuf) -> SessionStore {
+    let store = SessionStore::new(sessions);
+    match endpoints_dir() {
+        Some(endpoints) => store.with_endpoint_dir(endpoints),
+        None => store,
+    }
 }
 
 /// `kemi --result`: 最新の結果ファイルの中身を stdout に出し、元の verdict の終了コードで

@@ -1,10 +1,11 @@
 //! 掃除と一覧の並び（R-SESSION）。上限、ロック中の数え方、孤児の片付け。
 
+use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use super::super::*;
 use super::fixtures::*;
-use crate::session::cleanup::{ORPHAN_LOCK_MIN_AGE, cleanup_at};
+use crate::session::cleanup::{ORPHAN_LOCK_MIN_AGE, cleanup_at, for_each_stopped_review};
 use crate::session::files::SnapshotKind;
 
 #[test]
@@ -21,7 +22,7 @@ fn a_session_removed_by_the_cleanup_loses_its_files_directory() {
         drop(open);
     }
 
-    cleanup(&scratch.dir(), 1, u64::MAX);
+    cleanup(&scratch.dir(), &scratch.dir(), 1, u64::MAX);
 
     assert!(!files_dir(&scratch, "01HF7YAT00AAAAAAAAAAAAAAAA").exists());
     assert!(files_dir(&scratch, "01HF7YAT00BBBBBBBBBBBBBBBB").exists());
@@ -41,7 +42,7 @@ fn session_cleanup_keeps_the_newest_sessions() {
         drop(open);
     }
 
-    cleanup(&scratch.dir(), 2, u64::MAX);
+    cleanup(&scratch.dir(), &scratch.dir(), 2, u64::MAX);
 
     assert!(matches!(
         store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
@@ -79,7 +80,7 @@ fn session_cleanup_keeps_the_total_size() {
         + size_of("01HF7YAT00BBBBBBBBBBBBBBBB.session")
         + 10;
 
-    cleanup(&scratch.dir(), KEEP_SESSIONS, limit);
+    cleanup(&scratch.dir(), &scratch.dir(), KEEP_SESSIONS, limit);
 
     assert!(matches!(
         store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
@@ -109,7 +110,7 @@ fn session_cleanup_keeps_a_locked_session_out_of_the_count() {
 
     // 最新を開いたまま 2 件だけ残す。ロック中は消えず、件数にも数えないので、
     // 保留した古い 2 件も残る。
-    cleanup(&scratch.dir(), 2, u64::MAX);
+    cleanup(&scratch.dir(), &scratch.dir(), 2, u64::MAX);
 
     assert!(store.read("01HF7YAT00AAAAAAAAAAAAAAAA").is_ok());
     assert!(store.read("01HF7YAT00BBBBBBBBBBBBBBBB").is_ok());
@@ -147,7 +148,7 @@ fn session_cleanup_keeps_a_locked_session_out_of_the_total_size() {
         + size_of("01HF7YAT00CCCCCCCCCCCCCCCC.session")
         + 10;
 
-    cleanup(&scratch.dir(), KEEP_SESSIONS, limit);
+    cleanup(&scratch.dir(), &scratch.dir(), KEEP_SESSIONS, limit);
 
     assert!(matches!(
         store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
@@ -178,7 +179,7 @@ fn sessions_updated_at_the_same_time_are_ordered_by_the_larger_id() {
         vec!["01HF7YAT00BBBBBBBBBBBBBBBB", "01HF7YAT00AAAAAAAAAAAAAAAA"]
     );
 
-    cleanup(&scratch.dir(), 1, u64::MAX);
+    cleanup(&scratch.dir(), &scratch.dir(), 1, u64::MAX);
 
     assert!(matches!(
         store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
@@ -241,7 +242,7 @@ fn session_cleanup_counts_the_files_directory_in_the_total_size() {
         + size_of("01HF7YAT00BBBBBBBBBBBBBBBB.session")
         + 10;
 
-    cleanup(&scratch.dir(), KEEP_SESSIONS, limit);
+    cleanup(&scratch.dir(), &scratch.dir(), KEEP_SESSIONS, limit);
 
     assert!(matches!(
         store.read("01HF7YAT00AAAAAAAAAAAAAAAA"),
@@ -302,7 +303,7 @@ fn session_cleanup_evicts_a_stale_pair_by_the_limits() {
     newest.save_state_at(state_with_comment(), 200).unwrap();
     drop(newest);
 
-    cleanup(&scratch.dir(), 1, u64::MAX);
+    cleanup(&scratch.dir(), &scratch.dir(), 1, u64::MAX);
 
     assert!(!session.exists());
     assert!(!payload.exists());
@@ -354,7 +355,15 @@ fn session_cleanup_removes_orphan_lock_files() {
     std::fs::write(&lock_path, b"").unwrap();
     let written = modified(&lock_path);
 
-    let clean_at = |now| cleanup_at(&scratch.dir(), KEEP_SESSIONS, KEEP_BYTES, now);
+    let clean_at = |now| {
+        cleanup_at(
+            &scratch.dir(),
+            &scratch.dir(),
+            KEEP_SESSIONS,
+            KEEP_BYTES,
+            now,
+        )
+    };
 
     // 新しすぎるロックは、始まったばかりのセッションと競合しないよう残す。
     clean_at(written + ORPHAN_LOCK_MIN_AGE - Duration::from_secs(1));
@@ -388,6 +397,7 @@ fn session_cleanup_removes_an_orphan_lock_even_within_the_limits() {
 
     cleanup_at(
         &scratch.dir(),
+        &scratch.dir(),
         KEEP_SESSIONS,
         KEEP_BYTES,
         modified(&orphan) + ORPHAN_LOCK_MIN_AGE,
@@ -415,6 +425,9 @@ fn cleanup_removes_the_endpoints_and_running_records_whose_lock_is_released() {
     let record = running_record();
     let publish_endpoint = |id: &str| write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
     let publish_record = |id: &str| write_running_record(&scratch.dir(), id, &record).unwrap();
+    // 強制終了したレビューは、セッションを書く前ならロックのファイルだけを残す。
+    let leave_lock =
+        |id: &str| std::fs::write(scratch.dir().join(format!("{id}.lock")), b"").unwrap();
     // 強制終了で残ったつなぎ先と記録。片方だけ残る id もある（つなぎ先が書けなかったレビューは
     // 記録だけを、記録が書けなかったレビューや ps より前の kemi はつなぎ先だけを残す）ので、
     // どちらのファイルも、それだけで id を片付けの対象にする。
@@ -424,9 +437,15 @@ fn cleanup_removes_the_endpoints_and_running_records_whose_lock_is_released() {
     drop(suspended);
     publish_record(killed_with_session);
     let killed_endpoint_only = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    leave_lock(killed_endpoint_only);
     publish_endpoint(killed_endpoint_only);
     let killed_record_only = "01HF7YAT00DDDDDDDDDDDDDDDD";
+    leave_lock(killed_record_only);
     publish_record(killed_record_only);
+    // セッションもロックのファイルも無い id のものは、このセッションの置き場所のレビューのものと
+    // 言えないので残す。
+    let unknown = "01HF7YAT00EEEEEEEEEEEEEEEE";
+    publish_endpoint(unknown);
     let mut running = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
@@ -445,4 +464,104 @@ fn cleanup_removes_the_endpoints_and_running_records_whose_lock_is_released() {
     }
     assert!(endpoint_path(&scratch.dir(), running.id()).exists());
     assert!(running_path(&scratch.dir(), running.id()).exists());
+    assert!(endpoint_path(&scratch.dir(), unknown).exists());
+}
+
+/// 置き場所のファイルとディレクトリの名前の集まり。
+fn names_in(dir: &Path) -> BTreeSet<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect()
+}
+
+#[test]
+fn cleanup_leaves_names_that_are_not_session_ids_alone() {
+    let scratch = Scratch::new("session");
+    std::fs::create_dir_all(scratch.dir()).unwrap();
+    // 人や別の道具が置いたファイル。`<id>.session` の無い写しとつなぎ先の形をしている。
+    std::fs::write(scratch.dir().join("foo.payload"), b"not kemi's").unwrap();
+    std::fs::write(scratch.dir().join("foo.endpoint"), b"not kemi's").unwrap();
+    let before = names_in(&scratch.dir());
+
+    cleanup(&scratch.dir(), &scratch.dir(), KEEP_SESSIONS, KEEP_BYTES);
+
+    assert_eq!(names_in(&scratch.dir()), before);
+}
+
+#[test]
+fn while_the_cleanup_tidies_an_id_its_lock_cannot_be_taken_elsewhere() {
+    let scratch = Scratch::new("session");
+    std::fs::create_dir_all(scratch.dir()).unwrap();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut tidied = Vec::new();
+
+    for_each_stopped_review(
+        &scratch.dir(),
+        &BTreeSet::from([id.to_string()]),
+        |tidying| {
+            // 復元も新しいセッションも同じ取りに行き方をするので、1 回で取れなければどちらも取れない。
+            let taken = SessionLock::acquire(&scratch.dir(), tidying);
+            assert!(matches!(taken, Err(SessionError::Locked { .. })));
+            tidied.push(tidying.to_string());
+        },
+    );
+
+    assert_eq!(tidied, [id]);
+    assert!(SessionLock::acquire(&scratch.dir(), id).is_ok());
+}
+
+#[test]
+fn cleanup_removes_only_the_records_of_stopped_reviews_of_its_own_sessions_place() {
+    use crate::session::{
+        Endpoint, endpoint_path, running_path, write_endpoint, write_running_record,
+    };
+    let scratch = Scratch::new("session");
+    // Windows では、つなぎ先と起動中の記録をセッションと別の置き場所に置き、その置き場所は
+    // セッションの置き場所の違うレビューどうしで共有される（R-SESSION）。
+    let endpoints = scratch.0.join("endpoints");
+    let store = SessionStore::new(scratch.dir()).with_endpoint_dir(endpoints.clone());
+    let endpoint = Endpoint {
+        port: 1,
+        token: "t".to_string(),
+    };
+    let publish = |id: &str| {
+        write_endpoint(&endpoints, id, &endpoint).unwrap();
+        write_running_record(&endpoints, id, &running_record()).unwrap();
+    };
+    let suspended = "01HF7YAT00BBBBBBBBBBBBBBBB";
+    let mut open = store.create(info(suspended, 100)).unwrap();
+    open.save_state_at(state_with_comment(), 100).unwrap();
+    drop(open);
+    publish(suspended);
+    // セッションを書く前に強制終了したレビュー。ロックのファイルだけが残る。
+    let killed_before_writing = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    std::fs::write(
+        scratch.dir().join(format!("{killed_before_writing}.lock")),
+        b"",
+    )
+    .unwrap();
+    publish(killed_before_writing);
+    // 別のセッションの置き場所で動いている（か、そこで止まった）レビュー。
+    let elsewhere = "01HF7YAT00DDDDDDDDDDDDDDDD";
+    publish(elsewhere);
+    let mut running = store
+        .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
+        .unwrap();
+    publish(running.id());
+    let before = names_in(&scratch.dir());
+
+    running.save_state_at(state_with_comment(), 200).unwrap();
+
+    for removed in [suspended, killed_before_writing] {
+        assert!(!endpoint_path(&endpoints, removed).exists(), "{removed}");
+        assert!(!running_path(&endpoints, removed).exists(), "{removed}");
+    }
+    for kept in [running.id(), elsewhere] {
+        assert!(endpoint_path(&endpoints, kept).exists(), "{kept}");
+        assert!(running_path(&endpoints, kept).exists(), "{kept}");
+    }
+    let elsewhere_lock = format!("{elsewhere}.lock");
+    assert!(!before.contains(&elsewhere_lock));
+    assert!(!names_in(&scratch.dir()).contains(&elsewhere_lock));
 }

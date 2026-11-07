@@ -11,7 +11,7 @@ use kemi_server::StoredSession;
 
 use crate::cli::Cli;
 use crate::report::{self, fail, warn};
-use crate::results::{endpoints_dir, results_unset_reason, sessions_dir};
+use crate::results::{endpoints_dir, results_unset_reason, sessions_dir, tidying_session_store};
 use crate::review::{LiveRun, run_review};
 use crate::session;
 
@@ -23,7 +23,7 @@ pub(crate) async fn run_resume(cli: &Cli) -> ! {
             results_unset_reason()
         ));
     };
-    let store = SessionStore::new(dir);
+    let store = tidying_session_store(dir);
     let id = match &cli.resume {
         Some(Some(id)) => id.clone(),
         Some(None) => choose_session(&store),
