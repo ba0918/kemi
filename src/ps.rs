@@ -111,6 +111,15 @@ fn read_running(
     store: &SessionStore,
     records: Option<&Path>,
 ) -> Result<Vec<(String, RecordRead)>, String> {
+    read_running_with(store, records, || std::thread::sleep(RECHECK_DELAY))
+}
+
+/// [`read_running`] の本体。起動中に見えた id があれば、確かめ直す前に `wait` を 1 回だけ呼ぶ。
+fn read_running_with(
+    store: &SessionStore,
+    records: Option<&Path>,
+    wait: impl FnOnce(),
+) -> Result<Vec<(String, RecordRead)>, String> {
     let read = |id: &str| match records.map(|dir| read_running_record(dir, id)) {
         Some(Ok(Some(record))) => RecordRead::Found(record),
         None | Some(Ok(None)) => RecordRead::Missing,
@@ -122,7 +131,7 @@ fn read_running(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    std::thread::sleep(RECHECK_DELAY);
+    wait();
     Ok(ids
         .into_iter()
         .filter(|id| store.is_running(id))
@@ -167,5 +176,86 @@ mod tests {
         ] {
             assert!(parse_args(rejected).is_err(), "{rejected:?}");
         }
+    }
+
+    /// テストのための空のディレクトリ。本体の crate には一時ディレクトリの補助が無い。
+    struct ScratchDir(PathBuf);
+
+    impl ScratchDir {
+        fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "kemi-ps-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            ScratchDir(path)
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 別のスレッドが持つセッションのロック。ほかの kemi が起動中かを確かめる一瞬の代わり。
+    /// `read_running` はセッションのファイルを見ないので、開いて持つだけで保留中のセッションの役になる。
+    struct HeldLock {
+        release: std::sync::mpsc::Sender<()>,
+        holder: std::thread::JoinHandle<()>,
+    }
+
+    impl HeldLock {
+        fn hold(store: &SessionStore, id: &str) -> Self {
+            let (held, holding) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            let store = store.clone();
+            let info = kemi_core::session::SessionInfo {
+                id: id.to_string(),
+                created: 1,
+                updated: 1,
+                workspace: PathBuf::from("/tmp/workspace"),
+                workspace_key: "00000000000000aa".to_string(),
+                mode: kemi_core::session::SessionMode::Worktree,
+                title: String::new(),
+                total_files: 1,
+            };
+            let holder = std::thread::spawn(move || {
+                let open = store.create(info).unwrap();
+                held.send(()).unwrap();
+                // テストが合図を送る前に落ちても、送り手が消えて受け取りが終わるので残らない。
+                let _ = released.recv();
+                drop(open);
+            });
+            holding.recv().unwrap();
+            HeldLock { release, holder }
+        }
+
+        /// 手放す合図を送り、手放し終えるまで待つ。
+        fn release(self) {
+            let _ = self.release.send(());
+            self.holder.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn an_id_whose_lock_is_released_before_the_recheck_is_not_listed() {
+        let scratch = ScratchDir::new();
+        let store = SessionStore::new(scratch.0.join("sessions"));
+        let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+        let held = HeldLock::hold(&store, id);
+        let mut waited = 0;
+
+        let running = read_running_with(&store, None, || {
+            waited += 1;
+            held.release();
+        })
+        .unwrap();
+
+        // 最初の確認で起動中に見え、確かめ直しの前の待ちに入った。
+        assert_eq!(waited, 1);
+        assert!(running.is_empty(), "{running:?}");
     }
 }
