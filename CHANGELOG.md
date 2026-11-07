@@ -5,6 +5,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-08
+
 ### 追加
 
 - **`kemi ps` で、動いているレビューの id・PID・URL を一覧にできる。** URL を見失っても開き直せ、会話が落ちて残ったサーバーを
@@ -536,7 +538,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/ba0918/kemi/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ba0918/kemi/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ba0918/kemi/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/ba0918/kemi/compare/v0.3.5...v0.3.6
