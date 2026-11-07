@@ -17,17 +17,39 @@ pub(super) const ORPHAN_LOCK_MIN_AGE: Duration = Duration::from_secs(60);
 /// 上限を超えた分を最終更新の古い順に消す。ロック中のセッションは消さず、件数とバイト数にも
 /// 数えない。復元できないセッションも数える。1 セッションの大きさは `<id>.session` と
 /// `<id>.payload` と `<id>.files/` の中のファイルの合算（R-SESSION）。
-pub(crate) fn cleanup(dir: &Path, keep_count: usize, keep_bytes: u64) {
-    cleanup_at(dir, keep_count, keep_bytes, SystemTime::now());
+///
+/// `endpoint_dir` は `<id>.endpoint` と起動中の記録の置き場所で、`dir` と同じことも違うこともある。
+pub(crate) fn cleanup(dir: &Path, endpoint_dir: &Path, keep_count: usize, keep_bytes: u64) {
+    cleanup_at(dir, endpoint_dir, keep_count, keep_bytes, SystemTime::now());
 }
 
 /// [`cleanup`] の本体。孤児のロックの古さを `now` から測る。
-pub(crate) fn cleanup_at(dir: &Path, keep_count: usize, keep_bytes: u64, now: SystemTime) {
+pub(crate) fn cleanup_at(
+    dir: &Path,
+    endpoint_dir: &Path,
+    keep_count: usize,
+    keep_bytes: u64,
+    now: SystemTime,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let contents = classify(entries.flatten());
-    remove_records_of_stopped_reviews(dir, &contents.records);
+    let records = if endpoint_dir == dir {
+        contents.records.clone()
+    } else {
+        // 読めなければ記録の片付けだけを飛ばし、孤児と上限の片付けは続ける。
+        std::fs::read_dir(endpoint_dir)
+            .map(|entries| classify(entries.flatten()).records)
+            .unwrap_or_default()
+    };
+    // 孤児のロックを片付けるより前に行う。先に消すと、ロックのファイルだけを残した id の記録が
+    // この置き場所のものと分からなくなり、二度と消えない。
+    let own = records
+        .into_iter()
+        .filter(|id| contents.is_own(id))
+        .collect();
+    remove_records_of_stopped_reviews(dir, endpoint_dir, &own);
     remove_orphans(dir, &contents, now);
     remove_beyond_limits(dir, &contents, keep_count, keep_bytes);
 }
@@ -48,6 +70,13 @@ struct DirContents {
 }
 
 impl DirContents {
+    /// この置き場所のレビューの id か。起動中のレビューにも、強制終了で残ったレビューにも、
+    /// `<id>.session` かロックのファイルのどちらかが必ずある。つなぎ先と記録の置き場所は、
+    /// 別の置き場所のレビューと共有されることがある（R-SESSION）。
+    fn is_own(&self, id: &str) -> bool {
+        self.sessions.contains_key(id) || self.locks.iter().any(|(locked, _)| locked == id)
+    }
+
     /// 1 セッションの大きさ（R-SESSION）。`session` は `<id>.session` の大きさ。
     fn size_of(&self, id: &str, session: u64) -> u64 {
         session
@@ -99,12 +128,14 @@ fn classify(entries: impl IntoIterator<Item = std::fs::DirEntry>) -> DirContents
 }
 
 /// 動いていないレビューのつなぎ先と起動中の記録は、強制終了で残ったもの。消したセッションの
-/// ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。残ったロックのファイルは、
-/// セッションの無いものを孤児のロックとして後で片付ける。
-fn remove_records_of_stopped_reviews(dir: &Path, ids: &BTreeSet<String>) {
+/// ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。`ids` は、この
+/// セッションの置き場所のレビューの id に絞って渡す。ロックは `dir` で確かめ、つなぎ先と記録は
+/// `endpoint_dir` から消す。残ったロックのファイルは、セッションの無いものを孤児のロックとして
+/// 後で片付ける。
+fn remove_records_of_stopped_reviews(dir: &Path, endpoint_dir: &Path, ids: &BTreeSet<String>) {
     for_each_stopped_review(dir, ids, |id| {
-        let _ = std::fs::remove_file(super::endpoint_path(dir, id));
-        let _ = std::fs::remove_file(super::running_path(dir, id));
+        let _ = std::fs::remove_file(super::endpoint_path(endpoint_dir, id));
+        let _ = std::fs::remove_file(super::running_path(endpoint_dir, id));
     });
 }
 

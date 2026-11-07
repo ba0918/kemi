@@ -119,6 +119,8 @@ pub struct SavedSession {
 #[derive(Clone, Debug)]
 pub struct SessionStore {
     dir: PathBuf,
+    /// `<id>.endpoint` と起動中の記録の置き場所（R-AGENT-LINK、R-PS-RECORD）。
+    endpoint_dir: PathBuf,
     /// 1 セッションの `<id>.payload` の上限（R-SESSION）。
     copy_limit: u64,
     /// 1 セッションの `<id>.files/` の上限（R-PAGE-SESSION）。
@@ -128,6 +130,7 @@ pub struct SessionStore {
 impl SessionStore {
     pub fn new(dir: PathBuf) -> Self {
         SessionStore {
+            endpoint_dir: dir.clone(),
             dir,
             copy_limit: COPY_LIMIT,
             files_limit: FILES_LIMIT,
@@ -141,6 +144,15 @@ impl SessionStore {
     /// 超えの道を通すテストのためで、本番の上限は既定のまま。
     pub fn with_copy_limit(self, copy_limit: u64) -> Self {
         SessionStore { copy_limit, ..self }
+    }
+
+    /// `<id>.endpoint` と起動中の記録の置き場所を決める。掃除とセッションの削除がそこを片付ける。
+    /// 既定はセッションの置き場所と同じ。Windows では違うことがある（R-SESSION）。
+    pub fn with_endpoint_dir(self, endpoint_dir: PathBuf) -> Self {
+        SessionStore {
+            endpoint_dir,
+            ..self
+        }
     }
 
     /// `<id>.files/` の上限を差し替える。既定は [`FILES_LIMIT`]。
@@ -162,6 +174,7 @@ impl SessionStore {
         let lock = SessionLock::acquire_within(&self.dir, &info.id, ACQUIRE_PATIENCE)?;
         Ok(OpenSession {
             dir: self.dir.clone(),
+            endpoint_dir: self.endpoint_dir.clone(),
             info,
             state: SessionState::default(),
             copy: CopyStatus::Pending,
@@ -193,6 +206,7 @@ impl SessionStore {
         };
         Ok(OpenSession {
             dir: self.dir.clone(),
+            endpoint_dir: self.endpoint_dir.clone(),
             info,
             state,
             copy,
@@ -379,6 +393,7 @@ enum Lifecycle {
 /// 開いているセッション。ロックを保持し、状態か写しが変わるたびに書き直す。
 pub struct OpenSession {
     dir: PathBuf,
+    endpoint_dir: PathBuf,
     info: SessionInfo,
     state: SessionState,
     copy: CopyStatus,
@@ -471,7 +486,7 @@ impl OpenSession {
         self.write_session(&info, &state, &self.copy)?;
         self.state = state;
         self.info = info;
-        cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
+        cleanup(&self.dir, &self.endpoint_dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
     }
 
@@ -511,7 +526,7 @@ impl OpenSession {
         if !ready {
             self.remove_payload_file()?;
         }
-        cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
+        cleanup(&self.dir, &self.endpoint_dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(ready)
     }
 
@@ -525,8 +540,8 @@ impl OpenSession {
         self.lifecycle = Lifecycle::Deleted;
         self.remove_session_and_copy()?;
         remove_dir_if_present(&files_path(&self.dir, &self.info.id))?;
-        remove_if_present(&super::endpoint_path(&self.dir, &self.info.id))?;
-        remove_if_present(&super::running_path(&self.dir, &self.info.id))
+        remove_if_present(&super::endpoint_path(&self.endpoint_dir, &self.info.id))?;
+        remove_if_present(&super::running_path(&self.endpoint_dir, &self.info.id))
     }
 
     /// スナップショットを `<id>.files/` に書く。書く前に 20 MB の規則で場所を空ける
@@ -764,7 +779,7 @@ impl OpenSession {
             return self.remove_file();
         }
         self.write_session(&self.info, &self.state, &self.copy)?;
-        cleanup(&self.dir, KEEP_SESSIONS, KEEP_BYTES);
+        cleanup(&self.dir, &self.endpoint_dir, KEEP_SESSIONS, KEEP_BYTES);
         Ok(())
     }
 
