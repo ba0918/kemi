@@ -3,6 +3,14 @@ use super::*;
 const RUNNING: &str = "01HF7YAT00AAAAAAAAAAAAAAAA";
 const OTHER: &str = "01HF7YAT00BBBBBBBBBBBBBBBB";
 
+/// `kemi ps --format json` の配列に出た id の並び。
+fn listed_ids(listed: &[serde_json::Value]) -> Vec<String> {
+    listed
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
 #[test]
 fn ps_json_lists_a_running_review_with_all_keys() {
     let here = TempDir::new();
@@ -98,11 +106,7 @@ fn ps_lists_a_review_without_a_record_and_warns_only_for_a_broken_one() {
 
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let listed: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
-    let ids: Vec<&str> = listed
-        .iter()
-        .map(|row| row["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, [RUNNING, OTHER]);
+    assert_eq!(listed_ids(&listed), [RUNNING, OTHER]);
     for row in &listed {
         for (key, value) in row.as_object().unwrap() {
             assert!(key == "id" || value.is_null(), "{key} of {row}");
@@ -135,11 +139,10 @@ fn ps_reports_reviews_outside_the_repository_and_any_shows_them() {
     assert!(last.contains('1') && last.contains("--any"), "{text}");
     let any = String::from_utf8(any.stdout).unwrap();
     assert!(any.contains(RUNNING) && any.contains(OTHER), "{any}");
-    let ids: Vec<String> = ps_json(&here.path, &state.path, &["--any"])
-        .iter()
-        .map(|row| row["id"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(ids, [RUNNING, OTHER]);
+    assert_eq!(
+        listed_ids(&ps_json(&here.path, &state.path, &["--any"])),
+        [RUNNING, OTHER]
+    );
 }
 
 /// ファイルの名前と大きさ、`.lock` 以外は中身。Windows ではロック中のファイルを読めない。
@@ -288,10 +291,7 @@ fn ps_lists_the_review_started_later_first() {
     let mut second = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     let second_id = second.review_id();
 
-    let ids: Vec<String> = ps_json(&dir.path, &state.path, &[])
-        .iter()
-        .map(|row| row["id"].as_str().unwrap().to_string())
-        .collect();
+    let ids = listed_ids(&ps_json(&dir.path, &state.path, &[]));
 
     assert_eq!(ids, [second_id, first_id]);
     first.kill();
