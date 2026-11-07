@@ -364,29 +364,37 @@ fn ps_lists_the_pid_and_url_without_xdg_state_home() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn running_record_is_owner_only_and_gone_after_submit_and_suspend() {
+async fn running_record_is_owner_only_and_gone_after_submit() {
     use std::os::unix::fs::PermissionsExt;
     let dir = TempDir::new();
     let state = TempDir::new();
-    let (submitted, submitted_id) = start_worktree_review(&dir, &state, &[]);
-    let record = running_record_path(&state.path, &submitted_id);
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let record = running_record_path(&state.path, &id);
     let mode = std::fs::metadata(&record).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 
-    submitted.submit("approved").await;
-    let (status, _) = submitted.wait();
+    kemi.submit("approved").await;
+    let (status, _) = kemi.wait();
+
     assert_eq!(status.code(), Some(0));
     assert!(!record.exists());
+}
 
-    let mut suspended =
-        Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
-    let suspended_id = suspended.review_id();
-    suspended.wait_serving().await;
-    assert!(running_record_path(&state.path, &suspended_id).exists());
-    signal(&suspended.child, "-TERM");
-    let (status, _) = suspended.wait();
+#[cfg(unix)]
+#[tokio::test]
+async fn running_record_is_gone_after_suspend() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.wait_serving().await;
+    let record = running_record_path(&state.path, &id);
+    assert!(record.exists());
+
+    signal(&kemi.child, "-TERM");
+    let (status, _) = kemi.wait();
+
     assert_eq!(status.code(), Some(130));
-    assert!(!running_record_path(&state.path, &suspended_id).exists());
+    assert!(!record.exists());
 }
 
 #[cfg(unix)]
