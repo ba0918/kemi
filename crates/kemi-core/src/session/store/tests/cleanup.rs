@@ -413,26 +413,33 @@ fn cleanup_removes_the_endpoints_and_running_records_whose_lock_is_released() {
         token: "t".to_string(),
     };
     let record = running_record();
-    let publish = |id: &str| {
-        write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
-        write_running_record(&scratch.dir(), id, &record).unwrap();
-    };
-    // 強制終了で残ったつなぎ先と記録。片方はセッションが残り、片方はセッションが無い。
+    let publish_endpoint = |id: &str| write_endpoint(&scratch.dir(), id, &endpoint).unwrap();
+    let publish_record = |id: &str| write_running_record(&scratch.dir(), id, &record).unwrap();
+    // 強制終了で残ったつなぎ先と記録。片方だけ残る id もある（つなぎ先が書けなかったレビューは
+    // 記録だけを、記録が書けなかったレビューや ps より前の kemi はつなぎ先だけを残す）ので、
+    // どちらのファイルも、それだけで id を片付けの対象にする。
     let killed_with_session = "01HF7YAT00BBBBBBBBBBBBBBBB";
     let mut suspended = store.create(info(killed_with_session, 100)).unwrap();
     suspended.save_state_at(state_with_comment(), 100).unwrap();
     drop(suspended);
-    publish(killed_with_session);
-    let killed_without_session = "01HF7YAT00CCCCCCCCCCCCCCCC";
-    publish(killed_without_session);
+    publish_record(killed_with_session);
+    let killed_endpoint_only = "01HF7YAT00CCCCCCCCCCCCCCCC";
+    publish_endpoint(killed_endpoint_only);
+    let killed_record_only = "01HF7YAT00DDDDDDDDDDDDDDDD";
+    publish_record(killed_record_only);
     let mut running = store
         .create(info("01HF7YAT00AAAAAAAAAAAAAAAA", 100))
         .unwrap();
-    publish(running.id());
+    publish_endpoint(running.id());
+    publish_record(running.id());
 
     running.save_state_at(state_with_comment(), 200).unwrap();
 
-    for killed in [killed_with_session, killed_without_session] {
+    for killed in [
+        killed_with_session,
+        killed_endpoint_only,
+        killed_record_only,
+    ] {
         assert!(!endpoint_path(&scratch.dir(), killed).exists(), "{killed}");
         assert!(!running_path(&scratch.dir(), killed).exists(), "{killed}");
     }
