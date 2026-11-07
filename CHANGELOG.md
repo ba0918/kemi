@@ -5,6 +5,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-08
+
 ### 修正
 
 - **Windows で `XDG_STATE_HOME` を設定していても、強制終了したレビューのつなぎ先と起動中の記録が片付く。** Windows では
@@ -547,7 +549,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/ba0918/kemi/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ba0918/kemi/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ba0918/kemi/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ba0918/kemi/compare/v0.3.6...v0.4.0
