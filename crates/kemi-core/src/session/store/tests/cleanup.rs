@@ -1,5 +1,6 @@
 //! 掃除と一覧の並び（R-SESSION）。上限、ロック中の数え方、孤児の片付け。
 
+use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use super::super::*;
@@ -445,4 +446,26 @@ fn cleanup_removes_the_endpoints_and_running_records_whose_lock_is_released() {
     }
     assert!(endpoint_path(&scratch.dir(), running.id()).exists());
     assert!(running_path(&scratch.dir(), running.id()).exists());
+}
+
+/// 置き場所のファイルとディレクトリの名前の集まり。
+fn names_in(dir: &Path) -> BTreeSet<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect()
+}
+
+#[test]
+fn cleanup_leaves_names_that_are_not_session_ids_alone() {
+    let scratch = Scratch::new("session");
+    std::fs::create_dir_all(scratch.dir()).unwrap();
+    // 人や別の道具が置いたファイル。`<id>.session` の無い写しとつなぎ先の形をしている。
+    std::fs::write(scratch.dir().join("foo.payload"), b"not kemi's").unwrap();
+    std::fs::write(scratch.dir().join("foo.endpoint"), b"not kemi's").unwrap();
+    let before = names_in(&scratch.dir());
+
+    cleanup(&scratch.dir(), KEEP_SESSIONS, KEEP_BYTES);
+
+    assert_eq!(names_in(&scratch.dir()), before);
 }
