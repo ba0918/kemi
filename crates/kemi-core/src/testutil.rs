@@ -1,6 +1,6 @@
 //! テストの補助。一時ディレクトリと一時 git リポジトリ、レビューの値（ファイル・コメント）の
-//! 組み立て、ワークスペースの根、パスでファイルを探すこと。値の組み立ては既定の値を返すので、
-//! テストは確かめたい項目だけを構造体更新記法で上書きする。
+//! 組み立て、ワークスペースの根、パスでファイルを探すこと、所有者だけの権限の確かめ。値の
+//! 組み立ては既定の値を返すので、テストは確かめたい項目だけを構造体更新記法で上書きする。
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -33,6 +33,14 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// `path` が所有者だけが読み書きできるファイル（`0600`）であること。
+#[cfg(unix)]
+pub(crate) fn assert_owner_only(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "{}", path.display());
 }
 
 /// 一覧の 1 ファイル（変更、増減 0、id は f1、グループは g1）。

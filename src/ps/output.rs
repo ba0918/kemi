@@ -5,34 +5,24 @@ use std::path::Path;
 
 use super::listing::{Listing, Row};
 use crate::local_time;
-use crate::session::column;
+use crate::session::{align_columns, column};
 
 /// 1 行 1 要素の配列。記録が無い・読めないレビューは `id` 以外が `null`。
 pub(crate) fn json(rows: &[Row]) -> serde_json::Value {
     rows.iter()
-        .map(|row| match &row.record {
-            Some(record) => serde_json::json!({
+        .map(|row| {
+            let record = row.record.as_ref();
+            serde_json::json!({
                 "id": row.id,
-                "workspace": record.workspace.to_string_lossy(),
-                "mode": record.mode,
-                "label": record.label,
-                "started_at": local_time::format_utc_rfc3339(record.started_at),
-                "pid": record.pid,
-                "url": record.url,
-                "live_url": record.live_url,
-                "version": record.version,
-            }),
-            None => serde_json::json!({
-                "id": row.id,
-                "workspace": null,
-                "mode": null,
-                "label": null,
-                "started_at": null,
-                "pid": null,
-                "url": null,
-                "live_url": null,
-                "version": null,
-            }),
+                "workspace": record.map(|record| record.workspace.to_string_lossy()),
+                "mode": record.map(|record| record.mode),
+                "label": record.map(|record| &record.label),
+                "started_at": record.map(|record| local_time::format_utc_rfc3339(record.started_at)),
+                "pid": record.map(|record| record.pid),
+                "url": record.map(|record| &record.url),
+                "live_url": record.and_then(|record| record.live_url.as_ref()),
+                "version": record.map(|record| &record.version),
+            })
         })
         .collect()
 }
@@ -71,33 +61,19 @@ fn table(rows: &[Row], any: bool, home: Option<&Path>) -> String {
         header.push("WORKSPACE");
     }
     let mut lines: Vec<Vec<String>> = vec![header.iter().map(ToString::to_string).collect()];
-    lines.extend(rows.iter().map(|row| cells(row, live, any, home)));
-    let columns = lines[0].len();
-    let widths: Vec<usize> = (0..columns)
-        .map(|index| {
-            lines
-                .iter()
-                .map(|line| line[index].chars().count())
-                .max()
-                .unwrap_or(0)
-        })
-        .collect();
-    lines
-        .iter()
-        .map(|line| {
-            let padded: Vec<String> = line
-                .iter()
-                .zip(&widths)
-                .map(|(cell, width)| format!("{cell:<width$}"))
-                .collect();
-            format!("{}\n", padded.join("  ").trim_end())
-        })
+    lines.extend(
+        rows.iter()
+            .map(|row| cells(row, header.len(), live, any, home)),
+    );
+    align_columns(&lines)
+        .into_iter()
+        .map(|line| format!("{line}\n"))
         .collect()
 }
 
-/// 1 行の値。記録が無い・読めないレビューは `id` のほかを `-` にする。
-fn cells(row: &Row, live: bool, any: bool, home: Option<&Path>) -> Vec<String> {
-    let columns = 5 + usize::from(live) + usize::from(any);
+/// 1 行の値。`columns` は見出しの列の数。記録が無い・読めないレビューは `id` のほかを
+/// `-` にする。
+fn cells(row: &Row, columns: usize, live: bool, any: bool, home: Option<&Path>) -> Vec<String> {
     let Some(record) = &row.record else {
         let mut cells = vec![row.id.clone()];
         cells.resize(columns, "-".to_string());

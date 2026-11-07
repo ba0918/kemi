@@ -31,9 +31,9 @@ pub(crate) struct Listing {
 }
 
 /// `running` は起動中のレビューの id と、その記録を読んだ結果。`here` は ps を打った場所の
-/// 識別で、`any` でなければ記録の識別がこれと同じものだけを出す。記録が無い・読めないものは
-/// ワークスペースが分からないので、範囲を問わず出す。
-pub(crate) fn assemble(running: Vec<(String, RecordRead)>, here: &str, any: bool) -> Listing {
+/// 識別で、あれば記録の識別がこれと同じものだけを出し、無ければ（`--any`）範囲を問わない。
+/// 記録が無い・読めないものはワークスペースが分からないので、範囲を問わず出す。
+pub(crate) fn assemble(running: Vec<(String, RecordRead)>, here: Option<&str>) -> Listing {
     let mut rows = Vec::new();
     let mut outside = 0;
     let mut warnings = Vec::new();
@@ -47,7 +47,7 @@ pub(crate) fn assemble(running: Vec<(String, RecordRead)>, here: &str, any: bool
             }
         };
         if let Some(record) = &record
-            && !any
+            && let Some(here) = here
             && record.workspace_key != here
         {
             outside += 1;
@@ -111,7 +111,7 @@ mod tests {
             ("0".to_string(), RecordRead::Missing),
         ];
 
-        let listing = assemble(running, HERE, false);
+        let listing = assemble(running, Some(HERE));
 
         // 時刻が同じもの同士と、時刻の取れないもの同士は id の順。
         assert_eq!(ids(&listing), ["B", "C", "A", "0", "D", "E"]);
@@ -125,8 +125,8 @@ mod tests {
             ("C".to_string(), RecordRead::Found(record(300, ELSEWHERE))),
         ];
 
-        let here = assemble(running.clone(), HERE, false);
-        let any = assemble(running, HERE, true);
+        let here = assemble(running.clone(), Some(HERE));
+        let any = assemble(running, None);
 
         assert_eq!((ids(&here), here.outside), (vec!["A"], 2));
         assert_eq!((ids(&any), any.outside), (vec!["C", "B", "A"], 0));
@@ -142,7 +142,7 @@ mod tests {
             ),
         ];
 
-        let listing = assemble(running, HERE, false);
+        let listing = assemble(running, Some(HERE));
 
         assert_eq!(ids(&listing), ["A", "B"]);
         assert!(listing.rows.iter().all(|row| row.record.is_none()));

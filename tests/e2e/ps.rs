@@ -3,6 +3,14 @@ use super::*;
 const RUNNING: &str = "01HF7YAT00AAAAAAAAAAAAAAAA";
 const OTHER: &str = "01HF7YAT00BBBBBBBBBBBBBBBB";
 
+/// `kemi ps --format json` の配列に出た id の並び。
+fn listed_ids(listed: &[serde_json::Value]) -> Vec<String> {
+    listed
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
 #[test]
 fn ps_json_lists_a_running_review_with_all_keys() {
     let here = TempDir::new();
@@ -98,11 +106,7 @@ fn ps_lists_a_review_without_a_record_and_warns_only_for_a_broken_one() {
 
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let listed: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
-    let ids: Vec<&str> = listed
-        .iter()
-        .map(|row| row["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, [RUNNING, OTHER]);
+    assert_eq!(listed_ids(&listed), [RUNNING, OTHER]);
     for row in &listed {
         for (key, value) in row.as_object().unwrap() {
             assert!(key == "id" || value.is_null(), "{key} of {row}");
@@ -135,11 +139,10 @@ fn ps_reports_reviews_outside_the_repository_and_any_shows_them() {
     assert!(last.contains('1') && last.contains("--any"), "{text}");
     let any = String::from_utf8(any.stdout).unwrap();
     assert!(any.contains(RUNNING) && any.contains(OTHER), "{any}");
-    let ids: Vec<String> = ps_json(&here.path, &state.path, &["--any"])
-        .iter()
-        .map(|row| row["id"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(ids, [RUNNING, OTHER]);
+    assert_eq!(
+        listed_ids(&ps_json(&here.path, &state.path, &["--any"])),
+        [RUNNING, OTHER]
+    );
 }
 
 /// ファイルの名前と大きさ、`.lock` 以外は中身。Windows ではロック中のファイルを読めない。
@@ -288,10 +291,7 @@ fn ps_lists_the_review_started_later_first() {
     let mut second = Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
     let second_id = second.review_id();
 
-    let ids: Vec<String> = ps_json(&dir.path, &state.path, &[])
-        .iter()
-        .map(|row| row["id"].as_str().unwrap().to_string())
-        .collect();
+    let ids = listed_ids(&ps_json(&dir.path, &state.path, &[]));
 
     assert_eq!(ids, [second_id, first_id]);
     first.kill();
@@ -364,29 +364,37 @@ fn ps_lists_the_pid_and_url_without_xdg_state_home() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn running_record_is_owner_only_and_gone_after_submit_and_suspend() {
+async fn running_record_is_owner_only_and_gone_after_submit() {
     use std::os::unix::fs::PermissionsExt;
     let dir = TempDir::new();
     let state = TempDir::new();
-    let (submitted, submitted_id) = start_worktree_review(&dir, &state, &[]);
-    let record = running_record_path(&state.path, &submitted_id);
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    let record = running_record_path(&state.path, &id);
     let mode = std::fs::metadata(&record).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 
-    submitted.submit("approved").await;
-    let (status, _) = submitted.wait();
+    kemi.submit("approved").await;
+    let (status, _) = kemi.wait();
+
     assert_eq!(status.code(), Some(0));
     assert!(!record.exists());
+}
 
-    let mut suspended =
-        Kemi::spawn_with_state(&dir.path, &["--worktree", "--no-open"], &state.path);
-    let suspended_id = suspended.review_id();
-    suspended.wait_serving().await;
-    assert!(running_record_path(&state.path, &suspended_id).exists());
-    signal(&suspended.child, "-TERM");
-    let (status, _) = suspended.wait();
+#[cfg(unix)]
+#[tokio::test]
+async fn running_record_is_gone_after_suspend() {
+    let dir = TempDir::new();
+    let state = TempDir::new();
+    let (kemi, id) = start_worktree_review(&dir, &state, &[]);
+    kemi.wait_serving().await;
+    let record = running_record_path(&state.path, &id);
+    assert!(record.exists());
+
+    signal(&kemi.child, "-TERM");
+    let (status, _) = kemi.wait();
+
     assert_eq!(status.code(), Some(130));
-    assert!(!running_record_path(&state.path, &suspended_id).exists());
+    assert!(!record.exists());
 }
 
 #[cfg(unix)]
