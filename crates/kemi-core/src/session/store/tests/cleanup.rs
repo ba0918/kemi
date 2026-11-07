@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use super::super::*;
 use super::fixtures::*;
-use crate::session::cleanup::{ORPHAN_LOCK_MIN_AGE, cleanup_at};
+use crate::session::cleanup::{ORPHAN_LOCK_MIN_AGE, cleanup_at, for_each_stopped_review};
 use crate::session::files::SnapshotKind;
 
 #[test]
@@ -468,4 +468,26 @@ fn cleanup_leaves_names_that_are_not_session_ids_alone() {
     cleanup(&scratch.dir(), KEEP_SESSIONS, KEEP_BYTES);
 
     assert_eq!(names_in(&scratch.dir()), before);
+}
+
+#[test]
+fn while_the_cleanup_tidies_an_id_its_lock_cannot_be_taken_elsewhere() {
+    let scratch = Scratch::new("session");
+    std::fs::create_dir_all(scratch.dir()).unwrap();
+    let id = "01HF7YAT00AAAAAAAAAAAAAAAA";
+    let mut tidied = Vec::new();
+
+    for_each_stopped_review(
+        &scratch.dir(),
+        &BTreeSet::from([id.to_string()]),
+        |tidying| {
+            // 復元も新しいセッションも同じ取りに行き方をするので、1 回で取れなければどちらも取れない。
+            let taken = SessionLock::acquire(&scratch.dir(), tidying);
+            assert!(matches!(taken, Err(SessionError::Locked { .. })));
+            tidied.push(tidying.to_string());
+        },
+    );
+
+    assert_eq!(tidied, [id]);
+    assert!(SessionLock::acquire(&scratch.dir(), id).is_ok());
 }

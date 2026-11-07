@@ -99,16 +99,25 @@ fn classify(entries: impl IntoIterator<Item = std::fs::DirEntry>) -> DirContents
 }
 
 /// 動いていないレビューのつなぎ先と起動中の記録は、強制終了で残ったもの。消したセッションの
-/// ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。確かめてから消すまでの
-/// 間に同じ id の `--resume` がロックを取ると、書き直したばかりのものを消してしまうので、
-/// ロックを持ったまま消す。復元は 1 秒まで取り直すので断られない。残ったロックのファイルは、
+/// ものも含め、ロックの生死だけで片付ける（R-AGENT-LINK、R-PS-RECORD）。残ったロックのファイルは、
 /// セッションの無いものを孤児のロックとして後で片付ける。
 fn remove_records_of_stopped_reviews(dir: &Path, ids: &BTreeSet<String>) {
+    for_each_stopped_review(dir, ids, |id| {
+        let _ = std::fs::remove_file(super::endpoint_path(dir, id));
+        let _ = std::fs::remove_file(super::running_path(dir, id));
+    });
+}
+
+/// ロックの外れた id ごとに、そのロックを持ったまま `tidy` を行う。確かめてから消すまでの間に
+/// 同じ id の `--resume` がロックを取ると、書き直したばかりのものを消してしまうので。復元は
+/// 1 秒まで取り直すので断られない。
+pub(super) fn for_each_stopped_review(
+    dir: &Path,
+    ids: &BTreeSet<String>,
+    mut tidy: impl FnMut(&str),
+) {
     for id in ids {
-        with_free_lock(dir, id, || {
-            let _ = std::fs::remove_file(super::endpoint_path(dir, id));
-            let _ = std::fs::remove_file(super::running_path(dir, id));
-        });
+        with_free_lock(dir, id, || tidy(id));
     }
 }
 
