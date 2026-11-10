@@ -5,6 +5,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-11
+
 ### 追加
 
 - **左のペイン（ファイルツリー、説明の目次、`--live` のページのツリー）の幅を変えられ、畳める。** 本文との境界を掴んで
@@ -570,7 +572,8 @@ kemi の版ごとの変更。版の正典はルート `Cargo.toml` の `version`
 - GitHub Releases に Linux（x86_64 / aarch64、musl 静的）と macOS（x86_64 / arm64）の
   アーカイブを置く。`mise use -g github:ba0918/kemi` で入る。
 
-[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/ba0918/kemi/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/ba0918/kemi/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ba0918/kemi/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ba0918/kemi/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ba0918/kemi/compare/v0.4.0...v0.4.1
