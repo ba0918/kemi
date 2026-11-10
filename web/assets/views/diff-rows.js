@@ -114,11 +114,13 @@ function renderLine(line) {
     textEl("span", "mk", toneSign(tone)),
   );
   const code = el("span", "code");
+  const text = el("span", "code-text");
   if (line.newLine) {
-    fillCode(code, line.newLine, line.newSegments);
+    fillCode(text, line.newLine, line.newSegments);
   } else if (line.oldLine) {
-    fillCode(code, line.oldLine, line.oldSegments);
+    fillCode(text, line.oldLine, line.oldSegments);
   }
+  code.append(text);
   row.append(code);
   return row;
 }

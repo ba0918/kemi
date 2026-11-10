@@ -1736,8 +1736,10 @@ ul.files ul {
 }
 #horizontal-scroll-width { height: 1px; }
 #horizontal-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.row.split .code { overflow: clip; }
-.row.split .code-text {
+/* コードは欄の中で横に動かす（R-VIEW-HSCROLL）。表示領域そのものは横に動かさない。行番号とコメントが流れ、
+   縦に動いて行を作り直すたびに横位置が左端へ戻るため。 */
+.row .code { overflow: clip; }
+.row .code-text {
   display: block;
   width: max-content;
   transform: translateX(var(--code-offset, 0px));
