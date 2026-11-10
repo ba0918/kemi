@@ -4,8 +4,8 @@
 //! 保つため、行ごとに切らずに内容全体を順に処理する。
 
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{FontStyle, Style};
-use syntect::parsing::{SyntaxReference, SyntaxSet};
+use syntect::highlighting::{Color, FontStyle, Style, Theme};
+use syntect::parsing::{Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
@@ -13,8 +13,17 @@ use kemi_core::domain::diff::Segment;
 
 use kemi_core::domain::content::within_auto_limit;
 
+/// スタイル付きの断片。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub style: Style,
+    pub text: String,
+    /// テーマがコメントに使う色の断片か。この断片の色はページが決める（`render_line`）。
+    pub comment: bool,
+}
+
 /// 1 行分のスタイル付き断片。
-pub type HighlightedLine = Vec<(Style, String)>;
+pub type HighlightedLine = Vec<Token>;
 
 pub struct Highlighter {
     syntaxes: SyntaxSet,
@@ -64,6 +73,7 @@ impl Highlighter {
         } else {
             EmbeddedThemeName::InspiredGithub
         }];
+        let comment = comment_color(theme);
         let mut highlighter = HighlightLines::new(syntax, theme);
         let mut lines = Vec::new();
 
@@ -72,13 +82,17 @@ impl Highlighter {
                 .highlight_line(line, &self.syntaxes)
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(style, text)| (style, text.to_string()))
+                .map(|(style, text)| Token {
+                    style,
+                    text: text.to_string(),
+                    comment: style.foreground == comment,
+                })
                 .collect();
-            if let Some((_, last)) = ranges.last_mut() {
-                while last.ends_with('\n') || last.ends_with('\r') {
-                    last.pop();
+            if let Some(last) = ranges.last_mut() {
+                while last.text.ends_with('\n') || last.text.ends_with('\r') {
+                    last.text.pop();
                 }
-                if last.is_empty() {
+                if last.text.is_empty() {
                     ranges.pop();
                 }
             }
@@ -101,7 +115,18 @@ impl Default for Highlighter {
     }
 }
 
+/// テーマがコメントに付ける文字色。
+fn comment_color(theme: &Theme) -> Color {
+    let scope = Scope::new("comment").expect("`comment` is a valid scope name");
+    syntect::highlighting::Highlighter::new(theme)
+        .style_for_stack(ScopeStack::from_vec(vec![scope]).as_slice())
+        .foreground
+}
+
 /// 1 行を HTML にする。`segments` の changed 部分は単語単位の強調で包む。
+///
+/// コメントの断片には色を書かず、`tok-comment` の印だけを付ける。テーマのコメントの色は薄く、追加・削除の
+/// 行の背景の上では読めないため、ページがプリセットごとの色を付ける。
 pub fn render_line(ranges: &HighlightedLine, segments: &[Segment]) -> String {
     let changed = changed_ranges(segments);
     let mut html = String::new();
@@ -109,7 +134,8 @@ pub fn render_line(ranges: &HighlightedLine, segments: &[Segment]) -> String {
     // changed は位置の順で重ならないので、断片ごとに全体を見直さずカーソルで進める。
     let mut change_index = 0;
 
-    for (style, text) in ranges {
+    for token in ranges {
+        let text = &token.text;
         let start = offset;
         let end = offset + text.len();
         offset = end;
@@ -144,7 +170,7 @@ pub fn render_line(ranges: &HighlightedLine, segments: &[Segment]) -> String {
             let is_changed = change_index < overlap_end
                 && changed[change_index].0 <= left
                 && right <= changed[change_index].1;
-            html.push_str(&span(style, piece, is_changed));
+            html.push_str(&span(token, piece, is_changed));
         }
     }
 
@@ -164,30 +190,44 @@ fn changed_ranges(segments: &[Segment]) -> Vec<(usize, usize)> {
     ranges
 }
 
-fn span(style: &Style, text: &str, changed: bool) -> String {
+fn span(token: &Token, text: &str, changed: bool) -> String {
     let inner = if changed {
         format!("<span class=\"word-changed\">{}</span>", escape(text))
     } else {
         escape(text)
     };
-    format!("<span style=\"{}\">{}</span>", style_css(style), inner)
+    let class = if token.comment {
+        " class=\"tok-comment\""
+    } else {
+        ""
+    };
+    let css = style_css(token);
+    if css.is_empty() {
+        format!("<span{class}>{inner}</span>")
+    } else {
+        format!("<span{class} style=\"{css}\">{inner}</span>")
+    }
 }
 
-fn style_css(style: &Style) -> String {
-    let mut css = format!(
-        "color:#{:02x}{:02x}{:02x}",
-        style.foreground.r, style.foreground.g, style.foreground.b
-    );
+fn style_css(token: &Token) -> String {
+    let style = &token.style;
+    let mut declarations = Vec::new();
+    if !token.comment {
+        declarations.push(format!(
+            "color:#{:02x}{:02x}{:02x}",
+            style.foreground.r, style.foreground.g, style.foreground.b
+        ));
+    }
     if style.font_style.contains(FontStyle::BOLD) {
-        css.push_str(";font-weight:bold");
+        declarations.push("font-weight:bold".to_string());
     }
     if style.font_style.contains(FontStyle::ITALIC) {
-        css.push_str(";font-style:italic");
+        declarations.push("font-style:italic".to_string());
     }
     if style.font_style.contains(FontStyle::UNDERLINE) {
-        css.push_str(";text-decoration:underline");
+        declarations.push("text-decoration:underline".to_string());
     }
-    css
+    declarations.join(";")
 }
 
 fn escape(text: &str) -> String {
@@ -218,13 +258,13 @@ mod tests {
         assert_eq!(lines.len(), 2);
         let string_color = lines[0]
             .last()
-            .map(|(style, _)| style.foreground)
+            .map(|token| token.style.foreground)
             .expect("first line has ranges");
         assert!(
             lines[1]
                 .iter()
-                .any(|(style, text)| style.foreground == string_color
-                    && text.contains("second line")),
+                .any(|token| token.style.foreground == string_color
+                    && token.text.contains("second line")),
             "second line lost the string color: {:?}",
             lines[1]
         );
@@ -239,13 +279,13 @@ mod tests {
         assert_eq!(lines.len(), 3);
         let comment_color = lines[0]
             .first()
-            .map(|(style, _)| style.foreground)
+            .map(|token| token.style.foreground)
             .expect("first line has ranges");
         assert!(
             lines[1]
                 .iter()
-                .any(|(style, text)| style.foreground == comment_color
-                    && text.contains("still comment")),
+                .any(|token| token.style.foreground == comment_color
+                    && token.text.contains("still comment")),
             "second line lost the comment color: {:?}",
             lines[1]
         );
@@ -298,5 +338,41 @@ mod tests {
         let html = render_line(&lines[0], &segments);
         assert!(html.contains("word-changed"), "{html}");
         assert!(html.contains("color:#"), "{html}");
+    }
+
+    #[test]
+    fn render_line_leaves_the_comment_color_to_the_page() {
+        let highlighter = Highlighter::new();
+        for dark in [false, true] {
+            let lines = highlighter.highlight("a.rs", "let value = 1; // note\n", dark);
+
+            let html = render_line(&lines[0], &[]);
+            let comment = html
+                .split("<span")
+                .find(|span| span.contains(" note"))
+                .expect("the comment is rendered");
+            assert!(comment.contains("class=\"tok-comment\""), "{html}");
+            assert!(!comment.contains("color:#"), "{html}");
+            assert!(
+                html.contains("color:#"),
+                "code keeps the theme colors: {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_line_keeps_the_changed_mark_inside_a_comment() {
+        let highlighter = Highlighter::new();
+        let lines = highlighter.highlight("a.rs", "// note\n", true);
+        let segments = vec![Segment {
+            text: "// note".to_string(),
+            changed: true,
+        }];
+
+        let html = render_line(&lines[0], &segments);
+        assert!(
+            html.contains("class=\"tok-comment\"") && html.contains("word-changed"),
+            "{html}"
+        );
     }
 }

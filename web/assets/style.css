@@ -1341,6 +1341,16 @@ ul.files ul {
   color: inherit;
 }
 
+/* 構文ハイライトのコメント。ハイライトのテーマの色は追加・削除の行の背景の上で読めないほど薄いので、
+   サーバは色を書かず、ここでプリセットの色を付ける。単語単位の強調の上はさらに濃い背景なので、本文の色にする。 */
+.tok-comment {
+  color: var(--ink-2);
+}
+
+.tok-comment .word-changed {
+  color: var(--ink);
+}
+
 .row.tone-del .changed,
 .row.tone-del .word-changed,
 .cell.side-del .changed,
