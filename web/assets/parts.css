@@ -21,8 +21,12 @@
 .part-diagram-surface.failed { overflow: auto; -webkit-user-select: text; user-select: text; }
 .part-diagram-surface svg { transform-origin: 0 0; display: block; font: 14px sans-serif; color: inherit; }
 .part-diagram-surface svg rect, .part-diagram-surface svg polygon { fill: var(--bg, white); stroke: currentColor; stroke-width: 1.5; }
+/* alt・loop の枠は塗らない。枠はライフラインより手前に描かれるので、塗ると中を通るライフラインが隠れる。 */
+.part-diagram-surface svg .explanation-frame { fill: none; }
 .part-diagram-surface svg path, .part-diagram-surface svg line { stroke: currentColor; }
-.part-diagram-surface svg text, .part-diagram-surface svg .explanation-arrowhead { fill: currentColor; }
+/* 文字には背景色の縁を付ける。枠の条件やメッセージの文字はライフラインの上に重なるので、縁が無いと線が文字を貫く。 */
+.part-diagram-surface svg text { fill: currentColor; stroke: var(--bg, white); stroke-width: 4px; stroke-linejoin: round; paint-order: stroke; }
+.part-diagram-surface svg .explanation-arrowhead { fill: currentColor; }
 /* 図の見出しの行。操作は右に小さく置き、インラインではポインタを乗せたときと図の中にフォーカスがあるときに出す。 */
 .part-diagram-head { display:flex; align-items:center; gap:8px; min-height:40px; padding:4px 8px 4px 12px; border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0; background:var(--panel); }
 .part-grid .part-diagram-head { border:0; border-radius:0; background:transparent; padding:0 0 4px; }
@@ -47,7 +51,9 @@
 .part-diagram-dialog::backdrop { background:#0007; }
 .part-diagram-dialog > button { margin-bottom:12px; padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); cursor:pointer; }
 .part-diagram-dialog > .part-diagram { clear:both; }
-.part-grid svg { display: block; max-width: 100%; height: auto; font: 14px sans-serif; }
+/* 文字の縁と箱の塗りが背景色なので、会話パネルの中でも図の下地を背景色にそろえる。 */
+.part-grid svg { display: block; max-width: 100%; height: auto; font: 14px sans-serif; background: var(--bg, white); border-radius: 6px; }
 .part-grid svg rect { fill: var(--bg, white); stroke: currentColor; }
 .part-grid svg line { stroke: currentColor; }
-.part-grid svg text, .part-grid svg polygon { fill: currentColor; }
+.part-grid svg text { fill: currentColor; stroke: var(--bg, white); stroke-width: 4px; stroke-linejoin: round; paint-order: stroke; }
+.part-grid svg polygon { fill: currentColor; }

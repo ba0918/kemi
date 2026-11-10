@@ -1,7 +1,10 @@
 // @ts-check
 import { dom } from "../dom.js";
-import { currentEntry, displayMode, displayWrap, state } from "../state.js";
+import { currentEntry, displayWrap, state } from "../state.js";
 import { horizontalEntry, measureHorizontal } from "../model.js";
+
+/** 横に動かすコードの欄。1 列表示では行ごとに 1 つ、2 列表示では旧と新の 2 つ。 */
+const CODE_COLUMN = ".row > .code, .row > .cell > .code";
 
 /** 次に描いたときに、横の幅を測り直すか。 */
 let measurePending = false;
@@ -12,9 +15,8 @@ export function invalidateHorizontalWidth() {
 
 export function syncHorizontal() {
   state.horizontal = horizontalEntry(state.horizontal, currentEntry()?.file.id ?? null);
-  const active = displayMode() === "split" && !displayWrap();
-  const codes = Array.from(dom.content.querySelectorAll(".split .code"));
-  if (!active || state.loading || codes.length === 0) {
+  const codes = codeColumns();
+  if (displayWrap() || state.loading || codes.length === 0) {
     dom.horizontal.hidden = true;
     dom.content.style.setProperty("--code-offset", "0px");
     return;
@@ -35,6 +37,11 @@ export function syncHorizontal() {
   dom.content.style.setProperty("--code-offset", `${-state.horizontal.left}px`);
 }
 
+/** @returns {Element[]} */
+function codeColumns() {
+  return Array.from(dom.content.querySelectorAll(CODE_COLUMN));
+}
+
 export function onHorizontalScroll() {
   if (dom.horizontal.hidden) return;
   state.horizontal = { ...state.horizontal, left: dom.horizontal.scrollLeft };
@@ -43,7 +50,7 @@ export function onHorizontalScroll() {
 
 /** @param {WheelEvent} event */
 export function onCodeWheel(event) {
-  if (dom.horizontal.hidden || !(event.target instanceof Element) || !event.target.closest(".split .code")) return;
+  if (dom.horizontal.hidden || !(event.target instanceof Element) || !event.target.closest(CODE_COLUMN)) return;
   const delta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
   if (!delta) return;
   const scale = event.deltaMode === 1 ? 24 : event.deltaMode === 2 ? dom.horizontal.clientWidth : 1;

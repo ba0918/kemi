@@ -21,6 +21,7 @@
     <link rel="modulepreload" href="assets/features/narrow.js" />
     <link rel="modulepreload" href="assets/features/navigation.js" />
     <link rel="modulepreload" href="assets/features/rendered.js" />
+    <link rel="modulepreload" href="assets/features/side-pane.js" />
     <link rel="modulepreload" href="assets/features/submit.js" />
     <link rel="modulepreload" href="assets/features/theme.js" />
     <link rel="modulepreload" href="assets/features/units.js" />
@@ -209,9 +210,15 @@
 
     <div class="layout">
       <aside id="explanation-toc" class="tree" aria-label="Explanation contents" hidden></aside>
-      <div id="explanation-splitter" role="separator" aria-label="Resize explanation contents" aria-orientation="vertical" aria-controls="explanation-toc" tabindex="0" hidden></div>
       <aside class="tree" id="tree" aria-label="File tree"></aside>
       <div class="narrow-only" id="drawer-scrim"></div>
+      <!-- 左のペイン（目次・ファイルツリー・ページのツリー）と本文の境界。掴んで幅を変え、ボタンで畳む。 -->
+      <div id="side-divider">
+        <div id="side-splitter" role="separator" aria-label="Resize the side pane" aria-orientation="vertical" tabindex="0"></div>
+        <button id="side-toggle" type="button" title="Hide the side pane" aria-label="Hide the side pane" aria-expanded="true">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>
+        </button>
+      </div>
       <main id="main">
         <div id="explanation-status" hidden></div>
         <button id="explanation-update" type="button" hidden></button>

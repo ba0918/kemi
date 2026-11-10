@@ -16,6 +16,9 @@ import {
   lineAnchor,
   lineOffsets,
   metaItems,
+  clampSidePaneWidth,
+  sidePaneDefaultWidth,
+  sidePaneKeyWidth,
   nextHighlightOverride,
   nextTheme,
   placeThreads,
@@ -549,7 +552,7 @@ test("metaItems_shows_manifest_meta_and_computed_stats", () => {
     { label: "target", value: "main..kemi-v1" },
     { label: "Files", value: "1", stat: true },
     { label: "Groups", value: "1", stat: true },
-    { label: "Changes", value: "+1 −2", stat: true },
+    { label: "Changes", value: "+1 −2", stat: true, counts: { add: 1, del: 2 } },
   ]);
 });
 
@@ -558,7 +561,7 @@ test("metaItems_ignores_empty_meta", () => {
 
   assert.deepEqual(metaItems(review), [
     { label: "Files", value: "0", stat: true },
-    { label: "Changes", value: "+0 −0", stat: true },
+    { label: "Changes", value: "+0 −0", stat: true, counts: { add: 0, del: 0 } },
   ]);
 });
 
@@ -1509,4 +1512,33 @@ test("submit の確認には、往復しているレビューでだけ未渡し�
   assert.equal(unhandedNotice({ called: true, status: "working", unhanded: 0 }), null);
   assert.match(unhandedNotice({ called: true, status: "working", unhanded: 1 }) ?? "", /\b1\b/);
   assert.match(unhandedNotice({ called: true, status: "waiting", unhanded: 3 }) ?? "", /\b3\b/);
+});
+
+test("clampSidePaneWidth_keeps_the_side_pane_between_200px_and_half_of_the_layout", () => {
+  assert.equal(clampSidePaneWidth(120, 1400), 200);
+  assert.equal(clampSidePaneWidth(360, 1400), 360);
+  assert.equal(clampSidePaneWidth(900, 1400), 640);
+  assert.equal(clampSidePaneWidth(900, 1000), 500);
+});
+
+test("clampSidePaneWidth_never_goes_below_the_minimum_on_a_small_layout", () => {
+  assert.equal(clampSidePaneWidth(360, 300), 200);
+});
+
+test("sidePaneDefaultWidth_gives_the_file_tree_more_room_than_the_explanation_contents", () => {
+  assert.equal(sidePaneDefaultWidth("explanation"), 280);
+  assert.equal(sidePaneDefaultWidth("code"), 330);
+  assert.equal(sidePaneDefaultWidth("page"), 330);
+});
+
+test("sidePaneKeyWidth_moves_by_20px_with_arrows_and_jumps_to_the_ends_with_home_and_end", () => {
+  assert.equal(sidePaneKeyWidth("ArrowLeft", 300, 1400), 280);
+  assert.equal(sidePaneKeyWidth("ArrowRight", 300, 1400), 320);
+  assert.equal(sidePaneKeyWidth("Home", 300, 1400), 200);
+  assert.equal(sidePaneKeyWidth("End", 300, 1400), 640);
+  assert.equal(sidePaneKeyWidth("ArrowLeft", 200, 1400), 200);
+});
+
+test("sidePaneKeyWidth_ignores_keys_that_do_not_resize", () => {
+  assert.equal(sidePaneKeyWidth("Enter", 300, 1400), null);
 });

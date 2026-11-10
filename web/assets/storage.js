@@ -77,3 +77,26 @@ export function loadConversationWidth() {
 export function saveConversationWidth(width) {
   localStorage.setItem("kemi-conversation-width", String(Math.round(width)));
 }
+
+/**
+ * 左のペイン（ファイルツリー、説明の目次、ページのツリー）の幅と、畳んでいるか。見方ごとに覚える
+ * （表示の好み。R-SERVE）。幅を覚えていなければ null。
+ * @param {string} view
+ * @returns {{ width: number | null, collapsed: boolean }}
+ */
+export function loadSidePane(view) {
+  const width = Number(localStorage.getItem(`kemi-side-${view}-width`));
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : null,
+    collapsed: localStorage.getItem(`kemi-side-${view}-collapsed`) === "1",
+  };
+}
+
+/**
+ * @param {string} view
+ * @param {{ width: number, collapsed: boolean }} pane
+ */
+export function saveSidePane(view, pane) {
+  localStorage.setItem(`kemi-side-${view}-width`, String(Math.round(pane.width)));
+  localStorage.setItem(`kemi-side-${view}-collapsed`, pane.collapsed ? "1" : "0");
+}

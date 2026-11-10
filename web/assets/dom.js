@@ -13,7 +13,9 @@ function must(selector) {
 export const dom = {
   viewSwitch: must('#review-views'),
   explanationToc: must('#explanation-toc'),
-  explanationSplitter: must('#explanation-splitter'),
+  layout: must('.layout'),
+  sideSplitter: must('#side-splitter'),
+  sideToggle: /** @type {HTMLButtonElement} */ (must('#side-toggle')),
   explanationDocument: must('#explanation-document'),
   explanationStatus: must('#explanation-status'),
   explanationUpdate: /** @type {HTMLButtonElement} */ (must('#explanation-update')),

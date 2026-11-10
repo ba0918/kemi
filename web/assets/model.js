@@ -1484,12 +1484,14 @@ function reviewStats(review) {
 }
 
 /**
- * ヘッダに出す meta の項目。manifest の meta を先に、集計値は最後に置く。
+ * ヘッダに出す meta の項目。manifest の meta を先に、集計値は最後に置く。増減の項目は、追加と削除を
+ * 色分けできるよう数も持つ。
+ * @typedef {{ label: string, value: string, stat?: boolean, counts?: { add: number, del: number } }} MetaItem
  * @param {any} review
- * @returns {{ label: string, value: string, stat?: boolean }[]}
+ * @returns {MetaItem[]}
  */
 export function metaItems(review) {
-  /** @type {{ label: string, value: string, stat?: boolean }[]} */
+  /** @type {MetaItem[]} */
   const items = [];
   const meta = review && review.meta;
   if (typeof meta === "string") {
@@ -1512,7 +1514,12 @@ export function metaItems(review) {
   if (stats.groups > 0) {
     items.push({ label: "Groups", value: String(stats.groups), stat: true });
   }
-  items.push({ label: "Changes", value: `+${stats.add} −${stats.del}`, stat: true });
+  items.push({
+    label: "Changes",
+    value: `+${stats.add} −${stats.del}`,
+    stat: true,
+    counts: { add: stats.add, del: stats.del },
+  });
   return items;
 }
 
@@ -1705,4 +1712,50 @@ export function unhandedNotice(agent) {
   }
   const one = agent.unhanded === 1;
   return `${countLabel(agent.unhanded, "item")} not handed to the agent yet (comments, replies, and messages). ${one ? "It is" : "They are"} still included in the result.`;
+}
+
+/** 左のペイン（ファイルツリー、説明の目次、ページのツリー）の幅の下限（px）。 */
+const SIDE_PANE_MIN_WIDTH = 200;
+/** 左のペインの幅の上限（px）。レイアウトの半分のほうが狭ければそちら。 */
+const SIDE_PANE_MAX_WIDTH = 640;
+/** 境界にフォーカスして矢印キーを押したときに動かす幅（px）。 */
+const SIDE_PANE_KEY_STEP = 20;
+
+/**
+ * 左のペインの、幅を覚えていないときの幅（px）。ファイルツリーはパスを読むので、目次より広く取る。
+ * @param {"explanation" | "code" | "page"} view
+ * @returns {number}
+ */
+export function sidePaneDefaultWidth(view) {
+  return view === "explanation" ? 280 : 330;
+}
+
+/**
+ * 左のペインの幅を、下限と上限（レイアウトの半分まで）の間に収める。
+ * @param {number} width
+ * @param {number} layoutWidth
+ * @returns {number}
+ */
+export function clampSidePaneWidth(width, layoutWidth) {
+  const maximum = Math.max(SIDE_PANE_MIN_WIDTH, Math.min(SIDE_PANE_MAX_WIDTH, layoutWidth / 2));
+  return Math.max(SIDE_PANE_MIN_WIDTH, Math.min(maximum, width));
+}
+
+/**
+ * 境界でキーを押したときの左のペインの幅。幅を変えないキーなら null。
+ * @param {string} key
+ * @param {number} width
+ * @param {number} layoutWidth
+ * @returns {number | null}
+ */
+export function sidePaneKeyWidth(key, width, layoutWidth) {
+  /** @type {Record<string, number>} */
+  const targets = {
+    Home: 0,
+    End: Infinity,
+    ArrowLeft: width - SIDE_PANE_KEY_STEP,
+    ArrowRight: width + SIDE_PANE_KEY_STEP,
+  };
+  const target = targets[key];
+  return target === undefined ? null : clampSidePaneWidth(target, layoutWidth);
 }

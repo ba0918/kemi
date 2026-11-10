@@ -216,15 +216,34 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await browser('mouse','move',String(resizeBox.x),String(resizeBox.y));await browser('mouse','down');
   await browser('mouse','move',String(resizeBox.x+60),String(resizeBox.y));await browser('mouse','up');
   assert.ok(await contentsWidth() > minContentsWidth, 'pointer expands the contents');
+  // 左のペインは境界のボタンで畳め、同じボタンで畳む前の幅に戻る。
+  const widthBeforeCollapse = await contentsWidth();
+  const mainLeft = () => evaluate(`document.querySelector('main').getBoundingClientRect().left`);
+  const mainLeftBeforeCollapse = await mainLeft();
+  await browser('find','role','button','click','--name','Hide the side pane');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='Explanation contents').getClientRects().length`), 0, 'the contents are hidden while collapsed');
+  assert.ok(await mainLeft() < mainLeftBeforeCollapse - 100, 'the document takes the room of the collapsed contents');
+  await browser('find','role','button','click','--name','Show the side pane');
+  assert.equal(await contentsWidth(), widthBeforeCollapse, 'the contents come back at the width before collapsing');
   await browser('find','role','button','click','--name','Code','--exact');
   const codeTreeWidth = await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`);
   await browser('find','role','button','click','--name','Explanation','--exact');
   await evaluate(`${separator}.focus();true`);await browser('press','End');
   await browser('find','role','button','click','--name','Code','--exact');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`), codeTreeWidth);
+  // ファイルツリーも同じ境界で幅を変えられ、読み込み直しても幅が残る。説明の目次の幅は変わらない。
+  const treeWidth = () => evaluate(`Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='File tree').getBoundingClientRect().width`);
+  await evaluate(`${separator}.focus();true`);await browser('press','ArrowRight');
+  assert.equal(await treeWidth(), codeTreeWidth + 20, 'keyboard expands the file tree');
+  await browser('reload');
+  await browser('wait','--fn',`Boolean(Array.from(document.querySelectorAll('aside')).find(e=>e.getAttribute('aria-label')==='Explanation contents')?.getClientRects().length)`);
+  assert.equal(await contentsWidth(), maxContentsWidth, 'the contents width is remembered and the file tree does not change it');
+  await browser('find','role','button','click','--name','Code','--exact');
+  assert.equal(await treeWidth(), codeTreeWidth + 20, 'the file tree width is remembered across a reload');
+  await evaluate(`${separator}.focus();true`);await browser('press','ArrowLeft');
   await browser('find','role','button','click','--name','Explanation','--exact');
   await evaluate(`${separator}.focus();true`);await browser('press','Home');
-  console.log('PASS: contents resize by keyboard/pointer, both clamps, Code width unchanged');
+  console.log('PASS: contents and file tree resize by keyboard/pointer, both clamps, collapse, widths kept per view and across a reload');
   // 畳まない文書と目次を、1280px・390px と light・dark の 4 通りで見る。テーマは画面のボタンで切り替える。
   const artifacts = resolve('.agents/artifacts'); await mkdir(artifacts, { recursive: true });
   const readingRegion = `document.querySelector('[aria-label="Explanation"][role="region"]')`;

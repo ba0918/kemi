@@ -45,7 +45,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 - 下から上への呼び出し（view のボタンが feature を呼ぶ、前の feature が後ろの feature を
   呼ぶ）は `actions.js` を通す。中身は `app.js` が起動時に `bindActions` で 1 回だけ入れる。
 - `features/` の中の順番は
-   `horizontal-scroll → display → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
+   `horizontal-scroll → display → side-pane → navigation → files → rendered → parts → theme → comments → agent → units → conversation → narrow → submit → explanation → live` で、
   自分より前の feature だけを直接 import してよい。後ろのものは `actions` を通す。
 - `features/live/` は `live` の部品で、親の `features/live.js`（起動と結線、見方・側・表示幅・ページの切り替え、
   ページからの知らせの振り分け、帯と比べる相手の描画）が import する。部品の順は

@@ -18,8 +18,8 @@ import {
 } from "../views/explanation.js";
 import { showOverlay } from "../views/overlay.js";
 import { setupExplanationSelection } from "./explanation/selection.js";
+import { syncSidePane } from "./side-pane.js";
 
-let contentsWidth = 280;
 let closeSelection = () => {};
 
 /**
@@ -159,78 +159,6 @@ export function openExplanationEditor(request) {
   }
 }
 
-function setupContentsResize() {
-  const splitter = dom.explanationSplitter;
-  const layout = dom.explanationToc.parentElement;
-  if (!layout) {
-    return;
-  }
-  const maximum = () => Math.max(200, Math.min(480, layout.clientWidth * 0.4));
-  /** @param {number} width */
-  const setWidth = (width) => {
-    contentsWidth = Math.max(200, Math.min(maximum(), width));
-    layout.style.setProperty("--explanation-toc-width", `${contentsWidth}px`);
-    splitter.setAttribute("aria-valuemin", "200");
-    splitter.setAttribute("aria-valuemax", String(Math.floor(maximum())));
-    splitter.setAttribute("aria-valuenow", String(Math.round(contentsWidth)));
-  };
-  /**
-   * キーで決める目次の幅。幅を変えないキーなら null。
-   * @param {string} key
-   * @returns {number|null}
-   */
-  const keyWidth = (key) => {
-    switch (key) {
-      case "Home":
-        return 200;
-      case "End":
-        return maximum();
-      case "ArrowLeft":
-        return contentsWidth - 20;
-      case "ArrowRight":
-        return contentsWidth + 20;
-      default:
-        return null;
-    }
-  };
-  splitter.addEventListener("keydown", (event) => {
-    if (state.narrow || state.view !== "explanation") {
-      return;
-    }
-    const width = keyWidth(event.key);
-    if (width !== null) {
-      event.preventDefault();
-      setWidth(width);
-    }
-  });
-  splitter.addEventListener("pointerdown", (event) => {
-    if (state.narrow || state.view !== "explanation" || event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    splitter.focus();
-    const startX = event.clientX;
-    const startWidth = contentsWidth;
-    splitter.setPointerCapture(event.pointerId);
-    /** @param {PointerEvent} move */
-    const move = (move) => setWidth(startWidth + move.clientX - startX);
-    const finish = () => {
-      splitter.removeEventListener("pointermove", move);
-      splitter.removeEventListener("pointerup", finish);
-      splitter.removeEventListener("pointercancel", finish);
-    };
-    splitter.addEventListener("pointermove", move);
-    splitter.addEventListener("pointerup", finish);
-    splitter.addEventListener("pointercancel", finish);
-  });
-  new ResizeObserver(() => {
-    if (!state.narrow) {
-      setWidth(contentsWidth);
-    }
-  }).observe(layout);
-  setWidth(contentsWidth);
-}
-
 /** @param {'explanation'|'code'|'page'} view */
 export async function selectView(view) {
   if (state.view === "explanation" && view !== "explanation") {
@@ -264,7 +192,7 @@ function showView() {
   document.body.dataset.reviewView = state.view;
   dom.explanationDocument.hidden = state.view !== "explanation";
   dom.explanationToc.hidden = state.view !== "explanation";
-  dom.explanationSplitter.hidden = state.view !== "explanation";
+  syncSidePane();
   if (state.drawerOpen) {
     dom.explanationToc.dataset.drawer = "open";
   } else {
@@ -283,7 +211,6 @@ function showView() {
 
 /** @param {any} review */
 export async function startExplanation(review) {
-  setupContentsResize();
   closeSelection = setupExplanationSelection();
   const history = review.explanation;
   const current = history?.versions.find(

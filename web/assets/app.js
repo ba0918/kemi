@@ -19,6 +19,7 @@ import {
 } from "./features/display.js";
 import { applyNarrow, closeDrawer, reserveHandFloatSpace, toggleComments, toggleDrawer } from "./features/narrow.js";
 import { navigate } from "./features/navigation.js";
+import { setupSidePane } from "./features/side-pane.js";
 import {
   applyReview,
   copyPath,
@@ -296,6 +297,7 @@ dom.btnComments.addEventListener("click", toggleConversation);
 dom.cvRail.addEventListener("click", openConversation);
 dom.cvClose.addEventListener("click", closeConversation);
 dom.cvResizer.addEventListener("pointerdown", startResize);
+setupSidePane();
 dom.cvFilter.addEventListener("click", chooseFilter);
 dom.cvCompose.addEventListener("submit", submitMessage);
 dom.cvMessage.addEventListener("keydown", submitOnModEnter);
