@@ -1484,12 +1484,14 @@ function reviewStats(review) {
 }
 
 /**
- * ヘッダに出す meta の項目。manifest の meta を先に、集計値は最後に置く。
+ * ヘッダに出す meta の項目。manifest の meta を先に、集計値は最後に置く。増減の項目は、追加と削除を
+ * 色分けできるよう数も持つ。
+ * @typedef {{ label: string, value: string, stat?: boolean, counts?: { add: number, del: number } }} MetaItem
  * @param {any} review
- * @returns {{ label: string, value: string, stat?: boolean }[]}
+ * @returns {MetaItem[]}
  */
 export function metaItems(review) {
-  /** @type {{ label: string, value: string, stat?: boolean }[]} */
+  /** @type {MetaItem[]} */
   const items = [];
   const meta = review && review.meta;
   if (typeof meta === "string") {
@@ -1512,7 +1514,12 @@ export function metaItems(review) {
   if (stats.groups > 0) {
     items.push({ label: "Groups", value: String(stats.groups), stat: true });
   }
-  items.push({ label: "Changes", value: `+${stats.add} −${stats.del}`, stat: true });
+  items.push({
+    label: "Changes",
+    value: `+${stats.add} −${stats.del}`,
+    stat: true,
+    counts: { add: stats.add, del: stats.del },
+  });
   return items;
 }
 

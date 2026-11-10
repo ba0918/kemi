@@ -552,7 +552,7 @@ test("metaItems_shows_manifest_meta_and_computed_stats", () => {
     { label: "target", value: "main..kemi-v1" },
     { label: "Files", value: "1", stat: true },
     { label: "Groups", value: "1", stat: true },
-    { label: "Changes", value: "+1 −2", stat: true },
+    { label: "Changes", value: "+1 −2", stat: true, counts: { add: 1, del: 2 } },
   ]);
 });
 
@@ -561,7 +561,7 @@ test("metaItems_ignores_empty_meta", () => {
 
   assert.deepEqual(metaItems(review), [
     { label: "Files", value: "0", stat: true },
-    { label: "Changes", value: "+0 −0", stat: true },
+    { label: "Changes", value: "+0 −0", stat: true, counts: { add: 0, del: 0 } },
   ]);
 });
 

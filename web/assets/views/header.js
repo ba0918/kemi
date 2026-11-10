@@ -55,12 +55,20 @@ export function renderHeader() {
 }
 
 /**
- * @param {{ label: string, value: string }} item
+ * 集計値の 1 項目。増減は、ツリーと同じ追加と削除の色で分ける。
+ * @param {import("../model.js").MetaItem} item
  * @returns {HTMLElement}
  */
 function metaStat(item) {
   const span = el("span");
-  span.append(textEl("b", "", item.label), document.createTextNode(item.value));
+  span.append(textEl("b", "", item.label));
+  if (item.counts) {
+    const counts = el("span", "st");
+    counts.append(textEl("span", "p", `+${item.counts.add}`), " ", textEl("span", "m", `−${item.counts.del}`));
+    span.append(counts);
+  } else {
+    span.append(document.createTextNode(item.value));
+  }
   return span;
 }
 
