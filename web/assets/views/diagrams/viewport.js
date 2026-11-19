@@ -22,7 +22,7 @@ export function diagramCommentButton(title, comment) {
 
 /**
  * @param {import('../../diagrams/types.js').Sequence|import('../../diagrams/types.js').Flow} part @param {boolean} [modal]
- * @param {{comment?: (button: HTMLButtonElement) => void}} [options]
+ * @param {{comment?: (button: HTMLButtonElement) => void, close?: () => void}} [options] close は別表示を閉じる処理（別表示でだけ渡す）
  */
 export function diagramViewport(part, modal = false, options = {}) {
   const host = el('section', modal ? 'part-diagram part-diagram-modal' : 'part-diagram');
@@ -68,16 +68,29 @@ export function diagramViewport(part, modal = false, options = {}) {
     control('Reset diagram', '↺', () => { fitted = false; zoom.set({ x: 0, y: 0, k: 1 }); });
     const arrows = ['←','→','↑','↓'];
     for (const [index, [key, [dx, dy]]] of Object.entries(moves).entries()) control(`Move ${key.slice(5).toLowerCase()}`, arrows[index], () => zoom.set({ ...zoom.view, x: zoom.view.x + dx, y: zoom.view.y + dy }),panTools);
+    // 閉じる操作は、ダイアログの慣例どおり右上の × にする。見出しの行の右端に置き、ほかの操作とは区切る。
+    // 操作の並びの外に置くのは、狭い画面で操作を題の下へ回しても × だけは題の行に残すため。
+    if (options.close) {
+      const closeTools = el('div','part-diagram-tool-group part-diagram-close-group');
+      head.append(closeTools);
+      control('Close diagram', '×', options.close, closeTools).title = 'Close diagram (Esc)';
+    }
   }
   if (!modal) {
     const enlarge = control('Open diagram separately', '⤢', () => {
       const dialog = document.createElement('dialog'); dialog.className = 'part-diagram-dialog';
       dialog.setAttribute('aria-label', part.title);
       dialog.addEventListener('keydown', event => event.stopPropagation());
-      const close = button(''); close.textContent = 'Close diagram';
       const finish = () => { dialog.close(); dialog.remove(); enlarge.focus(); host.scrollIntoView({ block: 'nearest' }); };
-      close.addEventListener('click', finish); dialog.addEventListener('cancel', event => { event.preventDefault(); finish(); });
-      dialog.append(close, diagramViewport(part, true)); document.body.append(dialog); dialog.showModal(); close.focus();
+      dialog.addEventListener('cancel', event => { event.preventDefault(); finish(); });
+      // 暗くした背景を押しても閉じる。背景を押すと dialog 自身に届くので、箱の外かを位置で見分ける（箱の余白も dialog に届く）。
+      dialog.addEventListener('click', event => {
+        const box = dialog.getBoundingClientRect();
+        if (event.target === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)) finish();
+      });
+      const view = diagramViewport(part, true, { close: finish });
+      dialog.append(view); document.body.append(dialog); dialog.showModal();
+      /** @type {HTMLButtonElement|null} */ (view.querySelector('button[aria-label="Close diagram"]'))?.focus();
     });
     if (options.comment) controls.append(diagramCommentButton(part.title, options.comment));
   }

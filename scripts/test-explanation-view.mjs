@@ -142,8 +142,19 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await browser('press', '0'); assert.notEqual(await transform(), zoomed);
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
-  await browser('find', 'role', 'button', 'click', '--name', 'Close diagram');
+  // 閉じる操作は、ダイアログの右上（図の見出しの行の右端）の × に置く。
+  const closePlace = await evaluate(`(()=>{const d=document.querySelector('dialog'),c=Array.from(d.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')==='Close diagram'),h=d.querySelector('.part-diagram-head');const cb=c.getBoundingClientRect(),hb=h.getBoundingClientRect(),others=Array.from(h.querySelectorAll('button')).filter(b=>b!==c).map(b=>b.getBoundingClientRect().right);return {text:c.textContent.trim(),inHead:h.contains(c),rightmost:others.every(r=>r<=cb.left+1),gap:hb.right-cb.right}})()`);
+  assert.equal(closePlace.inHead && closePlace.rightmost, true, `the close button is the last control of the diagram heading (${JSON.stringify(closePlace)})`);
+  assert.ok(closePlace.text.startsWith('×') && closePlace.gap < 24, `the close button is a × at the right end (${JSON.stringify(closePlace)})`);
+  // ここでは本文に zoom を掛けているので、座標で押す操作は位置がずれる。ボタンを直接押す。
+  await evaluate(`document.querySelector('dialog button[aria-label="Close diagram"]').click();true`);
   assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true);
+  // ダイアログの外（暗くした背景）を押しても閉じる。
+  await evaluate(`window.diagramSource.click();true`);
+  await wait(`document.querySelector('dialog')?.open`);
+  await browser('mouse', 'move', '4', '4'); await browser('mouse', 'down'); await browser('mouse', 'up');
+  await wait(`!document.querySelector('dialog')`);
+  assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true, 'closing from the backdrop returns the focus to the diagram');
   await evaluate(`const style=document.createElement('style');style.id='font-change';style.textContent='.explanation-diagram {font-size:180px!important;font-family:serif!important}';document.head.append(style);true`);
   await wait(`Array.from(document.querySelectorAll('pre')).some(e=>{try{return JSON.parse(e.textContent).title==='Sequence operations'}catch{return false}})`);
   assert.equal(await evaluate(`document.body.textContent.includes('C survives') && document.body.textContent.includes('Comment stays')`), true);
@@ -173,6 +184,9 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations' && e.getClientRects().length)`);
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
+  // 狭い画面でも、図の題は 1 行を保ち、× は右上（題と同じ行の右端）に残る。操作は題の下へ回す。
+  const narrowHead = await evaluate(`(()=>{const d=document.querySelector('dialog'),h=d.querySelector('.part-diagram-head'),t=h.querySelector('.part-metadata').getBoundingClientRect(),c=d.querySelector('button[aria-label="Close diagram"]').getBoundingClientRect(),hb=h.getBoundingClientRect();return {titleWidth:t.width,sameRow:Math.abs((c.top+c.bottom)/2-(t.top+t.bottom)/2)<12,gap:hb.right-c.right}})()`);
+  assert.ok(narrowHead.titleWidth > 200 && narrowHead.sameRow && narrowHead.gap < 24, `390px: the title keeps its width and the × stays at its right (${JSON.stringify(narrowHead)})`);
   await browser('press', 'Escape');
   assert.equal(await evaluate(`!document.querySelector('dialog') && document.activeElement===window.diagramSource && document.activeElement.getClientRects().length>0`), true);
   console.log('PASS: Escape closes the separate diagram and returns to its source at 390px');
