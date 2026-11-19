@@ -77,7 +77,7 @@ export function explanationEditor(target) {
   const quote = textEl("blockquote", "explanation-comment-quote", target.quote);
   const input = /** @type {HTMLTextAreaElement} */ (el("textarea"));
   input.setAttribute("aria-label", `Comment on ${target.sectionTitle}`);
-  input.placeholder = "Ask a question or suggest a change…";
+  input.placeholder = "Ask a question or suggest a change (Cmd/Ctrl+Enter to save)";
   input.value = target.draft;
   const actions = el("div", "explanation-comment-actions");
   const cancel = button("btn");

@@ -93,7 +93,8 @@ try {
   await browser('press','c');
   await wait(`document.activeElement.tagName==='TEXTAREA'`);
   await browser('find','label','Comment on Selection review','fill','The second intent');
-  await browser('find','role','button','click','--name','Add comment','--exact');
+  // コードの見方の入力欄と同じく、Cmd/Ctrl+Enter で保存できる。
+  await browser('press','Control+Enter');
   await wait(`document.body.textContent.includes('The second intent')`);
   assert.deepEqual((await review()).comments[1].explanation.selection,{text:'intent',occurrence:1});
   await browser('open',url);
