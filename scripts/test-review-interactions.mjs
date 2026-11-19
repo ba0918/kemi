@@ -50,6 +50,8 @@ try {
   await evaluate(`Array.from(document.querySelectorAll('#diff-content .editor button')).find(b => b.textContent === 'Cancel').click()`);
   await wait(`!document.querySelector('#diff-content .editor')`);
 
+  // ほかの理由で操作できなくしてある要素は、ダイアログを閉じても操作できなくしたまま残す。
+  await evaluate(`document.querySelector('#overlay').inert = true; true`);
   await browser('click', '#btn-changes');
   await wait(`!document.querySelector('#modal').hidden`);
   assert.equal(await evaluate(`document.activeElement?.id`), 'modal-cancel', 'opening the dialog focuses its safe choice');
@@ -61,7 +63,8 @@ try {
   await browser('press', 'Escape');
   await wait(`document.querySelector('#modal').hidden`);
   assert.equal(await evaluate(`document.activeElement?.id`), 'btn-changes', 'closing the dialog returns the focus to the button that opened it');
-  assert.equal(await evaluate(`Array.from(document.body.children).some(e => e.inert)`), false, 'closing the dialog makes the page usable again');
+  assert.equal(await evaluate(`Array.from(document.body.children).some(e => e.inert && e.id !== 'overlay')`), false, 'closing the dialog makes the page usable again');
+  assert.equal(await evaluate(`document.querySelector('#overlay').inert`), true, 'closing the dialog keeps an element that was already inert');
   console.log('PASS closing the dialog returns the focus to its opener');
 } finally {
   await close();

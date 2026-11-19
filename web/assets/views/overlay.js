@@ -21,13 +21,27 @@ let modalAction = null;
 let modalOpener = null;
 
 /**
+ * ダイアログを開いている間だけ inert にした要素。閉じたらこれだけを戻す（前から inert だった要素は戻さない）。
+ * @type {HTMLElement[]}
+ */
+let blockedOutside = [];
+
+/**
  * ダイアログの外を操作できなくする（inert）か、戻す。ダイアログは body の直下にあるので、その兄弟を切り替える。
  * @param {boolean} blocked
  */
 function blockOutsideModal(blocked) {
+  if (!blocked) {
+    for (const element of blockedOutside) {
+      element.inert = false;
+    }
+    blockedOutside = [];
+    return;
+  }
   for (const element of document.body.children) {
-    if (element !== dom.modal && element instanceof HTMLElement) {
-      element.inert = blocked;
+    if (element !== dom.modal && element instanceof HTMLElement && !element.inert) {
+      element.inert = true;
+      blockedOutside.push(element);
     }
   }
 }
