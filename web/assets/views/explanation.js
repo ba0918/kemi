@@ -12,6 +12,7 @@ import {
   readingPoint,
   explanationElementId,
   commentCountDescription,
+  currentContentsIndex,
 } from "../explanation-model.js";
 import { partView } from "./parts.js";
 
@@ -370,18 +371,28 @@ export function explanationReferences(references, navigate = true) {
 let renderToken = 0;
 let refreshQueued = false;
 
-/** 目次の項目のうち、読み位置の上にある最後のものを示す。 */
+/** 目次で選んだ項目の移り先の id。その見出しが画面から出るまで、目次はこの項目を示す。 */
+let chosenContents = "";
+
+/** 目次の項目のうち、読み位置の上にある最後のもの（一番下まで読んだら最後の項目）を示す。 */
 function markCurrentContents() {
-  const top = dom.explanationDocument.getBoundingClientRect().top + 80;
+  const page = dom.explanationDocument;
+  const box = page.getBoundingClientRect();
   const items = Array.from(dom.explanationToc.querySelectorAll("[data-toc-target]"));
-  let current = items[0];
-  for (const item of items) {
-    const targetId = /** @type {HTMLElement} */ (item).dataset.tocTarget ?? "";
-    const target = document.getElementById(targetId);
-    if (target && target.getBoundingClientRect().top <= top) {
-      current = item;
-    }
+  const targets = items.map((item) => /** @type {HTMLElement} */ (item).dataset.tocTarget ?? "");
+  const tops = targets.map((id) => document.getElementById(id)?.getBoundingClientRect().top ?? Infinity);
+  const chosen = targets.indexOf(chosenContents);
+  const index = currentContentsIndex(tops, {
+    top: box.top,
+    threshold: box.top + 80,
+    bottom: box.bottom,
+    atEnd: page.scrollHeight > page.clientHeight && page.scrollTop + page.clientHeight >= page.scrollHeight - 1,
+    chosen: chosen < 0 ? null : chosen,
+  });
+  if (index !== chosen) {
+    chosenContents = "";
   }
+  const current = items[index];
   for (const item of items) {
     if (item === current) {
       item.setAttribute("aria-current", "location");
@@ -400,7 +411,10 @@ function contentsItem(label, targetId) {
   item.dataset.tocTarget = targetId;
   item.setAttribute("aria-label", `Go to ${label}`);
   item.addEventListener("click", () => {
+    chosenContents = targetId;
     document.getElementById(targetId)?.scrollIntoView({ block: "start" });
+    // 一番下まで動いた後では移り先へ動けず scroll が来ないので、ここでも示し直す。
+    markCurrentContents();
     actions.closeDrawer();
   });
   return item;

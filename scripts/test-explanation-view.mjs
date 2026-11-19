@@ -283,6 +283,15 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await goTo('Sub heading two');
   assert.ok(await evaluate(`(()=>{const h=Array.from(document.querySelectorAll('h3')).find(e=>e.textContent==='Sub heading two');return Math.abs(h.getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60})()`), 'a sub heading item moves to the heading');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Sub heading two', 'the item at the reading position is shown');
+  // 背の高い窓では、最後の見出しは一番下まで読んでも読み位置まで上がらない。
+  await browser('set','viewport','1280','2400'); await frames();
+  await evaluate(`${readingRegion}.scrollTop=${readingRegion}.scrollHeight;true`); await frames();
+  const lastTop = await evaluate(`(()=>{const items=Array.from(document.querySelectorAll('#explanation-toc [data-toc-target]'));return document.getElementById(items.at(-1).dataset.tocTarget).getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top})()`);
+  assert.ok(lastTop > 80, `the last heading stays below the reading position at the end (${lastTop})`);
+  assert.equal(await evaluate(`(()=>{const items=Array.from(document.querySelectorAll('#explanation-toc [data-toc-target]'));return items.at(-1).getAttribute('aria-current')})()`), 'location', 'reading to the end shows the last contents item even when its heading cannot reach the top');
+  await goTo('Middle section'); await frames();
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Middle section', 'an item chosen in the contents stays shown even when the move reaches the end');
+  await browser('set','viewport','1280','900');
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
