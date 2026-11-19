@@ -1,9 +1,9 @@
 // @ts-check
 // 画面に重ねて出すもの: 知らせ、完了画面、確認ダイアログ、短い通知。
 
-import { dom, button, copyText, el, textEl } from "../dom.js";
+import { dom, button, closeButton, copyText, el, textEl } from "../dom.js";
 import { state } from "../state.js";
-import { countLabel, unitLabel } from "../model.js";
+import { KEY_HELP, countLabel, unitLabel } from "../model.js";
 
 /** 短い通知を消すタイマー。 */
 let toastTimer = 0;
@@ -68,22 +68,72 @@ function setModalText(text) {
  * }} options 本文は、改行を保つ段落 1 つなら文字列で、組んだ要素ならその並びで渡す
  */
 export function openModal(options) {
-  dom.modalTitle.textContent = options.title;
-  if (typeof options.body === "string") {
-    setModalText(options.body);
-  } else {
-    dom.modalBody.textContent = "";
-    dom.modalBody.append(...options.body);
-  }
+  dom.modalRow.hidden = false;
   dom.modalOk.textContent = options.okLabel;
   dom.modalOk.className = options.okClass;
-  dom.modalCancel.textContent = options.cancelLabel;
-  modalAction = options.action;
+  showModal(options.title, options.body, options.cancelLabel, options.action);
+}
+
+/**
+ * 確かめることの無い知らせを、確認ダイアログと同じ形で出す。閉じる操作だけを置く。
+ * @param {string} title
+ * @param {HTMLElement[]} body
+ */
+export function openNotice(title, body) {
+  // 確かめることが無いので、下の行（戻る・進む）は置かず、見出しの × だけで閉じる（R-VIEW）。
+  dom.modalRow.hidden = true;
+  showModal(title, body, "Back", null);
+  dom.modalClose.focus();
+}
+
+/**
+ * @param {string} title
+ * @param {string | HTMLElement[]} body
+ * @param {string} cancelLabel
+ * @param {(() => void) | null} action
+ */
+function showModal(title, body, cancelLabel, action) {
+  dom.modalTitle.textContent = title;
+  if (typeof body === "string") {
+    setModalText(body);
+  } else {
+    dom.modalBody.textContent = "";
+    dom.modalBody.append(...body);
+  }
+  dom.modalCancel.textContent = cancelLabel;
+  modalAction = action;
   modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   dom.modal.hidden = false;
   blockOutsideModal(true);
-  // 取り消せない操作の確認なので、初めのフォーカスは戻る側に置く。
+  // 取り消せない操作の確認があるので、初めのフォーカスは戻る側に置く。
   dom.modalCancel.focus();
+}
+
+/**
+ * キー操作の一覧（R-KEYS）。コードの見方でないときは、コードの見方のキーであることを添える。
+ * @param {string} view 表示中の見方
+ * @returns {HTMLElement[]}
+ */
+export function keyHelpBody(view) {
+  const table = el("table", "key-help");
+  const rows = [...KEY_HELP, { keys: ["?"], label: "Show this list" }];
+  for (const row of rows) {
+    const tr = el("tr");
+    const keys = el("td", "key-help-keys");
+    row.keys.forEach((key, index) => {
+      if (index > 0) {
+        keys.append(" / ");
+      }
+      keys.append(textEl("kbd", "", key));
+    });
+    tr.append(keys, textEl("td", "", row.label));
+    table.append(tr);
+  }
+  const body = [table];
+  if (view !== "code") {
+    body.unshift(textEl("p", "key-help-note", "These keys work in the Code view."));
+  }
+  return body;
 }
 
 /**
@@ -175,16 +225,22 @@ export function showOverlay(title, detail) {
   dom.overlay.hidden = false;
   dom.overlayCard.textContent = "";
   dom.overlayCard.className = "";
-  dom.overlayCard.append(textEl("h2", "overlay-title", title));
+  const close = closeButton();
+  close.addEventListener("click", closeOverlay);
+  const head = el("div", "dialog-head");
+  head.append(textEl("h2", "overlay-title", title), close);
+  dom.overlayCard.append(head);
   if (detail) {
     dom.overlayCard.append(textEl("p", "overlay-detail", detail));
   }
-  const close = button("btn overlay-close");
-  close.textContent = "Close";
-  close.addEventListener("click", () => {
-    dom.overlay.hidden = true;
-  });
-  dom.overlayCard.append(close);
+}
+
+/** 知らせを閉じる。送信後の完了画面は閉じない（閉じても戻る画面が無い）。 */
+export function closeOverlay() {
+  if (dom.overlay.hidden || dom.overlayCard.classList.contains("finish")) {
+    return;
+  }
+  dom.overlay.hidden = true;
 }
 
 /**

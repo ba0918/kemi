@@ -101,7 +101,7 @@ Rust の workspace。ドメインは純粋関数、HTTP は axum、フロント�
 | Measure | `scripts/measure-startup.sh <fixture> <target/release/kemi>` / `scripts/measure-range.sh <fixture> <target/release/kemi> <commit\|file\|busy>` |
 | Browser（実バイナリ） | `node scripts/test-rendered-view.mjs <target/release/kemi>` / `node scripts/test-narrow-screen.mjs <target/release/kemi>` / `node scripts/test-agent-channel.mjs <target/release/kemi>`（agent-browser をローカルに入れて実行） |
 | Browser（コメント札のレイアウト） | `node scripts/test-comment-chip-layout.mjs <target/release/kemi>`（agent-browser が要る） |
-| Browser（コードの見方の操作の細部） | `node scripts/test-review-interactions.mjs <target/release/kemi>`（agent-browser が要る。行に乗せたときの本文の位置、コメントの編集の suggestion、確認ダイアログのフォーカス） |
+| Browser（コードの見方の操作の細部） | `node scripts/test-review-interactions.mjs <target/release/kemi>`（agent-browser が要る。行に乗せたときの本文の位置、コメントの編集の suggestion、確認ダイアログのフォーカス、`?` のキー操作の一覧） |
 | Browser（偽サーバ） | `node scripts/test-horizontal-scroll.mjs`（agent-browser が要る。`web/` は自前の HTTP サーバから配るので引数は無い） |
 | Browser（`--live`） | `node scripts/test-live.mjs <target/release/kemi> [<場面>...]`（agent-browser が要る。場面は `scripts/live/` の場面の関数の名前で、並べた順に走る。省くと全部。`<場面>:<値>` は値を受け取る場面にだけ渡せる） |
 | Browser（説明の見方） | `node scripts/test-explanation-view.mjs <target/release/kemi> [--parts-only \| --navigation \| --live-navigation \| --range-navigation]`（どれか 1 つで、その節だけ: 復元した会話の parts、説明の見方、`--live` の説明、コミット範囲の参照） / `node scripts/test-explanation-selection.mjs <target/release/kemi>`（agent-browser が要る） |

@@ -64,6 +64,9 @@ import {
   effectiveDisplay,
   unhandedNotice,
   editingSuggestionText,
+  mergeBaseNote,
+  KEY_HELP,
+  treeKeyMove,
 } from "./model.js";
 import { describeComment } from "./conversation-model.js";
 
@@ -1552,4 +1555,60 @@ test("editing a comment that has a suggestion starts from that suggestion", () =
 test("editing a comment without a suggestion starts the suggestion from the commented lines", () => {
   const comment = { quote: ["line a", "line b"], suggestion: null };
   assert.equal(editingSuggestionText(comment), "line a\nline b");
+});
+
+test("the final state of a commit range says it is the diff from the merge base", () => {
+  assert.equal(mergeBaseNote("HEAD~8...HEAD", "file"), "from the merge base of HEAD~8 and HEAD");
+});
+
+test("per-commit groups and reviews without group units carry no merge base note", () => {
+  assert.equal(mergeBaseNote("fix: something", "commit"), null);
+  assert.equal(mergeBaseNote("Working tree changes", null), null);
+});
+
+test("the key list names exactly the keys that have an action", () => {
+  const listed = new Set(KEY_HELP.flatMap((row) => row.keys));
+  for (let code = 0x21; code < 0x7f; code += 1) {
+    const key = String.fromCharCode(code);
+    assert.equal(listed.has(key), keyAction(key, 3, 1).type !== "none", `key ${key}`);
+  }
+});
+
+// ツリーの見えている項目の並び。0: グループ（開）、1: ディレクトリ（開、親 0）、2: ファイル（親 1）、
+// 3: ディレクトリ（畳、親 0）、4: ファイル（親 0）。
+const treeRows = [
+  { head: true, open: true, parent: -1 },
+  { head: true, open: true, parent: 0 },
+  { head: false, open: false, parent: 1 },
+  { head: true, open: false, parent: 0 },
+  { head: false, open: false, parent: 0 },
+];
+
+test("up and down arrows move through the visible tree items and stop at the ends", () => {
+  assert.deepEqual(treeKeyMove("ArrowDown", treeRows, 1), { type: "focus", index: 2 });
+  assert.deepEqual(treeKeyMove("ArrowUp", treeRows, 1), { type: "focus", index: 0 });
+  assert.deepEqual(treeKeyMove("ArrowDown", treeRows, 4), { type: "none" });
+  assert.deepEqual(treeKeyMove("ArrowUp", treeRows, 0), { type: "none" });
+});
+
+test("Home and End move to the first and the last tree item", () => {
+  assert.deepEqual(treeKeyMove("Home", treeRows, 3), { type: "focus", index: 0 });
+  assert.deepEqual(treeKeyMove("End", treeRows, 1), { type: "focus", index: 4 });
+});
+
+test("the right arrow opens a folded heading and enters an open one", () => {
+  assert.deepEqual(treeKeyMove("ArrowRight", treeRows, 3), { type: "toggle" });
+  assert.deepEqual(treeKeyMove("ArrowRight", treeRows, 1), { type: "focus", index: 2 });
+  assert.deepEqual(treeKeyMove("ArrowRight", treeRows, 2), { type: "none" });
+});
+
+test("the left arrow folds an open heading and otherwise moves to the parent heading", () => {
+  assert.deepEqual(treeKeyMove("ArrowLeft", treeRows, 1), { type: "toggle" });
+  assert.deepEqual(treeKeyMove("ArrowLeft", treeRows, 2), { type: "focus", index: 1 });
+  assert.deepEqual(treeKeyMove("ArrowLeft", treeRows, 3), { type: "focus", index: 0 });
+  assert.deepEqual(treeKeyMove("ArrowLeft", [{ head: false, open: false, parent: -1 }], 0), { type: "none" });
+});
+
+test("other keys leave the tree alone", () => {
+  assert.deepEqual(treeKeyMove("j", treeRows, 1), { type: "none" });
 });

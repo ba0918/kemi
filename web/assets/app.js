@@ -89,9 +89,9 @@ import {
 } from "./features/agent.js";
 import { renderConversation } from "./views/conversation.js";
 import { renderNotice } from "./views/file-header.js";
-import { renderTree } from "./views/tree.js";
+import { onTreeFocusIn, onTreeKey, renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
-import { closeModal, keepFocusInModal, runModalAction } from "./views/overlay.js";
+import { closeModal, closeOverlay, keepFocusInModal, keyHelpBody, openNotice, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
@@ -108,6 +108,10 @@ function handleKey(event) {
   if (event.key === "Escape") {
     if (!dom.modal.hidden) {
       closeModal();
+      return;
+    }
+    if (!dom.overlay.hidden && !dom.overlayCard.classList.contains("finish")) {
+      closeOverlay();
       return;
     }
     if (dom.viewMenu.matches(":popover-open") || dom.titleSheet.matches(":popover-open")) {
@@ -129,7 +133,6 @@ function handleKey(event) {
     }
   }
   const target = /** @type {HTMLElement} */ (event.target);
-  if (state.view !== 'code') return;
   if (
     target.tagName === "INPUT" ||
     target.tagName === "TEXTAREA" ||
@@ -137,6 +140,15 @@ function handleKey(event) {
   ) {
     return;
   }
+  // 一覧はどの見方でも開ける。`?` は Shift を伴うので、Shift は見ない。
+  // ほかの重ねた画面（確認ダイアログ、知らせ、図の別表示）の上には重ねない。
+  const covered = !dom.modal.hidden || !dom.overlay.hidden || document.querySelector("dialog[open]") !== null;
+  if (event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey && !covered) {
+    event.preventDefault();
+    openNotice("Keyboard shortcuts", keyHelpBody(state.view));
+    return;
+  }
+  if (state.view !== 'code') return;
   if (event.ctrlKey || event.metaKey || event.altKey || !dom.modal.hidden) {
     return;
   }
@@ -312,6 +324,20 @@ dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested
 dom.modalCancel.addEventListener("click", closeModal);
 dom.modalOk.addEventListener("click", runModalAction);
 dom.modal.addEventListener("keydown", keepFocusInModal);
+dom.modalClose.addEventListener("click", closeModal);
+// 暗くした背景（箱の外）を押しても閉じる（R-VIEW）。
+dom.modal.addEventListener("click", (event) => {
+  if (event.target === dom.modal) {
+    closeModal();
+  }
+});
+dom.overlay.addEventListener("click", (event) => {
+  if (event.target === dom.overlay) {
+    closeOverlay();
+  }
+});
+dom.tree.addEventListener("keydown", onTreeKey);
+dom.tree.addEventListener("focusin", onTreeFocusIn);
 dom.navPrev.addEventListener("click", () => void navigate(-1));
 dom.navNext.addEventListener("click", () => void navigate(1));
 dom.ruler.addEventListener("click", scrollToRulerPosition);

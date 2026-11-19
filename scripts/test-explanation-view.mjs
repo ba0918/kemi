@@ -143,9 +143,9 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
   // 閉じる操作は、ダイアログの右上（図の見出しの行の右端）の × に置く。
-  const closePlace = await evaluate(`(()=>{const d=document.querySelector('dialog'),c=Array.from(d.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')==='Close diagram'),h=d.querySelector('.part-diagram-head');const cb=c.getBoundingClientRect(),hb=h.getBoundingClientRect(),others=Array.from(h.querySelectorAll('button')).filter(b=>b!==c).map(b=>b.getBoundingClientRect().right);return {text:c.textContent.trim(),inHead:h.contains(c),rightmost:others.every(r=>r<=cb.left+1),gap:hb.right-cb.right}})()`);
+  const closePlace = await evaluate(`(()=>{const d=document.querySelector('dialog'),c=Array.from(d.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')==='Close diagram'),h=d.querySelector('.part-diagram-head');const cb=c.getBoundingClientRect(),hb=h.getBoundingClientRect(),others=Array.from(h.querySelectorAll('button')).filter(b=>b!==c).map(b=>b.getBoundingClientRect().right);return {shared:c.classList.contains('dialog-close')&&!!c.querySelector('svg'),inHead:h.contains(c),rightmost:others.every(r=>r<=cb.left+1),gap:hb.right-cb.right}})()`);
   assert.equal(closePlace.inHead && closePlace.rightmost, true, `the close button is the last control of the diagram heading (${JSON.stringify(closePlace)})`);
-  assert.ok(closePlace.text.startsWith('×') && closePlace.gap < 24, `the close button is a × at the right end (${JSON.stringify(closePlace)})`);
+  assert.ok(closePlace.shared && closePlace.gap < 24, `the close button is the shared × at the right end (${JSON.stringify(closePlace)})`);
   // ここでは本文に zoom を掛けているので、座標で押す操作は位置がずれる。ボタンを直接押す。
   await evaluate(`document.querySelector('dialog button[aria-label="Close diagram"]').click();true`);
   assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true);
@@ -318,6 +318,13 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.deepEqual(await shown(codeOnly), codeOnly.map(()=>true), 'the Code view offers its display controls');
   await browser('find','role','button','click','--name','Explanation','--exact');
   await wait(`document.body.dataset.reviewView==='explanation'`);
+  // 説明の見方でも ? で一覧を開け、コードの見方のキーであることを添える（R-KEYS）。
+  await evaluate(`document.activeElement.blur();true`);
+  await browser('press','?');
+  await wait(`!document.querySelector('#modal').hidden`);
+  assert.ok(await evaluate(`document.querySelector('#modal-body').textContent.includes('These keys work in the Code view.')`), 'the list says the keys are for the Code view');
+  await browser('press','Escape');
+  await wait(`document.querySelector('#modal').hidden`);
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
@@ -583,6 +590,10 @@ if (process.argv.includes('--range-navigation') || process.argv.length===3) {
     running=await start(['--from',base,'--group-by',unit]);await browser('set','viewport','1280','900');await browser('open',running.url);
     await wait(`document.querySelector('[aria-label="Review view"]')?.querySelector('[aria-pressed="true"]')?.textContent==='Code'`);
     assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
+    // 最終形の帯は、題の from...to が merge-base からの差分であることを文で添える。コミットごとには添えない。
+    const note=`from the merge base of ${base} and HEAD`;
+    await wait(`!!document.querySelector('#group-header .gh-line')`);
+    assert.equal(await evaluate(`document.querySelector('#group-header').textContent.includes(${JSON.stringify(note)})`),unit==='file',`${unit}: the merge base note on the group band`);
     await stopKemi(running);
     running=await start(['--from',base,'--group-by',unit,'--explanation',join(root,'explanation.json')]);await browser('open',running.url);
     await wait(`document.body.textContent.includes('Both group units')`);

@@ -97,7 +97,7 @@ function openUnitFailure(status) {
     body: `Reason: ${status.error || "unknown"}\nThe review can continue.`,
     okLabel: "Retry",
     okClass: "btn primary",
-    cancelLabel: "Close",
+    cancelLabel: "Back",
     action: () => {
       state.pendingUnit = { unit, jump: null };
       api

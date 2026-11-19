@@ -33,7 +33,7 @@ suggestion を実行ターミナルへ 1 つの JSON として返す、単一バ
 | [input.md](input.md) | 入力モードと focus レイヤ、その他の入出力 | R-INPUT | D1 |
 | [serve.md](serve.md) | サーバの配信モデルとライブリロード | R-SERVE、R-LIVE | P5 P10、D7、R2 |
 | [view.md](view.md) | 差分の表示 | R-VIEW | P1 P2 P4 P11、D2 D6、R3 R4 |
-| [reading.md](reading.md) | 読み進める操作（単位の切り替え、由来、移動、見た、コメント、重要） | R-UNIT、R-ORIGIN、R-NAV、R-SEEN、R-COMMENT、R-FOCUS | P3 P8 P9、D8、R6〜R13 |
+| [reading.md](reading.md) | 読み進める操作（単位の切り替え、由来、移動、見た、コメント、重要、キー操作） | R-UNIT、R-ORIGIN、R-NAV、R-SEEN、R-COMMENT、R-FOCUS、R-KEYS | P3 P8 P9、D8、R6〜R13 |
 | [render.md](render.md) | 描画表示 | R-RENDER | P15〜P21、D15 D16、R25〜R27 |
 | [narrow.md](narrow.md) | 狭い画面 | R-NARROW | P22〜P26 |
 | [output.md](output.md) | エージェントに返す出力（submit の契約、結果ファイル、digest） | R-SUBMIT、R-RESULT、R-DIGEST | P13、D4 D9、R14〜R16 R18 R19 |
