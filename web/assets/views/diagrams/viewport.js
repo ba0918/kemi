@@ -1,6 +1,6 @@
 // shoryo固定公開版のviewport操作と実寸再検証をkemiのviewsへ接続。MIT: ../../diagrams/LICENSE
 // @ts-check
-import { button, el, textEl, svgIcon, COMMENT_ICON } from '../../dom.js';
+import { button, closeButton, el, textEl, svgIcon, COMMENT_ICON } from '../../dom.js';
 import { drawing, svgElement, textMetrics } from '../../diagrams/explanation-svg.js';
 import { sequenceDrawing } from '../../diagrams/explanation-sequence.js';
 import { flowDrawing } from '../../diagrams/explanation-flow.js';
@@ -73,7 +73,7 @@ export function diagramViewport(part, modal = false, options = {}) {
     if (options.close) {
       const closeTools = el('div','part-diagram-tool-group part-diagram-close-group');
       head.append(closeTools);
-      control('Close diagram', '×', options.close, closeTools).title = 'Close diagram (Esc)';
+      const close = closeButton('Close diagram'); close.addEventListener('click', options.close); closeTools.append(close);
     }
   }
   if (!modal) {

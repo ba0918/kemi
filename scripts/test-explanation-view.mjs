@@ -143,9 +143,9 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
   // 閉じる操作は、ダイアログの右上（図の見出しの行の右端）の × に置く。
-  const closePlace = await evaluate(`(()=>{const d=document.querySelector('dialog'),c=Array.from(d.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')==='Close diagram'),h=d.querySelector('.part-diagram-head');const cb=c.getBoundingClientRect(),hb=h.getBoundingClientRect(),others=Array.from(h.querySelectorAll('button')).filter(b=>b!==c).map(b=>b.getBoundingClientRect().right);return {text:c.textContent.trim(),inHead:h.contains(c),rightmost:others.every(r=>r<=cb.left+1),gap:hb.right-cb.right}})()`);
+  const closePlace = await evaluate(`(()=>{const d=document.querySelector('dialog'),c=Array.from(d.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')==='Close diagram'),h=d.querySelector('.part-diagram-head');const cb=c.getBoundingClientRect(),hb=h.getBoundingClientRect(),others=Array.from(h.querySelectorAll('button')).filter(b=>b!==c).map(b=>b.getBoundingClientRect().right);return {shared:c.classList.contains('dialog-close')&&!!c.querySelector('svg'),inHead:h.contains(c),rightmost:others.every(r=>r<=cb.left+1),gap:hb.right-cb.right}})()`);
   assert.equal(closePlace.inHead && closePlace.rightmost, true, `the close button is the last control of the diagram heading (${JSON.stringify(closePlace)})`);
-  assert.ok(closePlace.text.startsWith('×') && closePlace.gap < 24, `the close button is a × at the right end (${JSON.stringify(closePlace)})`);
+  assert.ok(closePlace.shared && closePlace.gap < 24, `the close button is the shared × at the right end (${JSON.stringify(closePlace)})`);
   // ここでは本文に zoom を掛けているので、座標で押す操作は位置がずれる。ボタンを直接押す。
   await evaluate(`document.querySelector('dialog button[aria-label="Close diagram"]').click();true`);
   assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true);

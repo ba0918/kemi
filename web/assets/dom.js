@@ -112,6 +112,8 @@ export const dom = {
   modalBody: must("#modal-body"),
   modalOk: /** @type {HTMLButtonElement} */ (must("#modal-ok")),
   modalCancel: /** @type {HTMLButtonElement} */ (must("#modal-cancel")),
+  modalClose: /** @type {HTMLButtonElement} */ (must("#modal-close")),
+  modalRow: must("#modal-row"),
   overlay: must("#overlay"),
   overlayCard: must("#overlay-card"),
 };
@@ -169,6 +171,10 @@ export const EXPAND_ICON =
 export const CODE_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4 2 8l2.5 4M11.5 4 14 8l-2.5 4M9.5 2.5l-3 11"/></svg>';
 
+/** 閉じる操作の × の印（R-VIEW）。index.html の閉じるボタンも同じ印を直に持つ。 */
+export const CLOSE_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+
 export const ORIGIN_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="4" r="1.8"/><circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="8" r="1.8"/><path d="M4 5.8v4.4M5.6 4.8 10.4 7.2"/></svg>';
 
@@ -203,6 +209,19 @@ export function iconButton(title, markup) {
   element.title = title;
   element.setAttribute("aria-label", title);
   element.append(svgIcon(markup));
+  return element;
+}
+
+/**
+ * 重ねた画面と閉じられる面に共通の、見出しの行の右端に置く × のボタン（R-VIEW）。
+ * @param {string} [label]
+ * @returns {HTMLButtonElement}
+ */
+export function closeButton(label = "Close") {
+  const element = button("dialog-close");
+  element.title = label;
+  element.setAttribute("aria-label", label);
+  element.append(svgIcon(CLOSE_ICON));
   return element;
 }
 

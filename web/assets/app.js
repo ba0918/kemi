@@ -91,7 +91,7 @@ import { renderConversation } from "./views/conversation.js";
 import { renderNotice } from "./views/file-header.js";
 import { onTreeFocusIn, onTreeKey, renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
-import { closeModal, keepFocusInModal, keyHelpBody, openNotice, runModalAction } from "./views/overlay.js";
+import { closeModal, closeOverlay, keepFocusInModal, keyHelpBody, openNotice, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
@@ -108,6 +108,10 @@ function handleKey(event) {
   if (event.key === "Escape") {
     if (!dom.modal.hidden) {
       closeModal();
+      return;
+    }
+    if (!dom.overlay.hidden && !dom.overlayCard.classList.contains("finish")) {
+      closeOverlay();
       return;
     }
     if (dom.viewMenu.matches(":popover-open") || dom.titleSheet.matches(":popover-open")) {
@@ -318,6 +322,18 @@ dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested
 dom.modalCancel.addEventListener("click", closeModal);
 dom.modalOk.addEventListener("click", runModalAction);
 dom.modal.addEventListener("keydown", keepFocusInModal);
+dom.modalClose.addEventListener("click", closeModal);
+// 暗くした背景（箱の外）を押しても閉じる（R-VIEW）。
+dom.modal.addEventListener("click", (event) => {
+  if (event.target === dom.modal) {
+    closeModal();
+  }
+});
+dom.overlay.addEventListener("click", (event) => {
+  if (event.target === dom.overlay) {
+    closeOverlay();
+  }
+});
 dom.tree.addEventListener("keydown", onTreeKey);
 dom.tree.addEventListener("focusin", onTreeFocusIn);
 dom.navPrev.addEventListener("click", () => void navigate(-1));

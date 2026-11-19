@@ -72,19 +72,35 @@ try {
   await evaluate(`document.activeElement.blur(); true`);
   await browser('press', '?');
   await wait(`!document.querySelector('#modal').hidden`);
-  const help = await evaluate(`({title: document.querySelector('#modal-title').textContent, body: document.querySelector('#modal-body').textContent, ok: document.querySelector('#modal-ok').checkVisibility(), focus: document.activeElement?.id, cancel: document.querySelector('#modal-cancel').textContent})`);
+  // 閉じる操作は、どの画面でも見出しの行の右端の × にそろえる（R-VIEW）。
+  const closeOf = sel => `(() => { const c = document.querySelector(${JSON.stringify(sel)}); if (!c) return null; const b = c.getBoundingClientRect(), box = c.closest('.box, .cv-panel, .sheet')?.getBoundingClientRect(); return {cls: c.classList.contains('dialog-close'), label: c.getAttribute('aria-label'), title: c.title, text: c.textContent.trim(), icon: !!c.querySelector('svg'), right: box ? Math.round(box.right - b.right) : null, top: box ? Math.round(b.top - box.top) : null}; })()`;
+  const uniform = (c, what) => {
+    assert.ok(c && c.cls && c.label === 'Close' && c.title === 'Close' && c.text === '' && c.icon, `${what}: the close control is the shared × (${JSON.stringify(c)})`);
+  };
+  const help = await evaluate(`({title: document.querySelector('#modal-title').textContent, body: document.querySelector('#modal-body').textContent, row: document.querySelector('#modal .row').checkVisibility(), focus: document.activeElement?.id})`);
   assert.equal(help.title, 'Keyboard shortcuts');
   for (const key of ['j', 'k', 'g', 'G', 'n', 'p', 'v', 's', 'u', 'w', 'r', '?']) assert.ok(help.body.includes(key), `the list names ${key}: ${help.body}`);
-  assert.equal(help.ok, false, 'the list has no action to confirm');
-  assert.equal(help.focus, 'modal-cancel');
-  assert.equal(help.cancel, 'Close');
-  await browser('press', 'Escape');
+  assert.equal(help.row, false, 'the list has no row of choices, only the ×');
+  assert.equal(help.focus, 'modal-close', 'the list focuses its ×');
+  const helpClose = await evaluate(closeOf('#modal-close'));
+  uniform(helpClose, 'key list');
+  assert.ok(helpClose.right < 24 && helpClose.top < 24, `the × sits at the top right (${JSON.stringify(helpClose)})`);
+  await browser('click', '#modal-close');
   await wait(`document.querySelector('#modal').hidden`);
   await browser('click', '#btn-changes');
   await wait(`!document.querySelector('#modal').hidden`);
-  assert.equal(await evaluate(`document.querySelector('#modal-ok').checkVisibility()`), true, 'a later confirmation shows its action again');
-  await browser('press', 'Escape');
-  console.log('PASS ? lists the keys, with only a Close button, and the next dialog shows its action again');
+  const confirm = await evaluate(`({ok: document.querySelector('#modal-ok').checkVisibility(), back: document.querySelector('#modal-cancel').textContent, focus: document.activeElement?.id})`);
+  assert.deepEqual(confirm, {ok: true, back: 'Back', focus: 'modal-cancel'}, 'a confirmation keeps Back and its action below, and focuses Back');
+  uniform(await evaluate(closeOf('#modal-close')), 'confirmation');
+  await browser('mouse', 'move', '4', '4'); await browser('mouse', 'down'); await browser('mouse', 'up');
+  await wait(`document.querySelector('#modal').hidden`);
+  assert.equal(await evaluate(`document.activeElement?.id`), 'btn-changes', 'the backdrop closes the dialog and returns the focus');
+  if (await evaluate(`document.querySelector('#conversation').dataset.open !== 'true'`)) await browser('click', '#btn-comments');
+  await wait(`document.querySelector('#conversation').dataset.open === 'true'`);
+  uniform(await evaluate(closeOf('#cv-close')), 'conversation panel');
+  await browser('click', '#cv-close');
+  await wait(`document.querySelector('#conversation').dataset.open !== 'true'`);
+  console.log('PASS ? lists the keys, and every close control is the same × at the top right');
 
   // ファイルツリーは Tab の止まり先を 1 つだけ持ち、中は矢印キーで移る（R-VIEW）。
   const tabStops = `Array.from(document.querySelectorAll('#tree button')).filter(b => b.tabIndex >= 0)`;

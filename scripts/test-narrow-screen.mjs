@@ -409,6 +409,10 @@ try {
   assert.deepEqual([sheetBox.left, sheetBox.top, sheetBox.width, sheetBox.height].map(Math.round), [0, 0, 390, 844]);
   assert.equal(await evaluate(`document.querySelector('#sheet-title').textContent`), await evaluate(`document.querySelector('#review-title').textContent`));
   assert.ok(await evaluate(`document.querySelectorAll('#sheet-meta span').length`) > 0, 'the sheet should carry the meta');
+  // シートの閉じる操作も、ほかの画面と同じ × にそろえる（R-VIEW）。
+  for (const id of ['#sheet-close', '#cv-close']) {
+    assert.equal(await evaluate(`(() => { const c = document.querySelector('${id}'); return c.classList.contains('dialog-close') && c.getAttribute('aria-label') === 'Close' && !!c.querySelector('svg') && c.textContent.trim() === ''; })()`), true, `${id} is the shared ×`);
+  }
   await browser('click', '#sheet-close');
   await waitFor(`!document.querySelector('#title-sheet').matches(':popover-open')`);
   await browser('click', '#btn-comments');

@@ -1696,6 +1696,58 @@ ul.files ul {
   z-index: 50;
 }
 
+/* 重ねた画面と閉じられる面に共通の、見出しの行の右端の × （R-VIEW）。 */
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.dialog-head > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dialog-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.dialog-head > .dialog-close {
+  margin: -4px -6px 0 0;
+}
+
+.cv-close,
+.sheet-close {
+  margin-left: auto;
+}
+
+.dialog-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dialog-close:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.dialog-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .modal .box {
   background: var(--bg);
   border: 1px solid var(--line);
@@ -1801,9 +1853,6 @@ ul.files ul {
   white-space: pre-wrap;
 }
 
-.overlay-close {
-  align-self: flex-end;
-}
 
 /* 送信後の完了画面。 */
 #overlay-card.finish {
@@ -2460,13 +2509,6 @@ ul.files ul {
   border-bottom: 1px solid var(--line);
 }
 
-.cv-close {
-  margin-left: auto;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-size: 12.5px;
-}
 
 .cv-list,
 .cv-thread {
@@ -3016,13 +3058,6 @@ ul.files ul {
     background: var(--panel);
   }
 
-  .sheet-close {
-    margin-left: auto;
-    border: 0;
-    background: none;
-    color: var(--accent);
-    font-size: 13.5px;
-  }
 
   .sheet-body {
     flex: 1 1 auto;

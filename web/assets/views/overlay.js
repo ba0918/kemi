@@ -1,7 +1,7 @@
 // @ts-check
 // 画面に重ねて出すもの: 知らせ、完了画面、確認ダイアログ、短い通知。
 
-import { dom, button, copyText, el, textEl } from "../dom.js";
+import { dom, button, closeButton, copyText, el, textEl } from "../dom.js";
 import { state } from "../state.js";
 import { KEY_HELP, countLabel, unitLabel } from "../model.js";
 
@@ -68,7 +68,7 @@ function setModalText(text) {
  * }} options 本文は、改行を保つ段落 1 つなら文字列で、組んだ要素ならその並びで渡す
  */
 export function openModal(options) {
-  dom.modalOk.hidden = false;
+  dom.modalRow.hidden = false;
   dom.modalOk.textContent = options.okLabel;
   dom.modalOk.className = options.okClass;
   showModal(options.title, options.body, options.cancelLabel, options.action);
@@ -80,8 +80,10 @@ export function openModal(options) {
  * @param {HTMLElement[]} body
  */
 export function openNotice(title, body) {
-  dom.modalOk.hidden = true;
-  showModal(title, body, "Close", null);
+  // 確かめることが無いので、下の行（戻る・進む）は置かず、見出しの × だけで閉じる（R-VIEW）。
+  dom.modalRow.hidden = true;
+  showModal(title, body, "Back", null);
+  dom.modalClose.focus();
 }
 
 /**
@@ -223,16 +225,22 @@ export function showOverlay(title, detail) {
   dom.overlay.hidden = false;
   dom.overlayCard.textContent = "";
   dom.overlayCard.className = "";
-  dom.overlayCard.append(textEl("h2", "overlay-title", title));
+  const close = closeButton();
+  close.addEventListener("click", closeOverlay);
+  const head = el("div", "dialog-head");
+  head.append(textEl("h2", "overlay-title", title), close);
+  dom.overlayCard.append(head);
   if (detail) {
     dom.overlayCard.append(textEl("p", "overlay-detail", detail));
   }
-  const close = button("btn overlay-close");
-  close.textContent = "Close";
-  close.addEventListener("click", () => {
-    dom.overlay.hidden = true;
-  });
-  dom.overlayCard.append(close);
+}
+
+/** 知らせを閉じる。送信後の完了画面は閉じない（閉じても戻る画面が無い）。 */
+export function closeOverlay() {
+  if (dom.overlay.hidden || dom.overlayCard.classList.contains("finish")) {
+    return;
+  }
+  dom.overlay.hidden = true;
 }
 
 /**

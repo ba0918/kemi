@@ -197,7 +197,7 @@
       <div class="sheet narrow-only" id="title-sheet" popover aria-label="Review details">
         <div class="sheet-head">
           <b>Review</b>
-          <button class="sheet-close" id="sheet-close" type="button" popovertarget="title-sheet" popovertargetaction="hide">Close</button>
+          <button class="dialog-close sheet-close" id="sheet-close" type="button" popovertarget="title-sheet" popovertargetaction="hide" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
         </div>
         <div class="sheet-body">
           <div class="sheet-title" id="sheet-title"></div>
@@ -260,7 +260,7 @@
             <b>Conversation</b>
             <span class="cv-head-unread" id="cv-head-unread" hidden></span>
             <span class="agent-status" id="agent-status" data-kemi-agent-state="not-connected" role="status"></span>
-            <button class="cv-close" id="cv-close" type="button">Close</button>
+            <button class="dialog-close cv-close" id="cv-close" type="button" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
           </div>
           <div class="cv-list" id="cv-list">
             <div class="cv-filter" id="cv-filter" role="group" aria-label="Show">
@@ -307,9 +307,12 @@
 
     <div class="modal" id="modal" hidden>
       <div class="box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <h3 id="modal-title"></h3>
+        <div class="dialog-head">
+          <h3 id="modal-title"></h3>
+          <button class="dialog-close" id="modal-close" type="button" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+        </div>
         <div id="modal-body"></div>
-        <div class="row">
+        <div class="row" id="modal-row">
           <button class="btn" id="modal-cancel" type="button">Back</button>
           <button class="btn" id="modal-ok" type="button"></button>
         </div>
