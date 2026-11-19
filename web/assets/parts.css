@@ -18,7 +18,9 @@
 .part-markdown .kb-img-frame { display: inline-flex; flex-direction: column; padding: .4rem; border: 1px dashed currentColor; }
 .part-markdown pre { white-space: pre-wrap; }
 .part-diagram-surface { overflow: hidden; position: relative; min-height: 64px; border: 1px solid var(--line); border-radius: 0 0 8px 8px; background:var(--bg); touch-action: pan-y; -webkit-user-select: none; user-select: none; }
-.part-diagram-surface.failed { overflow: auto; -webkit-user-select: text; user-select: text; }
+.part-diagram-surface.failed { overflow: auto; max-height: 22.5rem; padding: 12px 14px; box-sizing: border-box; -webkit-user-select: text; user-select: text; }
+.part-diagram-surface.failed .part-failure { margin: 0 0 8px; font-weight: 600; }
+.part-diagram-surface.failed .part-original { margin: 0; font: 12px/1.5 var(--mono); color: var(--ink-2); }
 .part-diagram-surface svg { transform-origin: 0 0; display: block; font: 14px sans-serif; color: inherit; }
 .part-diagram-surface svg rect, .part-diagram-surface svg polygon { fill: var(--bg, white); stroke: currentColor; stroke-width: 1.5; }
 /* alt・loop の枠は塗らない。枠はライフラインより手前に描かれるので、塗ると中を通るライフラインが隠れる。 */
