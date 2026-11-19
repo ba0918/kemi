@@ -1,4 +1,5 @@
-// コードの見方の操作の細部を実バイナリで確かめる。行に乗せても本文が動かないこと。
+// コードの見方の操作の細部を実バイナリで確かめる。行に乗せても本文が動かないこと、コメントを編集するときの
+// suggestion の初めの文字列（R-COMMENT）。
 // node scripts/test-review-interactions.mjs <kemi-bin>
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
@@ -38,6 +39,16 @@ try {
   const hovered = await evaluate(codeLeft);
   assert.equal(hovered, before, `the code of a hovered row stays in place (before ${before}, hovered ${hovered})`);
   console.log('PASS hovering a row shows the comment button without moving its code');
+
+  await browser('click', `.cchip[data-id="${plain.id}"]`);
+  await wait(`Array.from(document.querySelectorAll('#cv-thread-head button')).some(b => b.textContent === 'Edit')`);
+  await evaluate(`Array.from(document.querySelectorAll('#cv-thread-head button')).find(b => b.textContent === 'Edit').click()`);
+  await wait(`document.querySelector('#diff-content .editor textarea[data-editor-field="suggestion"]')`);
+  const suggestion = await evaluate(`document.querySelector('#diff-content .editor textarea[data-editor-field="suggestion"]').value`);
+  assert.equal(suggestion, 'let value3 = 3;\nlet value4 = 4;');
+  console.log('PASS editing a comment without a suggestion starts the suggestion from the commented lines');
+  await evaluate(`Array.from(document.querySelectorAll('#diff-content .editor button')).find(b => b.textContent === 'Cancel').click()`);
+  await wait(`!document.querySelector('#diff-content .editor')`);
 } finally {
   await close();
   await stopKemi(kemi, 'SIGTERM');

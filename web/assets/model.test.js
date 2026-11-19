@@ -63,6 +63,7 @@ import {
   shownLineNumbers,
   effectiveDisplay,
   unhandedNotice,
+  editingSuggestionText,
 } from "./model.js";
 import { describeComment } from "./conversation-model.js";
 
@@ -1541,4 +1542,14 @@ test("sidePaneKeyWidth_moves_by_20px_with_arrows_and_jumps_to_the_ends_with_home
 
 test("sidePaneKeyWidth_ignores_keys_that_do_not_resize", () => {
   assert.equal(sidePaneKeyWidth("Enter", 300, 1400), null);
+});
+
+test("editing a comment that has a suggestion starts from that suggestion", () => {
+  const comment = { quote: ["old a", "old b"], suggestion: { replacement: "new a" } };
+  assert.equal(editingSuggestionText(comment), "new a");
+});
+
+test("editing a comment without a suggestion starts the suggestion from the commented lines", () => {
+  const comment = { quote: ["line a", "line b"], suggestion: null };
+  assert.equal(editingSuggestionText(comment), "line a\nline b");
 });
