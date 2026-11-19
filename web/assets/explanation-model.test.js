@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts, selectionAt, locateSelection, selectionTooLong, readingText, readingOffset, readingPoint, explanationElementId, commentCountDescription } from './explanation-model.js';
+import { freshness, resolveCodeReference, commentsForBlock, sectionCommentCounts, selectionAt, locateSelection, selectionTooLong, readingText, readingOffset, readingPoint, explanationElementId, commentCountDescription, currentContentsIndex } from './explanation-model.js';
 
 test('reading and notification freshness use their own base and the screen Code token', () => {
   assert.equal(freshness('review:1', null), 'pending');
@@ -134,4 +134,18 @@ test('a section count is described in words, and not at all when the section has
   assert.equal(commentCountDescription(0), '');
   assert.match(commentCountDescription(1), /^1 \S/);
   assert.match(commentCountDescription(3), /^3 \S/);
+});
+
+test('the contents mark the last heading above the reading position', () => {
+  assert.equal(currentContentsIndex([0, 150, 900], {top: 100, threshold: 180, bottom: 900, atEnd: false, chosen: null}), 1);
+  assert.equal(currentContentsIndex([200, 900], {top: 100, threshold: 180, bottom: 900, atEnd: false, chosen: null}), 0);
+});
+test('the contents mark the last heading once the document is scrolled to its end', () => {
+  assert.equal(currentContentsIndex([-700, 220], {top: 100, threshold: 180, bottom: 900, atEnd: true, chosen: null}), 1);
+});
+test('the contents keep the item chosen from the contents while its heading is on screen', () => {
+  assert.equal(currentContentsIndex([-700, 120, 400], {top: 100, threshold: 180, bottom: 900, atEnd: true, chosen: 1}), 1);
+});
+test('the contents stop keeping the chosen item once its heading leaves the screen', () => {
+  assert.equal(currentContentsIndex([-900, -100, 150], {top: 100, threshold: 180, bottom: 900, atEnd: false, chosen: 1}), 2);
 });

@@ -56,8 +56,9 @@ try {
   assert.ok(near>=0 && near<40,`the button sits right below the selection (${near})`);
   await browser('find','role','button','click','--name','Comment on selection','--exact');
   await wait(`document.activeElement.tagName==='TEXTAREA'`);
-  const placed=await evaluate(`(()=>{const f=${editor}.getBoundingClientRect();return {gap:f.top-${points.bottom},quote:${editor}.querySelector('blockquote').textContent,head:${editor}.textContent}})()`);
-  assert.ok(placed.gap>=0 && placed.gap<24,`the editor opens right below the selected line (${placed.gap})`);
+  const placed=await evaluate(`(()=>{const f=${editor}.getBoundingClientRect(),n=${firstParagraph}.firstChild,i=n.nodeValue.indexOf(${JSON.stringify(chosen)}),r=document.createRange();r.setStart(n,i);r.setEnd(n,i+${chosen.length});return {gap:f.top-r.getBoundingClientRect().bottom,badge:!document.querySelector('#update-badge')?.hidden,quote:${editor}.querySelector('blockquote').textContent,head:${editor}.textContent}})()`);
+  // 選んだ後に上部バーの高さが変わると本文ごと動くので、選んだ文字のいまの位置と比べる。
+  assert.ok(placed.gap>=0 && placed.gap<24,`the editor opens right below the selected line (${placed.gap}, update badge ${placed.badge})`);
   assert.equal(placed.quote,chosen,'the editor quotes the selected characters');
   assert.ok(placed.head.includes('Selection review'),'the editor names the section heading');
   await browser('find','label','Comment on Selection review','fill','Why start here?');
@@ -93,7 +94,8 @@ try {
   await browser('press','c');
   await wait(`document.activeElement.tagName==='TEXTAREA'`);
   await browser('find','label','Comment on Selection review','fill','The second intent');
-  await browser('find','role','button','click','--name','Add comment','--exact');
+  // コードの見方の入力欄と同じく、Cmd/Ctrl+Enter で保存できる。
+  await browser('press','Control+Enter');
   await wait(`document.body.textContent.includes('The second intent')`);
   assert.deepEqual((await review()).comments[1].explanation.selection,{text:'intent',occurrence:1});
   await browser('open',url);

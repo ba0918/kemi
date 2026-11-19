@@ -307,3 +307,29 @@ export function commentCountDescription(count) {
   }
   return `${count} ${count === 1 ? "comment" : "comments"}`;
 }
+
+/**
+ * 目次で読み位置を示す項目。読み位置（threshold）より上に頭がある見出しのうち最後のもの。
+ * 一番下まで読んだときは最後の見出しにする。最後の節が短いと、その頭が読み位置まで上がらないため。
+ * 目次で選んだ項目（chosen）は、その見出しが画面（top から bottom の間）にある間は選んだままにする。短い文書で
+ * 途中の項目を選ぶと一番下まで動くので、上の決め方だけでは選んだのと違う項目になる。
+ * @param {number[]} tops 見出しの頭の位置（文書の順）
+ * @param {{ top: number, threshold: number, bottom: number, atEnd: boolean, chosen: number | null }} view
+ * @returns {number}
+ */
+export function currentContentsIndex(tops, view) {
+  const chosenTop = view.chosen === null ? undefined : tops[view.chosen];
+  if (view.chosen !== null && chosenTop !== undefined && chosenTop >= view.top - 1 && chosenTop < view.bottom) {
+    return view.chosen;
+  }
+  if (view.atEnd && tops.length > 0) {
+    return tops.length - 1;
+  }
+  let current = 0;
+  tops.forEach((top, index) => {
+    if (top <= view.threshold) {
+      current = index;
+    }
+  });
+  return current;
+}

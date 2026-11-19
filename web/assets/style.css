@@ -1368,6 +1368,7 @@ ul.files ul {
 }
 
 .no-cell {
+  position: relative;
   flex: 0 0 3.4em;
   align-self: stretch;
   display: inline-flex;
@@ -1409,7 +1410,14 @@ ul.files ul {
   font-size: 14px;
   line-height: 1;
   padding: 0;
-  flex: 0 0 auto;
+  /* 行番号の欄の中に並べると、2 桁以上の行番号では欄が広がり、乗せた行の本文だけが横にずれる。
+     欄の外（+ と − の印の列）に重ねる。 */
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  margin-left: 2px;
+  transform: translateY(-50%);
+  z-index: 1;
 }
 
 .row:hover .line-add-btn {

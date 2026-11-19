@@ -5,7 +5,7 @@ import * as api from "../api.js";
 import { actions } from '../actions.js';
 import { currentEntry, isShowingFile, selectionText, state } from "../state.js";
 import { clearDraft, loadDraft } from "../storage.js";
-import { commentLabel, draftKey, hasLines, shownLineNumbers, tapSelection } from "../model.js";
+import { commentLabel, draftKey, editingSuggestionText, hasLines, shownLineNumbers, tapSelection } from "../model.js";
 import { firstLine, replaceComment } from "../conversation-model.js";
 import {
   recomputeThreads,
@@ -207,7 +207,7 @@ export function openCommentEditor(comment) {
     anchor: wide ? 0 : Number(comment.end_line ?? comment.start_line),
     wide,
     body: comment.body,
-    suggestion: comment.suggestion ? comment.suggestion.replacement : "",
+    suggestion: editingSuggestionText(comment),
     suggestionOn: Boolean(comment.suggestion),
     needsFocus: true,
     editId: comment.id,

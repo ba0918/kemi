@@ -18,7 +18,9 @@
 .part-markdown .kb-img-frame { display: inline-flex; flex-direction: column; padding: .4rem; border: 1px dashed currentColor; }
 .part-markdown pre { white-space: pre-wrap; }
 .part-diagram-surface { overflow: hidden; position: relative; min-height: 64px; border: 1px solid var(--line); border-radius: 0 0 8px 8px; background:var(--bg); touch-action: pan-y; -webkit-user-select: none; user-select: none; }
-.part-diagram-surface.failed { overflow: auto; -webkit-user-select: text; user-select: text; }
+.part-diagram-surface.failed { overflow: auto; max-height: 22.5rem; padding: 12px 14px; box-sizing: border-box; -webkit-user-select: text; user-select: text; }
+.part-diagram-surface.failed .part-failure { margin: 0 0 8px; font-weight: 600; }
+.part-diagram-surface.failed .part-original { margin: 0; font: 12px/1.5 var(--mono); color: var(--ink-2); }
 .part-diagram-surface svg { transform-origin: 0 0; display: block; font: 14px sans-serif; color: inherit; }
 .part-diagram-surface svg rect, .part-diagram-surface svg polygon { fill: var(--bg, white); stroke: currentColor; stroke-width: 1.5; }
 /* alt・loop の枠は塗らない。枠はライフラインより手前に描かれるので、塗ると中を通るライフラインが隠れる。 */
@@ -49,8 +51,14 @@
 .part-diagram-control-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .part-diagram-dialog { width:90vw; max-width:90vw; height:85vh; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--bg); color:var(--ink); box-shadow:0 16px 64px #0005; }
 .part-diagram-dialog::backdrop { background:#0007; }
-.part-diagram-dialog > button { margin-bottom:12px; padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); cursor:pointer; }
-.part-diagram-dialog > .part-diagram { clear:both; }
+.part-diagram-modal .part-diagram-close-group { padding-left:6px; margin-left:4px; border-left:1px solid var(--line); }
+/* 狭い画面の別表示では、操作を題の下の行へ回す。題と同じ行に並べると題が数文字の幅まで潰れる。× は題の行の右端に残す。 */
+@media (max-width:719.98px) {
+  .part-diagram-modal .part-diagram-head { flex-wrap:wrap; }
+  .part-diagram-modal .part-diagram-head .part-metadata { flex:1 1 0; }
+  .part-diagram-modal .part-diagram-close-group { order:1; }
+  .part-diagram-modal .part-diagram-controls { order:2; flex-basis:100%; margin-left:0; }
+}
 /* 文字の縁と箱の塗りが背景色なので、会話パネルの中でも図の下地を背景色にそろえる。 */
 .part-grid svg { display: block; max-width: 100%; height: auto; font: 14px sans-serif; background: var(--bg, white); border-radius: 6px; }
 .part-grid svg rect { fill: var(--bg, white); stroke: currentColor; }

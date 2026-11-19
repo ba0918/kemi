@@ -130,6 +130,11 @@ export function openExplanationEditor(request) {
       event.preventDefault();
       event.stopPropagation();
       close();
+    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (!save.disabled) {
+        form.requestSubmit(save);
+      }
     }
   });
   form.addEventListener("submit", async (event) => {

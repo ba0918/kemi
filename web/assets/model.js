@@ -642,6 +642,16 @@ export function suggestionAllowed(side) {
 }
 
 /**
+ * コメントを編集するときの suggestion の入力欄の初めの文字列。suggestion の無いコメントでも
+ * 空にせず対象の行で始める。空のまま suggestion にすると行の削除を意味するため（R-COMMENT）。
+ * @param {{ quote?: string[] | null, suggestion?: { replacement: string } | null }} comment
+ * @returns {string}
+ */
+export function editingSuggestionText(comment) {
+  return comment.suggestion ? comment.suggestion.replacement : (comment.quote ?? []).join("\n");
+}
+
+/**
  * 下書きをファイルとコメント位置ごとに分ける localStorage のキー。
  * @param {string} fileId
  * @param {{ side: string, start: number, end: number } | null} selection

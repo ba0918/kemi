@@ -128,6 +128,9 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   const span = await evaluate(`(()=>{const pre=${original};pre.scrollIntoView({block:'start'});const r=document.createRange();r.setStart(pre.firstChild,0);r.setEnd(pre.firstChild,12);const b=r.getBoundingClientRect();return {x:Math.round(b.left+1),y:Math.round(b.top+b.height/2),end:Math.round(b.right-1)}})()`);
   await browser('mouse', 'move', String(span.x), String(span.y)); await browser('mouse', 'down'); await browser('mouse', 'move', String(span.end), String(span.y)); await browser('mouse', 'up');
   assert.ok((await evaluate(`getSelection().toString()`)).length > 0, 'the original JSON of a failed diagram can be selected by dragging');
+  const failedFrame = await evaluate(`(()=>{const pre=${original},surface=pre.closest('.part-diagram-surface'),reason=surface.querySelector('.part-failure');return {height:parseFloat(getComputedStyle(surface).height),limit:parseFloat(getComputedStyle(document.documentElement).fontSize)*22.5,scrolls:surface.scrollHeight>surface.clientHeight,inset:reason.getBoundingClientRect().left-surface.getBoundingClientRect().left}})()`);
+  assert.ok(failedFrame.height <= failedFrame.limit + 1 && failedFrame.scrolls, `a failed diagram keeps the height of a diagram and scrolls its original JSON (${JSON.stringify(failedFrame)})`);
+  assert.ok(failedFrame.inset >= 8, `the reason sits inside the frame, away from its border (${failedFrame.inset})`);
   await evaluate(`getSelection().removeAllRanges();true`);
   for(const title of ['Alt and loop','Decision and return','Allowed contact and crossing','Long end label','Tall font start']) assert.equal(await evaluate(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')===${JSON.stringify(title)})`),true);
   await evaluate(`Array.from(document.querySelectorAll('[role="group"]')).find(e=>e.getAttribute('aria-label')==='Sequence operations diagram controls').focus();true`);
@@ -139,8 +142,19 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await browser('press', '0'); assert.notEqual(await transform(), zoomed);
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
-  await browser('find', 'role', 'button', 'click', '--name', 'Close diagram');
+  // 閉じる操作は、ダイアログの右上（図の見出しの行の右端）の × に置く。
+  const closePlace = await evaluate(`(()=>{const d=document.querySelector('dialog'),c=Array.from(d.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')==='Close diagram'),h=d.querySelector('.part-diagram-head');const cb=c.getBoundingClientRect(),hb=h.getBoundingClientRect(),others=Array.from(h.querySelectorAll('button')).filter(b=>b!==c).map(b=>b.getBoundingClientRect().right);return {text:c.textContent.trim(),inHead:h.contains(c),rightmost:others.every(r=>r<=cb.left+1),gap:hb.right-cb.right}})()`);
+  assert.equal(closePlace.inHead && closePlace.rightmost, true, `the close button is the last control of the diagram heading (${JSON.stringify(closePlace)})`);
+  assert.ok(closePlace.text.startsWith('×') && closePlace.gap < 24, `the close button is a × at the right end (${JSON.stringify(closePlace)})`);
+  // ここでは本文に zoom を掛けているので、座標で押す操作は位置がずれる。ボタンを直接押す。
+  await evaluate(`document.querySelector('dialog button[aria-label="Close diagram"]').click();true`);
   assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true);
+  // ダイアログの外（暗くした背景）を押しても閉じる。
+  await evaluate(`window.diagramSource.click();true`);
+  await wait(`document.querySelector('dialog')?.open`);
+  await browser('mouse', 'move', '4', '4'); await browser('mouse', 'down'); await browser('mouse', 'up');
+  await wait(`!document.querySelector('dialog')`);
+  assert.equal(await evaluate(`document.activeElement===window.diagramSource`), true, 'closing from the backdrop returns the focus to the diagram');
   await evaluate(`const style=document.createElement('style');style.id='font-change';style.textContent='.explanation-diagram {font-size:180px!important;font-family:serif!important}';document.head.append(style);true`);
   await wait(`Array.from(document.querySelectorAll('pre')).some(e=>{try{return JSON.parse(e.textContent).title==='Sequence operations'}catch{return false}})`);
   assert.equal(await evaluate(`document.body.textContent.includes('C survives') && document.body.textContent.includes('Comment stays')`), true);
@@ -170,6 +184,9 @@ if (!process.argv.includes('--navigation') && !process.argv.includes('--live-nav
   await wait(`Array.from(document.querySelectorAll('svg[role="img"]')).some(e=>e.getAttribute('aria-label')==='Sequence operations' && e.getClientRects().length)`);
   await evaluate(`window.diagramSource=Array.from(document.querySelectorAll('header')).find(e=>e.textContent.includes('Sequence operations')).parentElement.querySelector('[aria-label="Open diagram separately"]');window.diagramSource.click();true`);
   await wait(`document.querySelector('dialog')?.open`);
+  // 狭い画面でも、図の題は 1 行を保ち、× は右上（題と同じ行の右端）に残る。操作は題の下へ回す。
+  const narrowHead = await evaluate(`(()=>{const d=document.querySelector('dialog'),h=d.querySelector('.part-diagram-head'),t=h.querySelector('.part-metadata').getBoundingClientRect(),c=d.querySelector('button[aria-label="Close diagram"]').getBoundingClientRect(),hb=h.getBoundingClientRect();return {titleWidth:t.width,sameRow:Math.abs((c.top+c.bottom)/2-(t.top+t.bottom)/2)<12,gap:hb.right-c.right}})()`);
+  assert.ok(narrowHead.titleWidth > 200 && narrowHead.sameRow && narrowHead.gap < 24, `390px: the title keeps its width and the × stays at its right (${JSON.stringify(narrowHead)})`);
   await browser('press', 'Escape');
   assert.equal(await evaluate(`!document.querySelector('dialog') && document.activeElement===window.diagramSource && document.activeElement.getClientRects().length>0`), true);
   console.log('PASS: Escape closes the separate diagram and returns to its source at 390px');
@@ -283,6 +300,24 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await goTo('Sub heading two');
   assert.ok(await evaluate(`(()=>{const h=Array.from(document.querySelectorAll('h3')).find(e=>e.textContent==='Sub heading two');return Math.abs(h.getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top)<60})()`), 'a sub heading item moves to the heading');
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Sub heading two', 'the item at the reading position is shown');
+  // 背の高い窓では、最後の見出しは一番下まで読んでも読み位置まで上がらない。
+  await browser('set','viewport','1280','2400'); await frames();
+  await evaluate(`${readingRegion}.scrollTop=${readingRegion}.scrollHeight;true`); await frames();
+  const lastTop = await evaluate(`(()=>{const items=Array.from(document.querySelectorAll('#explanation-toc [data-toc-target]'));return document.getElementById(items.at(-1).dataset.tocTarget).getBoundingClientRect().top-${readingRegion}.getBoundingClientRect().top})()`);
+  assert.ok(lastTop > 80, `the last heading stays below the reading position at the end (${lastTop})`);
+  assert.equal(await evaluate(`(()=>{const items=Array.from(document.querySelectorAll('#explanation-toc [data-toc-target]'));return items.at(-1).getAttribute('aria-current')})()`), 'location', 'reading to the end shows the last contents item even when its heading cannot reach the top');
+  await goTo('Middle section'); await frames();
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Middle section', 'an item chosen in the contents stays shown even when the move reaches the end');
+  await browser('set','viewport','1280','900');
+  const codeOnly = ['#btn-unified','#btn-split','#btn-wrap','#chip-focus','#chip-sort'];
+  const shown = selectors => evaluate(`${JSON.stringify(selectors)}.map(s=>{const e=document.querySelector(s);return !!e && e.getClientRects().length>0})`);
+  assert.deepEqual(await shown(codeOnly), codeOnly.map(()=>false), 'the explanation view does not offer the Code-only display controls');
+  assert.deepEqual(await shown(['#btn-theme','#btn-approve','#btn-changes']), [true,true,true], 'the explanation view keeps the theme and the verdict buttons');
+  await browser('find','role','button','click','--name','Code','--exact');
+  await wait(`document.body.dataset.reviewView==='code'`);
+  assert.deepEqual(await shown(codeOnly), codeOnly.map(()=>true), 'the Code view offers its display controls');
+  await browser('find','role','button','click','--name','Explanation','--exact');
+  await wait(`document.body.dataset.reviewView==='explanation'`);
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);

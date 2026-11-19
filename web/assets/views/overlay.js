@@ -15,6 +15,38 @@ let toastTimer = 0;
 let modalAction = null;
 
 /**
+ * 確認ダイアログを開いたときにフォーカスのあった要素。閉じたらそこへ戻す。
+ * @type {HTMLElement | null}
+ */
+let modalOpener = null;
+
+/**
+ * ダイアログを開いている間だけ inert にした要素。閉じたらこれだけを戻す（前から inert だった要素は戻さない）。
+ * @type {HTMLElement[]}
+ */
+let blockedOutside = [];
+
+/**
+ * ダイアログの外を操作できなくする（inert）か、戻す。ダイアログは body の直下にあるので、その兄弟を切り替える。
+ * @param {boolean} blocked
+ */
+function blockOutsideModal(blocked) {
+  if (!blocked) {
+    for (const element of blockedOutside) {
+      element.inert = false;
+    }
+    blockedOutside = [];
+    return;
+  }
+  for (const element of document.body.children) {
+    if (element !== dom.modal && element instanceof HTMLElement && !element.inert) {
+      element.inert = true;
+      blockedOutside.push(element);
+    }
+  }
+}
+
+/**
  * 確認ダイアログの本文を、改行を保つ段落 1 つにする。
  * @param {string} text
  */
@@ -47,7 +79,11 @@ export function openModal(options) {
   dom.modalOk.className = options.okClass;
   dom.modalCancel.textContent = options.cancelLabel;
   modalAction = options.action;
+  modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   dom.modal.hidden = false;
+  blockOutsideModal(true);
+  // 取り消せない操作の確認なので、初めのフォーカスは戻る側に置く。
+  dom.modalCancel.focus();
 }
 
 /**
@@ -90,9 +126,40 @@ export function submitConfirmBody({ summary, unit, unhanded, approve }) {
   return body;
 }
 
+/**
+ * ダイアログの中で Tab が端に来たら反対の端へ回す。外は inert にしてあるが、それだけでは最後のボタンの次で
+ * フォーカスがページの外（body やブラウザの枠）へ出る。
+ * @param {KeyboardEvent} event
+ */
+export function keepFocusInModal(event) {
+  if (event.key !== "Tab") {
+    return;
+  }
+  const focusable = Array.from(dom.modal.querySelectorAll("button, a[href], textarea, input, select")).filter(
+    (element) => element instanceof HTMLElement && !(/** @type {HTMLButtonElement} */ (element).disabled) && element.offsetParent !== null,
+  );
+  const first = /** @type {HTMLElement | undefined} */ (focusable[0]);
+  const last = /** @type {HTMLElement | undefined} */ (focusable[focusable.length - 1]);
+  if (!first || !last) {
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export function closeModal() {
   dom.modal.hidden = true;
   modalAction = null;
+  blockOutsideModal(false);
+  if (modalOpener?.isConnected) {
+    modalOpener.focus();
+  }
+  modalOpener = null;
 }
 
 /**

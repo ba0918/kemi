@@ -89,6 +89,14 @@ body[data-review-view="explanation"] #live-stage:not([data-measuring]),
 body[data-review-view="explanation"] #page-tree,
 body[data-review-view="explanation"] #live-no-code { display:none!important; }
 body:not([data-review-view="code"]) #unit-switch { display:none!important; }
+/* 説明の見方では、上部バーと「…」のメニューにコードの見方だけで使う操作を出さない（R-EXPLANATION-VIEW）。 */
+body[data-review-view="explanation"] .tools .seg[aria-label="Display mode"],
+body[data-review-view="explanation"] #btn-wrap,
+body[data-review-view="explanation"] #chip-focus,
+body[data-review-view="explanation"] #chip-sort,
+body[data-review-view="explanation"] #menu-wrap,
+body[data-review-view="explanation"] #menu-focus,
+body[data-review-view="explanation"] #menu-sort { display:none!important; }
 /* 幅の境界は既存の狭い画面と同じ。 */
 @media (max-width:719.98px) {
   #review-views { order:3; width:100%; box-sizing:border-box; }
