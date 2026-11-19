@@ -292,6 +292,15 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   await goTo('Middle section'); await frames();
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('button[aria-current="location"]')).map(e=>e.getAttribute('aria-label')).join()`), 'Go to Middle section', 'an item chosen in the contents stays shown even when the move reaches the end');
   await browser('set','viewport','1280','900');
+  const codeOnly = ['#btn-unified','#btn-split','#btn-wrap','#chip-focus','#chip-sort'];
+  const shown = selectors => evaluate(`${JSON.stringify(selectors)}.map(s=>{const e=document.querySelector(s);return !!e && e.getClientRects().length>0})`);
+  assert.deepEqual(await shown(codeOnly), codeOnly.map(()=>false), 'the explanation view does not offer the Code-only display controls');
+  assert.deepEqual(await shown(['#btn-theme','#btn-approve','#btn-changes']), [true,true,true], 'the explanation view keeps the theme and the verdict buttons');
+  await browser('find','role','button','click','--name','Code','--exact');
+  await wait(`document.body.dataset.reviewView==='code'`);
+  assert.deepEqual(await shown(codeOnly), codeOnly.map(()=>true), 'the Code view offers its display controls');
+  await browser('find','role','button','click','--name','Explanation','--exact');
+  await wait(`document.body.dataset.reviewView==='explanation'`);
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
