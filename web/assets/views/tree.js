@@ -274,6 +274,7 @@ function rebuildTree() {
     const groupEl = el("div", "group");
     groupEl.dataset.group = group.id;
     const head = button("group-head");
+    head.dataset.focusKey = `g:${group.id}`;
     const baseNote = mergeBaseNote(group.title || "", currentUnit());
     head.title = baseNote ? `${group.title} (${baseNote})` : group.title || group.id;
     const caret = foldToggle(groupEl, head, state.groupOpen, group.id);

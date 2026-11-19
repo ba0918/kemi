@@ -121,6 +121,10 @@ try {
   assert.ok((await focused())?.includes('three.ts'), 'End reaches the last visible item');
   await browser('press', 'Home');
   assert.ok((await focused())?.includes('Changes'), 'Home reaches the first item');
+  stop = await stopState();
+  assert.ok(stop.count === 1 && stop.focusedIsStop, `the group heading becomes the stop too: ${JSON.stringify(stop)}`);
+  await evaluate(`document.querySelector('#chip-sort').click(); document.querySelector('#chip-sort').click(); true`);
+  assert.ok((await focused())?.includes('Changes'), 'rebuilding the tree keeps the focus on the group heading');
   // ツリーを作り直しても、ツリーの中のフォーカスは同じ項目に戻る。
   await browser('press', 'ArrowDown');
   await evaluate(`document.querySelector('#chip-sort').click(); true`);
