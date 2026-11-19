@@ -66,6 +66,7 @@ try {
   assert.equal(await evaluate(`document.activeElement?.id`), 'btn-changes', 'closing the dialog returns the focus to the button that opened it');
   assert.equal(await evaluate(`Array.from(document.body.children).some(e => e.inert && e.id !== 'overlay')`), false, 'closing the dialog makes the page usable again');
   assert.equal(await evaluate(`document.querySelector('#overlay').inert`), true, 'closing the dialog keeps an element that was already inert');
+  await evaluate(`document.querySelector('#overlay').inert = false; true`);
   console.log('PASS closing the dialog returns the focus to its opener');
 
   await browser('press', 'Escape');
@@ -73,7 +74,7 @@ try {
   await browser('press', '?');
   await wait(`!document.querySelector('#modal').hidden`);
   // 閉じる操作は、どの画面でも見出しの行の右端の × にそろえる（R-VIEW）。
-  const closeOf = sel => `(() => { const c = document.querySelector(${JSON.stringify(sel)}); if (!c) return null; const b = c.getBoundingClientRect(), box = c.closest('.box, .cv-panel, .sheet')?.getBoundingClientRect(); return {cls: c.classList.contains('dialog-close'), label: c.getAttribute('aria-label'), title: c.title, text: c.textContent.trim(), icon: !!c.querySelector('svg'), right: box ? Math.round(box.right - b.right) : null, top: box ? Math.round(b.top - box.top) : null}; })()`;
+  const closeOf = sel => `(() => { const c = document.querySelector(${JSON.stringify(sel)}); if (!c) return null; const b = c.getBoundingClientRect(), box = c.closest('.box, .cv-panel, .sheet, #overlay-card')?.getBoundingClientRect(); return {cls: c.classList.contains('dialog-close'), label: c.getAttribute('aria-label'), title: c.title, text: c.textContent.trim(), icon: !!c.querySelector('svg'), right: box ? Math.round(box.right - b.right) : null, top: box ? Math.round(b.top - box.top) : null}; })()`;
   const uniform = (c, what) => {
     assert.ok(c && c.cls && c.label === 'Close' && c.title === 'Close' && c.text === '' && c.icon, `${what}: the close control is the shared × (${JSON.stringify(c)})`);
   };
@@ -100,6 +101,18 @@ try {
   uniform(await evaluate(closeOf('#cv-close')), 'conversation panel');
   await browser('click', '#cv-close');
   await wait(`document.querySelector('#conversation').dataset.open !== 'true'`);
+  // 知らせも同じ × で、Escape と背景で閉じる。知らせや別の画面が開いている間は ? で一覧を重ねない。
+  await evaluate(`import('./assets/views/overlay.js').then(m => { m.showOverlay('Reference unavailable', 'detail'); return true; })`);
+  await wait(`!document.querySelector('#overlay').hidden`);
+  uniform(await evaluate(closeOf('#overlay-card .dialog-close')), 'notice');
+  await browser('press', '?');
+  assert.equal(await evaluate(`document.querySelector('#modal').hidden`), true, '? does not open the list over a notice');
+  await browser('press', 'Escape');
+  await wait(`document.querySelector('#overlay').hidden`);
+  await evaluate(`import('./assets/views/overlay.js').then(m => { m.showOverlay('Reference unavailable', 'detail'); return true; })`);
+  await wait(`!document.querySelector('#overlay').hidden`);
+  await browser('mouse', 'move', '5', '5'); await browser('mouse', 'down'); await browser('mouse', 'up');
+  await wait(`document.querySelector('#overlay').hidden`);
   console.log('PASS ? lists the keys, and every close control is the same × at the top right');
 
   // ファイルツリーは Tab の止まり先を 1 つだけ持ち、中は矢印キーで移る（R-VIEW）。

@@ -141,7 +141,9 @@ function handleKey(event) {
     return;
   }
   // 一覧はどの見方でも開ける。`?` は Shift を伴うので、Shift は見ない。
-  if (event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey && dom.modal.hidden) {
+  // ほかの重ねた画面（確認ダイアログ、知らせ、図の別表示）の上には重ねない。
+  const covered = !dom.modal.hidden || !dom.overlay.hidden || document.querySelector("dialog[open]") !== null;
+  if (event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey && !covered) {
     event.preventDefault();
     openNotice("Keyboard shortcuts", keyHelpBody(state.view));
     return;
