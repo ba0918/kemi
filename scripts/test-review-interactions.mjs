@@ -1,5 +1,6 @@
 // コードの見方の操作の細部を実バイナリで確かめる。行に乗せても本文が動かないこと、コメントを編集するときの
-// suggestion の初めの文字列（R-COMMENT）、確認ダイアログが開いている間フォーカスがダイアログの中に留まること。
+// suggestion の初めの文字列（R-COMMENT）、確認ダイアログが開いている間フォーカスがダイアログの中に留まること、
+// `?` で開くキー操作の一覧（R-KEYS）。
 // node scripts/test-review-interactions.mjs <kemi-bin>
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
@@ -66,6 +67,24 @@ try {
   assert.equal(await evaluate(`Array.from(document.body.children).some(e => e.inert && e.id !== 'overlay')`), false, 'closing the dialog makes the page usable again');
   assert.equal(await evaluate(`document.querySelector('#overlay').inert`), true, 'closing the dialog keeps an element that was already inert');
   console.log('PASS closing the dialog returns the focus to its opener');
+
+  await browser('press', 'Escape');
+  await evaluate(`document.activeElement.blur(); true`);
+  await browser('press', '?');
+  await wait(`!document.querySelector('#modal').hidden`);
+  const help = await evaluate(`({title: document.querySelector('#modal-title').textContent, body: document.querySelector('#modal-body').textContent, ok: document.querySelector('#modal-ok').checkVisibility(), focus: document.activeElement?.id, cancel: document.querySelector('#modal-cancel').textContent})`);
+  assert.equal(help.title, 'Keyboard shortcuts');
+  for (const key of ['j', 'k', 'g', 'G', 'n', 'p', 'v', 's', 'u', 'w', 'r', '?']) assert.ok(help.body.includes(key), `the list names ${key}: ${help.body}`);
+  assert.equal(help.ok, false, 'the list has no action to confirm');
+  assert.equal(help.focus, 'modal-cancel');
+  assert.equal(help.cancel, 'Close');
+  await browser('press', 'Escape');
+  await wait(`document.querySelector('#modal').hidden`);
+  await browser('click', '#btn-changes');
+  await wait(`!document.querySelector('#modal').hidden`);
+  assert.equal(await evaluate(`document.querySelector('#modal-ok').checkVisibility()`), true, 'a later confirmation shows its action again');
+  await browser('press', 'Escape');
+  console.log('PASS ? lists the keys, with only a Close button, and the next dialog shows its action again');
 } finally {
   await close();
   await stopKemi(kemi, 'SIGTERM');

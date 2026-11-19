@@ -65,6 +65,7 @@ import {
   unhandedNotice,
   editingSuggestionText,
   mergeBaseNote,
+  KEY_HELP,
 } from "./model.js";
 import { describeComment } from "./conversation-model.js";
 
@@ -1562,4 +1563,12 @@ test("the final state of a commit range says it is the diff from the merge base"
 test("per-commit groups and reviews without group units carry no merge base note", () => {
   assert.equal(mergeBaseNote("fix: something", "commit"), null);
   assert.equal(mergeBaseNote("Working tree changes", null), null);
+});
+
+test("the key list names exactly the keys that have an action", () => {
+  const listed = new Set(KEY_HELP.flatMap((row) => row.keys));
+  for (let code = 0x21; code < 0x7f; code += 1) {
+    const key = String.fromCharCode(code);
+    assert.equal(listed.has(key), keyAction(key, 3, 1).type !== "none", `key ${key}`);
+  }
 });

@@ -91,7 +91,7 @@ import { renderConversation } from "./views/conversation.js";
 import { renderNotice } from "./views/file-header.js";
 import { renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
-import { closeModal, keepFocusInModal, runModalAction } from "./views/overlay.js";
+import { closeModal, keepFocusInModal, keyHelpBody, openNotice, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
 import { currentEntry, displayWrap, state } from "./state.js";
 import { keyAction } from "./model.js";
@@ -129,7 +129,6 @@ function handleKey(event) {
     }
   }
   const target = /** @type {HTMLElement} */ (event.target);
-  if (state.view !== 'code') return;
   if (
     target.tagName === "INPUT" ||
     target.tagName === "TEXTAREA" ||
@@ -137,6 +136,13 @@ function handleKey(event) {
   ) {
     return;
   }
+  // 一覧はどの見方でも開ける。`?` は Shift を伴うので、Shift は見ない。
+  if (event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey && dom.modal.hidden) {
+    event.preventDefault();
+    openNotice("Keyboard shortcuts", keyHelpBody(state.view));
+    return;
+  }
+  if (state.view !== 'code') return;
   if (event.ctrlKey || event.metaKey || event.altKey || !dom.modal.hidden) {
     return;
   }

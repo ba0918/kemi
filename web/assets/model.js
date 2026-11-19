@@ -527,6 +527,21 @@ function firstIndexAtOrAfter(offsets, value, total) {
 }
 
 /**
+ * コードの見方のキー操作の一覧（R-KEYS）。`?` で開く一覧はこれを並べる。下の keyAction の割り当てと
+ * 食い違わないことはテストが確かめる。
+ * @type {ReadonlyArray<{ keys: string[], label: string }>}
+ */
+export const KEY_HELP = [
+  { keys: ["j", "k"], label: "Next / previous file" },
+  { keys: ["g", "G"], label: "First / last file" },
+  { keys: ["n", "p"], label: "Next / previous change" },
+  { keys: ["v"], label: "Mark the file as seen, or not" },
+  { keys: ["s", "u"], label: "2 columns / 1 column" },
+  { keys: ["w"], label: "Wrap long lines, or not" },
+  { keys: ["r"], label: "Rendered / source view" },
+];
+
+/**
  * @param {string} key
  * @param {number} count
  * @param {number} index

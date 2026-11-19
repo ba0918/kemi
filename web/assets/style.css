@@ -1740,6 +1740,27 @@ ul.files ul {
   margin: 0;
 }
 
+.modal .key-help {
+  border-collapse: collapse;
+  margin: 4px 0 14px;
+  font-size: 13.5px;
+}
+
+.modal .key-help td {
+  padding: 3px 0;
+}
+
+.modal .key-help .key-help-keys {
+  padding-right: 16px;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.modal .key-help kbd {
+  font-size: 12px;
+  color: var(--ink);
+}
+
 .modal .warn {
   border-left: 3px solid var(--note-line);
   background: var(--note-bg);

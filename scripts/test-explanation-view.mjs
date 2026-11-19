@@ -318,6 +318,13 @@ if (!process.argv.includes('--parts-only') && !process.argv.includes('--live-nav
   assert.deepEqual(await shown(codeOnly), codeOnly.map(()=>true), 'the Code view offers its display controls');
   await browser('find','role','button','click','--name','Explanation','--exact');
   await wait(`document.body.dataset.reviewView==='explanation'`);
+  // 説明の見方でも ? で一覧を開け、コードの見方のキーであることを添える（R-KEYS）。
+  await evaluate(`document.activeElement.blur();true`);
+  await browser('press','?');
+  await wait(`!document.querySelector('#modal').hidden`);
+  assert.ok(await evaluate(`document.querySelector('#modal-body').textContent.includes('These keys work in the Code view.')`), 'the list says the keys are for the Code view');
+  await browser('press','Escape');
+  await wait(`document.querySelector('#modal').hidden`);
   console.log('PASS: 1280/390 light/dark sections without collapse or frame, numbered underlined headings, contents navigation, indented Markdown headings and the current item');
   const review = await getJson(running.url, 'api/review');
   const id = (await readdir(join(root,'kemi','sessions'))).find(name=>name.endsWith('.endpoint')).slice(0,-9);
