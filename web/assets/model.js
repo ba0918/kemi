@@ -642,6 +642,21 @@ export function suggestionAllowed(side) {
 }
 
 /**
+ * コミット範囲の最終形のグループに添える文。最終形のグループの題は `from...to`（merge-base から to までの差分）で、
+ * 上部の題の `from..to` と点の数だけが違って見えるので、意味を文で示す（R-VIEW）。最終形でなければ null。
+ * @param {string} groupTitle
+ * @param {string | null} unit 表示中のグループ単位
+ * @returns {string | null}
+ */
+export function mergeBaseNote(groupTitle, unit) {
+  const dots = groupTitle.indexOf("...");
+  if (unit !== "file" || dots <= 0) {
+    return null;
+  }
+  return `from the merge base of ${groupTitle.slice(0, dots)} and ${groupTitle.slice(dots + 3)}`;
+}
+
+/**
  * コメントを編集するときの suggestion の入力欄の初めの文字列。suggestion の無いコメントでも
  * 空にせず対象の行で始める。空のまま suggestion にすると行の削除を意味するため（R-COMMENT）。
  * @param {{ quote?: string[] | null, suggestion?: { replacement: string } | null }} comment

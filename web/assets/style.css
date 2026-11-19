@@ -1032,6 +1032,20 @@ ul.files ul {
   text-overflow: ellipsis;
 }
 
+/* 狭いときは添えた文の方を切る。題（from...to）が切れると、何の差分かが読めなくなる。 */
+.group-header .gh-line:has(.gh-base) .gh-title {
+  flex-shrink: 0;
+}
+
+.group-header .gh-base {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .group-header .gh-st {
   flex: 0 0 auto;
   font-size: 12px;

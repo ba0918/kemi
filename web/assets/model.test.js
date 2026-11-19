@@ -64,6 +64,7 @@ import {
   effectiveDisplay,
   unhandedNotice,
   editingSuggestionText,
+  mergeBaseNote,
 } from "./model.js";
 import { describeComment } from "./conversation-model.js";
 
@@ -1552,4 +1553,13 @@ test("editing a comment that has a suggestion starts from that suggestion", () =
 test("editing a comment without a suggestion starts the suggestion from the commented lines", () => {
   const comment = { quote: ["line a", "line b"], suggestion: null };
   assert.equal(editingSuggestionText(comment), "line a\nline b");
+});
+
+test("the final state of a commit range says it is the diff from the merge base", () => {
+  assert.equal(mergeBaseNote("HEAD~8...HEAD", "file"), "from the merge base of HEAD~8 and HEAD");
+});
+
+test("per-commit groups and reviews without group units carry no merge base note", () => {
+  assert.equal(mergeBaseNote("fix: something", "commit"), null);
+  assert.equal(mergeBaseNote("Working tree changes", null), null);
 });

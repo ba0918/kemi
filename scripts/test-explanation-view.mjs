@@ -583,6 +583,10 @@ if (process.argv.includes('--range-navigation') || process.argv.length===3) {
     running=await start(['--from',base,'--group-by',unit]);await browser('set','viewport','1280','900');await browser('open',running.url);
     await wait(`document.querySelector('[aria-label="Review view"]')?.querySelector('[aria-pressed="true"]')?.textContent==='Code'`);
     assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='Explanation').disabled`),true);
+    // 最終形の帯は、題の from...to が merge-base からの差分であることを文で添える。コミットごとには添えない。
+    const note=`from the merge base of ${base} and HEAD`;
+    await wait(`!!document.querySelector('#group-header .gh-line')`);
+    assert.equal(await evaluate(`document.querySelector('#group-header').textContent.includes(${JSON.stringify(note)})`),unit==='file',`${unit}: the merge base note on the group band`);
     await stopKemi(running);
     running=await start(['--from',base,'--group-by',unit,'--explanation',join(root,'explanation.json')]);await browser('open',running.url);
     await wait(`document.body.textContent.includes('Both group units')`);

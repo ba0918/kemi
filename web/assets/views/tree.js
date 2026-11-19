@@ -9,6 +9,7 @@ import {
   commentCountChanges,
   commitTypeBox,
   formatBytes,
+  mergeBaseNote,
   statusLetter,
 } from "../model.js";
 
@@ -185,7 +186,8 @@ function rebuildTree() {
     const groupEl = el("div", "group");
     groupEl.dataset.group = group.id;
     const head = button("group-head");
-    head.title = group.title || group.id;
+    const baseNote = mergeBaseNote(group.title || "", currentUnit());
+    head.title = baseNote ? `${group.title} (${baseNote})` : group.title || group.id;
     const caret = foldToggle(groupEl, head, state.groupOpen, group.id);
     const count = el("span", "g-progress");
     head.append(caret);

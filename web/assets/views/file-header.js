@@ -21,12 +21,13 @@ import {
   allLinesExpanded,
   commentsOf,
   currentEntry,
+  currentUnit,
   groupProgressFor,
   originAvailable,
   renderToggleEnabled,
   state,
 } from "../state.js";
-import { collapseDefault, countLabel, formatBytes, statusLetter } from "../model.js";
+import { collapseDefault, countLabel, formatBytes, mergeBaseNote, statusLetter } from "../model.js";
 import { appendGroupTitle, fileStatsEl } from "./tree.js";
 
 /**
@@ -46,6 +47,10 @@ export function renderGroupHeader() {
   dom.groupHeader.dataset.open = open ? "true" : "false";
   const line = el("div", "gh-line");
   appendGroupTitle(line, entry.group, "gh-title");
+  const baseNote = mergeBaseNote(entry.group.title || "", currentUnit());
+  if (baseNote) {
+    line.append(textEl("span", "gh-base", baseNote));
+  }
   const progress = groupProgressFor(entry.group.id);
   line.append(textEl("span", "gh-st", `Seen ${progress.seen} / ${progress.total}`));
   if (entry.group.why) {
