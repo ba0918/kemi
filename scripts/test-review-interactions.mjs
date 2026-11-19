@@ -1,6 +1,6 @@
 // コードの見方の操作の細部を実バイナリで確かめる。行に乗せても本文が動かないこと、コメントを編集するときの
 // suggestion の初めの文字列（R-COMMENT）、確認ダイアログが開いている間フォーカスがダイアログの中に留まること、
-// `?` で開くキー操作の一覧（R-KEYS）。
+// `?` で開くキー操作の一覧（R-KEYS）、ファイルツリーの Tab の止まり先と矢印キー（R-VIEW）。
 // node scripts/test-review-interactions.mjs <kemi-bin>
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
@@ -18,7 +18,7 @@ const session = `kemi-interactions-${process.pid}`;
 const {browser, evaluate, waitFor: wait, close} = browserSession(session);
 const lines = Array.from({length: 20}, (_, i) => `const value${i + 1} = ${i + 1};\n`).join('');
 const manifest = join(fixture, 'review.json');
-await writeFile(manifest, JSON.stringify({title: 'Interactions', groups: [{id: 'group', title: 'Changes', diffs: [{path: 'sample.ts', old: lines, new: lines.replaceAll('const', 'let')}]}], approval: []}));
+await writeFile(manifest, JSON.stringify({title: 'Interactions', groups: [{id: 'group', title: 'Changes', diffs: [{path: 'sample.ts', old: lines, new: lines.replaceAll('const', 'let')}, {path: 'src/a/one.ts', old: 'a\n', new: 'b\n'}, {path: 'src/a/two.ts', old: 'a\n', new: 'c\n'}, {path: 'src/b/three.ts', old: 'a\n', new: 'd\n'}]}], approval: []}));
 const kemi = await launchKemi(binary, {cwd: fixture, state, args: [manifest]});
 try {
   const {url} = kemi;
@@ -85,6 +85,54 @@ try {
   assert.equal(await evaluate(`document.querySelector('#modal-ok').checkVisibility()`), true, 'a later confirmation shows its action again');
   await browser('press', 'Escape');
   console.log('PASS ? lists the keys, with only a Close button, and the next dialog shows its action again');
+
+  // ファイルツリーは Tab の止まり先を 1 つだけ持ち、中は矢印キーで移る（R-VIEW）。
+  const tabStops = `Array.from(document.querySelectorAll('#tree button')).filter(b => b.tabIndex >= 0)`;
+  const stopState = async () => evaluate(`(() => { const stops = ${tabStops}; return {count: stops.length, label: stops[0]?.textContent.trim().replace(/\\s+/g, ' ').slice(0, 30), visible: stops[0]?.getClientRects().length > 0, focusedIsStop: stops[0] === document.activeElement}; })()`);
+  const focused = () => evaluate(`document.activeElement.closest('#tree') ? document.activeElement.textContent.trim().replace(/\\s+/g, ' ').slice(0, 30) : null`);
+  let stop = await stopState();
+  assert.equal(stop.count, 1, `one tab stop at the start: ${JSON.stringify(stop)}`);
+  assert.ok(stop.label.includes('sample.ts'), `the stop is the file on display: ${JSON.stringify(stop)}`);
+  await evaluate(`${tabStops}[0].focus(); true`);
+  await browser('press', 'ArrowUp');
+  assert.ok((await focused())?.includes('Changes'), 'up from the first file reaches the group heading');
+  await browser('press', 'ArrowDown');
+  await browser('press', 'ArrowDown');
+  assert.equal(await focused(), '▾src', 'down from the first file reaches the src heading');
+  stop = await stopState();
+  assert.ok(stop.count === 1 && stop.focusedIsStop, `the focused item becomes the only stop: ${JSON.stringify(stop)}`);
+  await browser('press', 'ArrowLeft');
+  assert.equal(await evaluate(`document.activeElement.getAttribute('aria-expanded')`), 'false', 'left folds an open heading');
+  await browser('press', 'ArrowRight');
+  assert.equal(await evaluate(`document.activeElement.getAttribute('aria-expanded')`), 'true', 'right opens a folded heading');
+  await browser('press', 'ArrowRight');
+  assert.equal(await focused(), '▾a', 'right on an open heading enters its first child');
+  await browser('press', 'ArrowRight');
+  await browser('press', 'Enter');
+  await wait(`document.querySelector('#file-header')?.textContent.includes('src/a/one.ts')`);
+  assert.ok((await focused())?.includes('one.ts'), 'Enter opens the file and keeps the focus on it');
+  await browser('press', 'ArrowLeft');
+  assert.equal(await focused(), '▾a', 'left on a file moves to its heading');
+  await browser('press', 'ArrowLeft');
+  assert.equal(await evaluate(`document.activeElement.getAttribute('aria-expanded')`), 'false', 'the heading folds by keyboard and keeps the focus');
+  stop = await stopState();
+  assert.ok(stop.count === 1 && stop.visible, `folding away the file on display still leaves one visible stop: ${JSON.stringify(stop)}`);
+  await browser('press', 'End');
+  assert.ok((await focused())?.includes('three.ts'), 'End reaches the last visible item');
+  await browser('press', 'Home');
+  assert.ok((await focused())?.includes('Changes'), 'Home reaches the first item');
+  // ツリーを作り直しても、ツリーの中のフォーカスは同じ項目に戻る。
+  await browser('press', 'ArrowDown');
+  await evaluate(`document.querySelector('#chip-sort').click(); true`);
+  await wait(`document.querySelector('#chip-sort').getAttribute('aria-pressed') === 'true'`);
+  assert.ok((await focused())?.includes('sample.ts'), 'rebuilding the tree keeps the focus on the same item');
+  stop = await stopState();
+  assert.equal(stop.count, 1, `one stop after the rebuild: ${JSON.stringify(stop)}`);
+  await evaluate(`document.activeElement.blur(); true`);
+  await browser('press', 'j');
+  stop = await stopState();
+  assert.equal(stop.count, 1, `one stop after moving with j: ${JSON.stringify(stop)}`);
+  console.log('PASS the file tree is one tab stop, arrows move and fold inside it, and focus survives a rebuild');
 } finally {
   await close();
   await stopKemi(kemi, 'SIGTERM');

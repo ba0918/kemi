@@ -2,7 +2,7 @@
 // 左のファイルツリー（グループ見出し、ディレクトリ、ファイルの項目）と、その部分描き。
 
 import { actions } from "../actions.js";
-import { DIR_ICON, FILE_ICON, button, dom, el, svgIcon, textEl } from "../dom.js";
+import { DIR_ICON, FILE_ICON, button, dom, el, focusKeyWithin, restoreFocusKey, svgIcon, textEl } from "../dom.js";
 import { commentsOf, currentEntry, currentUnit, groupProgressFor, state } from "../state.js";
 import {
   buildTree,
@@ -11,6 +11,7 @@ import {
   formatBytes,
   mergeBaseNote,
   statusLetter,
+  treeKeyMove,
 } from "../model.js";
 
 /** @typedef {import("../model.js").FileEntry} FileEntry */
@@ -27,6 +28,12 @@ let treeItems = new Map();
  * @type {string | null}
  */
 let treeActiveId = null;
+
+/**
+ * 最後にツリーの中でフォーカスした項目の鍵（data-focus-key）。Tab の止まり先を決めるのに使う。
+ * @type {string | null}
+ */
+let lastTreeKey = null;
 
 /** 描いてあるツリーの版（state.treeVersion）。違えば作り直す。 */
 let treeRenderedVersion = -1;
@@ -136,6 +143,84 @@ export function renderTree() {
     treeRenderedVersion = state.treeVersion;
   }
   updateTreeActive();
+  syncTreeTabStop();
+}
+
+/** ツリーの見えている項目（グループとディレクトリの見出し、ファイル）を上から並べる。 */
+function visibleTreeButtons() {
+  return Array.from(dom.tree.querySelectorAll("button")).filter((item) => item.getClientRects().length > 0);
+}
+
+/**
+ * Tab の止まり先を 1 つにする（R-VIEW）。最後にフォーカスした項目が見えていればそれ、なければ表示中の
+ * ファイル、それも見えなければ最初の見えている項目。引き出しが閉じていて何も見えなければ最初の項目。
+ */
+export function syncTreeTabStop() {
+  const all = Array.from(dom.tree.querySelectorAll("button"));
+  const visible = visibleTreeButtons();
+  const byKey = (/** @type {string | null} */ key) => (key ? visible.find((item) => item.dataset.focusKey === key) : undefined);
+  const stop =
+    byKey(lastTreeKey) ??
+    byKey(treeActiveId ? `f:${treeActiveId}` : null) ??
+    visible[0] ??
+    all[0];
+  for (const item of all) {
+    item.tabIndex = item === stop ? 0 : -1;
+  }
+}
+
+/** ツリーの中でフォーカスが移ったら、その項目を止まり先にする。 */
+export function onTreeFocusIn(/** @type {FocusEvent} */ event) {
+  const target = event.target;
+  if (target instanceof HTMLButtonElement && target.dataset.focusKey) {
+    lastTreeKey = target.dataset.focusKey;
+    syncTreeTabStop();
+  }
+}
+
+/**
+ * 見出し・ファイルの親の見出し（グループかディレクトリの見出し）。
+ * @param {HTMLElement} item
+ * @returns {HTMLElement | null}
+ */
+function parentHead(item) {
+  let container = item.closest("li.dir, .group");
+  if (container && (item.classList.contains("dir-head") || item.classList.contains("group-head"))) {
+    container = container.parentElement?.closest("li.dir, .group") ?? null;
+  }
+  return container?.querySelector(":scope > .dir-head, :scope > .group-head") ?? null;
+}
+
+/** ツリーの中の矢印キー・Home・End（R-VIEW）。Enter と Space はボタンそのものが押す。 */
+export function onTreeKey(/** @type {KeyboardEvent} */ event) {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+    return;
+  }
+  const visible = visibleTreeButtons();
+  const index = visible.findIndex((item) => item === document.activeElement);
+  if (index < 0) {
+    return;
+  }
+  const rows = visible.map((item) => {
+    const head = item.classList.contains("dir-head") || item.classList.contains("group-head");
+    const parent = parentHead(item);
+    return {
+      head,
+      open: head && item.getAttribute("aria-expanded") === "true",
+      parent: parent ? visible.indexOf(/** @type {HTMLButtonElement} */ (parent)) : -1,
+    };
+  });
+  const move = treeKeyMove(event.key, rows, index);
+  if (move.type === "none") {
+    return;
+  }
+  event.preventDefault();
+  if (move.type === "toggle") {
+    visible[index].click();
+  } else {
+    visible[move.index].focus();
+    visible[move.index].scrollIntoView({ block: "nearest" });
+  }
 }
 
 /**
@@ -171,6 +256,8 @@ function foldToggle(container, head, remembered, key) {
     remembered.set(key, nextOpen);
     head.setAttribute("aria-expanded", String(nextOpen));
     caret.textContent = nextOpen ? "▾" : "▸";
+    // 畳んだ中に止まり先があると、Tab で入れなくなる。
+    syncTreeTabStop();
   });
   return caret;
 }
@@ -179,6 +266,7 @@ function rebuildTree() {
   const groups = buildTree(state.visible);
   /** 前回のボタンを使い回す。同じファイルの項目は作り直さない。 */
   const items = new Map(treeItems);
+  const focusedKey = focusKeyWithin(dom.tree);
   dom.tree.textContent = "";
   groupHeads = new Map();
   const fragment = document.createDocumentFragment();
@@ -215,6 +303,7 @@ function rebuildTree() {
   }
   treeItems = items;
   treeActiveId = null;
+  restoreFocusKey(dom.tree, focusedKey);
 }
 
 /**
@@ -229,6 +318,7 @@ function appendNodes(parent, nodes, group, items) {
       const li = el("li", "dir");
       const key = `${group.id}:${node.path}`;
       const head = button("dir-head");
+      head.dataset.focusKey = `d:${key}`;
       const caret = foldToggle(li, head, state.dirOpen, key);
       head.append(caret, svgIcon(DIR_ICON), document.createTextNode(node.name));
       const ul = el("ul");
@@ -254,6 +344,7 @@ function treeItem(entry, label, items) {
   if (!item) {
     item = button("file");
     item.dataset.fileId = entry.file.id;
+    item.dataset.focusKey = `f:${entry.file.id}`;
     item.addEventListener("click", () => {
       const index = state.visible.findIndex(
         (candidate) => candidate.file.id === item?.dataset.fileId,

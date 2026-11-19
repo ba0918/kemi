@@ -527,6 +527,45 @@ function firstIndexAtOrAfter(offsets, value, total) {
 }
 
 /**
+ * ファイルツリーの中の矢印キーの行き先（R-VIEW）。rows はツリーの見えている項目を上から並べたもの。
+ * head は見出し（グループ・ディレクトリ）、open はその開閉、parent は親の見出しの位置（無ければ -1）。
+ * @param {string} key
+ * @param {ReadonlyArray<{ head: boolean, open: boolean, parent: number }>} rows
+ * @param {number} index いまフォーカスのある項目の位置
+ * @returns {{ type: "focus", index: number } | { type: "toggle" } | { type: "none" }}
+ */
+export function treeKeyMove(key, rows, index) {
+  const row = rows[index];
+  if (!row) {
+    return { type: "none" };
+  }
+  /** @param {number} next */
+  const focus = (next) => (next >= 0 && next < rows.length && next !== index ? { type: /** @type {const} */ ("focus"), index: next } : { type: /** @type {const} */ ("none") });
+  switch (key) {
+    case "ArrowDown":
+      return focus(index + 1);
+    case "ArrowUp":
+      return focus(index - 1);
+    case "Home":
+      return focus(0);
+    case "End":
+      return focus(rows.length - 1);
+    case "ArrowRight":
+      if (!row.head) {
+        return { type: "none" };
+      }
+      return row.open ? (rows[index + 1]?.parent === index ? focus(index + 1) : { type: "none" }) : { type: "toggle" };
+    case "ArrowLeft":
+      if (row.head && row.open) {
+        return { type: "toggle" };
+      }
+      return focus(row.parent);
+    default:
+      return { type: "none" };
+  }
+}
+
+/**
  * コードの見方のキー操作の一覧（R-KEYS）。`?` で開く一覧はこれを並べる。下の keyAction の割り当てと
  * 食い違わないことはテストが確かめる。
  * @type {ReadonlyArray<{ keys: string[], label: string }>}

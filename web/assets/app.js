@@ -89,7 +89,7 @@ import {
 } from "./features/agent.js";
 import { renderConversation } from "./views/conversation.js";
 import { renderNotice } from "./views/file-header.js";
-import { renderTree } from "./views/tree.js";
+import { onTreeFocusIn, onTreeKey, renderTree } from "./views/tree.js";
 import { placeNotes, renderHeader, renderUpdateBadge } from "./views/header.js";
 import { closeModal, keepFocusInModal, keyHelpBody, openNotice, runModalAction } from "./views/overlay.js";
 import { dom } from "./dom.js";
@@ -318,6 +318,8 @@ dom.submitChanges.addEventListener("click", () => openConfirm("changes_requested
 dom.modalCancel.addEventListener("click", closeModal);
 dom.modalOk.addEventListener("click", runModalAction);
 dom.modal.addEventListener("keydown", keepFocusInModal);
+dom.tree.addEventListener("keydown", onTreeKey);
+dom.tree.addEventListener("focusin", onTreeFocusIn);
 dom.navPrev.addEventListener("click", () => void navigate(-1));
 dom.navNext.addEventListener("click", () => void navigate(1));
 dom.ruler.addEventListener("click", scrollToRulerPosition);
