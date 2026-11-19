@@ -1,5 +1,5 @@
 // コードの見方の操作の細部を実バイナリで確かめる。行に乗せても本文が動かないこと、コメントを編集するときの
-// suggestion の初めの文字列（R-COMMENT）。
+// suggestion の初めの文字列（R-COMMENT）、確認ダイアログが開いている間フォーカスがダイアログの中に留まること。
 // node scripts/test-review-interactions.mjs <kemi-bin>
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
@@ -49,6 +49,20 @@ try {
   console.log('PASS editing a comment without a suggestion starts the suggestion from the commented lines');
   await evaluate(`Array.from(document.querySelectorAll('#diff-content .editor button')).find(b => b.textContent === 'Cancel').click()`);
   await wait(`!document.querySelector('#diff-content .editor')`);
+
+  await browser('click', '#btn-changes');
+  await wait(`!document.querySelector('#modal').hidden`);
+  assert.equal(await evaluate(`document.activeElement?.id`), 'modal-cancel', 'opening the dialog focuses its safe choice');
+  for (let i = 0; i < 4; i += 1) {
+    await browser('press', 'Tab');
+    assert.ok(await evaluate(`document.querySelector('#modal .box').contains(document.activeElement)`), `Tab ${i + 1} keeps the focus inside the dialog`);
+  }
+  console.log('PASS the confirmation dialog takes the focus and keeps Tab inside it');
+  await browser('press', 'Escape');
+  await wait(`document.querySelector('#modal').hidden`);
+  assert.equal(await evaluate(`document.activeElement?.id`), 'btn-changes', 'closing the dialog returns the focus to the button that opened it');
+  assert.equal(await evaluate(`Array.from(document.body.children).some(e => e.inert)`), false, 'closing the dialog makes the page usable again');
+  console.log('PASS closing the dialog returns the focus to its opener');
 } finally {
   await close();
   await stopKemi(kemi, 'SIGTERM');
